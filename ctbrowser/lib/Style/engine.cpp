@@ -123,21 +123,7 @@ void engine::resolve_subtree(const read_txn & txn, node_id node, ancestor_filter
 
     const computed_style_ptr resolved = resolve(txn, node, self, ancestors, depth, parent);
     out[key_of(node)] = resolved;
-    if (chain_styles_.size() <= depth) { chain_styles_.resize(depth + 1); }
-    chain_styles_[depth] = resolved;
-    // ...and the size containers its children's `cq*` units measure: its own
-    // on the axes it contains, its parent's on the rest.
-    if (cq_chain_.size() <= depth) { cq_chain_.resize(depth + 1); }
-    std::pair<node_id, node_id> containers =
-        depth > 0 ? cq_chain_[depth - 1] : std::pair<node_id, node_id>{};
-    if (resolved) {
-        for (const std::string_view word :
-             split_top_level(resolved->get(atoms_->intern_lower("container-type")), " \t\n")) {
-            if (word == "size") { containers = {node, node}; }
-            if (word == "inline-size") { containers.first = node; }
-        }
-    }
-    cq_chain_[depth] = containers;
+    note_chain(depth, node, resolved);
 
     // The tag, id and classes are read from the stored facts rather than from
     // `self`, because resolve() may have grown levels_ and reallocated it.
@@ -155,6 +141,24 @@ void engine::resolve_subtree(const read_txn & txn, node_id node, ancestor_filter
         resolve_subtree(txn, child, ancestors, out, depth + 1, resolved);
     }
     ancestors.pop(my_tag, my_id, my_classes);
+}
+
+void engine::note_chain(std::size_t depth, node_id node, const computed_style_ptr & resolved) {
+    if (chain_styles_.size() <= depth) { chain_styles_.resize(depth + 1); }
+    chain_styles_[depth] = resolved;
+    // ...and the size containers its children's `cq*` units measure: its own
+    // on the axes it contains, its parent's on the rest.
+    if (cq_chain_.size() <= depth) { cq_chain_.resize(depth + 1); }
+    std::pair<node_id, node_id> containers =
+        depth > 0 ? cq_chain_[depth - 1] : std::pair<node_id, node_id>{};
+    if (resolved) {
+        for (const std::string_view word :
+             split_top_level(resolved->get(atoms_->intern_lower("container-type")), " \t\n")) {
+            if (word == "size") { containers = {node, node}; }
+            if (word == "inline-size") { containers.first = node; }
+        }
+    }
+    cq_chain_[depth] = containers;
 }
 
 void engine::enter_level(const read_txn & txn, node_id parent, std::size_t depth) {

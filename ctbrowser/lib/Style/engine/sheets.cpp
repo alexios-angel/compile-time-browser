@@ -587,7 +587,8 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
     // on the condition if a page with many containers shows it.
     const css::container_needs needs = css::container_requirements(e.condition);
     bool held = false;
-    for (std::size_t d = depth; d-- > 0;) {
+    // A PSEUDO-ELEMENT'S ORIGINATING ELEMENT is its container candidate too.
+    for (std::size_t d = depth + (pseudo_wanted_ != atom{} ? 1 : 0); d-- > 0;) {
         if (d >= chain_styles_.size() || !chain_styles_[d]) { continue; }
         const computed_style_ptr & style = chain_styles_[d];
         if (!e.name.empty()) {
@@ -611,15 +612,29 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
         // laid out yet, or `display: none` - is no size container, and
         // the search goes on past it.
         css::container_box box;
-        if (size || inline_size) {
+        if (size || inline_size || scroll_state) {
             const std::optional<container_size> laid = container_size_of(levels_[d][path_[d]].node);
             if (!laid && (needs.inline_axis || needs.block_axis)) { continue; }
-            if (laid) {
+            if (laid && (size || inline_size)) {
                 box.width = laid->width;
                 if (size) { box.height = laid->height; }
             }
+            if (laid && scroll_state) { box.scrollable = laid->scrollable; }
         }
         const css::media_environment & env = environment_;
+        // THE CONTAINER'S FONT, which an `em` in the query measures.
+        {
+            const auto get = [&](std::string_view name) {
+                return style->get(atoms_->intern_lower(name));
+            };
+            const float font_size =
+                css::length_text_to_px(get("font-size"), font_context(16.0f)).value_or(16.0f);
+            box.lengths =
+                font_context(font_size, line_height_px(get("line-height"), font_size),
+                             measure_ ? zero_advance_of(get("font-family"), get("font-weight"),
+                                                        get("font-style"), font_size)
+                                      : 0.0f);
+        }
         // `style(...)` IS THE if() CONDITION OF THE SAME NAME, asked of the
         // container rather than of the element (CSS Conditional 5 §3.3): its
         // custom properties, its attributes for an `attr()` in a range, its
@@ -656,13 +671,7 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
             conditions.functions = [this](std::string_view name) {
                 return function_of(atoms_->intern(name));
             };
-            const float font_size =
-                css::length_text_to_px(style->get(atoms_->intern_lower("font-size")),
-                                       font_context(16.0f))
-                    .value_or(16.0f);
-            conditions.lengths = font_context(
-                font_size,
-                line_height_px(style->get(atoms_->intern_lower("line-height")), font_size));
+            conditions.lengths = box.lengths;
             const std::string asked{text};
             const std::optional<std::string> answer = css::substitute_var(
                 "if(style(" + asked + "): y; not style(" + asked + "): n; else: u)", lookup,

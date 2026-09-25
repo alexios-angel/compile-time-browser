@@ -141,7 +141,8 @@ constexpr feature_entry container_features[] = {
 // is true by definition - and every other length unit goes through calc/'s
 // evaluator, which knows them all; a resolution unit is dppx.
 [[nodiscard]] float length_in_px(const token_stream & s, const css_token & t,
-                                 const media_environment & env) {
+                                 const media_environment & env,
+                                 const container_box * box = nullptr) {
     const std::string_view unit = s.unit_of(t);
     if (ascii_iequals(unit, "px") || unit.empty()) { return static_cast<float>(t.number); }
     if (ascii_iequals(unit, "dppx") || ascii_iequals(unit, "x")) {
@@ -149,7 +150,7 @@ constexpr feature_entry container_features[] = {
     }
     if (ascii_iequals(unit, "dpi")) { return static_cast<float>(t.number) / 96.0f; }
     if (ascii_iequals(unit, "dpcm")) { return static_cast<float>(t.number) / 96.0f * 2.54f; }
-    length_context ctx;
+    length_context ctx = box != nullptr ? box->lengths : length_context{};
     ctx.viewport_width = env.viewport_width;
     ctx.viewport_height = env.viewport_height;
     const math_answer answer = evaluate_math(s.text_of(t), ctx);
@@ -163,9 +164,9 @@ constexpr feature_entry container_features[] = {
 // the same bases: the root font size and the viewport. Media Queries 4 §2.4
 // makes it a value like any other; a function calc/ cannot resolve is the
 // `<general-enclosed>` the caller folds as unknown.
-[[nodiscard]] std::optional<float> math_in_px(std::string_view text,
-                                              const media_environment & env) {
-    length_context ctx;
+[[nodiscard]] std::optional<float> math_in_px(std::string_view text, const media_environment & env,
+                                              const container_box * box = nullptr) {
+    length_context ctx = box != nullptr ? box->lengths : length_context{};
     ctx.viewport_width = env.viewport_width;
     ctx.viewport_height = env.viewport_height;
     const math_answer answer = evaluate_math(text, ctx);
@@ -302,7 +303,7 @@ constexpr feature_entry container_features[] = {
                 w = written::ratio;
                 return 3;
             }
-            f.value = length_in_px(s, t, env);
+            f.value = length_in_px(s, t, env, box);
             if (t.type == token_type::number) {
                 w = t.number == 0 ? written::zero : written::number;
             } else {
@@ -315,7 +316,7 @@ constexpr feature_entry container_features[] = {
         if (t.type == token_type::function) {
             const std::string_view text = std::string_view{s.pool}.substr(
                 t.text, s.tokens[ends[at[i]] - 1].text + s.tokens[ends[at[i]] - 1].length - t.text);
-            const std::optional<float> px = math_in_px(text, env);
+            const std::optional<float> px = math_in_px(text, env, box);
             if (!px) { return 0; }
             f.value = *px;
             // calc/ answers a resolution as dppx and a length as px alike;
@@ -671,6 +672,84 @@ bool evaluate(std::span<const media_query> queries, const media_environment & en
     return false;
 }
 
+namespace {
+
+// ONE `scroll-state()` FEATURE over [from, to) (CSS Conditional 5 §3.4):
+// `scrollable`, `snapped`, `stuck` or `scrolled`, alone or with one of its
+// keywords. nullopt when the tokens are not one feature; unknown for a name
+// or a keyword the feature does not have. `scrollable` reads the box; the
+// other three ask `none` of it, since nothing here snaps, sticks or records
+// the last scroll's direction.
+[[nodiscard]] std::optional<truth> scroll_feature(const token_stream & s, std::size_t from,
+                                                  std::size_t to, std::uint8_t scrollable) {
+    std::vector<std::size_t> at;
+    for (std::size_t i = from; i < to; ++i) {
+        if (s.tokens[i].type != token_type::whitespace) { at.push_back(i); }
+    }
+    if (at.empty() || s.tokens[at[0]].type != token_type::ident) { return std::nullopt; }
+    const std::string_view name = s.text_of(s.tokens[at[0]]);
+    const bool boolean = at.size() == 1;
+    std::string_view value;
+    if (!boolean) {
+        if (at.size() != 3 || s.tokens[at[1]].type != token_type::colon ||
+            s.tokens[at[2]].type != token_type::ident) {
+            return std::nullopt;
+        }
+        value = s.text_of(s.tokens[at[2]]);
+    }
+    static constexpr std::pair<std::string_view, std::uint8_t> directions[] = {
+        {"top", scroll_top},
+        {"right", scroll_right},
+        {"bottom", scroll_bottom},
+        {"left", scroll_left},
+        {"block-start", scroll_top},
+        {"block-end", scroll_bottom},
+        {"inline-start", scroll_left},
+        {"inline-end", scroll_right},
+        {"x", scroll_left | scroll_right},
+        {"y", scroll_top | scroll_bottom},
+        {"block", scroll_top | scroll_bottom},
+        {"inline", scroll_left | scroll_right}};
+    const auto bits_of = [&](std::size_t first, std::size_t last) -> std::optional<std::uint8_t> {
+        for (std::size_t i = first; i < last; ++i) {
+            if (ascii_iequals(value, directions[i].first)) { return directions[i].second; }
+        }
+        return std::nullopt;
+    };
+    const auto answer = [&](std::uint8_t have, std::size_t kinds) -> truth {
+        if (boolean) { return have != 0 ? truth::yes : truth::no; }
+        if (ascii_iequals(value, "none")) { return have == 0 ? truth::yes : truth::no; }
+        const std::optional<std::uint8_t> bits = bits_of(0, kinds);
+        if (!bits) { return truth::unknown; }
+        return (have & *bits) != 0 ? truth::yes : truth::no;
+    };
+    if (ascii_iequals(name, "scrollable")) { return answer(scrollable, std::size(directions)); }
+    if (ascii_iequals(name, "scrolled")) { return answer(0, std::size(directions)); }
+    if (ascii_iequals(name, "stuck")) { return answer(0, 8); }
+    if (ascii_iequals(name, "snapped")) {
+        if (!boolean && ascii_iequals(value, "both")) { return truth::no; }
+        return !boolean && !ascii_iequals_any(value, {"none", "x", "y", "block", "inline"})
+                   ? truth::unknown
+                   : answer(0, std::size(directions));
+    }
+    return truth::unknown;
+}
+
+// A `scroll-state()` query: one feature, or `not`/`and`/`or` of them in
+// parentheses. nullopt when it is not one - which makes the call a
+// `<general-enclosed>`, unknown.
+[[nodiscard]] std::optional<truth> scroll_state_query(const token_stream & s, std::size_t from,
+                                                      std::size_t to, std::uint8_t scrollable) {
+    if (const std::optional<truth> one = scroll_feature(s, from, to, scrollable)) { return one; }
+    const auto test = [](std::string_view, std::size_t, std::size_t) { return truth::unknown; };
+    const auto enclosed = [&](std::size_t a, std::size_t b) {
+        return scroll_feature(s, a, b, scrollable).value_or(truth::unknown);
+    };
+    return boolean_expression(s, from, to, test, enclosed);
+}
+
+} // namespace
+
 std::optional<std::vector<container_query>> parse_container_conditions(std::string_view text) {
     const token_stream s = tokenize(text);
     const std::size_t end = s.tokens.size() - 1; // the eof token
@@ -716,39 +795,53 @@ std::optional<std::vector<container_query>> parse_container_conditions(std::stri
     return out;
 }
 
-std::string serialize_container_query(std::string_view condition) {
-    const token_stream s = tokenize(condition);
-    std::string out;
+namespace {
+
+// The tokens [from, to) of a container query, serialised: whitespace
+// collapsed, none just inside a parenthesis, `: ` after a feature, one space
+// either side of a comparison, and a feature's name - or, with `lower_all`,
+// every word, which is a `scroll-state()` query's case - lowercased. A
+// `scroll-state()` that is one is serialised the same way, lowercased; any
+// other function is copied as written, a `style()` with its name lowercased
+// and its whitespace collapsed, a `<general-enclosed>` exactly.
+void serialize_query_run(const token_stream & s, std::size_t from, std::size_t to, bool lower_all,
+                         std::string & out) {
     bool space = false; // whitespace seen since the last piece
-    int in_function = 0;
     const auto emit = [&](std::string_view piece) {
         if (space && !out.empty() && out.back() != '(') { out += ' '; }
         space = false;
         out += piece;
     };
-    for (std::size_t i = 0; i + 1 < s.tokens.size(); ++i) {
+    for (std::size_t i = from; i < to; ++i) {
         const css_token & t = s.tokens[i];
         if (t.type == token_type::whitespace) {
             space = true;
             continue;
         }
-        const std::string_view text =
-            source_run(s, i, i + 1).empty() ? s.text_of(t) : source_run(s, i, i + 1);
-        if (in_function > 0) {
-            if (t.type == token_type::function || t.type == token_type::open_paren) {
-                ++in_function;
-            } else if (t.type == token_type::close_paren) {
-                --in_function;
-                space = false;
-            }
-            emit(text);
-            continue;
-        }
+        const std::string_view run = source_run(s, i, i + 1);
+        const std::string_view text = run.empty() ? s.text_of(t) : run;
         switch (t.type) {
-        case token_type::function:
-            emit(text);
-            in_function = 1;
+        case token_type::function: {
+            const std::size_t close = std::min(end_of_block(s, i), to);
+            const std::size_t last =
+                close > i + 1 && s.tokens[close - 1].type == token_type::close_paren ? close - 1
+                                                                                     : close;
+            if (ascii_iequals(text, "scroll-state(") &&
+                scroll_state_query(s, i + 1, last, 0).has_value()) {
+                emit("scroll-state(");
+                serialize_query_run(s, i + 1, last, true, out);
+                out += ')';
+            } else if (ascii_iequals(text, "style(")) {
+                emit("style(");
+                out += collapse_whitespace(trim(slice(s, i + 1, last), html_whitespace),
+                                           html_whitespace);
+                out += ')';
+            } else {
+                emit(slice(s, i, close));
+            }
+            i = close - 1;
             break;
+        }
         case token_type::close_paren:
             space = false;
             out += ')';
@@ -778,14 +871,22 @@ std::string serialize_container_query(std::string_view condition) {
             if (ascii_istarts_with(name, "min-") || ascii_istarts_with(name, "max-")) {
                 name.remove_prefix(4);
             }
-            const bool lower =
-                entry_of(name, true) != nullptr || ascii_iequals_any(text, {"not", "and", "or"});
+            const bool lower = lower_all || entry_of(name, true) != nullptr ||
+                               ascii_iequals_any(text, {"not", "and", "or"});
             emit(lower ? ascii_lower_copy(text) : std::string{text});
             break;
         }
         default: emit(text); break;
         }
     }
+}
+
+} // namespace
+
+std::string serialize_container_query(std::string_view condition) {
+    const token_stream s = tokenize(condition);
+    std::string out;
+    serialize_query_run(s, 0, s.tokens.size() - 1, false, out);
     return out;
 }
 
@@ -841,6 +942,9 @@ std::optional<truth> evaluate_container_condition(std::string_view text,
     // Containment 3 §5.3); the query is handed over as text, since only the
     // engine holds the container's computed style.
     const auto test = [&](std::string_view name, std::size_t a, std::size_t b) {
+        if (ascii_iequals(name, "scroll-state")) {
+            return scroll_state_query(s, a, b, box.scrollable).value_or(truth::unknown);
+        }
         if (!ascii_iequals(name, "style")) { return truth::unknown; }
         return query(trim(slice(s, a, b), html_whitespace));
     };

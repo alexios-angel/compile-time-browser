@@ -9,6 +9,7 @@
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/style/css/boolean.hpp>
+#include <ctbrowser/style/css/calc.hpp>
 #include <ctbrowser/style/css/media_fwd.hpp>
 #include <ctbrowser/style/css/value.hpp>
 
@@ -47,7 +48,16 @@ namespace ctbrowser::style::css {
 struct container_box {
     std::optional<float> width;
     std::optional<float> height;
+    // WHERE IT CAN STILL SCROLL, for `scroll-state(scrollable: ...)`: the
+    // scroll_* bits, all clear for a box that is no scroll container or is
+    // scrolled as far as it goes every way.
+    std::uint8_t scrollable = 0;
+    // The CONTAINER'S font, for the relative units in the query: `(width:
+    // 10em)` is ten of the container's ems (CSS Conditional 5 §3.2). The
+    // viewport in it is ignored - the window's is `env`'s.
+    length_context lengths;
 };
+inline constexpr std::uint8_t scroll_top = 1, scroll_right = 2, scroll_bottom = 4, scroll_left = 8;
 
 // A `<container-condition>` (CSS Conditional 5 §3): the size features
 // against `box`, each `style(...)`'s query text answered by `query` against

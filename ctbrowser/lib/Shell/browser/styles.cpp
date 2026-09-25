@@ -66,9 +66,27 @@ void browser::load_author_styles() {
             const ctbrowser::layout::fragment * f = fragments_.find(id);
             if (f == nullptr || f->box == nullptr) { return std::nullopt; }
             const ctbrowser::layout::resolved_edges e = ctbrowser::layout::edges_of(*f);
-            return ctbrowser::style::engine::container_size{
+            ctbrowser::style::engine::container_size size{
                 std::max(0.0f, f->bounds.width - e.horizontal_inner()),
                 std::max(0.0f, f->bounds.height - e.vertical_inner())};
+            // WHERE A SCROLL CONTAINER CAN STILL GO, for scroll-state(): its
+            // scrolling area against its padding box at its scroll offset.
+            // ponytail: the offset is taken as the origin - the bindings keep
+            // a scripted one privately - so only a box nothing has scrolled
+            // answers right; read dom_bindings::scroll_offset_of once it is
+            // public, and restyle on a scroll.
+            if (f->box->scroll_container) {
+                const ctbrowser::rect area = ctbrowser::layout::scrolling_area_of(*f);
+                const ctbrowser::rect port = ctbrowser::layout::padding_box_of(*f);
+                const ctbrowser::point at{};
+                namespace css = ctbrowser::style::css;
+                const float right = area.width - port.width - at.x;
+                const float down = area.height - port.height - at.y;
+                size.scrollable = static_cast<std::uint8_t>(
+                    (at.y > 0.5f ? css::scroll_top : 0) | (down > 0.5f ? css::scroll_bottom : 0) |
+                    (at.x > 0.5f ? css::scroll_left : 0) | (right > 0.5f ? css::scroll_right : 0));
+            }
+            return size;
         });
     author_css_ = collect_author_styles();
     if (!author_css_.empty()) { styles_->add_sheet(author_css_, ctbrowser::style::author_origin); }

@@ -253,6 +253,7 @@ public:
     struct container_size {
         float width = 0;
         float height = 0;
+        std::uint8_t scrollable = 0; // css::scroll_* - where it can still scroll
         [[nodiscard]] friend bool operator==(const container_size &,
                                              const container_size &) = default;
     };
@@ -456,8 +457,12 @@ public:
     // `element` (the element's resolved style). No box is made for it; this is
     // what getComputedStyle(el, "::before") reads. Empty when `node` is not an
     // element in a tree.
+    // `styles`, when given, is the map the element's own style came from: the
+    // ancestors' styles in it are what an `@container` around the rule asks,
+    // the originating element being a container of its pseudo-element.
     [[nodiscard]] computed_style_ptr resolve_pseudo(const read_txn & txn, node_id node, atom pseudo,
-                                                    const computed_style_ptr & element);
+                                                    const computed_style_ptr & element,
+                                                    const style_map * styles = nullptr);
 
     // --- selector matching, for `querySelector` -------------------------------
     //
@@ -514,6 +519,9 @@ public:
     // non-element branch would clear the level a text node happens to sit in and
     // lose every sibling before it.
     void enter_level(const read_txn & txn, node_id parent, std::size_t depth);
+    // The element at `depth` resolved: its style on the chain, and the size
+    // containers its descendants' `cq*` units measure.
+    void note_chain(std::size_t depth, node_id node, const computed_style_ptr & resolved);
     // A parentless element at depth 0 - the document element - is one of one.
     void root_facts(const read_txn & txn, node_id node, std::size_t depth,
                     element_facts & facts) const;
