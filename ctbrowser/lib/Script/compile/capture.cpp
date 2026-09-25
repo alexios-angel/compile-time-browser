@@ -219,6 +219,13 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
         // where it expects a statement. It binds one name of its own.
         if (at(outer).kind == vp::nk::export_decl && at(outer).c == 1) {
             hoist(std::string{default_binding});
+            // ...AND A NAMED ONE BINDS ITS NAME TOO (16.2.3.7: the
+            // declaration's BoundNames) - `export default function F() {}`
+            // and `export default class C {}` are declarations of F and C,
+            // which `export { F as G }` may name.
+            if (const std::int32_t named = default_export_name(outer); named >= 0) {
+                hoist(std::string{at(named).text});
+            }
             continue;
         }
         const std::int32_t stmt =

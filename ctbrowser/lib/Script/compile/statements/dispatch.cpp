@@ -55,6 +55,11 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             const std::uint16_t r = alloc_reg();
             compile_expr(n.a, r);
             proto().emit(instruction{op::cell_set, static_cast<std::uint16_t>(slot), r});
+            // A named default also initialises the binding its name makes
+            // (predeclare_locals).
+            if (const std::int32_t named = default_export_name(idx); named >= 0) {
+                emit_write(at(named).text, r);
+            }
             release_to(mark);
             break;
         }

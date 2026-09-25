@@ -273,6 +273,15 @@ public:
     // The (local, exported) pairs a top-level statement binds. Collected rather
     // than published in place, because the binding pass runs at entry and the
     // statement compiles later.
+    // The function or class node of a NAMED `export default` at `outer`, or -1.
+    [[nodiscard]] std::int32_t default_export_name(std::int32_t outer) const {
+        const vp::node & n = at(outer);
+        if (n.kind != vp::nk::export_decl || n.c != 1 || n.a < 0 || at(n.a).text.empty()) {
+            return -1;
+        }
+        const vp::nk kind = at(n.a).kind;
+        return kind == vp::nk::func_expr || kind == vp::nk::class_decl ? n.a : -1;
+    }
     void export_bindings(std::int32_t outer,
                          std::vector<std::pair<std::string, std::string>> & out);
 
