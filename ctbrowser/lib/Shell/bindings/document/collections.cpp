@@ -247,13 +247,30 @@ constexpr std::string_view collection_state_key = "@@sym:ctbrowser:collection";
 
 // One native, three questions, closing over the C++ side of a collection.
 // Called as state("length") / state("item", i) / state("namedItem", name).
-[[nodiscard]] value collection_state_of(context & cx, value self) {
-    return cx.lookup_property(self, std::string{collection_state_key});
+//
+// THE BRAND CHECK, WebIDL 3.7.6 step 1: the state is an OWN property of the
+// collection - of the proxy's target, read without a trap - so an object that
+// merely inherits from a collection is not one, and `Object.create(list)
+// .length` is the TypeError (HTMLCollection-as-prototype.html). The proxy's
+// get trap passes the receiver on, which is what lets this see the object the
+// read started from.
+[[nodiscard]] value collection_state_of(value self) {
+    value holder = self;
+    if (self.is_kind(script::heap_kind::proxy)) {
+        holder = static_cast<script::proxy_object *>(self.as_heap())->target;
+    }
+    if (!holder.is_object()) { return value::undefined(); }
+    const value * held =
+        static_cast<script::object_object *>(holder.as_heap())->find(collection_state_key);
+    return held == nullptr ? value::undefined() : *held;
 }
 
 [[nodiscard]] value ask_collection(context & cx, value self, const char * what, value argument) {
-    const value state = collection_state_of(cx, self);
-    if (!state.is_callable()) { return value::undefined(); }
+    const value state = collection_state_of(self);
+    if (!state.is_callable()) {
+        cx.throw_error("TypeError", "Illegal invocation");
+        return value::undefined();
+    }
     const value args[2] = {cx.string(what), argument};
     return cx.call(state, args, value::undefined());
 }
@@ -586,7 +603,7 @@ value dom_bindings::make_live_collection(context & cx,
                          return *at < held->members.size() ? member(c, held->members[*at])
                                                            : value::undefined();
                      }
-                     return c.lookup_property(args[0], key);
+                     return c.get_with_receiver(args[0], key, args.size() > 2 ? args[2] : args[0]);
                  }));
     // AN INDEX IS READ-ONLY. `collection[0] = x` must not stick - an
     // HTMLCollection's indexed properties have no setter, so a non-strict
