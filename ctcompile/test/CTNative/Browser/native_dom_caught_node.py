@@ -520,6 +520,18 @@ RAW_HELPER_SOURCES |= {
 }
 
 
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-number-power": source.replace("return this;", "return 1 ** (1 / 0) ? null : this;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return (-0) ** -3 < 0 ? {done: done, value: anchor} : null;",
+    )
+    .replace("throw anchor;", "throw (true ? -2 : 0) ** 3 === -8 ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
 # Retain the complete source-global witnesses; the initialized provider and
 # absence of source writes must prove the binding before helper projection.
 RAW_HELPER_SOURCES |= {
@@ -618,7 +630,12 @@ var outcome0 = observe(false), outcome1 = observe(true);
         raw_steps = (
             1_000_000
             if name.endswith(
-                ("-helper-primitives", "-helper-transported-not", "-helper-number-bitwise")
+                (
+                    "-helper-primitives",
+                    "-helper-transported-not",
+                    "-helper-number-bitwise",
+                    "-helper-number-power",
+                )
             )
             else None
         )
