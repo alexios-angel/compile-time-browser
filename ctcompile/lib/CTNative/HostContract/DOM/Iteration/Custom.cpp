@@ -1,3 +1,4 @@
+#include "../../../Analysis/StringNumber.h"
 #include "../../Prefix.h"
 #include "../Source/Proof.hpp"
 #include "ctcompile/CTNative/Runtime/Number.hpp"
@@ -230,39 +231,47 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (auto result = llvm::dyn_cast_if_present<ctjs::BooleanAttr>(primitive.literal)) {
             return result.getValue();
         }
+        const auto number = [](mlir::Attribute value) -> std::optional<double> {
+            if (auto numeric = llvm::dyn_cast<ctjs::NumberAttr>(value)) {
+                return numeric.getDouble();
+            }
+            if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(value)) {
+                return boolean.getValue() ? 1.0 : 0.0;
+            }
+            if (llvm::isa<ctjs::NullAttr>(value)) { return 0.0; }
+            if (llvm::isa<ctjs::UndefinedAttr>(value)) {
+                return std::numeric_limits<double>::quiet_NaN();
+            }
+            if (auto text = llvm::dyn_cast<ctjs::StringAttr>(value)) {
+                return literalStringNumber(text.getValue());
+            }
+            return std::nullopt;
+        };
         if (comparison.getKind() == ctjs::CompareKind::Eq) {
-            // Normalize only the proof operands. Loose scalar equality maps
-            // Boolean to Number and identifies null with undefined; the shared
-            // strict comparison then preserves tags, NaNs and signed zeros.
-            const auto scalar = [](mlir::Attribute value) -> mlir::Attribute {
-                if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(value)) {
-                    return ctjs::NumberAttr::get(
-                        value.getContext(),
-                        std::bit_cast<uint64_t>(boolean.getValue() ? 1.0 : 0.0));
-                }
-                if (llvm::isa<ctjs::UndefinedAttr>(value)) {
-                    return ctjs::NullAttr::get(value.getContext());
-                }
-                return llvm::isa<ctjs::NumberAttr, ctjs::NullAttr>(value) ? value
-                                                                          : mlir::Attribute{};
+            // Absence compares by tag, before any numeric conversion. Only
+            // exact primitives can bypass conversion; objects/BigInts refuse.
+            const auto absent = [](mlir::Attribute value) {
+                return llvm::isa<ctjs::NullAttr, ctjs::UndefinedAttr>(value);
             };
-            const auto a = scalar(lhs.getValue()), b = scalar(rhs.getValue());
-            if (!a || !b) { return std::nullopt; }
-            const auto equal = host_detail::prefixCompare(
-                ctjs::CompareKind::StrictEq, host_detail::prefixValue::constant(a),
-                host_detail::prefixValue::constant(b), comparison.getContext());
-            return llvm::cast<ctjs::BooleanAttr>(equal.literal).getValue();
+            if (absent(lhs.getValue()) || absent(rhs.getValue())) {
+                if (!ctjs::isPrimitiveAttr(lhs.getValue()) ||
+                    !ctjs::isPrimitiveAttr(rhs.getValue())) {
+                    return std::nullopt;
+                }
+                return absent(lhs.getValue()) && absent(rhs.getValue());
+            }
+        } else if (llvm::isa<ctjs::StringAttr>(lhs.getValue()) &&
+                   llvm::isa<ctjs::StringAttr>(rhs.getValue())) {
+            // String ordering needs UTF-16 comparison, never numeric conversion.
+            return std::nullopt;
         }
-        auto left =
-            lhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(lhs.getValue()) : ctjs::NumberAttr{};
-        auto right =
-            rhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
+        const auto left = number(lhs.getValue()), right = number(rhs.getValue());
         if (!left || !right) { return std::nullopt; }
-        // Original Numbers need no conversion or hooks. Binary64 comparisons
-        // preserve unordered NaNs and signed-zero equality.
-        const double a = left.getDouble(), b = right.getDouble();
+        // These exact primitive conversions cannot call hooks. Binary64
+        // comparisons preserve unordered NaNs and signed-zero equality.
+        const double a = *left, b = *right;
         switch (comparison.getKind()) {
-        case ctjs::CompareKind::StrictEq: return a == b;
+        case ctjs::CompareKind::Eq: return a == b;
         case ctjs::CompareKind::Lt: return a < b;
         case ctjs::CompareKind::Le: return a <= b;
         case ctjs::CompareKind::Gt: return a > b;
