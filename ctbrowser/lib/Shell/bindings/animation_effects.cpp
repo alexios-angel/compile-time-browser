@@ -13,6 +13,33 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
     ctx.font_size = font_size;
     ctx.viewport_width = static_cast<float>(viewport_width_);
     ctx.viewport_height = static_cast<float>(viewport_height_);
+    // THE CONTAINERS A KEYFRAME'S `cq*` UNITS MEASURE (CSS Conditional 5
+    // §4), as the cascade finds them: the nearest ancestor size container on
+    // each axis, its content box as last laid out.
+    if (styles_ != nullptr && fragments_ != nullptr) {
+        const auto txn = doc_->read();
+        const atom type_key = atoms_->intern_lower("container-type");
+        for (node_id up = txn.parent(id);
+             up && (ctx.container_width < 0 || ctx.container_height < 0); up = txn.parent(up)) {
+            const auto found = styles_->find(style::engine::key_of(up));
+            if (found == styles_->end() || !found->second) { continue; }
+            bool size = false, inline_size = false;
+            for (const std::string_view word :
+                 split_top_level(found->second->get(type_key), html_whitespace)) {
+                size = size || word == "size";
+                inline_size = inline_size || word == "inline-size";
+            }
+            const layout::fragment * f = size || inline_size ? fragments_->find(up) : nullptr;
+            if (f == nullptr || f->box == nullptr) { continue; }
+            const layout::resolved_edges e = layout::edges_of(*f);
+            if (ctx.container_width < 0) {
+                ctx.container_width = std::max(0.0f, f->bounds.width - e.horizontal_inner());
+            }
+            if (size && ctx.container_height < 0) {
+                ctx.container_height = std::max(0.0f, f->bounds.height - e.vertical_inner());
+            }
+        }
+    }
 
     for (const std::size_t index : animations_on(id, false)) {
         const animation_record & a = animations_[index];
