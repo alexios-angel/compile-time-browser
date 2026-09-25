@@ -23,6 +23,7 @@ struct loaded_frame {
 struct timer {
     std::uint32_t id = 0;
     value callback;
+    std::vector<value> arguments; // setTimeout's third and later, for a Function
     double due_ms = 0;
     double interval_ms = 0;
     bool repeating = false;

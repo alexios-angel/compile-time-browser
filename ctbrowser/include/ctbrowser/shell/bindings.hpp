@@ -614,6 +614,10 @@ private:
     // nothing for a document without one of its own. Taken wherever the
     // bindings run script, or read a window handler, on the document's behalf.
     [[nodiscard]] std::optional<context::realm_scope> enter_realm(context & cx);
+    // The bindings whose window is `window` - the page's or a frame's, at any
+    // depth, and the page's for anything else. "Report the exception" and
+    // `reportError` fire at one particular global - frames.cpp.
+    [[nodiscard]] dom_bindings & bindings_of(value window);
     // A subresource URL as the asset registry names it - frames.cpp.
     [[nodiscard]] std::string subresource_name(std::string_view src) const;
 

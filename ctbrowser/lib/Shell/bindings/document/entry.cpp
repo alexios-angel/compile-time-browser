@@ -85,7 +85,10 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
         // variable, and the listener is then the only reference there is.
         mark(l.host);
     }
-    for (const timer & t : timers_) { mark(t.callback); }
+    for (const timer & t : timers_) {
+        mark(t.callback);
+        for (const value held : t.arguments) { mark(held); }
+    }
     // A QUEUED FETCH holds the only reference to the promise a page is
     // waiting on, and to the signal that may cancel it. Neither is reachable
     // from anywhere else between the call and the turn that settles it.

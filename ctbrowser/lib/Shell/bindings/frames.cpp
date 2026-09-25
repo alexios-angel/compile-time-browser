@@ -568,6 +568,22 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     cx.define_global("dispatchEvent", frame_dispatch);
 }
 
+dom_bindings & dom_bindings::bindings_of(value window) {
+    const auto find = [window](const auto & self, dom_bindings & at) -> dom_bindings * {
+        if (at.window_view_.is_heap() && at.window_view_.as_heap() == window.as_heap()) {
+            return &at;
+        }
+        for (const frame_entry & frame : at.frames_) {
+            if (frame.bindings == nullptr) { continue; }
+            if (dom_bindings * found = self(self, *frame.bindings)) { return found; }
+        }
+        return nullptr;
+    };
+    dom_bindings & top = primary();
+    dom_bindings * found = window.is_heap() ? find(find, top) : nullptr;
+    return found != nullptr ? *found : top;
+}
+
 std::optional<context::realm_scope> dom_bindings::enter_realm(context & cx) {
     if (realm_ == nullptr) { return std::nullopt; }
     return std::optional<context::realm_scope>{std::in_place, cx, *realm_};

@@ -434,6 +434,30 @@ void test_timers() {
     }
 }
 
+void test_timer_arguments_are_converted_by_the_idl() {
+    // HTML 8.6's IDL: the timeout is a `long` (2**32 wraps to 0), a handler
+    // that is not a Function is stringified AT THE CALL, and the arguments
+    // after the timeout are the callback's. A throw in a queueMicrotask
+    // callback is reported, and the checkpoint goes on to the next job.
+    browser page{browser_options{200, 200}};
+    page.load_html(R"(<html><body><script>
+    var log = [];
+    window.onerror = function (m, u, l, c, e) { log.push('onerror:' + e.message); return true; };
+    setTimeout(function () { log.push('late'); }, 50);
+    setTimeout(function () { log.push('wrapped'); }, Math.pow(2, 32));
+    setTimeout(function (a, b) { log.push('args:' + a + b); }, 1, 'x', 'y');
+    setTimeout({ toString: function () { log.push('stringified'); return 'log.push("ran")'; } }, 2);
+    queueMicrotask(function () { throw new Error('boom'); });
+    queueMicrotask(function () { log.push('next job'); });
+    </script></body></html>)");
+    (void)page.tick(10);
+    (void)page.run_script("console.log(log.join());");
+    check(!log_of(page).empty() &&
+              log_of(page).back() == "stringified,onerror:boom,next job,wrapped,args:xy,ran",
+          "the timers converted their arguments: " +
+              (log_of(page).empty() ? std::string{} : log_of(page).back()));
+}
+
 void test_interval_repeats_and_can_be_cleared() {
     browser page{browser_options{200, 200}};
     page.load_html(R"(<html><body><script>
@@ -538,6 +562,7 @@ int main() {
     test_collection_keeps_what_the_page_still_uses();
     test_collection_happens_on_its_own();
     test_timers();
+    test_timer_arguments_are_converted_by_the_idl();
     test_interval_repeats_and_can_be_cleared();
     test_request_animation_frame();
     test_cancel_animation_frame_and_a_throw();

@@ -254,6 +254,25 @@ void test_windows_post_messages_to_each_other() {
     }
 }
 
+void test_report_error_fires_at_its_this_window() {
+    // reporterror-cross-realm-method.html: the page's `reportError` called on
+    // a frame's window reports in the FRAME - `this`'s global, not the realm
+    // the method came from.
+    browser page{browser_options{400, 300}};
+    page.load_html("<!DOCTYPE html><html><body><iframe id=f></iframe><script>"
+                   "var log = [];"
+                   "addEventListener('error', function () { log.push('page'); });"
+                   "window.addEventListener('load', function () {"
+                   "  var w = document.getElementById('f').contentWindow;"
+                   "  w.addEventListener('error', function (e) { log.push('frame:' + e.error); });"
+                   "  reportError.call(w, 'x'); console.log(log.join()); });"
+                   "</script></body></html>");
+    for (int i = 0; i < 5; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"frame:x"}); }
+}
+
 void test_a_named_frame_is_its_window_on_the_window() {
     // nameditem-02.html: `window.x` for `<iframe name=x>` is the frame's
     // WindowProxy - HTML 7.3.3 puts child navigables first - while an id
@@ -417,6 +436,7 @@ int main() {
     test_a_data_url_frame_carries_its_own_type();
     test_a_frame_runs_its_scripts_in_its_own_realm();
     test_windows_post_messages_to_each_other();
+    test_report_error_fires_at_its_this_window();
     test_a_form_submits_into_a_named_frame();
     REPORT("frames");
 }

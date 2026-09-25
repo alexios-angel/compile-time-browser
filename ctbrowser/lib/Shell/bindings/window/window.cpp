@@ -86,13 +86,17 @@ void dom_bindings::install_window(context & cx) {
     // page hands over, as if it had been thrown uncaught - an `error` event
     // at the window whose `error` is the value. The message is not read off
     // the value (its getters must not run; reporterror.any.js asserts so), and
-    // the argument is required.
+    // the argument is required. The window is `this`'s - a frame's method
+    // borrowed by the page reports in the frame (reporterror-cross-realm-
+    // method.html) - and a bare call's is the caller's own.
     cx.define_native("reportError", [this](context & c, std::span<value> a) {
         if (a.empty()) {
             c.throw_error("TypeError", "reportError: 1 argument required, but only 0 present.");
             return value::undefined();
         }
-        (void)dispatch_error_value("Uncaught exception", a[0]);
+        const value self = c.current_this();
+        (void)bindings_of(self.is_heap() ? self : c.global_this())
+            .dispatch_error_value("Uncaught exception", a[0]);
         return value::undefined();
     });
 
@@ -764,6 +768,7 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
     // sketch writes `function setup() {}` at its top level, which is a global.
     auto * window_handler = cx.allocate<script::object_object>();
     const value window_target = target;
+    context::define_immutable_globals(*static_cast<script::object_object *>(target.as_heap()));
     script::realm_record * const realm_of = &realm;
     // NAMED ACCESS ON THE WINDOW - `window.someId`, and `window.someName` for the
     // handful of elements whose `name` attribute is exposed that way. It is HTML
@@ -904,13 +909,13 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
         if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
+        if (context::immutable_global(name)) { return value::boolean(false); }
         // An own property of the window keeps its own storage - `innerWidth` is
         // refreshed on the object every frame, and routing it to the globals
         // would leave a read seeing the stale one.
         if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
             c.store_property(args[0], name, args[2]);
         } else {
-            if (context::immutable_global(name)) { return value::boolean(false); }
             realm_of->globals[name] = args[2];
         }
         return value::boolean(true);
@@ -944,9 +949,8 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
                    }
                    if (const auto it = realm_of->globals.find(name);
                        it != realm_of->globals.end()) {
-                       return c.from_property_descriptor(context::property_descriptor::data(
-                           it->second, context::immutable_global(name) ? script::attr_none
-                                                                       : script::attr_default));
+                       return c.from_property_descriptor(
+                           context::property_descriptor::data(it->second, script::attr_default));
                    }
                    value held = frame_at(c, name);
                    if (held.is_undefined()) { held = named_value(c, name); }
