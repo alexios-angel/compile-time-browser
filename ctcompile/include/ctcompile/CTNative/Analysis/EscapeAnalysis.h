@@ -590,6 +590,9 @@ struct ArrayContentsEvidence {
 /// proof may discharge Stored sites absent from every return path. A bounded
 /// acyclicity check over ALL array/object writes excludes transient cycles. Retained
 /// children keep their original Stored witness; no unique owner is inferred.
+/// For scf.if/scf.while, a charged census checks current operand/result lattices
+/// and direct Stored targets before the independent contents proof. The legacy
+/// top-level census remains incomplete, and nested allocation sites still refuse.
 /// Unsupported operations, cycles, missing lattices or budget exhaustion leave
 /// every original verdict intact. No native admission consumes this refinement.
 [[nodiscard]] EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp function,

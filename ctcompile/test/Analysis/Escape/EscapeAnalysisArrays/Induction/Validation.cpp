@@ -129,7 +129,8 @@ void InductionCases::validation() {
   }
 }
 )mlir";
-    const auto checkProjected = [&](const contents_row & expected) {
+    const auto checkProjected = [&](const contents_row & expected, const char * discharged = "",
+                                    bool retentionComplete = true) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(expected.body, &context);
         if (!module) {
             fail(row{.what = expected.what, .body = expected.body, .expected = ""},
@@ -152,22 +153,29 @@ void InductionCases::validation() {
             }
         });
         checkArrayContents(*module, expected);
-        // The legacy storage census still refuses regions. Contents evidence
-        // alone cannot authorize its retention consumer or change any verdict.
+        // A separate current-region census permits the retention query while
+        // the public legacy storage/load evidence stays incomplete. The harness
+        // checks every budget cutoff, retained witness and unchanged lattice.
         budgets += checkArrayRetention(
-            *module, {.what = expected.what, .body = expected.body, .complete = false});
+            *module,
+            {.what = expected.what,
+             .body = expected.body,
+             .discharged = discharged,
+             .complete = retentionComplete && expected.failure == ArrayContentsFailure::None});
         ++rows;
     };
     checkProjected({.what = "the original structured shortcut preserves its yielded receiver",
                     .body = projected,
                     .arrays = "a:[zero,zero,zero]; box:[a] | a:[zero,zero,zero]; box:[a]",
                     .reads = "box[0]=a",
-                    .exit = "a -> {a}; a -> {a}"});
+                    .exit = "a -> {a}; a -> {a}"},
+                   "x");
     checkProjected({.what = "a structured cached receiver cannot discharge a returned child",
                     .body = replace(projected, "ctjs.return %2", "ctjs.return %1"),
                     .arrays = "a:[zero,zero,zero]; box:[a] | a:[zero,zero,zero]; box:[a]",
                     .reads = "box[0]=a",
-                    .exit = "x -> {x}; x -> {x}"});
+                    .exit = "x -> {x}; x -> {x}"},
+                   "a");
     checkProjected({.what = "each selected array keeps its own contents and retained children",
                     .body = replace(projected, "scf.yield %6 :", "scf.yield %4 :"),
                     .arrays = "a:[zero,zero,zero]; box:[a] | a:[x,zero,x]; box:[zero]",
@@ -195,6 +203,25 @@ void InductionCases::validation() {
                         projected, "      scf.yield %6 :",
                         "      %nested = ctjs.create_array[%3, %3, %3]\n      scf.yield %nested :"),
                     .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    checkProjected(
+        {.what = "a structured loaded receiver survives replacement of its holder",
+         .body = replace(projected, "    %11 =", "    ctjs.set_property %4[%5], %1\n    %11 ="),
+         .arrays = "a:[zero,zero,zero]; box:[x] | a:[zero,zero,zero]; box:[x]",
+         .reads = "box[0]=a",
+         .exit = "a -> {a}; a -> {a}"},
+        "x");
+    checkProjected({.what = "a live structured publication cannot discharge stored children",
+                    .body = replace(projected, "    ctjs.frame_exit",
+                                    "    ctjs.store_global \"held\", %1\n    ctjs.frame_exit"),
+                    .failure = ArrayContentsFailure::UnsupportedOperation});
+    checkProjected({.what = "a structured retention proof cannot discard a transient holder cycle",
+                    .body = replace(projected, "    %11 =",
+                                    "    ctjs.set_property %4[%5], %4\n"
+                                    "    ctjs.set_property %4[%5], %2\n    %11 ="),
+                    .arrays = "a:[zero,zero,zero]; box:[a] | a:[zero,zero,zero]; box:[a]",
+                    .reads = "box[0]=a",
+                    .exit = "a -> {a}; a -> {a}"},
+                   "", false);
     reject("loaded cached guards cannot change the saved bound",
            replace(loaded, "%added, %savedBound :", "%added, %zero :"));
     reject("loaded cached guards retain the current extent check",

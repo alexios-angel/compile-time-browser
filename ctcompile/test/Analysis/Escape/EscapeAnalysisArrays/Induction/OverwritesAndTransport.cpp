@@ -6624,11 +6624,13 @@ void InductionCases::overwritesAndTransport() {
             continue;
         }
         checkArrayContents(*module, expected);
-        // The independent contents proof supports SCF. The legacy retention
-        // census deliberately rejects every operation with nested regions.
+        // The retention-local region census now supports these SCF inputs;
+        // legacy storage evidence and fractional quotient refusals stay intact.
         budgets += checkArrayRetention(
-            *module,
-            {.what = expected.what, .body = expected.body, .discharged = "", .complete = false});
+            *module, {.what = expected.what,
+                      .body = expected.body,
+                      .discharged = expected.failure == ArrayContentsFailure::None ? "x" : "",
+                      .complete = expected.failure == ArrayContentsFailure::None});
         ++rows;
     }
 
@@ -6760,10 +6762,12 @@ void InductionCases::overwritesAndTransport() {
             continue;
         }
         checkArrayContents(*module, expected);
-        // Exact contents do not complete the legacy region-free retention census.
+        // Region inputs and exact contents jointly prove the absent child.
         budgets += checkArrayRetention(
-            *module,
-            {.what = expected.what, .body = expected.body, .discharged = "", .complete = false});
+            *module, {.what = expected.what,
+                      .body = expected.body,
+                      .discharged = expected.failure == ArrayContentsFailure::None ? "x" : "",
+                      .complete = expected.failure == ArrayContentsFailure::None});
         ++rows;
     }
 }

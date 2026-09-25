@@ -301,7 +301,49 @@ mlir::Value storageTargetValue(const Verdict & verdict) {
     return {};
 }
 
-void refineArrayRetention(EscapeVerdicts & verdicts, ctjs::FuncOp function, std::size_t workLimit) {
+bool structuredRetentionInputs(const mlir::DataFlowSolver & solver, ctjs::FuncOp function,
+                               std::size_t & work, std::size_t workLimit) {
+    const auto spend = [&]() {
+        if (work == workLimit) { return false; }
+        ++work;
+        return true;
+    };
+    const auto initialized = [&](mlir::Value value) {
+        if (!spend() || !value) { return false; }
+        if (!isValueTyped(value)) { return true; }
+        const AliasLattice * lattice = solver.lookupState<AliasLattice>(value);
+        return lattice != nullptr && !lattice->getValue().isUninitialized();
+    };
+    // The legacy census deliberately models only top-level CFG operations.
+    // Check every nested operand/result against the current solver instead of
+    // presenting that partial census as complete. SCF supplies the region
+    // branch alias transport; this walk supplies no new alias or contents fact.
+    // Nested sites still lack instance/nonrepetition correspondence and refuse.
+    return !function.getBody()
+                .walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
+                    if (!spend() ||
+                        (operation->getNumRegions() != 0 &&
+                         !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) ||
+                        (isTrackedSite(operation) &&
+                         operation->getParentRegion() != &function.getBody()) ||
+                        !llvm::all_of(operation->getOperands(), initialized) ||
+                        !llvm::all_of(operation->getResults(), initialized)) {
+                        return mlir::WalkResult::interrupt();
+                    }
+                    for (unsigned index = 0; index < operation->getNumOperands(); ++index) {
+                        const RoleOf role = operandRole(operation, index);
+                        if (role.role == OperandRole::Sink && role.reason == EscapeReason::Stored &&
+                            !initialized(storageTargetValue({role.reason, operation, index}))) {
+                            return mlir::WalkResult::interrupt();
+                        }
+                    }
+                    return mlir::WalkResult::advance();
+                })
+                .wasInterrupted();
+}
+
+void refineArrayRetention(EscapeVerdicts & verdicts, const mlir::DataFlowSolver & solver,
+                          ctjs::FuncOp function, std::size_t workLimit) {
     const auto candidate = [](mlir::Operation * site, const Verdict & verdict) {
         return verdict.reason == EscapeReason::Stored ||
                (llvm::isa<ctjs::CreateArrayOp>(site) && verdict.reason == EscapeReason::Passed &&
@@ -309,18 +351,22 @@ void refineArrayRetention(EscapeVerdicts & verdicts, ctjs::FuncOp function, std:
                 llvm::isa_and_nonnull<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(verdict.by));
     };
     if (workLimit == 0 || verdicts.unvisitedSites != 0 || verdicts.unvisitedOperands != 0 ||
-        verdicts.wholeFunction || !verdicts.directStorage.complete ||
-        !verdicts.directLoads.complete || !llvm::any_of(verdicts.sites, [&](const auto & entry) {
+        verdicts.wholeFunction || !llvm::any_of(verdicts.sites, [&](const auto & entry) {
             return candidate(entry.first, entry.second);
         })) {
+        return;
+    }
+    if ((!verdicts.directStorage.complete || !verdicts.directLoads.complete) &&
+        !structuredRetentionInputs(solver, function, verdicts.arrayRetentionWork, workLimit)) {
         return;
     }
 
     // Candidate alias closure cannot discharge a sink. The independent query
     // must prove every operation in the CURRENT function, including effects
     // after the last read and the exact origin of a saved, later-returned read.
-    const ArrayContentsEvidence contents = computeArrayContents(function, workLimit);
-    verdicts.arrayRetentionWork = contents.work;
+    const ArrayContentsEvidence contents =
+        computeArrayContents(function, workLimit - verdicts.arrayRetentionWork);
+    verdicts.arrayRetentionWork += contents.work;
     if (!contents.complete) { return; }
     const auto spend = [&]() {
         if (verdicts.arrayRetentionWork == workLimit) { return false; }
@@ -611,7 +657,7 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             out.directLoads.reads.push_back(std::move(read));
         }
     }
-    refineArrayRetention(out, function, arrayRetentionWorkLimit);
+    refineArrayRetention(out, solver, function, arrayRetentionWorkLimit);
     return out;
 }
 
