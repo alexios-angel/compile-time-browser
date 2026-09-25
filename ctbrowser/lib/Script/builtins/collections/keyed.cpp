@@ -770,10 +770,12 @@ void install_collections(context & cx) {
                     if (static_cast<double>(self.items.size()) > other.size) {
                         return value::boolean(false);
                     }
-                    const std::vector<value> mine = self.items;
-                    const context::rooted_values keep{c, mine};
+                    // BY INDEX over the live list (the proposal's step 6 walks
+                    // O.[[SetData]] as it is at each step): `has` may mutate
+                    // the receiver, and an element it removes is not asked about.
                     const detail::unwind_watch watch{c};
-                    for (const value & e : mine) {
+                    for (std::size_t i = 0; i < self.items.size(); ++i) {
+                        const value e = self.items[i];
                         const bool in = record_has(c, other, e);
                         if (watch.threw()) { return value::undefined(); }
                         if (!in) { return value::boolean(false); }
@@ -797,11 +799,11 @@ void install_collections(context & cx) {
                 });
         algebra("isDisjointFrom",
                 [](context & c, array_object & self, const set_record & other) -> value {
-                    const std::vector<value> mine = self.items;
-                    const context::rooted_values keep{c, mine};
                     const detail::unwind_watch watch{c};
-                    if (static_cast<double>(mine.size()) <= other.size) {
-                        for (const value & e : mine) {
+                    if (static_cast<double>(self.items.size()) <= other.size) {
+                        // Live, as isSubsetOf's walk is.
+                        for (std::size_t i = 0; i < self.items.size(); ++i) {
+                            const value e = self.items[i];
                             const bool in = record_has(c, other, e);
                             if (watch.threw()) { return value::undefined(); }
                             if (in) { return value::boolean(false); }
