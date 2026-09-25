@@ -225,8 +225,24 @@ void dom_bindings::deliver_mutation_records() {
     mutation_delivery_queued_ = false;
     if (cx_ == nullptr) { return; }
     delivering_mutations_ = true;
-    // By index with the bound re-read: a callback may construct observers.
+    // "Notify mutation observers" steps 2-5: the observers that have records
+    // NOW and the slots signalled NOW are this round's. A record a callback
+    // queues for an observer that had none, or a slot it signals, belongs to
+    // the NEXT round - queue_mutation_delivery has asked for one already, the
+    // flag being clear - so a second observer called in this round would see
+    // this round's slotchange events not yet fired, and must not be
+    // (slotchange-event.html, "a single compound microtask").
+    std::vector<std::size_t> notify;
     for (std::size_t i = 0; i < mutation_observers_.size(); ++i) {
+        script::array_object * queue = mutation_records_of(i);
+        if (queue != nullptr && !queue->items.empty()) { notify.push_back(i); }
+    }
+    std::vector<std::pair<dom_bindings *, std::vector<node_id>>> signalled;
+    signalled.emplace_back(this, std::exchange(signal_slots_, {}));
+    for (const auto & made : secondary_documents_) {
+        signalled.emplace_back(made.get(), std::exchange(made->signal_slots_, {}));
+    }
+    for (const std::size_t i : notify) {
         script::object_object * observer = mutation_observer_at(i);
         script::array_object * queue = mutation_records_of(i);
         if (observer == nullptr || queue == nullptr || queue->items.empty()) { continue; }
@@ -245,11 +261,17 @@ void dom_bindings::deliver_mutation_records() {
         note_callback_fault("MutationObserver");
     }
     sync_mutation_roots();
-    // "Notify mutation observers" step 5: the signalled slots' `slotchange`,
-    // after the callbacks - this document's and every one it made.
-    fire_signalled_slots();
-    for (std::size_t i = 0; i < secondary_documents_.size(); ++i) {
-        secondary_documents_[i]->fire_signalled_slots();
+    // Step 7: this round's signalled slots' `slotchange`, after the callbacks
+    // - this document's and every one it made. A slot signalled since is kept
+    // for the next round.
+    for (auto & [owner, slots] : signalled) {
+        std::vector<node_id> later = std::exchange(owner->signal_slots_, std::move(slots));
+        owner->fire_signalled_slots();
+        for (const node_id one : later) {
+            if (std::ranges::find(owner->signal_slots_, one) == owner->signal_slots_.end()) {
+                owner->signal_slots_.push_back(one);
+            }
+        }
     }
     delivering_mutations_ = false;
 }
