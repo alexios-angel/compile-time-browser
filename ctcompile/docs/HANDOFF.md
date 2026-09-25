@@ -22,6 +22,33 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional allocations in single-visit loops, 2026-09-25 UTC
+
+Resumed **84fdf55f** and the interrupted iteration21 candidates.
+**bb52d521** extends the existing counted-loop census to nested single-block
+`scf.if` arms only when the body is proved to execute once. Current inputs,
+selected allocation identities, every exit and the all-write acyclic graph
+remain mandatory. Eighteen new rows and three live trip-count mutations check
+saved/returned aliases, stale solver state and a forged completion marker.
+Headers, zero/multiple visits, nested stores and nested loops remain refused.
+This proves frame confinement, not shorter lifetimes or native ownership.
+
+The devbox built `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`; exact CTests passed:
+`ctcompile_escape_analysis_arrays` **1/1, 4.83 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+Formatting passed **1126 C++, 159 Python, 114 web files**; diff checks passed.
+Full CTest/compiler lit, broad corpora/matrices, raw escape oracle,
+WPT/test262, sanitizers and cross-platform/performance runs were skipped.
+
+Native zero-result structured helper projection is still in flight.
+Its initial recovery CTest passed **1/1, 5.47 s**; host-contract checks exposed
+two budget diagnostic failures. The census cutoff now clears the remaining
+budget before refusal, restoring the existing diagnostic path. Final native
+rebuild, recovery/host checks and two unchanged conditional source executions
+are queued. No final native pass is claimed yet. Checkpoints and logs are in
+`/tmp/ctcompile-iteration21/`.
+
 ## Exact conditional iterator helper edges, 2026-09-25 UTC
 
 Resumed the interrupted conditional-helper candidate after **d324b5c4**.
