@@ -53,11 +53,7 @@ namespace {
     // it parses. A SYNTAX error and a selector this engine cannot match are
     // different answers, and only the first is "not supported".
     if (ascii_istarts_with(body, "selector(") && body.back() == ')') {
-        atom_table atoms;
-        bool invalid = false;
-        const stylesheet parsed =
-            parse_selector_text(body.substr(9, body.size() - 10), atoms, invalid);
-        return !invalid && !parsed.selectors.empty();
+        return supports_selector(body.substr(9, body.size() - 10));
     }
     // `at-rule(<at-keyword-token>)`, `font-format(<ident>)` and
     // `font-tech(<ident>)` (CSS Conditional 5 §6, CSS Fonts 4 §11.1): one

@@ -174,6 +174,11 @@ struct stylesheet {
     // refusing it would drop a rule the sheet may well have declared.
     std::vector<namespace_declaration> namespaces;
     bool prefixes_checked = true;
+    // FALSE ONLY FOR `selector()` in @supports (CSS Conditional 4 §6.2): an
+    // argument of `:is()`/`:where()` that does not parse, or none at all, fails
+    // the whole selector instead of being dropped, and a vendor-prefixed
+    // pseudo-element is not taken on trust.
+    bool forgiving = true;
     std::vector<import_statement> imports;
     // How much of the pool is the INPUT. Beyond it is decoded escape text, which
     // appears nowhere in the source - so a run of tokens is a contiguous source

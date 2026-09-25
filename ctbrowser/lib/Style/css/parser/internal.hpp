@@ -77,7 +77,9 @@ public:
     // set when the text is not a selector at all.
     [[nodiscard]] stylesheet take_selector_list(bool & invalid,
                                                 const std::vector<namespace_declaration> * ns,
-                                                const nesting_context * nesting) {
+                                                const nesting_context * nesting,
+                                                bool forgiving = true) {
+        sheet_.forgiving = forgiving;
         if (ns != nullptr) {
             sheet_.namespaces = *ns;
         } else {

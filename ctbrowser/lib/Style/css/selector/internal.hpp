@@ -2,6 +2,7 @@
 
 #include <ctbrowser/style/css/selector.hpp>
 
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <span>
@@ -292,7 +293,7 @@ private:
         const bool is_where = ascii_iequals(name, "where");
         // `:has()` takes RELATIVE selectors, and may not nest - Selectors 4 §4.5.
         const bool is_has = ascii_iequals(name, "has");
-        if (is_has && relative_) {
+        if (is_has && (relative_ || in_has_)) {
             invalid = true;
             return false;
         }
@@ -329,6 +330,7 @@ private:
                 selector_parser one{*sheet_, *atoms_};
                 one.nesting_ = nesting_;
                 one.in_argument_ = true;
+                one.in_has_ = in_has_ || relative_;
                 const std::uint32_t n = one.run(inner.subspan(at, end - at));
                 if (!one.invalid() && n == 1) {
                     ref.args.push_back(std::move(sheet_->selectors[before]));
@@ -336,18 +338,23 @@ private:
                     saw_scope_ = saw_scope_ || one.saw_scope_;
                 } else {
                     dropped = true;
+                    invalid = invalid || !sheet_->forgiving;
                 }
                 sheet_->selectors.resize(before);
                 if (end >= inner.size()) { break; }
                 at = end + 1;
             }
             if (dropped) { into.part.dropped = true; }
-            if (ref.args.empty()) { return false; }
+            if (ref.args.empty()) {
+                invalid = invalid || !sheet_->forgiving;
+                return false;
+            }
         } else {
             // The nested list's own syntax errors are this selector's: `:not(>)` is not
             // a selector, and the flag has to come back out of the recursion to say so.
             selector_parser nested{*sheet_, *atoms_};
             nested.relative_ = is_has;
+            nested.in_has_ = in_has_ || relative_;
             nested.nesting_ = nesting_;
             nested.in_argument_ = true;
             const std::uint32_t count = nested.run(inner);
@@ -762,7 +769,15 @@ private:
                     std::string_view name = text(next);
                     if (!name.empty() && name.back() == '(') { name.remove_suffix(1); }
                     if (doubled) {
-                        if (!known_functional_pseudo_element(name)) {
+                        // Every functional pseudo-element takes an argument:
+                        // `::picker()` is no selector (CSS-supports-selector-picker).
+                        const auto args = sheet_->children_of(next);
+                        const bool empty =
+                            std::all_of(args.begin(), args.end(), [&](const auto & v) {
+                                return v.kind == cv_kind::token &&
+                                       token(v).type == token_type::whitespace;
+                            });
+                        if (!known_functional_pseudo_element(name) || empty) {
                             dead = invalid_ = true;
                             continue;
                         }
@@ -821,7 +836,10 @@ private:
                 const std::string_view name = text(next);
                 i = name_at;
                 if (doubled || legacy_pseudo_element(name)) {
-                    if (!known_pseudo_element(name)) {
+                    // ponytail: @supports knows no vendor's pseudo-elements;
+                    // list the real ones (`::-webkit-scrollbar`) if a page asks.
+                    if (!known_pseudo_element(name) ||
+                        (!sheet_->forgiving && name.starts_with('-'))) {
                         dead = invalid_ = true;
                         continue;
                     }
@@ -948,6 +966,7 @@ private:
     atom_table * atoms_;
     bool invalid_ = false;
     bool relative_ = false; // parsing the argument of `:has()`
+    bool in_has_ = false;   // ...or anything inside one: `:has()` may not nest
     // Parsing the argument of `:not()`, `:is()`, `:where()` or `:has()`, where
     // a pseudo-element cannot be (Selectors 4 §3.6.3): it is a syntax error.
     bool in_argument_ = false;

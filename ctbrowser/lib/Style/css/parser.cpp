@@ -16,6 +16,14 @@ stylesheet parse_selector_text(std::string_view text, atom_table & atoms, bool &
     return p.take_selector_list(invalid, namespaces, nesting);
 }
 
+bool supports_selector(std::string_view text) {
+    atom_table atoms;
+    parser p{text, atoms};
+    bool invalid = false;
+    const stylesheet parsed = p.take_selector_list(invalid, nullptr, nullptr, false);
+    return !invalid && parsed.selectors.size() == 1;
+}
+
 stylesheet parse_declaration_list(std::string_view css, atom_table & atoms) {
     parser p{css, atoms};
     return p.take_declaration_list();
