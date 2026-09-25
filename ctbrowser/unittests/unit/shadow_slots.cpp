@@ -141,6 +141,31 @@ void test_set_html_unsafe_attaches_a_declarative_root() {
              "true,false;true;true,true,<b>s</b>,about:blank,1");
 }
 
+// THE PAGE'S OWN PARSER attaches them as it meets the template, not
+// afterwards: a script inside the root already runs connected, the host keeps
+// only its light children, and a template on an element that cannot host one
+// - or on one that already does - stays an ordinary template. DOMParser's
+// document does not allow declarative roots at all.
+void test_the_page_parser_attaches_declarative_roots() {
+    CHECK_EQ(said("<html><body><div id=h><template shadowrootmode=OPEN><b>in</b><script>"
+                  "alert('ran:' + document.getElementById('h').shadowRoot.firstChild.textContent)"
+                  "</script></template><span>light</span></div>"
+                  "<progress id=g><template shadowrootmode=open>y</template></progress>"
+                  "<div id=m><template shadowrootmode=closed>1</template>"
+                  "<template shadowrootmode=open>2</template></div><script>"
+                  "var h = document.getElementById('h');"
+                  "alert((h.querySelector('template') === null) + ',' + h.children.length);"
+                  "var g = document.getElementById('g');"
+                  "alert(!!g.querySelector('template') + ',' + g.shadowRoot);"
+                  "var m = document.getElementById('m');"
+                  "alert(m.shadowRoot + ',' + m.querySelector('template').content.textContent);"
+                  "var d = new DOMParser().parseFromString("
+                  "'<div id=x><template shadowrootmode=open></template></div>', 'text/html');"
+                  "alert(d.getElementById('x').shadowRoot);"
+                  "</script></body></html>"),
+             "ran:in;true,1;true,null;null,2;null");
+}
+
 } // namespace
 
 // slotchange-event.html: not synchronous, once per change however many
@@ -184,6 +209,7 @@ int main() {
     test_slots_assign_by_name();
     test_manual_slot_assignment();
     test_set_html_unsafe_attaches_a_declarative_root();
+    test_the_page_parser_attaches_declarative_roots();
     test_slotchange_events();
     REPORT("shadow_slots");
 }

@@ -219,75 +219,6 @@ node_id dom_bindings::assigned_slot_of(node_id slottable) const {
     return answer;
 }
 
-// `<template shadowrootmode=open>` AS A SHADOW ROOT - HTML 13.2.6, "attach a
-// shadow root to the template's parent". `setHTMLUnsafe` runs it over the
-// scratch document its markup was parsed into; `innerHTML` deliberately does
-// not, which is the whole difference between the two spellings.
-//
-// THE DOCUMENT IS AN ARGUMENT because the fragment parse happens in a scratch
-// one - the tree builder replaces the root it is handed - and a template's
-// contents live in the document that parsed them, not under the element, so
-// the conversion has to happen THERE and the result be copied across.
-void dom_bindings::attach_declarative_shadow_roots(document & doc, node_id within) {
-    std::vector<node_id> templates;
-    {
-        const auto txn = doc.read();
-        const auto walk = [&](auto && self, node_id at) -> void {
-            for (const node_id child : txn.children(at)) {
-                if (txn.tag(child) && txn.element_ns(child) == node_ns::html &&
-                    txn.local_name(child) == "template") {
-                    templates.push_back(child);
-                    // A declarative root INSIDE a template's contents is one
-                    // too, and the outer one is converted first - so by the
-                    // time this one is, its parent is already in a shadow tree.
-                    self(self, doc.template_content(child));
-                    continue;
-                }
-                self(self, child);
-            }
-        };
-        walk(walk, within);
-    }
-    for (const node_id one : templates) {
-        node_id host;
-        document::shadow_tree how;
-        {
-            const auto txn = doc.read();
-            const std::string_view mode =
-                txn.attribute_value(one, atoms_->intern("shadowrootmode"));
-            if (mode != "open" && mode != "closed") { continue; }
-            host = txn.parent(one);
-            if (!host || !txn.tag(host)) { continue; }
-            // NOT AT THE TOP OF THE FRAGMENT. A `<template shadowrootmode>`
-            // whose parent is the fragment root has no element to be the
-            // shadow of - the context element is not in the fragment tree - so
-            // it stays an ordinary template, which is what every engine does
-            // with one.
-            if (host == within) { continue; }
-            how.open = mode == "open";
-            how.delegates_focus =
-                txn.has_attribute(one, atoms_->intern("shadowrootdelegatesfocus"));
-            how.manual_slots =
-                txn.attribute_value(one, atoms_->intern("shadowrootslotassignment")) == "manual";
-            how.clonable = txn.has_attribute(one, atoms_->intern("shadowrootclonable"));
-            how.serializable = txn.has_attribute(one, atoms_->intern("shadowrootserializable"));
-            how.declarative = true;
-        }
-        const auto root = doc.attach_shadow(host, how);
-        // An element that cannot host a shadow root, or already hosts one,
-        // keeps an ORDINARY template: the markup is not an error.
-        if (!root) { continue; }
-        std::vector<node_id> moving;
-        {
-            const auto txn = doc.read();
-            const std::span<const node_id> kids = txn.children(doc.template_content(one));
-            moving.assign(kids.begin(), kids.end());
-        }
-        for (const node_id child : moving) { (void)doc.append_child(*root, child); }
-        (void)doc.remove_child(one);
-    }
-}
-
 // THE SHADOW TREES A COPY DOES NOT CARRY. `copy_subtree` copies nodes and
 // attributes, and a shadow root is neither - it is a second tree the document
 // remembers beside the host. The two trees have the same SHAPE, so this walks
@@ -316,11 +247,10 @@ void dom_bindings::copy_shadow_trees(const document & src, const read_txn & from
 
 // `setHTMLUnsafe(markup)`: `innerHTML` PLUS the declarative shadow roots.
 //
-// It cannot be innerHTML followed by a conversion: the fragment is parsed into
-// a SCRATCH document, and a `<template>`'s contents are held by THAT document
-// rather than under the element, so they are gone by the time the copy lands
-// here. The conversion therefore happens in the scratch, and the copy carries
-// the shadow trees over.
+// The fragment is parsed into a SCRATCH document whose "allow declarative
+// shadow roots" is on, so the tree builder attaches them there (see
+// tree_builder::declarative_shadow_root) and the copy carries the shadow trees
+// over.
 void dom_bindings::set_html_unsafe(node_id target, std::string_view markup) {
     if (!target || atoms_ == nullptr) { return; }
     {
@@ -337,9 +267,8 @@ void dom_bindings::set_html_unsafe(node_id target, std::string_view markup) {
     {
         const auto txn = doc_->read();
         body = parse_html_fragment(scratch, markup, txn.local_name(target), txn.element_ns(target),
-                                   doc_->scripting());
+                                   doc_->scripting(), true);
     }
-    attach_declarative_shadow_roots(scratch, body);
     const auto from = scratch.read();
     const std::span<const node_id> kids = from.children(body);
     const std::vector<node_id> sources{kids.begin(), kids.end()};
@@ -351,23 +280,26 @@ void dom_bindings::set_html_unsafe(node_id target, std::string_view markup) {
 
 void dom_bindings::install_shadow_dom(context & cx) {
     // `Document.parseHTMLUnsafe(html)`, HTML 8.6.1: a new document, parsed
-    // with scripting off and the declarative shadow roots attached - the
-    // static twin of setHTMLUnsafe, on the Document interface object.
-    // (The interface object is a NATIVE, not a plain object - `is_object()`
-    // is heap_kind::object exactly.)
+    // with scripting off and "allow declarative shadow roots" on - the static
+    // twin of setHTMLUnsafe, on the Document interface object - whose URL is
+    // about:blank. (The interface object is a NATIVE, not a plain object -
+    // `is_object()` is heap_kind::object exactly.)
     if (const value ctor = cx.global("Document"); ctor.is_kind(script::heap_kind::native)) {
         set_method(cx, *static_cast<script::native_object *>(ctor.as_heap()), "parseHTMLUnsafe",
                    [this](context & c, std::span<value> a) {
                        const std::string markup = arg_string(c, a, 0);
-                       const value made = parse_from_string(c, markup, "text/html");
-                       dom_bindings * top = primary_ == nullptr ? this : primary_;
-                       for (const auto & owner : top->secondary_documents_) {
-                           if (!owner->is_the_document(made)) { continue; }
-                           owner->attach_declarative_shadow_roots(*owner->doc_,
-                                                                  owner->doc_->root());
-                           owner->observe_location("about:blank", "");
-                       }
-                       return made;
+                       dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+                       document & fresh =
+                           *top.owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+                       fresh.set_scripting(false);
+                       fresh.set_allow_declarative_shadow_roots(true);
+                       html::tree_builder builder{fresh, *atoms_};
+                       builder.set_scripting(false);
+                       (void)builder.parse(markup);
+                       dom_bindings & made = adopt_second_document(c, fresh);
+                       made.install_document(c);
+                       made.observe_location("about:blank", "");
+                       return made.document_;
                    });
     }
     // --- HTMLSlotElement ------------------------------------------------------

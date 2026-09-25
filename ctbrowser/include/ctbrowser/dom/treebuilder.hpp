@@ -335,6 +335,9 @@ private:
     void mode_before_html(const token & t);
     void mode_before_head(const token & t);
     void mode_in_head(const token & t);
+    // A `<template shadowrootmode>` start tag made into its parent's shadow
+    // root; false when it is an ordinary template for the caller to insert.
+    [[nodiscard]] bool declarative_shadow_root(const token & t);
     void mode_in_head_noscript(const token & t);
     void mode_after_head(const token & t);
     void mode_in_body(const token & t);
