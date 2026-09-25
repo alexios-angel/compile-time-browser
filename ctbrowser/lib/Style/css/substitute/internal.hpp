@@ -293,6 +293,10 @@ private:
     // read after, and what the attribute holds is then judged by the type.
     [[nodiscard]] bool attribute(const token_stream & outer, const call & found, int depth,
                                  std::string & expansion);
+    // attr()'s security: is the token at `at` inside a url(), src(),
+    // image() or image-set() - and does a substituted value make one?
+    [[nodiscard]] static bool inside_url_function(const token_stream & s, std::size_t at);
+    [[nodiscard]] static bool makes_url(std::string_view value);
 
     // --- ident(), CSS Values 5 §ident ---------------------------------------
     //

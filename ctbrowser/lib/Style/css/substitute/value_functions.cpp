@@ -157,10 +157,59 @@ namespace ctbrowser::style::css::substitute_detail {
     }
     }
     if (value) {
+        // AN ATTRIBUTE IS NO URL (CSS Values 5 §attr security): substituted
+        // into a property's value as a <url> - a url token, or a url(),
+        // src(), image() or image-set() it made - or into one, as the string
+        // `src(attr(x))` hands it, the attr() makes the declaration invalid
+        // at computed-value time. A custom property keeps it: there the
+        // value is only tokens until something uses it.
+        const bool custom = conditions_ == nullptr || conditions_->property.empty() ||
+                            conditions_->property.starts_with("--");
+        if (!custom && (inside_url_function(outer, found.open) || makes_url(*value))) {
+            return false;
+        }
         expansion = std::move(*value);
         return true;
     }
     return fallback(s, args, depth, expansion);
+}
+
+namespace {
+
+constexpr std::array<std::string_view, 6> url_functions{
+    "url", "src", "image", "image-set", "-webkit-image-set", "cross-fade"};
+
+[[nodiscard]] bool is_url_function(const token_stream & s, const css_token & t) {
+    if (t.type != token_type::function) { return false; }
+    std::string_view name = s.text_of(t);
+    name.remove_suffix(1);
+    return ascii_iequals_any(name, url_functions);
+}
+
+} // namespace
+
+bool substituter::inside_url_function(const token_stream & s, std::size_t at) {
+    std::vector<bool> open; // per open block: is it a url-taking function
+    for (std::size_t i = 0; i < at && i < s.tokens.size(); ++i) {
+        const css_token & t = s.tokens[i];
+        if (t.type == token_type::function || t.type == token_type::open_paren ||
+            t.type == token_type::open_square || t.type == token_type::open_curly) {
+            open.push_back(is_url_function(s, t));
+        } else if (!open.empty() &&
+                   (t.type == token_type::close_paren || t.type == token_type::close_square ||
+                    t.type == token_type::close_curly)) {
+            open.pop_back();
+        }
+    }
+    return std::ranges::find(open, true) != open.end();
+}
+
+bool substituter::makes_url(std::string_view value) {
+    const token_stream s = tokenize(value);
+    for (const css_token & t : s.tokens) {
+        if (t.type == token_type::url || is_url_function(s, t)) { return true; }
+    }
+    return false;
 }
 
 [[nodiscard]] bool substituter::identifier(const token_stream & outer, const call & found,
