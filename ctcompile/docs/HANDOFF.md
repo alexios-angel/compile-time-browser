@@ -22,6 +22,75 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Primitive helper predicates and branch-local store inputs, 2026-09-25 UTC
+
+Resumed **33b3811d** and the interrupted iteration23 candidates. The initial
+checkout was clean; the old WIP branch is already an ancestor. Parallel agents
+prepared direct native tests and the escape change; after service interruptions,
+the parent completed review, fixture corrections, focused gates and commits.
+
+**507d0c97** reuses `PrimitiveAlternatives::literal` for exact helper
+predicate truthiness: Number (including signed zero and NaN), String, null and
+undefined join Boolean. Unknown, object, coercing and BigInt inputs still refuse.
+The existing budgeted projection retains evaluated inputs, selected payloads and
+ordered effects; complete helper and DOM proofs still govern admission. Forty
+new controls (116 total), plus former control 52, cover raw and structured forms,
+wrong payloads/effects and rollback at zero and a late nonzero budget.
+
+**6c8b52de** reuses the counted-loop invariant/index proofs for branch-local
+producers only in arms already proved to execute at most once. Seventeen new
+retention rows, one former refusal and five live key/receiver mutations preserve
+alias, guard-reload, every-exit, all-write-cycle and incomplete-budget refusals.
+This proves frame confinement, not region lifetime or native ownership.
+
+Focused devbox targets: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Final exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 5.98 s**,
+`ctcompile_host_contract` **1/1, 3.98 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.71 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+
+**7c9a7e4e** adds two derived primitive-helper source witnesses. Raw and
+structured preparation pass; Node/VM traces agree. **20 generated C++ files and
+40 GCC/Clang binaries** pass across both printers, structured providers and
+optimization modes, checking ordered DOM writes, two documents and 16 lifetimes.
+The complete raw sources use the existing 1,000,000-step option; both retain
+explicit refusals at the default 100,000 steps. Structured modes use the default.
+Ten zero-budget refusals also pass. Source/symbol checks find no Script/AOT
+dependency; inspected C++ uses typed values and public DOM calls. Seven final
+code/test/build hashes match the devbox. Original source fixtures remain
+unchanged. Formatting passes
+**1126 C++, 159 Python, 114 web files**; diff checks pass. Evidence and review:
+`/tmp/ctcompile-iteration23/`.
+
+Initial gates caught fixture SSA naming/dominance errors and a comparison that
+omitted retained literal evaluation. These were corrected without removing
+assertions. Host tests retain direct private-normalizer refusals and now check
+source/contract rollback at the documented `prepareDOMEntry` transaction boundary.
+The host test links the existing native lowering library for that check; its
+missing declaration and link dependency were corrected during the focused gate.
+Independent native production review found no defects; the parent completed the
+interrupted escape review and reviewed final test corrections. Passing unrelated
+focused gates were not replayed after fixture-only fixes.
+
+**Next:** computed helper predicates need exact producer-value and inertness
+proofs together; recognizing a condition alone leaves its producer in the helper.
+This is a code-traced boundary, not a new frontend measurement. Escape analysis
+still refuses an `scf.if` result as a store key, even with equal constant yields;
+a new negative row pins the required payload-correspondence proof. Dynamic
+differing branches, repeated allocation identities/lifetimes, mutable exception
+state, escaping owners, unguarded Bootstrap defaults, the native application
+driver and full native Bootstrap remain unfinished.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. No full-Bootstrap admission or raw-oracle
+precision gain is claimed. The Linux Claude loop was running; Windows identity
+inspection found no matches. Concurrent rules applied; no browser/runtime/shared
+implementation changed.
+
 ## Iterator helper payloads and conditional stores, 2026-09-25 UTC
 
 Resumed **d63eac23** and its result-bearing helper boundary. The checkout was
