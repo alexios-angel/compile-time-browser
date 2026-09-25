@@ -757,6 +757,38 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         forwardedComparison.find("    %secondFlag ="),
         std::string{"    %secondFlag = ctjs.truthy %secondCompare\n"}.size(),
         forwardedFlag("%secondCompare", "%secondCompare"));
+    const std::string thenBoolean = "      %thenBoolean = ctjs.convert to_boolean %p\n";
+    const std::string elseBoolean = "      %elseNot = ctjs.unary not %p\n"
+                                    "      %elseEven = ctjs.unary not %elseNot\n";
+    const std::string booleanYields =
+        forwardedFlag("%thenBoolean", "%elseEven", thenBoolean, elseBoolean);
+    const std::string booleanYieldKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", booleanYields));
+    const std::string booleanYieldGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", booleanYields));
+    const std::string booleanYieldTuple =
+        "    %transportFlag = ctjs.truthy %q\n"
+        "    %forwarded:2 = scf.if %transportFlag -> (!ctjs.value, !ctjs.value) {\n" +
+        thenBoolean +
+        "      scf.yield %zero, %thenBoolean : !ctjs.value, !ctjs.value\n"
+        "    } else {\n" +
+        elseBoolean +
+        "      scf.yield %one, %elseEven : !ctjs.value, !ctjs.value\n"
+        "    }\n"
+        "    %secondFlag = ctjs.truthy %forwarded#1\n";
+    const std::string negatedYields =
+        forwardedFlag("%thenNot", "%elseNot", "      %thenNot = ctjs.unary not %p\n",
+                      "      %elseBoolean = ctjs.convert to_boolean %p\n"
+                      "      %elseNot = ctjs.unary not %elseBoolean\n");
+    auto booleanYieldComparison = comparedInput();
+    booleanYieldComparison.replace(
+        booleanYieldComparison.find("    %secondFlag ="),
+        std::string{"    %secondFlag = ctjs.truthy %secondCompare\n"}.size(),
+        forwardedFlag("%thenBoolean", "%elseEven",
+                      "      %thenBoolean = ctjs.convert to_boolean %secondCompare\n",
+                      "      %elseNot = ctjs.unary not %secondCompare\n"
+                      "      %elseEven = ctjs.unary not %elseNot\n"));
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -2765,6 +2797,120 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(forwardedKeys) + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "distinct Boolean yield chains preserve the exact input truthiness choice",
+         .body = loopValues + allocationLoop(booleanYieldKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "distinct odd Boolean yield chains reverse the selected Number arms",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", negatedYields, true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "Boolean yield chains use only their corresponding tuple result slot",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", booleanYieldTuple))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "Boolean yield chains preserve dominating strict comparison correspondence",
+         .body = loopValues + allocationLoop(crossBlockStore(booleanYieldComparison)) + done,
+         .confinedNested = "fresh"},
+        {.what = "Boolean yield chains preserve the independently proved guard read gap",
+         .body = loopValues +
+                 allocationLoop(booleanYieldGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "different yield input snapshots cannot acquire Boolean correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  forwardedFlag("%thenBoolean", "%elseEven",
+                                                "      %thenBoolean = ctjs.convert to_boolean %q\n",
+                                                elseBoolean)))) +
+                 done,
+         .complete = false},
+        {.what = "opposite yield polarities cannot acquire Boolean correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     forwardedFlag("%thenBoolean", "%elseNot", thenBoolean, elseBoolean)))) +
+                 done,
+         .complete = false},
+        {.what = "odd Boolean yield chains cannot retain unswapped Number arms",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%one", "%secondFlag", negatedYields))) +
+                 done,
+         .complete = false},
+        {.what = "numeric conversion in a yield cannot borrow Boolean correspondence",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(siblingInput(
+                 "%zero", "%one", "%secondFlag",
+                 forwardedFlag("%thenBoolean", "%elseEven",
+                               "      %thenBoolean = ctjs.convert to_number %p\n", elseBoolean)))) +
+             done,
+         .complete = false},
+        {.what = "Boolean yield chains cannot hide a then-arm producer effect",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(siblingInput(
+                 "%zero", "%one", "%secondFlag",
+                 forwardedFlag("%thenBoolean", "%elseEven",
+                               thenBoolean + "      %called = ctjs.call %p(%q)\n", elseBoolean)))) +
+             done,
+         .complete = false},
+        {.what = "Boolean yield chains cannot hide an else-arm producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     forwardedFlag("%thenBoolean", "%elseEven", thenBoolean,
+                                   elseBoolean + "      %called = ctjs.call %p(%q)\n")))) +
+                 done,
+         .complete = false},
+        {.what = "Boolean yield chains still require independently finite selected Numbers",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%nan", "%secondFlag", booleanYields))) +
+                 done,
+         .complete = false},
+        {.what = "Boolean yield chains cannot overwrite their current guard dependency",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore("    %read = ctjs.get_property %guard[%zero]\n" +
+                                   siblingInput("%read", "%one", "%secondFlag", booleanYields))) +
+                 done,
+         .complete = false},
+        {.what = "every retaining exit preserves a child selected through Boolean yields",
+         .body = loopValues + allocationLoop(booleanYieldKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "clearing a Boolean-yield holder releases its stored child",
+         .body =
+             loopValues + allocationLoop(booleanYieldKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved Boolean-yield alias survives clearing its holder",
+         .body = loopValues + allocationLoop(booleanYieldKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "Boolean yield chains retain every no-result transient cycle check",
+         .body = loopValues +
+                 allocationLoop(booleanYieldKeys + "    scf.if %secondFlag {\n"
+                                                   "      ctjs.set_property %fresh[%zero], %guard\n"
+                                                   "      ctjs.set_property %fresh[%zero], %zero\n"
+                                                   "    }\n") +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "Boolean yield chains cannot authorize repeated allocation identities",
+         .body =
+             loopValues + allocationLoop(booleanYieldKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "zero visits cannot authorize Boolean-yield allocation identities",
+         .body =
+             loopValues + allocationLoop(booleanYieldKeys, "%two", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "Boolean yield chains require initialized solver inputs",
+         .body = loopValues + allocationLoop(booleanYieldKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "calls in an arithmetic key arm still refuse the complete census",
          .body = loopValues +
                  allocationLoop(
@@ -3687,6 +3833,88 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = forwardedMutation.what, .body = forwardedMutation.body, .expected = ""},
              "the equal-yield mutation fixture did not parse");
     }
+    retention_row booleanYieldMutation{
+        .what = "Boolean yields reprove both chains, polarity, tuple slots, Number arms and guards",
+        .body = loopValues +
+                allocationLoop(nestedSiblingStore(
+                                   "      %read = ctjs.get_property %guard[%one]\n" +
+                                   siblingInput("%read", "%two", "%secondFlag", booleanYieldTuple)),
+                               "%two", "%one", "%zero, %zero, %zero") +
+                done,
+        .confinedNested = "fresh"};
+    auto booleanYieldModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + booleanYieldMutation.body + "}\n", &context);
+    if (booleanYieldModule) {
+        ctjs::FuncOp function = *booleanYieldModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto truthy = second.getCondition().getDefiningOp<ctjs::TruthyOp>();
+        auto forwarding = truthy.getValue().getDefiningOp<mlir::scf::IfOp>();
+        auto * thenForward = forwarding.getThenRegion().front().getTerminator();
+        auto conversion = thenForward->getOperand(1).getDefiningOp<ctjs::ConvertOp>();
+        auto outer = forwarding.getElseRegion()
+                         .front()
+                         .getTerminator()
+                         ->getOperand(1)
+                         .getDefiningOp<ctjs::UnaryOp>();
+        auto inner = outer.getOperand().getDefiningOp<ctjs::UnaryOp>();
+        auto * secondYield = second.getThenRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = conversion.getOperand();
+        const mlir::Value originalCondition = forwarding.getCondition();
+        const mlir::Value originalYield = secondYield->getOperand(0);
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value independent = function.getBody().front().getArgument(4);
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*booleanYieldModule))) {
+            fail(row{.what = booleanYieldMutation.what,
+                     .body = booleanYieldMutation.body,
+                     .expected = ""},
+                 "the Boolean-yield stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 12; ++state) {
+            conversion->setOperand(0, state == 1 ? independent : originalInput);
+            inner->setOperand(0, state == 2 ? independent : originalInput);
+            conversion.setKindAttr(ctjs::ConvertKindAttr::get(
+                &context, state == 3 ? ctjs::ConvertKind::ToNumber : ctjs::ConvertKind::ToBoolean));
+            outer.setKindAttr(ctjs::UnaryKindAttr::get(
+                &context, state == 4 ? ctjs::UnaryKind::Void : ctjs::UnaryKind::Not));
+            outer->setOperand(0, state == 5 ? originalInput : inner.getResult());
+            thenForward->setOperand(1, state == 6 ? originalInput : conversion.getResult());
+            truthy->setOperand(0, forwarding.getResult(state == 7 ? 0 : 1));
+            secondYield->setOperand(0, state == 8 ? originalPosition : originalYield);
+            load->setOperand(1, state == 9 ? zero : originalPosition);
+            forwarding->setOperand(0, state == 10 ? first.getCondition() : originalCondition);
+            booleanYieldMutation.complete = state == 0 || state == 6 || state >= 10;
+            booleanYieldMutation.confinedNested = booleanYieldMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*booleanYieldModule, booleanYieldMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                booleanYieldMutation.complete) {
+                fail(row{.what = booleanYieldMutation.what,
+                         .body = booleanYieldMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied Boolean-yield correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = booleanYieldMutation.what,
+                 .body = booleanYieldMutation.body,
+                 .expected = ""},
+             "the Boolean-yield mutation fixture did not parse");
+    }
     for (const std::string & comparisons : {comparedGap, crossBlockGap}) {
         retention_row comparisonMutation{
             .what =
@@ -3766,8 +3994,9 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  "the strict comparison mutation fixture did not parse");
         }
     }
-    std::printf("array retention: %zu rows, one hundred twenty live states, %zu budget cutoffs\n",
-                rows.size(), budgets);
+    std::printf(
+        "array retention: %zu rows, one hundred thirty-two live states, %zu budget cutoffs\n",
+        rows.size(), budgets);
 }
 
 void checkObjectContents(mlir::MLIRContext & context) {

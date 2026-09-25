@@ -73,21 +73,34 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
     // records whether the branch reverses the exact input's truthiness.
     auto truthy = condition.getDefiningOp<ctjs::TruthyOp>();
     if (!truthy) { return {condition, false}; }
+    const auto booleanInput = [&](mlir::Value value) -> std::pair<mlir::Value, bool> {
+        bool negated = false;
+        while (true) {
+            // The shared budget bounds traversal; exhaustion supplies no partial key.
+            if (!spend(1)) { return {}; }
+            if (auto convert = value.getDefiningOp<ctjs::ConvertOp>();
+                convert && convert.getKind() == ctjs::ConvertKind::ToBoolean) {
+                value = convert.getOperand();
+                continue;
+            }
+            auto unary = value.getDefiningOp<ctjs::UnaryOp>();
+            if (!unary || unary.getKind() != ctjs::UnaryKind::Not) { return {value, negated}; }
+            value = unary.getOperand();
+            negated = !negated;
+        }
+    };
     mlir::Value input = truthy.getValue();
     bool negated = false;
     while (true) {
-        // The shared budget bounds traversal; exhaustion supplies no partial key.
-        if (!spend(1)) { return {}; }
-        if (auto convert = input.getDefiningOp<ctjs::ConvertOp>();
-            convert && convert.getKind() == ctjs::ConvertKind::ToBoolean) {
-            input = convert.getOperand();
-            continue;
-        }
+        const auto [value, reversed] = booleanInput(input);
+        if (!value) { return {}; }
+        input = value;
+        negated ^= reversed;
         if (auto branch = input.getDefiningOp<mlir::scf::IfOp>()) {
-            // Equal incoming SSA values retain one truthiness snapshot. This
-            // selects no arm: the census and replay still check every effect.
+            // Both incoming chains must retain one SSA input and polarity.
+            // This selects no arm: census and replay still check every effect.
             const auto position = llvm::cast<mlir::OpResult>(input).getResultNumber();
-            mlir::Value common;
+            std::pair<mlir::Value, bool> common;
             for (mlir::Region & region : branch->getRegions()) {
                 if (!spend(1)) { return {}; }
                 if (!llvm::hasSingleElement(region) || region.front().empty() ||
@@ -96,22 +109,25 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                     break;
                 }
                 auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                if (!yield || yield.getNumOperands() != branch.getNumResults() ||
-                    (common && common != yield.getOperand(position))) {
+                if (!yield || yield.getNumOperands() != branch.getNumResults()) {
                     common = {};
                     break;
                 }
-                common = yield.getOperand(position);
+                const auto incoming = booleanInput(yield.getOperand(position));
+                if (!incoming.first) { return {}; }
+                if (common.first && common != incoming) {
+                    common = {};
+                    break;
+                }
+                common = incoming;
             }
-            if (common) {
-                input = common;
+            if (common.first) {
+                input = common.first;
+                negated ^= common.second;
                 continue;
             }
         }
-        auto unary = input.getDefiningOp<ctjs::UnaryOp>();
-        if (!unary || unary.getKind() != ctjs::UnaryKind::Not) { break; }
-        input = unary.getOperand();
-        negated = !negated;
+        break;
     }
     auto compare = input.getDefiningOp<ctjs::CompareOp>();
     if (compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
