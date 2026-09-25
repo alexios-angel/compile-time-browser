@@ -19,6 +19,32 @@ namespace {
            kind == nk::do_stmt;
 }
 
+// The first character of the next token at or after `from`: white space, line
+// terminators and comments skipped. '\0' at the end of the source or inside
+// an unterminated comment.
+[[nodiscard]] char next_token_char(std::string_view source, std::size_t from) {
+    for (std::size_t i = from; i < source.size();) {
+        const char c = source[i];
+        if (c == ' ' || c == '\t' || c == '\v' || c == '\f' || c == '\n' || c == '\r') {
+            ++i;
+            continue;
+        }
+        if (c == '/' && i + 1 < source.size() && source[i + 1] == '/') {
+            i = source.find('\n', i);
+            if (i == std::string_view::npos) { return '\0'; }
+            continue;
+        }
+        if (c == '/' && i + 1 < source.size() && source[i + 1] == '*') {
+            const std::size_t end = source.find("*/", i + 2);
+            if (end == std::string_view::npos) { return '\0'; }
+            i = end + 2;
+            continue;
+        }
+        return c;
+    }
+    return '\0';
+}
+
 } // namespace
 
 // --- statements ------------------------------------------------------------
@@ -219,7 +245,17 @@ void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function) 
         // ctjs's parser has no ASI here and reads the declaration, so the
         // source is what has to be asked. `const` and `class` are reserved
         // words and get no such reading.
-        if (n.text == "let" && newline_follows(idx, n.text.size())) { return; }
+        //
+        // EXCEPT BEFORE `[`: an ExpressionStatement may not begin with the
+        // two tokens `let [` (14.5, its lookahead restriction), so
+        // `if (false) let \n [a] = 0;` is neither a declaration nor an
+        // expression here - it is the SyntaxError, newline or not.
+        if (n.text == "let" && newline_follows(idx, n.text.size())) {
+            if (next_token_char(source_, offset_of(idx) + n.text.size()) == '[') {
+                report("a statement cannot begin with `let [`", idx);
+            }
+            return;
+        }
         report("a `" + std::string{n.text} +
                    "` declaration cannot be the body of a statement; it needs a block",
                idx);

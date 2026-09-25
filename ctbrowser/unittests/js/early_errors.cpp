@@ -123,6 +123,12 @@ void answers(std::string_view source, std::string_view expected) {
 } // namespace
 
 int main() {
+    // A statement body may be `let` followed by a newline - the identifier -
+    // but never `let [` (14.5's lookahead), newline or comment between.
+    refused("if (false) let\n[a] = 0;");
+    refused("L: let /* x */\n[a] = 0;");
+    accepted("if (false) let\nx = 1;");
+
     // ================================================================
     // 1. DUPLICATE LEXICAL DECLARATIONS - 14.2.1, 15.2.1, 16.1.1
     // ================================================================
