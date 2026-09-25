@@ -449,7 +449,7 @@ var outcome0 = observe(false), outcome1 = observe(true);
                     optimize=optimize,
                     success=False,
                 )
-                if "DOM iterator observed completions require state transport" not in result:
+                if "DOM iterator observed state requires completion normalization" not in result:
                     raise RuntimeError(f"{name}: lost recovered protocol diagnostic: {result}")
 
 

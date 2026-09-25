@@ -2010,10 +2010,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
             }
         }
-        return error("DOM iterator observed completions require state transport");
     }
 
-    if (!stateInitials.empty() || suppressedThrow) {
+    if (!observedNext && (!stateInitials.empty() || suppressedThrow)) {
         for (mlir::Operation * user : object->getUsers()) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
             if (user != open &&
@@ -2309,6 +2308,153 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
                 continue;
             }
+            if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation);
+                invocation && observedInvocations.contains(invocation)) {
+                const bool closing = observedInvocations.lookup(invocation) != next;
+                if (state.size() != 1 || (closing && !observableThrow)) { return false; }
+                auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
+                llvm::SmallVector<mlir::Value> saved;
+                for (auto value : exit.getState()) {
+                    if (!spend()) { return false; }
+                    saved.push_back(values.lookup(value));
+                }
+                // Unlike eliminating Invoke, retaining it must read the actual
+                // unwind arguments. A throwing close's normalized return uses
+                // the same source projection with the pre-call saved values.
+                const auto project = [&](mlir::OpBuilder & inside, bool unwind, mlir::Value payload,
+                                         mlir::ValueRange savedValues)
+                    -> mlir::FailureOr<llvm::SmallVector<mlir::Value>> {
+                    for (std::size_t i = 0;
+                         i < values.getValueMap().size() + values.getOperationMap().size() +
+                                 values.getBlockMap().size();
+                         ++i) {
+                        if (!spend()) { return mlir::failure(); }
+                    }
+                    mlir::IRMapping projected(values);
+                    auto & source =
+                        (unwind ? invocation.getUnwindBody() : invocation.getNormalBody()).front();
+                    projected.map(source.getArgument(0), payload);
+                    if (unwind) {
+                        for (auto [argument, value] :
+                             llvm::zip(source.getArguments().drop_front(), savedValues)) {
+                            if (!spend()) { return mlir::failure(); }
+                            projected.map(argument, value);
+                        }
+                    }
+                    for (auto & item : source.without_terminator()) {
+                        if (!spend()) { return mlir::failure(); }
+                        inside.clone(item, projected); // Census proved inert constants/padding.
+                    }
+                    llvm::SmallVector<mlir::Value> result;
+                    for (auto value : llvm::cast<ctjs::InvokeYieldOp>(source.back()).getValues()) {
+                        if (!spend() || !projected.contains(value)) { return mlir::failure(); }
+                        result.push_back(projected.lookup(value));
+                    }
+                    return result;
+                };
+                auto done = ctjs::ConstantOp::create(
+                    at, where, ctjs::BooleanAttr::get(candidate.getContext(), true));
+                mlir::scf::IfOp closeGuard;
+                mlir::OpBuilder calling = at;
+                if (closing) {
+                    auto test = ctjs::TruthyOp::create(at, where, at.getI1Type(), state.front());
+                    closeGuard =
+                        mlir::scf::IfOp::create(at, where, operation.getResultTypes(), test, true);
+                    auto & exhausted = closeGuard.getThenRegion().front();
+                    mlir::OpBuilder inside(&exhausted, exhausted.end());
+                    auto empty = ctjs::ConstantOp::create(
+                        inside, where, ctjs::UndefinedAttr::get(candidate.getContext()));
+                    auto projected = project(inside, false, empty, {});
+                    if (mlir::failed(projected)) { return false; }
+                    mlir::scf::YieldOp::create(inside, where, *projected);
+                    calling.setInsertionPointToEnd(&closeGuard.getElseRegion().front());
+                }
+                auto key = ctjs::ConstantOp::create(
+                    calling, where,
+                    ctjs::StringAttr::get(candidate.getContext(), closing ? "return" : "next"));
+                auto holder = values.lookup(object.getResult());
+                auto method = ctjs::GetPropertyOp::create(calling, where, type, holder, key);
+                mlir::OperationState built(operation.getLoc(), operation.getName());
+                built.addTypes(operation.getResultTypes());
+                if (!closing) { built.addTypes(type); }
+                built.addAttributes(operation.getAttrs());
+                for (unsigned i = 0; i != 3; ++i) { built.addRegion(); }
+                auto copied = llvm::cast<ctjs::InvokeOp>(calling.create(built));
+                auto & body = copied.getBody().emplaceBlock();
+                mlir::OpBuilder inside(&body, body.end());
+                auto called =
+                    ctjs::CallOp::create(inside, where, type, method, holder, mlir::ValueRange{});
+                ctjs::InvokeExitOp::create(inside, where, called, saved);
+                for (bool unwind : {false, true}) {
+                    auto & arm =
+                        (unwind ? copied.getUnwindBody() : copied.getNormalBody()).emplaceBlock();
+                    auto payload = arm.addArgument(type, where);
+                    if (unwind) {
+                        for (auto value : saved) {
+                            if (!spend()) { return false; }
+                            arm.addArgument(value.getType(), where);
+                        }
+                    }
+                    inside.setInsertionPointToEnd(&arm);
+                    mlir::Value completedDone = done;
+                    mlir::Value result = payload;
+                    if (!closing && !unwind) {
+                        auto doneKey = ctjs::ConstantOp::create(
+                            inside, where, ctjs::StringAttr::get(candidate.getContext(), "done"));
+                        completedDone =
+                            ctjs::GetPropertyOp::create(inside, where, type, payload, doneKey);
+                        auto valueKey = ctjs::ConstantOp::create(
+                            inside, where, ctjs::StringAttr::get(candidate.getContext(), "value"));
+                        result =
+                            ctjs::GetPropertyOp::create(inside, where, type, payload, valueKey);
+                    }
+                    auto projected =
+                        project(inside, closing || unwind, result,
+                                unwind ? mlir::ValueRange(arm.getArguments().drop_front())
+                                       : mlir::ValueRange(saved));
+                    if (mlir::failed(projected)) { return false; }
+                    if (!closing) { projected->push_back(completedDone); }
+                    ctjs::InvokeYieldOp::create(inside, where, *projected);
+                }
+                if (closing) {
+                    mlir::scf::YieldOp::create(calling, where, copied.getResults());
+                    values.map(operation.getResults(), closeGuard.getResults());
+                    state.front() = done;
+                } else {
+                    values.map(operation.getResults(), copied.getResults().drop_back());
+                    state.front() = copied.getResults().back();
+                    emittedNext = called;
+                }
+                continue;
+            }
+            if (auto protectedBody = llvm::dyn_cast<ctjs::TryOp>(operation)) {
+                if (!observedNext || protectedBody != attempt || state.size() != 1) {
+                    return false;
+                }
+                mlir::OperationState built(operation.getLoc(), operation.getName());
+                built.addTypes(operation.getResultTypes());
+                built.addAttributes(operation.getAttrs());
+                built.addRegion();
+                built.addRegion();
+                auto * copied = at.create(built);
+                for (auto [from, to] : llvm::zip(operation.getRegions(), copied->getRegions())) {
+                    auto & block = to.emplaceBlock();
+                    for (auto argument : from.front().getArguments()) {
+                        if (!spend()) { return false; }
+                        values.map(argument,
+                                   block.addArgument(argument.getType(), argument.getLoc()));
+                    }
+                    auto innerState = state;
+                    mlir::OpBuilder inside(&block, block.end());
+                    if (!self(self, from.front(), inside, values, innerState, depth + 1, false)) {
+                        return false;
+                    }
+                }
+                // The lifetime census proved state has no catch or later user.
+                // Preserve Try's one result and its original caught values.
+                values.map(operation.getResults(), copied->getResults());
+                continue;
+            }
             if (auto region = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
                 if (!region.getNoInline() || region.getNumResults() || region->getNumOperands() ||
                     !region.getRegion().hasOneBlock() ||
@@ -2491,7 +2637,25 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (!completed.back()) { return error("DOM custom iterator budget exhausted"); }
         }
     }
+    const bool retainedCompletions = static_cast<bool>(observedNext);
     entry.getBody().takeBody(rewritten);
+    if (retainedCompletions) {
+        const auto charged = entry.walk([&](mlir::Operation * operation) {
+            for (unsigned i = 0; i <= operation->getNumOperands() + operation->getNumResults();
+                 ++i) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (charged.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
+        if (mlir::failed(mlir::verify(entry))) {
+            return error("DOM iterator observed state rewrite is malformed");
+        }
+        // ponytail: retained Try tuples still need an inactive-value proof.
+        // Keep complete preparation transactional until completion normalization
+        // and the final next/done census can prove these protected regions.
+        return error("DOM iterator observed state requires completion normalization");
+    }
     // Only after selecting the custom arm can completion normalization discard
     // inactive eager-array state. A live record marker is poison and refuses.
     // Earlier helper bodies may have been retired; their SSA identities cannot

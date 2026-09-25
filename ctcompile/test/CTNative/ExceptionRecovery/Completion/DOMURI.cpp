@@ -639,7 +639,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
               "original observing iterator defers suppression without changing any source state");
         if (!close) { llvm::consumeError(close.takeError()); }
         const auto boundary = structured
-                                  ? "DOM iterator observed completions require state transport"
+                                  ? "DOM iterator observed state requires completion normalization"
                               : method ? "DOM Symbol.iterator must be a closed identity method"
                                        : "DOM iterator getter requires a terminal throw";
         for (unsigned budget : {0u, 100000u}) {
@@ -1026,6 +1026,40 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                            ? definition->getAttr("value")
                            : mlir::Attribute{};
             };
+            const bool transported =
+                structured &&
+                (control == 0 || control == 15 || control == 21 || control == 28 || control == 40);
+            llvm::SmallVector<unsigned> originalWidths;
+            llvm::SmallVector<mlir::Attribute> closeNormalTags, closeUnwindTags;
+            unsigned caughtArguments = 0, caughtAnchor = 0;
+            if (transported) {
+                entry.walk([&](ctjs::InvokeOp kept) {
+                    if (kept != opening) { originalWidths.push_back(kept.getNumResults()); }
+                });
+                for (auto close : closeCalls) {
+                    auto kept = llvm::cast<ctjs::InvokeOp>(close->getParentOp());
+                    for (auto * tags : {&closeNormalTags, &closeUnwindTags}) {
+                        auto & arm =
+                            (tags == &closeNormalTags ? kept.getNormalBody() : kept.getUnwindBody())
+                                .front();
+                        auto yield = llvm::cast<ctjs::InvokeYieldOp>(arm.back());
+                        tags->push_back(literalValue(yield.getValues().front()));
+                    }
+                }
+                auto & caught = attempt.getCatchBody().front();
+                caughtArguments = caught.getNumArguments();
+                attempt.getCatchBody().walk([&](ctjs::CompareOp compare) {
+                    if (compare.getKind() != ctjs::CompareKind::StrictEq) { return; }
+                    auto read = compare.getRhs().getDefiningOp<ctjs::CellGetOp>();
+                    auto anchor = read ? llvm::dyn_cast<mlir::BlockArgument>(read.getCell())
+                                       : mlir::BlockArgument{};
+                    if (check(compare.getLhs() == caught.getArgument(0) && anchor &&
+                                  anchor.getOwner() == &caught,
+                              "original catch compares its payload with its saved anchor cell")) {
+                        caughtAnchor = anchor.getArgNumber();
+                    }
+                });
+            }
             const auto remember = [&](mlir::OpOperand & use, mlir::Value value) {
                 if (value == opening.getNormalBody().front().getArgument(0)) {
                     value = openCall.getResult();
@@ -1110,7 +1144,139 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
             if (reason.find(expected) == std::string::npos) {
                 llvm::errs() << "iterator control " << control << ": " << reason << '\n';
             }
-            if ((control == 0 || control >= 11) && control != 35 && structured) {
+            if (transported) {
+                // The rewrite replaces the entry body. Inspect its new SSA;
+                // the earlier pointer assertions belong only to refused rewrites.
+                entry = candidate->lookupSymbol<ctjs::FuncOp>(contract.entry);
+                check(mlir::succeeded(mlir::verify(*candidate)),
+                      "observed state transport verifies before completion normalization");
+                const auto isTrue = [&](mlir::Value value) {
+                    return literalValue(value) == ctjs::BooleanAttr::get(&context, true);
+                };
+                unsigned kept = 0, closes = 0, attempts = 0, caughtComparisons = 0;
+                ctjs::InvokeOp advancing;
+                entry.walk([&](ctjs::InvokeOp found) {
+                    auto & body = found.getBody().front();
+                    auto called = llvm::cast<ctjs::CallOp>(body.front());
+                    auto dispatch = llvm::cast<ctjs::InvokeExitOp>(body.back());
+                    auto method = called.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                    const bool next = method && ctjs::constantKey(method.getKey()) == "next";
+                    check(method && called.getReceiver() == method.getObject() &&
+                              called.getArgs().empty() &&
+                              std::distance(body.begin(), body.end()) == 2 &&
+                              dispatch.getNormalResult() == called.getResult() &&
+                              dispatch.getState().size() == 15 && kept < originalWidths.size() &&
+                              found.getNumResults() == originalWidths[kept] + (next ? 1u : 0u),
+                          "method invocations keep call/exit bodies, original tuples and 15 saved "
+                          "slots");
+                    ++kept;
+                    auto & normal = found.getNormalBody().front();
+                    auto & unwind = found.getUnwindBody().front();
+                    auto success = llvm::cast<ctjs::InvokeYieldOp>(normal.back());
+                    auto failure = llvm::cast<ctjs::InvokeYieldOp>(unwind.back());
+                    auto failedValues = failure.getValues();
+                    if (next) {
+                        advancing = found;
+                        auto done = success.getValues().back().getDefiningOp<ctjs::GetPropertyOp>();
+                        auto item = success.getValues()[1].getDefiningOp<ctjs::GetPropertyOp>();
+                        check(done && item && done->getBlock() == &normal &&
+                                  item->getBlock() == &normal &&
+                                  done.getObject() == normal.getArgument(0) &&
+                                  item.getObject() == normal.getArgument(0) &&
+                                  ctjs::constantKey(done.getKey()) == "done" &&
+                                  ctjs::constantKey(item.getKey()) == "value" &&
+                                  isTrue(failedValues.back()),
+                              "next extracts done and value only from its successful payload; "
+                              "failure is done");
+                        failedValues = failedValues.drop_back();
+                    } else {
+                        auto guard = llvm::dyn_cast<mlir::scf::IfOp>(found->getParentOp());
+                        if (!check(method && ctjs::constantKey(method.getKey()) == "return" &&
+                                       guard &&
+                                       found->getParentRegion() == &guard.getElseRegion() &&
+                                       method->getParentRegion() == &guard.getElseRegion(),
+                                   "each close looks up and invokes return only in the "
+                                   "non-exhausted arm")) {
+                            return;
+                        }
+                        unsigned exhaustedEffects = 0;
+                        guard.getThenRegion().walk([&](mlir::Operation * operation) {
+                            exhaustedEffects +=
+                                llvm::isa<ctjs::GetPropertyOp, ctjs::CallOp, ctjs::InvokeOp>(
+                                    operation);
+                        });
+                        auto skipped =
+                            llvm::cast<mlir::scf::YieldOp>(guard.getThenRegion().front().back());
+                        auto truth = guard.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                        auto done =
+                            truth ? llvm::dyn_cast_or_null<ctjs::ConstantOp>(truth->getPrevNode())
+                                  : ctjs::ConstantOp{};
+                        auto state =
+                            llvm::dyn_cast<mlir::scf::YieldOp>(guard->getBlock()->getTerminator());
+                        check(!exhaustedEffects && guard.getNumResults() == found.getNumResults(),
+                              "exhausted close skips both lookup and call without changing tuple "
+                              "arity");
+                        const auto carriesDone = [&](auto && self, mlir::Value value,
+                                                     unsigned depth) -> bool {
+                            if (!done || depth == 64) { return false; }
+                            if (value == done.getResult()) { return true; }
+                            auto result = llvm::dyn_cast<mlir::OpResult>(value);
+                            auto branch = result
+                                              ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner())
+                                              : mlir::scf::IfOp{};
+                            if (!branch) { return false; }
+                            for (auto & region : branch->getRegions()) {
+                                auto yield = llvm::cast<mlir::scf::YieldOp>(region.front().back());
+                                if (!self(self, yield.getOperand(result.getResultNumber()),
+                                          depth + 1)) {
+                                    return false;
+                                }
+                            }
+                            return true;
+                        };
+                        check(done && isTrue(done.getResult()) && state &&
+                                  carriesDone(carriesDone, state.getOperands().back(), 0),
+                              "both close paths carry done true outside the lookup guard");
+                        check(literalValue(skipped.getOperand(0)) == closeNormalTags[closes] &&
+                                  literalValue(success.getValues()[0]) == closeUnwindTags[closes] &&
+                                  literalValue(failedValues[0]) == closeUnwindTags[closes] &&
+                                  literalValue(skipped.getOperand(1)) ==
+                                      ctjs::UndefinedAttr::get(&context) &&
+                                  success.getValues()[1].getDefiningOp<mlir::ub::PoisonOp>() &&
+                                  failedValues[1].getDefiningOp<mlir::ub::PoisonOp>(),
+                              "close exhaustion yields undefined with normal tags; throwing paths "
+                              "keep failure tags and padding");
+                        check(
+                            success.getValues()[2] == normal.getArgument(0) &&
+                                llvm::equal(success.getValues().drop_front(3), dispatch.getState()),
+                            "normalized throwing close projects its payload with pre-call saved "
+                            "values");
+                        ++closes;
+                    }
+                    check(llvm::equal(failedValues.drop_front(2), unwind.getArguments()),
+                          "actual unwind projects its own payload and saved block arguments");
+                });
+                entry.walk([&](ctjs::TryOp found) {
+                    ++attempts;
+                    auto & caught = found.getCatchBody().front();
+                    auto exit = llvm::cast<ctjs::TryExitOp>(found.getBody().front().back());
+                    check(found->getNumResults() == 1 &&
+                              caught.getNumArguments() == caughtArguments &&
+                              exit.getCaughtValues().size() == caughtArguments,
+                          "Try keeps one result and its original caught tuple");
+                    found.getCatchBody().walk([&](ctjs::CompareOp compare) {
+                        if (compare.getKind() != ctjs::CompareKind::StrictEq) { return; }
+                        ++caughtComparisons;
+                        auto read = compare.getRhs().getDefiningOp<ctjs::CellGetOp>();
+                        check(compare.getLhs() == caught.getArgument(0) && read &&
+                                  read.getCell() == caught.getArgument(caughtAnchor),
+                              "catch retains exact thrown-payload and saved-anchor cell identity");
+                    });
+                });
+                check(kept == 3 && closes == 2 && advancing && attempts == 1 &&
+                          caughtComparisons == 1,
+                      "state transport retains next, both closes and the original local catch");
+            } else if ((control == 0 || control >= 11) && control != 35 && structured) {
                 check(openCall->getBlock() == openBlock &&
                           llvm::equal(openCall->getOperands(), openOperands) &&
                           mlir::succeeded(mlir::verify(*candidate)),
