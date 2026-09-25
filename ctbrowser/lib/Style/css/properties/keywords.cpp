@@ -79,6 +79,15 @@ constexpr or_grammar or_grammars[] = {
      {"jis78 jis83 jis90 jis04 simplified traditional", "full-width proportional-width", "ruby"},
      true},
     {"text-underline-position", "auto", {"from-font under", "left right"}, true},
+    // CSS Box 4 §4: `none | block | block-start || block-end`, the two ends
+    // together being `block`. (The inline keywords are at risk and no
+    // engine takes them.)
+    {"margin-trim",
+     "none block",
+     {"block-start", "block-end"},
+     true,
+     "block-start block-end",
+     "block"},
     // `none | [ space | ideographic-space ] && auto-phrase?`, CSS Text 4 §8.2.
     {"word-space-transform",
      "none",

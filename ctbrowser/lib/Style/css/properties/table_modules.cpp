@@ -167,7 +167,7 @@ constexpr property_syntax modules[] = {
     {"overflow-inline", k::keyword_only, "visible hidden clip scroll auto", "visible", false,
      false},
     {"overflow-anchor", k::keyword_only, "auto none", "auto", false, false},
-    {"overflow-clip-margin", k::freeform, "", "0px", false, false},
+    {"overflow-clip-margin", k::freeform, "", "0px", false, true}, // declaration.cpp
     {"block-ellipsis", k::freeform, "", "no-ellipsis", true, false},
     {"line-clamp", k::freeform, "", "none", false, false, true},
     {"-webkit-line-clamp", k::integer, "none", "none", false, true},
@@ -235,7 +235,7 @@ constexpr property_syntax modules[] = {
     {"-webkit-border-top-right-radius", k::freeform, "", "0px", false, true},
     {"-webkit-border-bottom-right-radius", k::freeform, "", "0px", false, true},
     {"-webkit-border-bottom-left-radius", k::freeform, "", "0px", false, true},
-    {"margin-trim", k::freeform, "", "none", false, false},
+    {"margin-trim", k::freeform, "", "none", false, false}, // keywords.cpp
     {"contain", k::freeform, "", "none", false, false},
     // CSS Conditional 5 §4: the container queries' two longhands and their
     // shorthand. `CSS.supports("container-type:size")` is how every

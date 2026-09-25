@@ -462,6 +462,29 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(indent + (hanging ? " hanging" : "") + (each_line ? " each-line" : ""));
     }
 
+    // `<visual-box> || <length [0,∞]>`, CSS Overflow 4 §3.2: the box first,
+    // `padding-box` (the default) and a zero length after a box left out,
+    // and `0px` when that leaves nothing.
+    if (ascii_iequals(property, "overflow-clip-margin")) {
+        static const property_syntax length{"", k::length, "", "", false, true};
+        std::string box, margin;
+        for (const std::string_view raw : split_top_level(simplified, html_whitespace)) {
+            const std::string_view part = trim(raw, html_whitespace);
+            if (part.empty()) { continue; }
+            if (box.empty() &&
+                ascii_iequals_any(part, {"content-box", "padding-box", "border-box"})) {
+                box = ascii_lower_copy(part);
+            } else if (!margin.empty() || !typed_component(part, length, margin)) {
+                return {};
+            }
+        }
+        if (box.empty() && margin.empty()) { return {}; }
+        if (box == "padding-box") { box.clear(); }
+        if (!box.empty() && margin == "0px") { margin.clear(); }
+        if (box.empty() && margin.empty()) { return yes("0px"); }
+        return yes(box + (box.empty() || margin.empty() ? "" : " ") + margin);
+    }
+
     // `[ auto | <integer> ]{1,3}`, CSS Text 4 §6.3: the word, and the least
     // before and after a hyphen. An omitted `before` is `auto` and an omitted
     // `after` is the `before`, so those are what the shortest form leaves out.

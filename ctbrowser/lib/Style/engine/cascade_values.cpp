@@ -41,7 +41,8 @@ std::string fold_value(std::string text, std::string_view name,
     };
     const bool radius = name.starts_with("border-") && name.ends_with("-radius");
     if (radius || name == "border-image-width" || name == "border-image-outset" ||
-        name == "border-image-slice" || name == "text-decoration-inset" || name == "text-indent") {
+        name == "border-image-slice" || name == "text-decoration-inset" || name == "text-indent" ||
+        name == "overflow-clip-margin") {
         // Every component computes before inheritance; scalar folding
         // cannot resolve or clamp a list as a single length.
         std::vector<std::string> parts;
