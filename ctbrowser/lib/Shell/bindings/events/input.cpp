@@ -92,6 +92,15 @@ bool dom_bindings::dispatch_error_value(std::string_view message, value error,
     const context::rooted keep_error{*cx_, error};
     value event = make_event(*cx_, "error", node_id{});
     auto * object = static_cast<script::object_object *>(event.as_heap());
+    // AN ErrorEvent, which is what makes the window's `onerror` take the five
+    // arguments rather than the event (handler_attributes.cpp).
+    if (const value ctor =
+            cx_->has_global("ErrorEvent") ? cx_->global("ErrorEvent") : value::undefined();
+        ctor.is_object_like()) {
+        if (const value proto = cx_->lookup_property(ctor, "prototype"); proto.is_object()) {
+            object->prototype = proto;
+        }
+    }
     object->set("message", cx_->string(std::string{message}));
     // The script's URL: "report an exception" names it, and an inline
     // script's is its document's (`source === location.href` in the
