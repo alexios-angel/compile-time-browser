@@ -944,6 +944,32 @@ void dom_bindings::install_option_reflection(context & cx) {
                         return value::undefined();
                     })));
     }
+
+    // `accessKeyLabel`, HTML 6.7.3: the ASSIGNED access key, described - ""
+    // when none was assigned. The engine assigns one only for an `accesskey`
+    // that is a single code point (as the shipping engines do: "s 0" is
+    // refused, not read as "s"), and labels it with the Alt modifier.
+    if (const value on = interface_prototype("HTMLElement"); on.is_object()) {
+        static_cast<script::object_object *>(on.as_heap())
+            ->define_accessor(
+                "accessKeyLabel",
+                value::object(cx.allocate<script::native_object>(
+                    "accessKeyLabel",
+                    [this](context & c, std::span<value>) {
+                        dom_bindings & owner = target_owner(c.current_this());
+                        const node_id id = owner.receiver(c);
+                        if (!id) { return c.string(""); }
+                        std::string key{
+                            owner.doc_->read().attribute_value(id, atoms_->intern("accesskey"))};
+                        std::size_t at = 0;
+                        if (key.empty() || ((void)decode_utf8(key, at), at != key.size())) {
+                            return c.string("");
+                        }
+                        ascii_upper_in_place(key);
+                        return c.string("Alt+" + key);
+                    })),
+                value::undefined());
+    }
 }
 
 } // namespace ctbrowser::shell
