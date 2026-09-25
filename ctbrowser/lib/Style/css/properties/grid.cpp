@@ -328,6 +328,7 @@ bool sized_run(cursor & c, size_kind kind, const grid_context & ctx, std::string
     std::optional<long long> integer;
     std::string ident;
     std::size_t words = 0;
+    std::size_t span_at = 0; // which word `span` was, from one
     while (c.i < stop && !c.done()) {
         const css_token & t = c.peek();
         ++words;
@@ -339,9 +340,12 @@ bool sized_run(cursor & c, size_kind kind, const grid_context & ctx, std::string
                 if (c.i != stop) { return std::nullopt; }
                 return "auto";
             }
+            // `span && [ <integer> || <custom-ident> ]`: the keyword first or
+            // last, never between the two it spans (`5 span`, `2 i span`).
             if (ascii_iequals(word, "span")) {
-                if (span || integer || !ident.empty()) { return std::nullopt; }
+                if (span) { return std::nullopt; }
                 span = true;
+                span_at = words;
                 ++c.i;
                 continue;
             }
@@ -384,6 +388,7 @@ bool sized_run(cursor & c, size_kind kind, const grid_context & ctx, std::string
     if (words == 0) { return std::nullopt; }
     if (span) {
         if (!integer && ident.empty()) { return std::nullopt; }
+        if (span_at != 1 && span_at != words) { return std::nullopt; }
         // A span below one is a syntax error as a literal and clamps as a
         // folded calc() (CSS Values 4 §10.10).
         if (integer && *integer < 1) {
@@ -560,6 +565,20 @@ bool match_grid(std::string_view property, const token_stream & ts, const scan &
     return true;
 }
 
+// A canonical <grid-line> that is a custom ident and nothing else - which an
+// omitted line copies (CSS Grid 2 §8.4). `--a` and `-a-` are idents; `-3` is
+// an integer.
+[[nodiscard]] bool ident_only_line(const std::string & line) {
+    if (line.empty() || line == "auto" || line.starts_with("span") ||
+        line.find(' ') != std::string::npos) {
+        return false;
+    }
+    const auto digit = [](char c) { return c >= '0' && c <= '9'; };
+    const char second = line.size() > 1 ? line[1] : ' ';
+    return !(digit(line.front()) ||
+             ((line.front() == '-' || line.front() == '+') && digit(second)));
+}
+
 bool split_grid_lines(std::string_view shorthand, std::string_view value,
                       std::vector<std::string> & out) {
     const token_stream ts = tokenize(value);
@@ -586,14 +605,10 @@ bool split_grid_lines(std::string_view shorthand, std::string_view value,
     }
     // An omitted line copies an earlier custom-ident, else `auto`
     // (CSS Grid 2 §8.4).
-    const auto is_ident_only = [](const std::string & line) {
-        return line != "auto" && !line.starts_with("span") &&
-               !(line.front() == '-' || (line.front() >= '0' && line.front() <= '9'));
-    };
     while (lines.size() < wanted) {
         const std::string & source =
             wanted == 4 && lines.size() >= 2 ? lines[lines.size() - 2] : lines.front();
-        lines.push_back(is_ident_only(source) ? source : "auto");
+        lines.push_back(ident_only_line(source) ? source : "auto");
     }
     out = std::move(lines);
     return true;
@@ -602,14 +617,10 @@ bool split_grid_lines(std::string_view shorthand, std::string_view value,
 std::string fold_grid_lines(std::span<const std::string> lines) {
     // The shortest spelling: a trailing `auto` that the expansion would
     // restore is dropped, and so is a copied custom-ident.
-    const auto is_ident_only = [](const std::string & line) {
-        return line != "auto" && !line.starts_with("span") &&
-               !(line.front() == '-' || (line.front() >= '0' && line.front() <= '9'));
-    };
     std::vector<std::string> kept(lines.begin(), lines.end());
     const auto implied = [&](std::size_t i) {
         const std::string & source = kept.size() == 4 && i >= 2 ? kept[i - 2] : kept.front();
-        return is_ident_only(source) ? source : std::string{"auto"};
+        return ident_only_line(source) ? source : std::string{"auto"};
     };
     while (kept.size() > 1 && kept.back() == implied(kept.size() - 1)) { kept.pop_back(); }
     std::string out;
