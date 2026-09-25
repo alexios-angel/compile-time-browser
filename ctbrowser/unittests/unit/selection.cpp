@@ -68,8 +68,12 @@ void test_add_range_keeps_the_callers_range() {
                   "alert(s.toString());"
                   "s.removeAllRanges();"
                   "alert(s.rangeCount);"
+                  // A CLONE IS A LIVE RANGE too, and the selection takes it
+                  // (selection/collapse-*.html add theirs that way).
+                  "var c = r.cloneRange(); s.addRange(c);"
+                  "alert(s.rangeCount + ',' + (s.getRangeAt(0) === c));"
                   "</script></body></html>"),
-             "1;true;true;1;4;Range;ell;0");
+             "1;true;true;1;4;Range;ell;0;1,true");
 }
 
 void test_collapse_and_extend_carry_the_direction() {
