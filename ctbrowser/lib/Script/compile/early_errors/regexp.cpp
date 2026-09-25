@@ -293,6 +293,12 @@ private:
         ++i_;
         quantifiable_ = true;
         if (c == 'b' || c == 'B') {
+            // In a class `\b` is BACKSPACE (a ClassEscape); `\B` is none, and
+            // with `u` no identity escape either (22.2.1: ClassEscape[+U]).
+            if (in_class_ && c == 'B' && unicode_) {
+                fail("`\\B` is not a class escape with the u flag");
+                return;
+            }
             if (!in_class_) { quantifiable_ = false; } // an assertion
             return;
         }

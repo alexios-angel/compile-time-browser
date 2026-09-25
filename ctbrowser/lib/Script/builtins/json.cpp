@@ -87,6 +87,13 @@ struct json_writer {
     explicit json_writer(context & c) : cx(c) {}
 
     context & cx;
+    // A THROW from a getter, a toJSON or a replacer is PARKED (context::call)
+    // and throw_pending sees it. The unwind count is NOT asked: a toJSON that
+    // throws and catches inside itself moves it as well, and serialising
+    // would stop at a value it had every right to finish. The one engine
+    // throw that LANDS instead - a revoked proxy's - is caught up front in
+    // serialize before anything reads it.
+    [[nodiscard]] bool threw() const { return cx.throw_pending(); }
     std::string indent;                     // 25.5.2 state.[[Indent]]
     std::string gap;                        // 25.5.2 state.[[Gap]]
     value replacer = value::undefined();    // state.[[ReplacerFunction]]
@@ -113,7 +120,20 @@ struct json_writer {
     // the string "null", and is why this returns a bool rather than a string.
     [[nodiscard]] bool serialize(value holder, const std::string & key, value v,
                                  std::string & out) {
-        if (failed) { return false; }
+        // The [[Get]] that produced `v` (the caller's) may have thrown.
+        if (failed || threw()) {
+            failed = true;
+            return false;
+        }
+        // A REVOKED PROXY throws at its first operation, which is step 2's
+        // GetV of `toJSON` - one TypeError, here, rather than one there and a
+        // second from IsArray over the handler the first consumed.
+        if (v.is_kind(heap_kind::proxy) &&
+            !static_cast<proxy_object *>(v.as_heap())->handler.is_object_like()) {
+            failed = true;
+            cx.throw_error("TypeError", "Cannot perform 'get' on a proxy that has been revoked");
+            return false;
+        }
         // Steps 2-3: an Object or a BigInt is asked for `toJSON` FIRST, before
         // the replacer sees it. A Date's ISO string comes from there.
         if (v.is_object_like() || v.is_kind(heap_kind::bigint)) {
@@ -125,13 +145,17 @@ struct json_writer {
                                          ? value::object(cx.prototype(context::proto_kind::bigint))
                                          : v,
                                      "toJSON", v);
-            if (cx.throw_pending()) {
+            if (threw()) {
                 failed = true;
                 return false;
             }
             if (to_json.is_callable()) {
                 const value args[1] = {cx.string(key)};
                 v = cx.call(to_json, args, v);
+                if (threw()) {
+                    failed = true;
+                    return false;
+                }
             }
         }
         // Step 4: the replacer is called with the HOLDER as its receiver and
@@ -140,6 +164,10 @@ struct json_writer {
         if (replacer.is_callable()) {
             const value args[2] = {cx.string(key), v};
             v = cx.call(replacer, args, holder);
+            if (threw()) {
+                failed = true;
+                return false;
+            }
         }
         // Step 4: a Number, String, Boolean or BigInt WRAPPER serialises as
         // its primitive - through ToNumber / ToString, so a user valueOf or
@@ -152,7 +180,7 @@ struct json_writer {
             } else if (slot->is_boolean() || slot->is_kind(heap_kind::bigint)) {
                 v = *slot;
             }
-            if (cx.throw_pending()) {
+            if (threw()) {
                 failed = true;
                 return false;
             }
@@ -281,7 +309,7 @@ struct json_writer {
             count = static_cast<array_object *>(v.as_heap())->items.size();
         } else {
             const double length = array_like_length(cx, v);
-            if (cx.throw_pending()) {
+            if (threw()) {
                 failed = true;
                 return false;
             }
@@ -313,11 +341,11 @@ struct json_writer {
             // EnumerableOwnProperties through the ownKeys and
             // getOwnPropertyDescriptor traps, in that order.
             for (const std::string & key : own_property_names(cx, v)) {
-                if (cx.throw_pending()) { break; }
+                if (threw()) { break; }
                 context::property_descriptor found;
                 if (cx.own_property(v, key, found) && found.enumerable) { keys.push_back(key); }
             }
-            if (cx.throw_pending()) {
+            if (threw()) {
                 failed = true;
                 stack.pop_back();
                 return false;
@@ -369,10 +397,10 @@ struct json_writer {
         // Number OBJECT (step 4.b.iii.2.c) is ToString'd, and anything else
         // contributes nothing.
         const double length = array_like_length(cx, replacer);
-        if (cx.throw_pending()) { return false; }
+        if (state.threw()) { return false; }
         for (double i = 0; i < length; ++i) {
             const value each = cx.lookup_index(replacer, value::number(i));
-            if (cx.throw_pending()) { return false; }
+            if (state.threw()) { return false; }
             std::string name;
             if (each.is_string()) {
                 name = static_cast<const string_object *>(each.as_heap())->text;
@@ -381,7 +409,7 @@ struct json_writer {
             } else if (const value * slot = primitive_slot(each);
                        slot != nullptr && (slot->is_string() || slot->is_number())) {
                 name = cx.to_string(each);
-                if (cx.throw_pending()) { return false; }
+                if (state.threw()) { return false; }
             } else {
                 continue;
             }
@@ -400,7 +428,7 @@ struct json_writer {
         } else if (slot->is_string()) {
             space = cx.string(cx.to_string(space));
         }
-        if (cx.throw_pending()) { return false; }
+        if (state.threw()) { return false; }
     }
     // TEN IS THE CEILING for both forms (steps 7 and 8), and a number is
     // ToIntegerOrInfinity'd rather than rounded: `JSON.stringify(o, null, 1.9)`
@@ -564,14 +592,21 @@ value materialize_recorded(context & cx, const json_value & node, std::string_vi
 // is how one filters, and is why this cannot be a plain map. Undefined with a
 // throw pending is an abrupt completion.
 value internalize_json(context & cx, value holder, const std::string & key, value reviver,
-                       std::uint32_t depth, const parse_record * record) {
+                       std::uint32_t depth, const parse_record * record, bool & failed) {
     // The recursion follows the parsed document's shape, so it is bounded by
     // nesting - but a reviver may graft an object onto itself and this walk
     // would then never end. The ceiling is the VM's own for the same reason the
     // VM has one.
     if (depth > context::reentry_ceiling) { return value::undefined(); }
+    // A THROW STOPS THE WALK. A getter's, a trap's or the reviver's is
+    // PARKED (context::call) and throw_pending sees it; the engine's own -
+    // IsArray of a revoked proxy the reviver grafted in - LANDS instead, and
+    // `failed` carries it up, so the walk stops there rather than deleting
+    // the child and calling the reviver again. (The unwind count is no
+    // signal: a reviver that throws and catches inside itself moves it.)
+    const auto threw = [&] { return failed || cx.throw_pending(); };
     const value held = cx.lookup_property(holder, key); // step 1: Get(holder, name)
-    if (cx.throw_pending()) { return value::undefined(); }
+    if (threw()) { return value::undefined(); }
     const context::rooted keep_held{cx, held};
     // The parse record still describes this value only while the value is
     // the one parsed (SameValue): a reviver that replaced it forward
@@ -583,8 +618,8 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
         // trap's) propagates but a REFUSAL is ignored: a reviver that made
         // the property non-configurable first simply leaves it in place.
         const auto revive_child = [&](const std::string & k, const parse_record * child) {
-            const value revived = internalize_json(cx, held, k, reviver, depth + 1, child);
-            if (cx.throw_pending()) { return false; }
+            const value revived = internalize_json(cx, held, k, reviver, depth + 1, child, failed);
+            if (threw()) { return false; }
             if (revived.is_undefined()) {
                 (void)cx.delete_own_property(held, k);
             } else {
@@ -596,13 +631,16 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
                 wanted.writable = wanted.enumerable = wanted.configurable = true;
                 (void)cx.define_own_property(held, k, wanted);
             }
-            return !cx.throw_pending();
+            return !threw();
         };
         bool is_array = false;
-        if (!is_array_value(cx, held, is_array)) { return value::undefined(); }
+        if (!is_array_value(cx, held, is_array)) {
+            failed = true;
+            return value::undefined();
+        }
         if (is_array) {
             const double len = array_like_length(cx, held);
-            if (cx.throw_pending() || !generic_walk_ok(cx, len)) { return value::undefined(); }
+            if (threw() || !generic_walk_ok(cx, len)) { return value::undefined(); }
             for (double i = 0; i < len; i += 1.0) {
                 const auto at = static_cast<std::size_t>(i);
                 const parse_record * child =
@@ -610,17 +648,21 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
                 if (!revive_child(number_to_string(i), child)) { return value::undefined(); }
             }
         } else {
-            // EnumerableOwnProperties: the key list is taken BEFORE the walk
-            // (step 2.c.i takes OwnPropertyKeys once) - a property the reviver
-            // adds is not visited - and each is re-checked for being there and
-            // enumerable as its turn comes.
-            const std::vector<std::string> keys = own_property_names(cx, held, key_filter::strings);
-            if (cx.throw_pending()) { return value::undefined(); }
-            for (const std::string & each : keys) {
+            // EnumerableOwnProperties (step 2.c.i), ONCE, before the walk:
+            // OwnPropertyKeys and each key's [[GetOwnProperty]] now, so a
+            // property the reviver adds is not visited - and one it DELETES
+            // still is, its [[Get]] reading whatever the chain holds, which
+            // the reviver may then define back (reviver-object-get-prop-from-
+            // prototype).
+            std::vector<std::string> keys;
+            for (std::string & each : own_property_names(cx, held, key_filter::strings)) {
                 context::property_descriptor found;
                 const bool present = cx.own_property(held, each, found);
-                if (cx.throw_pending()) { return value::undefined(); }
-                if (!present || !found.enumerable) { continue; }
+                if (threw()) { return value::undefined(); }
+                if (present && found.enumerable) { keys.push_back(std::move(each)); }
+            }
+            if (threw()) { return value::undefined(); }
+            for (const std::string & each : keys) {
                 const parse_record * child = nullptr;
                 if (recorded) {
                     for (const parse_entry & e : record->entries) {
@@ -711,7 +753,8 @@ void install_json(context & cx) {
         const value wrapper = c.make_object();
         const context::rooted keep_wrapper{c, wrapper};
         static_cast<object_object *>(wrapper.as_heap())->set("", out);
-        return detail::internalize_json(c, wrapper, "", reviver, 0, &root);
+        bool failed = false;
+        return detail::internalize_json(c, wrapper, "", reviver, 0, &root, failed);
     });
     // 25.5.3 JSON.rawJSON / 25.5.2 JSON.isRawJSON (ES2025): a frozen,
     // null-prototype object whose `rawJSON` is the text, serialised verbatim

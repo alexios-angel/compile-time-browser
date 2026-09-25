@@ -530,6 +530,11 @@ void install_regexp(context & cx) {
         if (watch.threw()) { return value::undefined(); }
         return builtin_exec(c, cache, self, subject);
     });
+    // %RegExp.prototype.exec% by a name no page can reach or replace: what
+    // RegExpExec falls back to (22.2.7.1 step 4) when a page has set `exec`
+    // to something that is not callable. The `:` marks it engine data, as
+    // Object.prototype's intrinsic toString does.
+    regexp_proto->define("@#IntrinsicRegExpExec:", *regexp_proto->find("exec"), attr_none);
     // 22.2.6.16: `test` is RegExpExec, so a subclass's `exec` is what it asks.
     method(cx, regexp_proto, "test", 1, [](context & c, std::span<value> a) -> value {
         const value self = c.current_this();
@@ -647,45 +652,54 @@ void install_regexp(context & cx) {
     }
     method(cx, iterator_proto, "next", 0, regexp_string_iterator_next);
     iterator_proto->define("@@toStringTag", cx.string("RegExp String Iterator"), attr_configurable);
-    symbol_method("@@matchAll", "[Symbol.matchAll]", 1,
-                  [iterator_proto](context & c, std::span<value> a) -> value {
-                      const value rx = c.current_this();
-                      if (!object_this(c, rx, "RegExp.prototype[Symbol.matchAll]")) {
-                          return value::undefined();
-                      }
-                      if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }
-                      const detail::unwind_watch watch{c};
-                      const value subject = c.string(c.to_string(arg_at(a, 0)));
-                      if (watch.threw()) { return value::undefined(); }
-                      const context::rooted keep{c, subject};
-                      const value ctor = species_constructor(c, rx, c.global("RegExp"));
-                      if (ctor.is_undefined()) { return value::undefined(); }
-                      std::string flags;
-                      if (!read_flags(c, rx, flags)) { return value::undefined(); }
-                      const value flags_value = c.string(flags);
-                      const context::rooted keep_flags{c, flags_value};
-                      const value args[2] = {rx, flags_value};
-                      const value matcher = c.construct(ctor, args);
-                      if (watch.threw()) { return value::undefined(); }
-                      const context::rooted keep_matcher{c, matcher};
-                      double last = 0;
-                      if (!get_last_index(c, rx, last) || !set_last_index(c, matcher, last)) {
-                          return value::undefined();
-                      }
-                      value made = c.make_object();
-                      auto * it = static_cast<object_object *>(made.as_heap());
-                      it->prototype = value::object(iterator_proto);
-                      it->define("@#IteratingRegExp", matcher, attr_none);
-                      it->define("@#IteratedString", subject, attr_none);
-                      it->define("@#Global", value::boolean(flags.find('g') != std::string::npos),
-                                 attr_none);
-                      it->define("@#FullUnicode",
-                                 value::boolean(flags.find('u') != std::string::npos ||
-                                                flags.find('v') != std::string::npos),
-                                 attr_none);
-                      it->define("@#Done", value::boolean(false), attr_none);
-                      return made;
-                  });
+    symbol_method(
+        "@@matchAll", "[Symbol.matchAll]", 1,
+        [iterator_proto](context & c, std::span<value> a) -> value {
+            const value rx = c.current_this();
+            if (!object_this(c, rx, "RegExp.prototype[Symbol.matchAll]")) {
+                return value::undefined();
+            }
+            if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }
+            const detail::unwind_watch watch{c};
+            const value subject = c.string(c.to_string(arg_at(a, 0)));
+            if (watch.threw()) { return value::undefined(); }
+            const context::rooted keep{c, subject};
+            const value ctor = species_constructor(c, rx, c.global("RegExp"));
+            if (ctor.is_undefined()) { return value::undefined(); }
+            std::string flags;
+            if (!read_flags(c, rx, flags)) { return value::undefined(); }
+            const value flags_value = c.string(flags);
+            const context::rooted keep_flags{c, flags_value};
+            const value args[2] = {rx, flags_value};
+            const value matcher = c.construct(ctor, args);
+            if (watch.threw()) { return value::undefined(); }
+            const context::rooted keep_matcher{c, matcher};
+            double last = 0;
+            if (!get_last_index(c, rx, last) || !set_last_index(c, matcher, last)) {
+                return value::undefined();
+            }
+            // %RegExpStringIteratorPrototype%.[[Prototype]] is
+            // %IteratorPrototype% (22.2.9.2) - found now, at first
+            // use, because Iterator installs after RegExp does.
+            if (!iterator_proto->prototype.is_object()) {
+                if (const value iterator = c.global("Iterator"); iterator.is_object_like()) {
+                    const value base = c.lookup_property(iterator, "prototype");
+                    if (base.is_object()) { iterator_proto->prototype = base; }
+                }
+            }
+            value made = c.make_object();
+            auto * it = static_cast<object_object *>(made.as_heap());
+            it->prototype = value::object(iterator_proto);
+            it->define("@#IteratingRegExp", matcher, attr_none);
+            it->define("@#IteratedString", subject, attr_none);
+            it->define("@#Global", value::boolean(flags.find('g') != std::string::npos), attr_none);
+            it->define("@#FullUnicode",
+                       value::boolean(flags.find('u') != std::string::npos ||
+                                      flags.find('v') != std::string::npos),
+                       attr_none);
+            it->define("@#Done", value::boolean(false), attr_none);
+            return made;
+        });
     method(cx, iterator_proto, "@@iterator", 0,
            [](context & c, std::span<value>) { return c.current_this(); });
 

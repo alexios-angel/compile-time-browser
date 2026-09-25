@@ -239,7 +239,11 @@ namespace {
 [[nodiscard]] bool symbol_dispatch(context & cx, value target, const char * symbol,
                                    std::span<value> a, value & out) {
     out = value::undefined();
-    if (target.is_nullish()) { return false; }
+    // AN OBJECT ONLY: step 2 is "if regexp is an Object", so a primitive's
+    // prototype is never asked - a getter on Number.prototype[@@match] does
+    // not run for `"a1b".match(1)` (the cstm-*-on-*-primitive files), now
+    // that a primitive's [[Get]] does reach its prototype's accessors.
+    if (!target.is_object_like()) { return false; }
     const value method = cx.lookup_property(target, symbol);
     if (cx.throw_pending()) { return true; }
     if (method.is_nullish()) { return false; }
@@ -569,7 +573,11 @@ void install_string(context & cx) {
         return value::boolean(std::string_view{s}.substr(0, stop).ends_with(needle));
     });
     text("slice", 2, [](context & c, const std::string & s, std::span<value> a) -> value {
+        // Each ToIntegerOrInfinity is `?`: a throw from the first ends the
+        // method before the second argument is coerced (its valueOf unrun).
+        const detail::unwind_watch watch{c};
         const std::size_t from = clamp_index(integer_arg(c, a, 0), s.size());
+        if (watch.threw()) { return value::undefined(); }
         // has_index: `slice(1, undefined)` ends at the LENGTH, not at 0.
         const std::size_t to =
             has_index(a, 1) ? clamp_index(integer_arg(c, a, 1), s.size()) : s.size();
@@ -581,7 +589,9 @@ void install_string(context & cx) {
         // exist - and it SWAPS its arguments if they are backwards. has_index
         // so an explicit `undefined` end still means "to the end" rather than
         // zero.
+        const detail::unwind_watch watch{c};
         std::size_t from = static_cast<std::size_t>(std::max(0.0, integer_arg(c, a, 0)));
+        if (watch.threw()) { return value::undefined(); }
         std::size_t to = has_index(a, 1)
                              ? static_cast<std::size_t>(std::max(0.0, integer_arg(c, a, 1)))
                              : s.size();
@@ -602,7 +612,9 @@ void install_string(context & cx) {
         //
         // integer_arg rather than num_at, for the reason `at` above needed it:
         // a NaN start reached `static_cast<std::size_t>` and the engine hung.
+        const detail::unwind_watch watch{c};
         const double raw = integer_arg(c, a, 0);
+        if (watch.threw()) { return value::undefined(); } // the length is not coerced
         const auto size = static_cast<double>(s.size());
         const double start = raw < 0 ? std::max(size + raw, 0.0) : std::min(raw, size);
         const auto from = static_cast<std::size_t>(start);
@@ -765,20 +777,15 @@ void install_string(context & cx) {
         [replace_string](context & c, const std::string & s, std::span<value> a) -> value {
             return replace_string(c, s, a, true);
         });
-    // ASCII-ONLY, on purpose and for the whole family: core/algorithms.hpp
-    // folds A-Z and nothing else so that a rendered page cannot depend on the
-    // host's locale or Unicode tables. `"Straße".toUpperCase()` is
-    // "STRAßE" here and "STRASSE" in V8, which unittests/js/string_basics
-    // asserts rather than leaves to be discovered.
+    // UNICODE'S DEFAULT CASE CONVERSION, from a table generated off the pinned
+    // Unicode release (case_mapping.cpp says why that is not the host
+    // dependence the ASCII-only fold was avoiding): `"Straße".toUpperCase()`
+    // is "STRASSE" and a final Σ lowercases to ς, as in every browser.
     text("toUpperCase", 0, [](context & c, const std::string & s, std::span<value>) -> value {
-        std::string out = s;
-        ascii_upper_in_place(out);
-        return c.string(out);
+        return c.string(unicode_case(s, true));
     });
     text("toLowerCase", 0, [](context & c, const std::string & s, std::span<value>) -> value {
-        std::string out = s;
-        ascii_lower_in_place(out);
-        return c.string(out);
+        return c.string(unicode_case(s, false));
     });
     text("trim", 0, [](context & c, const std::string & s, std::span<value>) -> value {
         std::size_t from = 0;
@@ -908,23 +915,18 @@ void install_string(context & cx) {
                  return c.string(out);
              });
     }
-    // THE SAME ASCII FOLD as toUpperCase, deliberately. This was `std::toupper`,
+    // THE SAME CONVERSION as toUpperCase, deliberately. This was `std::toupper`,
     // which reads the GLOBAL C LOCALE: what it does to a byte above 0x7F is
     // implementation- and locale-defined, so `toLocaleUpperCase` and
     // `toUpperCase` could disagree about the same string depending on `LC_ALL` -
-    // exactly the host dependence core/algorithms.hpp exists to prevent, and it
-    // would have shown up as a golden that renders differently on two machines.
-    // A real locale fold needs tables this engine does not carry; saying so is
-    // better than a fold that varies.
+    // exactly the host dependence core/algorithms.hpp exists to prevent. With
+    // no ECMA-402 there is no locale to tailor for (Turkish dotless i), and
+    // 22.1.3.26 lets the locale forms answer the default.
     text("toLocaleUpperCase", 0, [](context & c, const std::string & s, std::span<value>) -> value {
-        std::string out = s;
-        ascii_upper_in_place(out);
-        return c.string(out);
+        return c.string(unicode_case(s, true));
     });
     text("toLocaleLowerCase", 0, [](context & c, const std::string & s, std::span<value>) -> value {
-        std::string out = s;
-        ascii_lower_in_place(out);
-        return c.string(out);
+        return c.string(unicode_case(s, false));
     });
     text("concat", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
         const std::string before = c.current_stack();

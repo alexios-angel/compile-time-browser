@@ -18,6 +18,12 @@ void install_function(context & cx) {
     using detail::method;
     using detail::new_table;
     object_object * function_proto = new_table(cx);
+    // 20.2.3: Function.prototype is itself a built-in function of `length` 0
+    // and `name` "", both { false, false, true } and `length` first (10.2.9's
+    // order) - so a function whose own `length` or `name` was deleted reads
+    // these rather than undefined.
+    function_proto->define("length", value::number(0), attr_configurable);
+    function_proto->define("name", cx.string(""), attr_configurable);
 
     // IsCallable(this) IS STEP 1 of all three (20.2.3.1/20.2.3.3/20.2.3.2), and
     // all three answered `undefined` instead - so `({}).call()` reached through
@@ -60,10 +66,13 @@ void install_function(context & cx) {
                // anything else that is not an object is a TypeError (step 2).
                const value list = arg_at(a, 1);
                std::vector<value> args;
-               if (list.is_array()) {
+               if (list.is_array() &&
+                   static_cast<array_object *>(list.as_heap())->elements == element_kind::none) {
                    // A REAL ARRAY IS ITS ELEMENTS, unchanged: `items` is already the
                    // list and its size is bounded by what was actually allocated, so
-                   // `Math.max.apply(null, twoHundredThousand)` keeps working.
+                   // `Math.max.apply(null, twoHundredThousand)` keeps working. NOT a
+                   // typed array, whose elements are bytes in a buffer (a view's
+                   // `items` is empty): that one is read index by index below.
                    args = static_cast<array_object *>(list.as_heap())->items;
                } else if (!list.is_undefined() && !list.is_null()) {
                    if (!list.is_object_like()) {
@@ -91,6 +100,10 @@ void install_function(context & cx) {
            });
     method(cx, function_proto, "bind", 1,
            [this_function, bind_this](context & c, std::span<value> a) {
+               // A getter on the target's `length` or `name`, or a proxy's
+               // getPrototypeOf trap, may throw - and a throw that has landed
+               // is not pending (context::unwinds).
+               const detail::unwind_watch watch{c};
                const value self = this_function(c, "bind");
                if (!self.is_callable()) { return value::undefined(); }
                const value receiver = bind_this(c, self, arg_at(a, 0));
@@ -98,7 +111,7 @@ void install_function(context & cx) {
                // runs here and may throw; the bound function's [[Prototype]] is
                // the target's, not Function.prototype's.
                const value proto = detail::prototype_of(c, self);
-               if (c.throw_pending()) { return value::undefined(); }
+               if (watch.threw()) { return value::undefined(); }
                // The arguments bound NOW are prepended to the ones supplied later,
                // which is what makes `f.bind(o, 1)` a partial application rather than
                // just a receiver change.
@@ -152,7 +165,7 @@ void install_function(context & cx) {
                double left = 0.0;
                if (c.has_own_property(self, "length")) {
                    const value target_length = c.lookup_property(self, "length");
-                   if (c.throw_pending()) { return value::undefined(); }
+                   if (watch.threw()) { return value::undefined(); }
                    if (target_length.is_number()) {
                        // Step 7.b: +Infinity stays, -Infinity is 0, else
                        // ToIntegerOrInfinity less the bound count - not ToLength,
@@ -167,7 +180,7 @@ void install_function(context & cx) {
                }
                fn->define("length", value::number(std::max(0.0, left)), attr_configurable);
                const value target_name = c.lookup_property(self, "name");
-               if (c.throw_pending()) { return value::undefined(); }
+               if (watch.threw()) { return value::undefined(); }
                fn->define("name",
                           c.string("bound " + (target_name.is_string() ? c.to_string(target_name)
                                                                        : std::string{})),
@@ -468,8 +481,9 @@ void install_dynamic_function(context & cx) {
     // same table lookup already walks - so a page that adds to it is seen by
     // every function, which is what a page doing that expects.
     if (object_object * table = cx.prototype(context::proto_kind::function)) {
+        // { false, false, false } (20.2.2.2), as every constructor's is.
         static_cast<native_object *>(cx.global("Function").as_heap())
-            ->set("prototype", value::object(table));
+            ->define("prototype", value::object(table), attr_none);
         link_constructor(cx, table, "Function", 1, cx.global("Function"));
     }
     // %GeneratorFunction% (27.3), %AsyncGeneratorFunction% (27.4) and

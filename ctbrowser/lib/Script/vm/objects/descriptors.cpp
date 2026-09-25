@@ -53,7 +53,8 @@ bool array_set_length(array_object & arr, double n) {
             return false;
         }
     }
-    return arr.set_js_length(n);
+    // Growing makes holes, not elements (steps 17-18 delete; nothing adds).
+    return arr.set_js_length_with_holes(n);
 }
 
 namespace {
@@ -68,7 +69,9 @@ namespace {
     if (static_cast<std::size_t>(at) + 1 - arr.items.size() > array_object::dense_limit) {
         return true; // the caller records it sparse
     }
+    const std::size_t before = arr.items.size();
     arr.items.resize(static_cast<std::size_t>(at) + 1, value::undefined());
+    arr.add_holes(before, at); // what it jumps over is not elements
     return true;
 }
 
@@ -470,29 +473,34 @@ bool context::delete_own_property(value target, const std::string & name) {
     // is the one a page reaches for - the DOMStringMap's handler removes the
     // attribute, which no delete on its target could do.
     if (target.is_kind(heap_kind::proxy)) {
+        // A THROW ANSWERS TRUE, as in define_own_property below: a strict
+        // `delete` turns false into a TypeError of its own, and one throw -
+        // a revoked handler, a trap that is not callable, a trap that threw -
+        // must not become two over the handler the first one consumed.
         auto * p = static_cast<proxy_object *>(target.as_heap());
         bool failed = false;
         const value trap = proxy_trap(target, "deleteProperty", &failed);
-        if (failed || throw_pending()) { return false; }
+        if (failed || throw_pending()) { return true; }
         if (!trap.is_callable()) { return delete_own_property(p->target, name); }
         const value args[2] = {p->target, key_value(name)};
         const std::size_t before = unwinds();
-        if (!truthy(call(trap, args, p->handler))) { return false; }
-        if (throw_pending() || unwinds() != before) { return false; }
+        const bool answered = truthy(call(trap, args, p->handler));
+        if (throw_pending() || unwinds() != before) { return true; }
+        if (!answered) { return false; }
         // Steps 9-13: `true` may not claim a non-configurable property went,
         // nor that any property of a non-extensible target did.
         property_descriptor held;
-        if (!own_property(p->target, name, held)) { return true; }
-        if (throw_pending() || unwinds() != before) { return false; }
+        const bool target_has = own_property(p->target, name, held);
+        if (throw_pending() || unwinds() != before) { return true; }
+        if (!target_has) { return true; }
         const bool extensible = held.configurable && is_extensible(p->target);
-        if (throw_pending() || unwinds() != before) { return false; }
+        if (throw_pending() || unwinds() != before) { return true; }
         if (!extensible) {
             throw_error("TypeError", "'deleteProperty' on proxy: trap returned truish for "
                                      "property '" +
                                          name +
                                          "' which is non-configurable in the proxy target, "
                                          "or the target is non-extensible");
-            return false;
         }
         return true;
     }
@@ -535,6 +543,10 @@ bool context::delete_own_property(value target, const std::string & name) {
             return true;
         }
         if ((closure->attrs_of(name) & attr_configurable) == 0) { return false; }
+        // A REDEFINED `length` or `name` lives in the table, and deleting it
+        // must not uncover the synthesised one underneath.
+        if (name == "name") { closure->name_erased = true; }
+        if (name == "length") { closure->length_erased = true; }
         return closure->erase(name);
     }
     if (target.is_array()) {
@@ -593,7 +605,9 @@ bool context::define_own_property(value target, const std::string & name,
         auto * p = static_cast<proxy_object *>(target.as_heap());
         bool failed = false;
         const value trap = proxy_trap(target, "defineProperty", &failed);
-        if (failed || throw_pending()) { return false; }
+        // A revoked handler or a trap that is not callable has thrown: true,
+        // as for a trap that throws below.
+        if (failed || throw_pending()) { return true; }
         if (!trap.is_callable()) { return define_own_property(p->target, name, wanted); }
         const value args[3] = {p->target, key_value(name), from_property_descriptor(wanted)};
         const std::size_t before = unwinds();

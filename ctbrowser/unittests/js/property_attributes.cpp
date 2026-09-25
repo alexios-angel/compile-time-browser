@@ -714,9 +714,12 @@ int main() {
     js_expect("Object.prototype.toString.call(null)", "[object Null]");
     js_expect("Object.prototype.toString.call([])", "[object Array]");
     js_expect("Object.prototype.toString.call(function () {})", "[object Function]");
-    // [[ErrorData]] and [[RegExpMatcher]] are slots this engine does not have,
-    // so both are answered from the prototype chain instead.
+    // [[ErrorData]] is the private slot the constructors record, so an error
+    // is one and its prototype is not; [[RegExpMatcher]] is a slot this engine
+    // does not have, so a regular expression is answered from its chain.
     js_expect("Object.prototype.toString.call(new TypeError())", "[object Error]");
+    js_expect("Object.prototype.toString.call(TypeError.prototype)", "[object Object]");
+    js_expect("Object.prototype.toString.call(Object.create(Error.prototype))", "[object Object]");
     js_expect("Object.prototype.toString.call(/x/)", "[object RegExp]");
     // 20.1.3.6 step 15: a STRING @@toStringTag replaces the built-in tag, and
     // anything else is ignored rather than stringified.

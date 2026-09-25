@@ -138,7 +138,8 @@ void install_symbol(context & cx) {
     const value registry = cx.make_array();
     auto * symbol_for =
         cx.allocate<native_object>("for", [keys, registry](context & c, std::span<value> a) {
-            const std::string d = str_at(c, a, 0);
+            // ToString(key): a missing key is undefined, so "undefined".
+            const std::string d = a.empty() ? std::string{"undefined"} : str_at(c, a, 0);
             if (c.throw_pending()) { return value::undefined(); }
             auto * held = static_cast<array_object *>(registry.as_heap());
             for (std::size_t i = 0; i < keys->size() && i < held->items.size(); ++i) {

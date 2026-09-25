@@ -188,6 +188,33 @@ void test_substitution_limits() {
                   "17");
 }
 
+// The pieces of the grammar the matcher read as something else: `\cX`, a
+// class's `[\b]`, a quantifier bound past int32, and the RepeatMatcher rule
+// that an iteration matching nothing fails once the minimum is met.
+void test_escapes_and_repetition() {
+    expect_result("return /\\cJ/.test('\\n') + ',' + /[\\cJ]/.test('\\n');", "true,true");
+    expect_result("return /\\c1/.test('\\\\c1');", "true");
+    expect_result("return /[\\b]/.test('\\b') + ',' + /[\\b]/.test('b');", "true,false");
+    // Annex B's legacy octal escape in a class: [\12-\14] is U+000A-U+000C.
+    expect_result("return /[\\12-\\14]/.test('\\x0b') + ',' + /[\\12-\\14]/.test('1');",
+                  "true,false");
+    expect_result("return /(a?b?" /* not a trigraph */ "?)*/.exec('ab')[0];", "ab");
+    expect_result("return String('abc'.match(/(?:(?=(abc)))?a/)[1]);", "undefined");
+    expect_result("return 'abc'.match(/(?:(?=(abc))){1,1}a/)[1];", "abc");
+    expect_result("return new RegExp('b{' + Number.MAX_SAFE_INTEGER + '}').test('b');", "false");
+    // A lookbehind is matched RIGHT TO LEFT: greedy nearest the position,
+    // and the captures that reading gives.
+    expect_result("return /(?<=(\\d+)(\\d+))$/.exec('1053').slice(1).join();", "1,053");
+    expect_result("return /(?<=\\$\\d+\\.)\\d+/.exec('cost $10.53')[0];", "53");
+    expect_result("return /(?<!abc)\\w\\w\\w/.exec('abcdef')[0];", "abc");
+    expect_result("return /(?<=(b+))c/.exec('abbbbbbc')[1];", "bbbbbb");
+    // An exec() result's index, input and groups are OWN data properties.
+    expect_result(
+        "const m = /(?<x>a)/.exec('a'); delete m.input;"
+        "return m.hasOwnProperty('groups') + ',' + Object.keys(m).join() + ',' + m.input;",
+        "true,0,1,index,groups,undefined");
+}
+
 // Annex B's legacy RegExp features: the static accessors RegExpBuiltinExec
 // updates, refused for any receiver but %RegExp% and emptied by a subclass
 // instance's match; compile refuses a subclass instance.
@@ -223,5 +250,6 @@ int main() {
     test_exec();
     test_symbol_methods();
     test_substitution_limits();
+    test_escapes_and_repetition();
     REPORT("regexp_model");
 }

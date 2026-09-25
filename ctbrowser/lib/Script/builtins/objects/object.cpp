@@ -62,22 +62,33 @@ namespace {
     std::vector<std::pair<std::string, context::property_descriptor>> wanted;
     for (const std::string & key : own_property_names(cx, from, key_filter::all)) {
         context::property_descriptor found;
-        if (!cx.own_property(from, key, found) || !found.enumerable) { continue; }
+        const bool own = cx.own_property(from, key, found);
+        if (cx.throw_pending()) { return false; } // a getOwnPropertyDescriptor trap threw
+        if (!own || !found.enumerable) { continue; }
         // An own DATA property's [[Get]] is its value; only an accessor has to
         // be called. Reading every key back by NAME would have missed an
         // array's elements, whose values do not come out of lookup_property -
         // `Object.defineProperties(o, [{value: 1}])` is legal and defines "0".
-        const value descriptor = found.is_accessor() ? cx.lookup_property(from, key) : found.held;
+        // A PROXY's [[Get]] is its `get` trap, asked after the descriptor
+        // (20.1.2.3.1 steps 3.b.ii-iii), whatever the descriptor said.
+        const value descriptor = found.is_accessor() || from.is_kind(heap_kind::proxy)
+                                     ? cx.lookup_property(from, key)
+                                     : found.held;
+        if (cx.throw_pending()) { return false; }
         if (!descriptor.is_object_like()) {
             cx.throw_error("TypeError", "Property description must be an object");
             return false;
         }
         const context::property_descriptor read = cx.to_property_descriptor(descriptor);
-        if (!valid_descriptor(cx, read)) { return false; }
+        if (cx.throw_pending() || !valid_descriptor(cx, read)) { return false; }
         wanted.emplace_back(key, read);
     }
+    // A trap that throws answers true, and the walk stops there.
+    const std::size_t before = cx.unwinds();
     for (const auto & [key, descriptor] : wanted) {
-        if (!cx.define_own_property(target, key, descriptor)) {
+        const bool defined = cx.define_own_property(target, key, descriptor);
+        if (cx.throw_pending() || cx.unwinds() != before) { return false; }
+        if (!defined) {
             cx.throw_error("TypeError", "Cannot redefine property: " + key);
             return false;
         }
@@ -100,7 +111,7 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
     if (of.is_array()) {
         auto * arr = static_cast<array_object *>(of.as_heap());
         for (std::size_t i = 0; i < arr->length(); ++i) {
-            if (!arr->element_attrs.empty()) {
+            if (!arr->element_attrs.empty() || arr->has_hole_run()) {
                 const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
                 if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
             }
@@ -374,24 +385,26 @@ void install_object(context & cx) {
             tag = "Number";
         } else if (self.is_boolean()) {
             tag = "Boolean";
-        } else if (self.is_kind(heap_kind::symbol)) {
-            tag = "Symbol";
         } else if (value * slot = primitive_slot(self); slot != nullptr) {
             // A WRAPPER answers for what it wraps (20.1.3.6 steps 6-11); a
-            // Symbol or BigInt wrapper reaches its @@toStringTag below.
+            // Symbol or BigInt wrapper reaches its @@toStringTag below - as
+            // a Symbol itself does: it has no builtin tag (step 14 leaves it
+            // "Object"), only Symbol.prototype's, which a page may delete.
             tag = slot->is_number()    ? "Number"
                   : slot->is_string()  ? "String"
                   : slot->is_boolean() ? "Boolean"
                                        : "Object";
-            // [[ErrorData]] and [[RegExpMatcher]] are slots this engine does not
-            // have: an error and a regular expression are both ordinary objects
-            // here, distinguishable only by the prototype they were built on.
-            // That is exact for everything the constructors make, and it also
-            // answers "Error" for `Object.create(TypeError.prototype)`, which a
-            // real slot would not. The alternative is a marker property, which
-            // a page could see.
-        } else if (inherits_from(c, self, c.prototype(context::proto_kind::error))) {
+        } else if (self.is_object() &&
+                   static_cast<object_object *>(self.as_heap())->find("@#ErrorData") != nullptr) {
+            // [[ErrorData]] is the private slot every error constructor and
+            // the engine's own throws record (errors.cpp; Error.isError asks
+            // the same), so `EvalError.prototype` and
+            // `Object.create(TypeError.prototype)` - ordinary objects - are
+            // "[object Object]" as step 14 has them.
             tag = "Error";
+            // [[RegExpMatcher]] is a slot this engine does not have: a regular
+            // expression is an ordinary object here, distinguishable only by
+            // the prototype it was built on.
         } else if (inherits_from(c, self, c.prototype(context::proto_kind::regexp))) {
             tag = "RegExp";
         } else if (self.is_object() && static_cast<object_object *>(self.as_heap())->find("__ms")) {
@@ -585,11 +598,21 @@ void install_object(context & cx) {
         // object, and a primitive is BOXED (ToObject) - see
         // detail::wrap_primitive.
         const value v = arg_at(a, 0);
-        if (v.is_object_like()) { return v; }
         // 20.1.1.1 step 1: under `new` from a subclass (`class O extends
-        // Object`, reached through super()) the instance [[Construct]] made
-        // from NewTarget IS the answer; a plain `new Object()` or a call
-        // makes a fresh one, which the instance also is.
+        // Object`, reached through super(), or Reflect.construct with a
+        // NewTarget) the instance [[Construct]] made from NewTarget IS the
+        // answer, WHATEVER the argument - `new O({a: 1}).a` is undefined.
+        const value self = c.current_this();
+        if (detail::constructing_this(self)) {
+            const value proto = static_cast<object_object *>(self.as_heap())->prototype;
+            if (proto.is_object_like() &&
+                proto.as_heap() != c.prototype(context::proto_kind::object)) {
+                return self;
+            }
+        }
+        if (v.is_object_like()) { return v; }
+        // A plain `new Object()` or a call makes a fresh one, which the
+        // instance also is.
         if (v.is_nullish()) {
             return detail::constructing_this(c.current_this()) ? c.current_this() : c.make_object();
         }
@@ -806,9 +829,16 @@ void install_object(context & cx) {
         const context::rooted keep_iterator{c, iterator};
         const value next = c.lookup_property(iterator, "next");
         if (c.throw_pending()) { return value::undefined(); }
+        // IteratorClose (7.4.11) with a THROW completion: `return` is called
+        // and whatever it does is dropped for the throw already in hand.
+        // FENCED, because a getter's or a toString's throw is parked by then
+        // and context::call runs nothing while one is.
         const auto close = [&] {
             const value ret = c.lookup_property(iterator, "return");
-            if (ret.is_callable()) { (void)c.call(ret, std::span<const value>{}, iterator); }
+            if (!ret.is_callable()) { return; }
+            bool threw = false;
+            value ignored = value::undefined();
+            (void)c.call_fenced(ret, std::span<const value>{}, iterator, threw, ignored);
         };
         for (;;) {
             bool done = false;
@@ -926,12 +956,13 @@ void install_object(context & cx) {
         return out;
     });
     method(cx, object_ctor, "assign", 2, [](context & c, std::span<value> a) {
-        const value target = arg_at(a, 0);
-        // 20.1.2.1 step 1 is ToObject(target), so null and undefined throw. A
-        // primitive target is returned as itself here: there is no wrapper to
-        // hand back and the writes have nowhere to land.
-        if (!object_coercible(c, target, "Object.assign")) { return value::undefined(); }
-        if (!target.is_object_like()) { return detail::box_primitive(c, target); }
+        // 20.1.2.1 step 1 is ToObject(target), so null and undefined throw and
+        // a primitive is BOXED: `Object.assign(12, "ab")` is a Number wrapper
+        // with the two characters on it, and a String wrapper's read-only
+        // indices refuse a source's with the TypeError Set(..., true) owes.
+        if (!object_coercible(c, arg_at(a, 0), "Object.assign")) { return value::undefined(); }
+        const value target = detail::box_primitive(c, arg_at(a, 0));
+        const context::rooted keep_target{c, target};
         for (std::size_t i = 1; i < a.size(); ++i) {
             // Step 4.a: a null or undefined source is SKIPPED rather than an
             // error, which is what makes `Object.assign({}, maybe)` idiomatic.

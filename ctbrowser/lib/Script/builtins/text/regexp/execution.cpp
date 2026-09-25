@@ -41,26 +41,45 @@ namespace regexp_detail {
 // EscapeRegExpPattern, 22.2.6.13.1: what `source` reads back so that
 // `new RegExp(re.source)` and `eval("/" + re.source + "/")` both mean the
 // same pattern again. The empty pattern is "(?:)", a bare `/` is escaped and
-// a line terminator is spelled as its escape.
+// a line terminator - LF, CR, U+2028 and U+2029, none of which a literal may
+// hold - is spelled as its escape. One ALREADY escaped (`RegExp("\\\n")`, a
+// backslash then an LF) keeps its backslash and takes only the letter, so the
+// source reads `\n` and not `\\n`, which would be a backslash and an n.
 [[nodiscard]] std::string escape_pattern(const std::string & source) {
     if (source.empty()) { return "(?:)"; }
+    // The escape for a line terminator at `i`, and its width - or nothing.
+    const auto terminator = [&](std::size_t i, std::size_t & width) -> const char * {
+        width = 1;
+        if (source[i] == '\n') { return "n"; }
+        if (source[i] == '\r') { return "r"; }
+        width = 3;
+        if (source.compare(i, 3, "\xE2\x80\xA8") == 0) { return "u2028"; }
+        if (source.compare(i, 3, "\xE2\x80\xA9") == 0) { return "u2029"; }
+        return nullptr;
+    };
     std::string out;
     bool in_class = false;
     for (std::size_t i = 0; i < source.size(); ++i) {
         const char c = source[i];
+        std::size_t width = 0;
         if (c == '\\' && i + 1 < source.size()) {
             out += c;
-            out += source[++i];
+            if (const char * letter = terminator(i + 1, width)) {
+                out += letter;
+                i += width;
+            } else {
+                out += source[++i];
+            }
             continue;
         }
         if (c == '[') { in_class = true; }
         if (c == ']') { in_class = false; }
         if (c == '/' && !in_class) {
             out += "\\/";
-        } else if (c == '\n') {
-            out += "\\n";
-        } else if (c == '\r') {
-            out += "\\r";
+        } else if (const char * letter = terminator(i, width)) {
+            out += '\\';
+            out += letter;
+            i += width - 1;
         } else {
             out += c;
         }
@@ -106,6 +125,15 @@ namespace regexp_detail {
     arr->is_match = true;
     arr->index = value::number(static_cast<double>(m.begin));
     arr->input = cx.string(s);
+    // AND AS OWN DATA PROPERTIES, which is what CreateDataProperty makes them
+    // (steps 22-23 and 25): `hasOwnProperty("groups")`, a page's write, a
+    // delete, OwnPropertyKeys - index, input, groups, then `indices` - and no
+    // setter on Array.prototype runs. The slots above stay for the legacy
+    // statics, which read the match as it was made.
+    object_object & own = arr->named_table();
+    own.set("index", arr->index);
+    own.set("input", arr->input);
+    own.set("groups", groups);
     if (program.indices) {
         // MakeMatchIndicesIndexPairArray, 22.2.7.8: `[start, end]` per group,
         // undefined for one that did not participate, and its own `groups`.
@@ -200,10 +228,12 @@ value regexp_exec(context & cx, value rx, value subject) {
         cx.throw_error("TypeError", "RegExp exec method called on an incompatible receiver");
         return value::undefined();
     }
-    // The built-in matcher IS %RegExp.prototype.exec%; calling it through the
-    // prototype keeps one implementation.
-    const value builtin =
-        cx.lookup_property(value::object(cx.prototype(context::proto_kind::regexp)), "exec");
+    // The built-in matcher IS %RegExp.prototype.exec% - the INTRINSIC, kept
+    // under a private key, not whatever `exec` a page has since put on the
+    // prototype (step 4 runs exactly when that one is not callable).
+    object_object * proto = cx.prototype(context::proto_kind::regexp);
+    const value * intrinsic = proto == nullptr ? nullptr : proto->find("@#IntrinsicRegExpExec:");
+    const value builtin = intrinsic == nullptr ? value::undefined() : *intrinsic;
     if (!builtin.is_callable()) { return value::null(); }
     const value result = cx.call(builtin, std::span<const value>{&subject, 1}, rx);
     return watch.threw() ? value::undefined() : result;
