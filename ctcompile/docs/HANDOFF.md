@@ -22,6 +22,78 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Static Number/bitwise helpers and sibling conditional keys, 2026-09-25 UTC
+
+Resumed clean **35d19c4d** from HANDOFF and part 00. Iteration 28 was
+fully committed; the old WIP branch is already an ancestor. Parallel agents
+saved native controls and diagnosed the escape replay boundary before service
+limits stopped them. The parent completed both changes, final review and gates;
+no independent final review is claimed.
+
+**95e99919** folds exact Number `BitNot`, static `Add` and all six static
+bitwise operators in private iterator helpers. Existing typed Number operators
+reuse public Core ToInt32/ToUint32; APFloat supplies static Add rounding.
+Generic bitwise and invalid static kinds remain refused. Guarded raw operands,
+exact attributes, input evaluation, shared uses, bounded CFG/SCF normalization,
+complete helper/DOM proofs and private-candidate rollback remain required.
+108 new controls (**434 total**) cover result bits, wrapping/truncation, masked
+shifts, NaN/infinity, transported/shared values, effects and malformed inputs,
+with zero/late-budget rollback.
+
+**095f0bbc** correlates corresponding finite Number results from sibling
+`scf.if` operations using the exact same i1 condition. The census alone was
+insufficient: independent replay previously combined incompatible arm choices.
+An explicit per-path Boolean fact now retains the selected edge for sibling
+result branches in an already-certified single-visit body. Producer replay
+clears the fact; transport copies the value snapshot. Nested/no-result branches
+retain structural replay. Independent Number bounds, guard dependencies, current
+contents, every exit and all-write cycle checks still govern confinement.
+17 new rows (**253 total**) and five live mutations (**42 states total**) cover
+condition identity, guard gaps, retained aliases, repeated/zero visits, cycles,
+stale solvers, forged markers and every incomplete-budget rollback. This proves
+frame confinement, not ownership or shorter lifetimes.
+
+Seven distinct explicit devbox targets built across native and escape batches:
+`ctcompile-test-exception-recovery`, `ctcompile-test-host-contract`, `ctjs-opt`,
+`ctjs-translate`, `ctcompile-test-native-reference`,
+`ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 8.83 s**,
+`ctcompile_host_contract` **1/1, 2.69 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.90 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+Passing native CTests were not replayed after the separate escape change.
+
+**4b924444** adds two complete derived source witnesses. Each raw import
+retains one BitNot and all six binary bitwise producers, including a transported
+operand. The initial raw run hit the default **100,000-step** budget; complete
+sources remain intact and now assert that refusal before using the existing
+**1,000,000-step** option. Structured preparation keeps the default budget.
+Node/VM traces agree; **20 generated C++ files and 40 GCC/Clang binaries**, both
+printers/providers/optimization modes, ten zero-budget and two raw default-budget
+refusals, ordered DOM writes, two documents and 16 lifetimes pass. Source and
+linked-symbol checks find no Script/AOT dependency. Inspected output uses typed
+values and the existing public DOM seam.
+
+All seven final source/test hashes match local and devbox files. The original
+ten C++ raw literals and 71 Python multiline literals remain intact. Repository
+formatting passes **1126 C++, 159 Python, 114 web files**; diff checks pass.
+Evidence, commands, preserved agent checkpoints and generated files are in
+`/tmp/ctcompile-iteration29/`.
+
+**Next:** power and non-Number helper comparisons; nested/recomputed-condition
+correlation, broader expression correspondence, differing receivers and repeated
+allocation identities. Protected numeric `setAttribute`, mutable exceptional
+state, escaping owners, unguarded Bootstrap defaults, the native application
+driver and full native Bootstrap remain unfinished. No full-Bootstrap admission
+or raw escape-oracle precision gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs, raw
+escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. Claude's Linux loop was running; Windows
+process identity inspection succeeded with no matches. Concurrent rules applied;
+no browser/runtime/shared implementation, local build, push or history rewrite.
+
 ## Exact Number unary helpers and paired conditional keys, 2026-09-25 UTC
 
 Resumed clean **aebc81d1** and its explicit unary-helper/correlated-key boundary.
