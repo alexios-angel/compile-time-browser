@@ -370,7 +370,8 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         // <input> though, whatever its type today: `input.type` changes and
         // the store follows the type state (HTML 4.10.5.1's value modes), so
         // the accessor cannot be decided by the type the wrapper was made at.
-        if (tag == "input" || control_kind_of(tag, type) != control_kind::none) {
+        if (tag != "button" &&
+            (tag == "input" || control_kind_of(tag, type) != control_kind::none)) {
             obj.define_accessor(
                 "value",
                 value::object(cx.allocate<script::native_object>(
