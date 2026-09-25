@@ -515,6 +515,12 @@ value context::lookup_property(value target, const std::string & name) {
     if (target.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(target.as_heap());
         if (value * found = closure->find(name)) { return *found; }
+        // An OWN accessor - `static get w()` on a class, the constructor being
+        // the closure, or one a page defined - before anything synthesised: a
+        // `name` redefined as a getter is that getter's (bind reads it).
+        if (accessor_entry * entry = closure->find_accessor(name)) {
+            return call_getter(*this, *entry, target);
+        }
         if (name == "prototype") { return ensure_prototype(target); }
         // `f.name` and `f.length`, read off the compiled function rather than
         // stored on every closure - most functions are never asked and an extra
@@ -539,11 +545,6 @@ value context::lookup_property(value target, const std::string & name) {
                 !closure->proto->is_generator && (name == "caller" || name == "arguments")) {
                 return value::null();
             }
-        }
-        // `static get w()` on a class - the constructor IS the closure, so its
-        // accessors live here rather than on any object.
-        if (accessor_entry * entry = closure->find_accessor(name)) {
-            return call_getter(*this, *entry, target);
         }
         // STATIC INHERITANCE: `class D extends B` makes D's own [[Prototype]]
         // B, so `D.staticMethod` finds B's. Babel wires this by hand with

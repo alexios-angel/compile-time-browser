@@ -84,9 +84,17 @@ void quote_json(std::string_view text, std::string & out) {
 // The specification makes that a TypeError, and a TypeError is a page's own bug
 // reported to it rather than a dead process.
 struct json_writer {
-    explicit json_writer(context & c) : cx(c) {}
+    explicit json_writer(context & c) : cx(c), unwinds_before(c.unwinds()) {}
 
     context & cx;
+    // A THROW THAT HAS LANDED is not pending: a revoked proxy's trap lookup,
+    // a getter or a toJSON that threw has unwound to the page's handler by the
+    // time the native sees it again (context::unwinds), and carrying on would
+    // throw a second time over the handler the first one consumed.
+    std::size_t unwinds_before;
+    [[nodiscard]] bool threw() const {
+        return cx.throw_pending() || cx.unwinds() != unwinds_before;
+    }
     std::string indent;                     // 25.5.2 state.[[Indent]]
     std::string gap;                        // 25.5.2 state.[[Gap]]
     value replacer = value::undefined();    // state.[[ReplacerFunction]]
@@ -113,7 +121,11 @@ struct json_writer {
     // the string "null", and is why this returns a bool rather than a string.
     [[nodiscard]] bool serialize(value holder, const std::string & key, value v,
                                  std::string & out) {
-        if (failed) { return false; }
+        // The [[Get]] that produced `v` (the caller's) may have thrown.
+        if (failed || threw()) {
+            failed = true;
+            return false;
+        }
         // Steps 2-3: an Object or a BigInt is asked for `toJSON` FIRST, before
         // the replacer sees it. A Date's ISO string comes from there.
         if (v.is_object_like() || v.is_kind(heap_kind::bigint)) {
@@ -125,13 +137,17 @@ struct json_writer {
                                          ? value::object(cx.prototype(context::proto_kind::bigint))
                                          : v,
                                      "toJSON", v);
-            if (cx.throw_pending()) {
+            if (threw()) {
                 failed = true;
                 return false;
             }
             if (to_json.is_callable()) {
                 const value args[1] = {cx.string(key)};
                 v = cx.call(to_json, args, v);
+                if (threw()) {
+                    failed = true;
+                    return false;
+                }
             }
         }
         // Step 4: the replacer is called with the HOLDER as its receiver and
@@ -140,6 +156,10 @@ struct json_writer {
         if (replacer.is_callable()) {
             const value args[2] = {cx.string(key), v};
             v = cx.call(replacer, args, holder);
+            if (threw()) {
+                failed = true;
+                return false;
+            }
         }
         // Step 4: a Number, String, Boolean or BigInt WRAPPER serialises as
         // its primitive - through ToNumber / ToString, so a user valueOf or
@@ -152,7 +172,7 @@ struct json_writer {
             } else if (slot->is_boolean() || slot->is_kind(heap_kind::bigint)) {
                 v = *slot;
             }
-            if (cx.throw_pending()) {
+            if (threw()) {
                 failed = true;
                 return false;
             }
@@ -281,7 +301,7 @@ struct json_writer {
             count = static_cast<array_object *>(v.as_heap())->items.size();
         } else {
             const double length = array_like_length(cx, v);
-            if (cx.throw_pending()) {
+            if (threw()) {
                 failed = true;
                 return false;
             }
@@ -313,11 +333,11 @@ struct json_writer {
             // EnumerableOwnProperties through the ownKeys and
             // getOwnPropertyDescriptor traps, in that order.
             for (const std::string & key : own_property_names(cx, v)) {
-                if (cx.throw_pending()) { break; }
+                if (threw()) { break; }
                 context::property_descriptor found;
                 if (cx.own_property(v, key, found) && found.enumerable) { keys.push_back(key); }
             }
-            if (cx.throw_pending()) {
+            if (threw()) {
                 failed = true;
                 stack.pop_back();
                 return false;
@@ -369,10 +389,10 @@ struct json_writer {
         // Number OBJECT (step 4.b.iii.2.c) is ToString'd, and anything else
         // contributes nothing.
         const double length = array_like_length(cx, replacer);
-        if (cx.throw_pending()) { return false; }
+        if (state.threw()) { return false; }
         for (double i = 0; i < length; ++i) {
             const value each = cx.lookup_index(replacer, value::number(i));
-            if (cx.throw_pending()) { return false; }
+            if (state.threw()) { return false; }
             std::string name;
             if (each.is_string()) {
                 name = static_cast<const string_object *>(each.as_heap())->text;
@@ -381,7 +401,7 @@ struct json_writer {
             } else if (const value * slot = primitive_slot(each);
                        slot != nullptr && (slot->is_string() || slot->is_number())) {
                 name = cx.to_string(each);
-                if (cx.throw_pending()) { return false; }
+                if (state.threw()) { return false; }
             } else {
                 continue;
             }
@@ -400,7 +420,7 @@ struct json_writer {
         } else if (slot->is_string()) {
             space = cx.string(cx.to_string(space));
         }
-        if (cx.throw_pending()) { return false; }
+        if (state.threw()) { return false; }
     }
     // TEN IS THE CEILING for both forms (steps 7 and 8), and a number is
     // ToIntegerOrInfinity'd rather than rounded: `JSON.stringify(o, null, 1.9)`

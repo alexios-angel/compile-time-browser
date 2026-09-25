@@ -399,9 +399,12 @@ struct unwind_watch {
     return cx.has_property(self, value::number(i));
 }
 
+// DeletePropertyOrThrow. A proxy's throw answers true, as its define does.
 [[nodiscard]] inline bool delete_element(context & cx, value self, double i) {
-    if (cx.delete_own_property(self, number_to_string(i))) { return !cx.throw_pending(); }
-    if (cx.throw_pending()) { return false; }
+    const unwind_watch watch{cx};
+    const bool deleted = cx.delete_own_property(self, number_to_string(i));
+    if (watch.threw()) { return false; }
+    if (deleted) { return true; }
     cx.throw_error("TypeError", "Cannot delete property '" + number_to_string(i) + "'");
     return false;
 }

@@ -97,6 +97,10 @@ void install_function(context & cx) {
            });
     method(cx, function_proto, "bind", 1,
            [this_function, bind_this](context & c, std::span<value> a) {
+               // A getter on the target's `length` or `name`, or a proxy's
+               // getPrototypeOf trap, may throw - and a throw that has landed
+               // is not pending (context::unwinds).
+               const detail::unwind_watch watch{c};
                const value self = this_function(c, "bind");
                if (!self.is_callable()) { return value::undefined(); }
                const value receiver = bind_this(c, self, arg_at(a, 0));
@@ -104,7 +108,7 @@ void install_function(context & cx) {
                // runs here and may throw; the bound function's [[Prototype]] is
                // the target's, not Function.prototype's.
                const value proto = detail::prototype_of(c, self);
-               if (c.throw_pending()) { return value::undefined(); }
+               if (watch.threw()) { return value::undefined(); }
                // The arguments bound NOW are prepended to the ones supplied later,
                // which is what makes `f.bind(o, 1)` a partial application rather than
                // just a receiver change.
@@ -158,7 +162,7 @@ void install_function(context & cx) {
                double left = 0.0;
                if (c.has_own_property(self, "length")) {
                    const value target_length = c.lookup_property(self, "length");
-                   if (c.throw_pending()) { return value::undefined(); }
+                   if (watch.threw()) { return value::undefined(); }
                    if (target_length.is_number()) {
                        // Step 7.b: +Infinity stays, -Infinity is 0, else
                        // ToIntegerOrInfinity less the bound count - not ToLength,
@@ -173,7 +177,7 @@ void install_function(context & cx) {
                }
                fn->define("length", value::number(std::max(0.0, left)), attr_configurable);
                const value target_name = c.lookup_property(self, "name");
-               if (c.throw_pending()) { return value::undefined(); }
+               if (watch.threw()) { return value::undefined(); }
                fn->define("name",
                           c.string("bound " + (target_name.is_string() ? c.to_string(target_name)
                                                                        : std::string{})),
