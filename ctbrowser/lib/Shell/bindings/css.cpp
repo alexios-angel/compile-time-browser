@@ -49,10 +49,17 @@ void dom_bindings::install_css_interface(context & cx) {
     // that passes one string containing a colon is asking the first question,
     // and answering it as though it were the second is how `CSS.supports('(a:
     // b)')` comes back true for the property `(a`.
+    //
+    // The one-argument form has a second chance `@supports` does not: CSS
+    // Conditional 4 §6.1 step 2 tries the text again WRAPPED IN PARENTHESES,
+    // so `CSS.supports('color: red')` is true while `@supports color: red`
+    // stays invalid. That is why the retry is here and not in the grammar.
     method("supports", 1, [](context & c, std::span<value> args) {
         if (args.empty()) { return value::boolean(false); }
         if (args.size() == 1) {
-            return value::boolean(style::css::supports_condition(c.to_string(args[0])));
+            const std::string text = c.to_string(args[0]);
+            return value::boolean(style::css::supports_condition(text) ||
+                                  style::css::supports_condition("(" + text + ")"));
         }
         return value::boolean(style::css::supports_declaration(
             ascii_lower_copy(c.to_string(args[0])), c.to_string(args[1])));
