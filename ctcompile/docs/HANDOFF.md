@@ -16,11 +16,56 @@ are recorded below.
 > `~/Downloads/claude/AGENT-SYNC.jsonl`. Just branch from the current `ctcompile-v1`
 > tip - nothing about the native work changed.
 
-Native work continues on `main` after the `ctcompile-v1` merge.
+Native work continues on `ctcompile-v1`, fast-forwarded through the completed `main` merge and DOM layout work.
 The native application driver remains incomplete; native compiler development uses
 `ctjs-translate` and `ctjs-opt`. Build on the devbox using `tools/remote-build.sh`
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
+
+## Observed iterator coverage and exact CFG predecessors, 2026-09-25 UTC
+
+Resumed the iterator thread interrupted in iteration 162. The clean checkout
+contained the completed release and DOM layout work on `main`; `ctcompile-v1`
+was fast-forwarded to **a59638ba** before continuing. The old WIP branch was
+already an ancestor. No other branch was changed or pushed.
+
+**ad9ef3f3** proves traversal ordering in the innermost shared continuation block,
+including verified result-bearing Invoke regions. Close coverage follows every
+exact completion-tag leaf. Only the actual next-unwind arm can bypass closing;
+exhaustion and saved-return paths must reach their respective close. Unknown
+flags, missing coverage and foreign region ancestry refuse. Both close(false)
+flags, all three retained Invokes, their 15 saved registers and source effects
+remain intact; complete preparation still rolls back.
+
+Original getter **1a7fb166** and method **7acf503b**, with structured helper bodies,
+now reach **observed completion state transport**. Raw helper CFGs retain their
+earlier refusals. **No new native JavaScript source admission is claimed.**
+
+**70de7046** records the actual first incoming CFG edge in each existing escape
+path state. Cached array-length provenance can now follow shortcut joins whose
+other syntactic predecessors were also visited. Receiver identity, saved bound,
+current extent, mutation census and exact replay remain required. Frozen source
+**d1302d9a**, program **502bee7b1676c84d**, improves from **0/4 to 2/4 confined
+allocation sites**; all four are observed with zero VM violations. Node returns
+`[[0,0,0],[0,0,0]]`. Saved-child, changed-bound and different-receiver controls
+retain escapes.
+
+Focused recovery **1/1, 5.38 s**, arrays **1/1, 4.87 s**, host contract
+**1/1, 2.77 s**, one new escape lit case **1/1, 0.10 s**, and the selected
+three-source native differential check pass. Formatting passes **1126 C++,
+159 Python, 114 web files**. Eight final hashes match the devbox; 24 generated
+C++ files and the harness binary checks retain the no-Script invariant.
+Full suites and broad corpus/matrix runs were skipped.
+
+**Next:** prove normal item use through the retained next-result tuple, then
+rewrite next/exhaustion and both unsuppressed close completions through Try state.
+Preserve saved returns, caught-node identity and every effect; do not remove the
+explicit state-transport refusal until that correspondence is proved. Raw helper
+CFG normalization, structured escape origins, escaping node owners, broader
+iterators, unguarded Bootstrap defaults, the native application driver and full
+native Bootstrap remain unfinished. Continue on `ctcompile-v1`.
+
+[Exact checks, review limits and next boundary](handoff/2026-09-25-invoke-coverage-cfg-predecessors.md).
 
 ## DOM source layout, 2026-09-25 UTC
 
