@@ -36,32 +36,17 @@ value context::own_keys(value source) {
         // page sees from for-in and has to match Object.keys. for-in
         // enumerates STRING keys only, and ENUMERABLE ones only: 13.7.5.15
         // filters on [[Enumerable]], which is why a built-in method never turns
-        // up in a `for (k in Math)`.
+        // up in a `for (k in Math)`. A String wrapper's indices are own and
+        // enumerable (10.4.3.1), and come first.
         auto * obj = static_cast<object_object *>(source.as_heap());
+        if (const value * slot = primitive_slot(source); slot != nullptr && slot->is_string()) {
+            const std::size_t n = static_cast<string_object *>(slot->as_heap())->text.size();
+            for (std::size_t i = 0; i < n; ++i) {
+                keys->items.push_back(string(std::to_string(i)));
+            }
+        }
         obj->each_own_enumerable_key(
             [&](const std::string & name) { keys->items.push_back(string(name)); });
-        // ...AND THE PROTOTYPE CHAIN (14.7.5.9 EnumerateObjectProperties): an
-        // inherited enumerable key is visited once, unless an own or nearer
-        // property of the same name shadows it - a non-enumerable one shadows
-        // too. `for (k in body)` reaching the Window-forwarded handlers on
-        // HTMLBodyElement.prototype is the case a page notices.
-        std::unordered_set<std::string> seen;
-        const auto shadow = [&](object_object * table) {
-            table->each_own_entry(
-                [&](const std::string & name, std::uint8_t) { seen.insert(name); });
-        };
-        shadow(obj);
-        for (value up = obj->prototype; up.is_object();) {
-            auto * parent = static_cast<object_object *>(up.as_heap());
-            std::vector<std::string> fresh;
-            parent->each_own_enumerable_key([&](const std::string & name) {
-                if (seen.find(name) == seen.end()) { fresh.push_back(name); }
-            });
-            for (const std::string & name : fresh) { keys->items.push_back(string(name)); }
-            shadow(parent);
-            up = parent->prototype;
-            if (seen.size() > 1u << 16) { break; } // a cyclic chain is a page's own bug
-        }
     } else if (source.is_array()) {
         auto * arr = static_cast<array_object *>(source.as_heap());
         const std::size_t n = arr->items.size();
@@ -105,6 +90,58 @@ value context::own_keys(value source) {
                 keys->items.push_back(string(name));
             }
         }
+    }
+    // ...AND THE PROTOTYPE CHAIN (14.7.5.9 EnumerateObjectProperties), for
+    // every kind of object: an inherited enumerable key is visited once,
+    // unless an own or nearer property of the same name shadows it - a
+    // non-enumerable one shadows too. `for (k in body)` reaching the
+    // Window-forwarded handlers on HTMLBodyElement.prototype is the case a page
+    // notices; an enumerable property a page put on Object.prototype,
+    // Array.prototype or Function.prototype is the one test262 asks about.
+    // The chain is the explicit object links, then the implicit tables behind
+    // them (implicit_prototypes).
+    std::vector<object_object *> chain;
+    value up = source.is_object()  ? static_cast<object_object *>(source.as_heap())->prototype
+               : source.is_array() ? static_cast<array_object *>(source.as_heap())->prototype
+                                   : value::null();
+    for (int depth = 0; depth < 4096 && up.is_object(); ++depth) {
+        auto * parent = static_cast<object_object *>(up.as_heap());
+        chain.push_back(parent);
+        up = parent->prototype;
+    }
+    if (up.is_null()) {
+        if (chain.empty()) {
+            for (object_object * table : implicit_prototypes(source)) {
+                if (table != nullptr) { chain.push_back(table); }
+            }
+        } else if (object_object * table = prototype(proto_kind::object)) {
+            chain.push_back(table);
+        }
+    }
+    // Nothing inherited is enumerable - the usual case, every built-in
+    // prototype - and nothing needs a shadow set.
+    bool inherits = false;
+    for (object_object * table : chain) {
+        table->each_own_enumerable_key([&](const std::string &) { inherits = true; });
+        if (inherits) { break; }
+    }
+    if (!inherits) { return out; }
+    std::unordered_set<std::string> seen;
+    for (const value & key : keys->items) { seen.insert(to_string(key)); }
+    const auto shadow = [&](object_object * table) {
+        table->each_own_entry([&](const std::string & name, std::uint8_t) { seen.insert(name); });
+    };
+    if (source.is_object()) { shadow(static_cast<object_object *>(source.as_heap())); }
+    if (source.is_array() && static_cast<array_object *>(source.as_heap())->named) {
+        shadow(static_cast<array_object *>(source.as_heap())->named.get());
+    }
+    for (object_object * parent : chain) {
+        std::vector<std::string> fresh;
+        parent->each_own_enumerable_key([&](const std::string & name) {
+            if (seen.find(name) == seen.end()) { fresh.push_back(name); }
+        });
+        for (const std::string & name : fresh) { keys->items.push_back(string(name)); }
+        shadow(parent);
     }
     return out;
 }

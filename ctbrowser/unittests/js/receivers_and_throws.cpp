@@ -65,5 +65,33 @@ int main() {
     js_expect("(function(){var s = new String('ab'); s[5] = 'x'; s.k = 1;"
               "return Object.getOwnPropertyNames(s).join(); })()",
               "0,1,5,length,k");
+
+    // for-in walks the WHOLE chain for every kind of object (14.7.5.9): a
+    // String wrapper's indices, and an enumerable key a page put on a
+    // built-in prototype, once, unless something nearer shadows it.
+    js_expect("(function(){var out = []; for (var k in new String('ab')) out.push(k);"
+              "return out.join(); })()",
+              "0,1");
+    js_expect("(function(){Object.defineProperty(Function.prototype, 'fp',"
+              " {value: 1, enumerable: true, configurable: true});"
+              "Object.defineProperty(Array.prototype, 'ap',"
+              " {value: 2, enumerable: true, configurable: true});"
+              "var out = []; for (var k in (function () {}).bind(null)) out.push(k);"
+              "for (var k in [7]) out.push(k); var o = {ap: 0}; for (var k in o) out.push(k);"
+              "delete Function.prototype.fp; delete Array.prototype.ap; return out.join(); })()",
+              "fp,0,ap,ap");
+    // [[Set]] of a fresh name asks the chain: a setter on Array.prototype
+    // takes an array's write, and a read-only Object.prototype property
+    // refuses a plain object's.
+    js_expect("(function(){var got; Object.defineProperty(Array.prototype, 'sp',"
+              " {set: function (v) { got = v; }, configurable: true});"
+              "var a = []; a.sp = 5; var own = a.hasOwnProperty('sp');"
+              "delete Array.prototype.sp; return got + ',' + own; })()",
+              "5,false");
+    js_expect("(function(){Object.defineProperty(Object.prototype, 'ro',"
+              " {value: 1, writable: false, configurable: true});"
+              "var j = JSON; j.ro = 2; var r = j.ro + ',' + j.hasOwnProperty('ro');"
+              "delete Object.prototype.ro; return r; })()",
+              "1,false");
     REPORT("receivers_and_throws");
 }

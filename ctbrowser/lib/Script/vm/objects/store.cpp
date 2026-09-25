@@ -337,7 +337,8 @@ void context::store_property(value target, const std::string & name, value v) {
             obj->props[it->second].second = v;
             return;
         }
-        for (value up = obj->prototype; up.is_heap();) {
+        value up = obj->prototype;
+        while (up.is_heap()) {
             // A TYPED ARRAY up the chain answers a numeric key's [[Set]] for
             // this receiver (10.4.5.5 step 1.b.ii): an index it does not have
             // is a quiet success that creates nothing; one it has is a
@@ -361,6 +362,17 @@ void context::store_property(value target, const std::string & name, value v) {
                 break;
             }
             up = parent->prototype;
+        }
+        // ...and the implicit Object.prototype a null link ends in: its
+        // read-only data refuses the write too (its accessors were
+        // assign_through_accessor's).
+        if (up.is_null()) {
+            if (object_object * table = prototype(proto_kind::object);
+                table != nullptr && table->find(name) != nullptr &&
+                (table->attrs_of(name) & attr_writable) == 0) {
+                store_rejected_ = true;
+                return;
+            }
         }
         if (!obj->extensible) {
             store_rejected_ = true;
@@ -411,10 +423,9 @@ void context::store_property(value target, const std::string & name, value v) {
         }
         if (name != "length" || typed_length) {
             // A NAMED PROPERTY, in the array's own table - see
-            // array_object::named. The same three checks as an object's: an
-            // own accessor's setter, a non-writable own data property, and
-            // extensibility for a fresh one. (Inherited setters on
-            // Array.prototype are not consulted; nothing defines one.)
+            // array_object::named. The same checks as an object's: an own
+            // accessor's setter, a non-writable own data property, then the
+            // chain, and extensibility for a fresh one.
             if (arr->named) {
                 if (accessor_entry * entry = arr->named->find_accessor(name)) {
                     if (entry->setter.is_callable()) {
@@ -429,6 +440,22 @@ void context::store_property(value target, const std::string & name, value v) {
                         return;
                     }
                     arr->named->set(name, v);
+                    return;
+                }
+            }
+            // A FRESH ONE ASKS THE CHAIN FIRST (10.1.9.2 step 2): a setter on
+            // Array.prototype or a subclass's prototype takes the write, and
+            // an inherited read-only property refuses it; otherwise the
+            // property is defined on the array.
+            if (arr->elements == element_kind::none) {
+                object_object * table = prototype(proto_kind::array);
+                const value proto = !arr->prototype.is_null() ? arr->prototype
+                                    : table != nullptr        ? value::object(table)
+                                                              : value::undefined();
+                if (proto.is_object_like()) {
+                    if (!set_for_receiver(*this, proto, name, v, target)) {
+                        store_rejected_ = true;
+                    }
                     return;
                 }
             }
