@@ -9,4 +9,5 @@ target_sources(ctbrowser-script PRIVATE
 add_subdirectory(async)
 add_subdirectory(collections)
 add_subdirectory(objects)
+add_subdirectory(temporal)
 add_subdirectory(text)

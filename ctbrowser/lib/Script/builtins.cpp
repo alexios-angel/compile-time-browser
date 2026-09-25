@@ -4,6 +4,10 @@
 
 namespace ctbrowser::script {
 
+namespace builtins_detail {
+void install_temporal(context & cx); // builtins/temporal/install.cpp
+} // namespace builtins_detail
+
 using namespace builtins_detail;
 
 void install_builtins(context & cx, std::uint64_t seed) {
@@ -30,6 +34,7 @@ void install_builtins(context & cx, std::uint64_t seed) {
     install_date(cx);
     install_globals(cx);
     install_promise(cx);
+    install_temporal(cx);
 }
 
 } // namespace ctbrowser::script
