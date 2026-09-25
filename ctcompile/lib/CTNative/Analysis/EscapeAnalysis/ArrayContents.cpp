@@ -212,10 +212,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
                     }
                 }
-                // ponytail: sibling result branches in one certified body visit.
-                // Nested/no-result branches retain full structural replay.
-                const bool correlated = state.loop && branch->getBlock() == state.loop->body &&
-                                        branch.getNumResults() != 0;
+                // The census admits every nested If only for one body visit.
+                // No-result branches retain full structural replay.
+                const bool correlated = state.loop && branch.getNumResults() != 0;
                 const auto choice = held(branch.getCondition()).conditionChoice;
                 if (correlated && choice) {
                     auto & region = *choice ? branch.getThenRegion() : branch.getElseRegion();

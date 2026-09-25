@@ -159,9 +159,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         // Replay retains the choice of this exact immutable i1 value. Equal
         // ranges or separately recomputed predicates establish no correspondence.
         if (!branch || !other || branch.getCondition() != other.getCondition()) { return false; }
-        if (branch != other && (branch->getBlock() != body || other->getBlock() != body)) {
-            return false;
-        }
+        // yieldedInputs accepts only producers reached by the single-visit
+        // census, including nested arms. Replay retains their exact i1 choice.
         const auto first = yieldedInputs(left);
         const auto second = yieldedInputs(right);
         return first.size() == 2 && second.size() == 2 && sameInput(first[0], second[0]) &&

@@ -575,6 +575,15 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string siblingKeys = selectedStore(siblingInput());
     const std::string siblingGap = selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
                                                  siblingInput("%read", "%two"));
+    const auto nestedArm = [](const std::string & input) {
+        return "    scf.if %flag {\n" + input + "    }\n";
+    };
+    const auto nestedSiblingStore = [&](const std::string & input) {
+        return localArray + nestedArm(input + "      ctjs.set_property %guard[%key], %fresh\n");
+    };
+    const std::string nestedSiblingKeys = nestedSiblingStore(siblingInput());
+    const std::string nestedSiblingGap = nestedSiblingStore(
+        "      %read = ctjs.get_property %guard[%one]\n" + siblingInput("%read", "%two"));
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -1767,6 +1776,101 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(siblingKeys) + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "nested sibling result branches retain the same exact predicate choice",
+         .body = loopValues + allocationLoop(nestedSiblingKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "two conditional ancestors preserve nested sibling Number correspondence",
+         .body = loopValues +
+                 allocationLoop(
+                     localArray +
+                     nestedArm(nestedArm(siblingInput() +
+                                         "      ctjs.set_property %guard[%key], %fresh\n"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "a root result and nested result retain their common predicate snapshot",
+         .body = loopValues +
+                 allocationLoop(localArray +
+                                siblingInput("%zero", "%one", "%flag", "    scf.if %flag {\n") +
+                                "      ctjs.set_property %guard[%key], %fresh\n    }\n") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested cancellation transports through its result-bearing ancestor",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(selectedInput("%key", "%zero", siblingInput(), "", "%outerKey"),
+                                   "%guard", "%outerKey")) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested signed Number choices cancel without primitive conversion",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(siblingInput("%negative", "%one"))) + done,
+         .confinedNested = "fresh"},
+        {.what = "nested correspondence retains the independently proved guard read gap",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "nested cancellation cannot overwrite its current guard dependency",
+         .body =
+             loopValues +
+             allocationLoop(nestedSiblingStore("      %read = ctjs.get_property %guard[%zero]\n" +
+                                               siblingInput("%read", "%one"))) +
+             done,
+         .complete = false},
+        {.what = "different nested condition identities cannot borrow the first choice",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(siblingInput(
+                     "%zero", "%one", "%secondFlag", "      %secondFlag = ctjs.truthy %q\n"))) +
+                 done,
+         .complete = false},
+        {.what = "recomputed nested truthiness has no predicate correspondence",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(siblingInput(
+                     "%zero", "%one", "%secondFlag", "      %secondFlag = ctjs.truthy %p\n"))) +
+                 done,
+         .complete = false},
+        {.what = "nested unknown values still require both independent Number proofs",
+         .body =
+             loopValues + allocationLoop(nestedSiblingStore(siblingInput("%zero", "%p"))) + done,
+         .complete = false},
+        {.what = "nested nonfinite operands cannot cancel into a bounded own index",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(nestedSiblingStore(siblingInput("%zero", "%nan"))) + done,
+         .complete = false},
+        {.what = "one retaining exit prevents nested sibling child confinement",
+         .body = loopValues + allocationLoop(nestedSiblingKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "clearing the nested zero-key holder releases the stored child",
+         .body =
+             loopValues + allocationLoop(nestedSiblingKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved nested-key alias survives clearing its holder",
+         .body = loopValues + allocationLoop(nestedSiblingKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "nested result correlation preserves transient cycle refusal",
+         .body =
+             loopValues +
+             allocationLoop(nestedSiblingKeys + "    ctjs.set_property %fresh[%zero], %guard\n"
+                                                "    ctjs.set_property %fresh[%zero], %zero\n") +
+             done,
+         .complete = false},
+        {.what = "nested result correlation cannot hide an unsupported producer effect",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(siblingInput(
+                     "%zero", "%one", "%flag", "      %called = ctjs.call %p(%q)\n"))) +
+                 done,
+         .complete = false},
+        {.what = "nested choices cannot authorize repeated body allocation identities",
+         .body =
+             loopValues + allocationLoop(nestedSiblingKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "zero visits cannot authorize nested result allocation identities",
+         .body = loopValues + allocationLoop(nestedSiblingKeys, "%one") + done,
+         .complete = false},
+        {.what = "nested result correlation requires current initialized solver inputs",
+         .body = loopValues + allocationLoop(nestedSiblingKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "calls in an arithmetic key arm still refuse the complete census",
          .body = loopValues +
                  allocationLoop(
@@ -2319,7 +2423,69 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = siblingMutation.what, .body = siblingMutation.body, .expected = ""},
              "the sibling cancellation mutation fixture did not parse");
     }
-    std::printf("array retention: %zu rows, forty-two live states, %zu budget cutoffs\n",
+    retention_row nestedSiblingMutation{
+        .what = "nested sibling correspondence reproves live conditions, yields and guard reads",
+        .body = loopValues +
+                allocationLoop(nestedSiblingGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto nestedSiblingModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + nestedSiblingMutation.body + "}\n", &context);
+    if (nestedSiblingModule) {
+        ctjs::FuncOp function = *nestedSiblingModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto * thenYield = first.getThenRegion().front().getTerminator();
+        auto * elseYield = second.getElseRegion().front().getTerminator();
+        auto load = thenYield->getOperand(0).getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalCondition = second.getCondition();
+        const mlir::Value originalElse = elseYield->getOperand(0);
+        const mlir::Value originalPosition = load->getOperand(1);
+        mlir::OpBuilder at(second);
+        auto independent = ctjs::TruthyOp::create(at, second.getLoc(), at.getI1Type(),
+                                                  function.getBody().front().getArgument(3));
+        mlir::Value zero;
+        for (auto literal : function.getBody().front().getOps<ctjs::ConstantOp>()) {
+            if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue());
+                number && number.getBits() == 0) {
+                zero = literal;
+            }
+        }
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*nestedSiblingModule))) {
+            fail(row{.what = nestedSiblingMutation.what,
+                     .body = nestedSiblingMutation.body,
+                     .expected = ""},
+                 "the nested sibling stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 5; ++state) {
+            second->setOperand(0, state == 1 ? independent.getResult() : originalCondition);
+            elseYield->setOperand(0, state == 2 ? originalPosition : originalElse);
+            load->setOperand(1, state == 3 ? zero : originalPosition);
+            nestedSiblingMutation.complete = state == 0 || state == 4;
+            nestedSiblingMutation.confinedNested = nestedSiblingMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*nestedSiblingModule, nestedSiblingMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                nestedSiblingMutation.complete) {
+                fail(row{.what = nestedSiblingMutation.what,
+                         .body = nestedSiblingMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied nested predicate correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = nestedSiblingMutation.what,
+                 .body = nestedSiblingMutation.body,
+                 .expected = ""},
+             "the nested sibling mutation fixture did not parse");
+    }
+    std::printf("array retention: %zu rows, forty-seven live states, %zu budget cutoffs\n",
                 rows.size(), budgets);
 }
 
