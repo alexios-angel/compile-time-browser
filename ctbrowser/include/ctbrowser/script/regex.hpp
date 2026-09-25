@@ -1228,8 +1228,31 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		return (pos == s.size() || (st.multi && s[pos] == '\n')) && k(pos);
 	case rx_piece::wordb:
 	case rx_piece::nwordb: {
-		const bool before = pos > 0 && rx_is_word(s[pos - 1]);
-		const bool after = pos < s.size() && rx_is_word(s[pos]);
+		// IsWordChar (22.2.2.9.3): under `i` with `u` or `v` the word
+		// characters are every code point whose simple case fold is one -
+		// LATIN SMALL LETTER LONG S (s) and KELVIN SIGN (k) join the ASCII
+		// ones. Everywhere else they are the ASCII ones alone.
+		const bool fold_words = st.icase && (st.p->unicode || st.p->unicode_sets);
+		const auto word_before = [&] {
+			if (pos == 0) { return false; }
+			if (!fold_words || static_cast<unsigned char>(s[pos - 1]) < 0x80u) {
+				return rx_is_word(s[pos - 1]);
+			}
+			std::size_t width = 1;
+			const std::uint32_t cp = rx_utf8_decode_before(s, pos, width);
+			return cp == 0x017Fu || cp == 0x212Au;
+		};
+		const auto word_after = [&] {
+			if (pos >= s.size()) { return false; }
+			if (!fold_words || static_cast<unsigned char>(s[pos]) < 0x80u) {
+				return rx_is_word(s[pos]);
+			}
+			std::size_t width = 1;
+			const std::uint32_t cp = rx_utf8_decode(s, pos, width);
+			return cp == 0x017Fu || cp == 0x212Au;
+		};
+		const bool before = word_before();
+		const bool after = word_after();
 		const bool boundary = before != after;
 		return boundary == (pc.kind == rx_piece::wordb) && k(pos);
 	}
