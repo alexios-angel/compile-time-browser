@@ -733,6 +733,14 @@ bool supports_declaration(std::string_view property, std::string_view value) {
     // `allow_important` is true because `@supports (color: red !important)` is a
     // <declaration> and the priority does not change the answer.
     const value_check checked = check_declaration(property, value, true);
+    // A SHORTHAND IS SUPPORTED WHEN IT SPLITS. check_declaration takes a
+    // shorthand's text whole - the split is the declaration block's - so
+    // `margin: foo` passed here while `el.style.margin = 'foo'` stored
+    // nothing. The block's own split answers, on a scratch block.
+    if (checked.valid && !checked.substituted && !longhands_of(property).empty()) {
+        declaration_block scratch;
+        if (!set_declaration(scratch, property, checked.serialized, false)) { return false; }
+    }
     // ...AND A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT. `el.style`
     // still stores such a value - CSSOM says a page may - but a declaration
     // calling `attr()` or `random-item()` here really would be dropped by the
