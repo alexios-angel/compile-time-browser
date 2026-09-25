@@ -715,7 +715,9 @@ void install_collections(context & cx) {
             for (const value & item : snapshot) {
                 const value args[2] = {item, value::number(index++)};
                 const value key = normalise_key(c.call(a[1], args));
-                if (watch.threw()) { return value::undefined(); }
+                // Parked if it threw; the unwind count also moves for a
+                // callback that throws and catches inside itself.
+                if (c.throw_pending()) { return value::undefined(); }
                 value * entry = find_pair(*groups, key);
                 if (entry == nullptr) {
                     put_pair(c, *groups, key, c.make_array());

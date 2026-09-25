@@ -224,13 +224,14 @@ value array_find(context & c, std::span<value> a, const char * name, bool backwa
     if (!detail::callable_arg(c, callback, "callback")) { return miss; }
     const value this_arg = arg_at(a, 1);
     const double step = backwards ? -1.0 : 1.0;
-    const detail::unwind_watch watch{c};
+    detail::unwind_watch watch{c};
     for (double k = backwards ? len - 1 : 0; backwards ? k >= 0 : k < len; k += step) {
         const value item = detail::element_at(c, self, k);
         if (watch.threw()) { return miss; }
         const value call_args[3] = {item, value::number(k), self};
         const bool hit = context::truthy(c.call(callback, call_args, this_arg));
         if (c.throw_pending()) { return miss; } // parked, as in `each` below
+        watch.rearm();
         if (hit) { return want_index ? value::number(k) : item; }
     }
     return miss;
@@ -261,7 +262,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
         // `length` getter runs, and its throw wins, even for a callback that
         // is not callable.
-        const detail::unwind_watch watch{c};
+        detail::unwind_watch watch{c};
         const double len = detail::array_like_length(c, self);
         if (watch.threw()) { return false; }
         const value callback = arg_at(a, 0);
@@ -284,6 +285,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             // unwind count is no signal after a call, since a callback that
             // throws and catches inside itself moves it too.
             if (c.throw_pending() || !body(k, item, verdict)) { return false; }
+            watch.rearm();
         }
         return true;
     };
@@ -298,7 +300,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
         // `length` getter runs, and its throw wins, even for a callback that
         // is not callable.
-        const detail::unwind_watch watch{c};
+        detail::unwind_watch watch{c};
         const double len = detail::array_like_length(c, self);
         if (watch.threw()) { return out; }
         const value callback = arg_at(a, 0);
@@ -329,6 +331,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             const value call_args[3] = {item, value::number(k), self};
             const value mapped = c.call(callback, call_args, this_arg);
             if (c.throw_pending()) { return out; }
+            watch.rearm();
             if (!detail::create_element(c, out, k, mapped)) { return out; }
         }
         return out;
@@ -339,7 +342,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "filter")) { return out; }
-        const detail::unwind_watch watch{c};
+        detail::unwind_watch watch{c};
         const double len = detail::array_like_length(c, self);
         if (watch.threw()) { return out; }
         const value callback = arg_at(a, 0);
@@ -359,6 +362,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             const value call_args[3] = {item, value::number(k), self};
             const bool kept = context::truthy(c.call(callback, call_args, this_arg));
             if (c.throw_pending()) { return out; }
+            watch.rearm();
             if (!kept) { continue; }
             if (!detail::create_element(c, out, to, item)) { return out; }
             to += 1.0;
@@ -401,7 +405,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
         // `length` getter runs, and its throw wins, even for a callback that
         // is not callable.
-        const detail::unwind_watch watch{c};
+        detail::unwind_watch watch{c};
         const double len = detail::array_like_length(c, self);
         if (watch.threw()) { return value::undefined(); }
         const value callback = arg_at(a, 0);
@@ -450,6 +454,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             // A THROW ENDS THE FOLD, rather than walking the rest of an
             // array-like of 2^53 - 1 to call a callback that cannot run.
             if (c.throw_pending()) { return value::undefined(); }
+            watch.rearm();
         }
         return total;
     };

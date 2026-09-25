@@ -338,6 +338,9 @@ struct unwind_watch {
     std::size_t before;
     explicit unwind_watch(context & c) : cx(c), before(c.unwinds()) {}
     [[nodiscard]] bool threw() const { return cx.throw_pending() || cx.unwinds() != before; }
+    // AFTER A CALLBACK THAT DID NOT THROW: one that threw and caught inside
+    // itself moved the count, and the next read must not take that for its own.
+    void rearm() { before = cx.unwinds(); }
 };
 [[nodiscard]] inline array_object * dense_array_this(value self); // below
 [[nodiscard]] inline bool put_element(context & cx, value self, double i, value v) {
@@ -526,6 +529,7 @@ struct generic_walk {
         return steps <= max_generic_walk || generic_walk_ok(cx, steps);
     }
     [[nodiscard]] bool threw() const { return watch.threw(); }
+    void rearm() { watch.rearm(); } // see unwind_watch::rearm
 };
 
 // ToObject(this value), 23.1.3's first step in every method: a primitive is

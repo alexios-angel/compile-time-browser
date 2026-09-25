@@ -62,6 +62,7 @@ namespace {
             // Parked if it threw (context::call); the unwind count would also
             // move for a mapper that throws and catches inside itself.
             if (c.throw_pending()) { return false; }
+            walk.rearm();
         }
         const context::rooted keep_element(c, element);
         bool flatten = false;
