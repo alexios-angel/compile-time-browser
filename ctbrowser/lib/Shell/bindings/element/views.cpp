@@ -1,4 +1,5 @@
 #include "../computed_style/internal.hpp"
+#include "control_methods/helpers.hpp"
 #include "internal.hpp"
 
 #include "view_geometry.hpp"
@@ -424,23 +425,24 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                         mutated();
                         return value::undefined();
                     })));
-            obj.define_accessor("checked",
-                                value::object(cx.allocate<script::native_object>(
-                                    "checked",
-                                    [this, id](context &, std::span<value>) {
-                                        const auto read = doc_->read();
-                                        return value::boolean(
-                                            forms_->state_of(read, *atoms_, id).checked);
-                                    })),
-                                value::object(cx.allocate<script::native_object>(
-                                    "checked", [this, id](context &, std::span<value> a) {
-                                        const auto read = doc_->read();
-                                        forms_->state_of(read, *atoms_, id).checked =
-                                            !a.empty() && context::truthy(a[0]);
-                                        wrote_to_control_ = true;
-                                        mutated();
-                                        return value::undefined();
-                                    })));
+            obj.define_accessor(
+                "checked",
+                value::object(cx.allocate<script::native_object>(
+                    "checked",
+                    [this, id](context &, std::span<value>) {
+                        const auto read = doc_->read();
+                        return value::boolean(forms_->state_of(read, *atoms_, id).checked);
+                    })),
+                value::object(cx.allocate<script::native_object>(
+                    "checked", [this, id](context &, std::span<value> a) {
+                        const auto read = doc_->read();
+                        const bool on = !a.empty() && context::truthy(a[0]);
+                        forms_->state_of(read, *atoms_, id).checked = on;
+                        if (on) { control_helpers{this}.uncheck_radio_group(read, this, id); }
+                        wrote_to_control_ = true;
+                        mutated();
+                        return value::undefined();
+                    })));
         }
     }
 

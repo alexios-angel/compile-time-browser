@@ -184,6 +184,38 @@ bool control_helpers::is_disabled(const read_txn & txn, dom_bindings * b, node_i
     return false;
 }
 
+bool control_helpers::in_radio_group(const read_txn & txn, dom_bindings * b, node_id a,
+                                     node_id other) const {
+    // HTML 4.10.5.1.16's radio button group: both radio inputs, the same
+    // form owner (or none), the same tree, and the same non-empty name -
+    // compared exactly, as the name is not a keyword.
+    const auto helpers = *this;
+    const auto radio = [&](node_id id) {
+        return helpers.is(txn, id, "input") && helpers.input_type(txn, b, id) == "radio";
+    };
+    if (!radio(a) || !radio(other)) { return false; }
+    const std::string name = helpers.attribute_of(txn, b, a, "name");
+    return !name.empty() && helpers.attribute_of(txn, b, other, "name") == name &&
+           helpers.form_owner(txn, b, a) == helpers.form_owner(txn, b, other) &&
+           helpers.tree_top(txn, b, a) == helpers.tree_top(txn, b, other);
+}
+
+void control_helpers::uncheck_radio_group(const read_txn & txn, dom_bindings * b,
+                                          node_id id) const {
+    // "When the element's checkedness becomes true, every other element in
+    // its radio button group has its checkedness set to false."
+    const auto helpers = *this;
+    if (!helpers.is(txn, id, "input") || helpers.input_type(txn, b, id) != "radio" ||
+        helpers.attribute_of(txn, b, id, "name").empty()) {
+        return;
+    }
+    helpers.walk_tree(txn, helpers.tree_top(txn, b, id), [&](node_id other) {
+        if (other != id && helpers.in_radio_group(txn, b, id, other)) {
+            b->forms_->state_of(txn, *b->atoms_, other).checked = false;
+        }
+    });
+}
+
 void control_helpers::plain(script::object_object &) {}
 
 } // namespace ctbrowser::shell::detail

@@ -176,19 +176,11 @@ unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id 
         // A radio with no name is in no group, and the requirement is
         // the group's (4.10.5.1.16) - so it is never missing.
         if (name.empty()) { return flags; }
-        {
-            const node_id owner = helpers.form_owner(txn, b, id);
-            helpers.walk_tree(txn, helpers.tree_top(txn, b, id), [&](node_id other) {
-                if (other == id || !helpers.is(txn, other, "input") ||
-                    helpers.input_type(txn, b, other) != "radio" ||
-                    helpers.attribute_of(txn, b, other, "name") != name ||
-                    helpers.form_owner(txn, b, other) != owner) {
-                    return;
-                }
-                if (helpers.has_attribute(txn, b, other, "required")) { any_required = true; }
-                if (b->forms_->state_of(txn, *b->atoms_, other).checked) { any_checked = true; }
-            });
-        }
+        helpers.walk_tree(txn, helpers.tree_top(txn, b, id), [&](node_id other) {
+            if (other == id || !helpers.in_radio_group(txn, b, id, other)) { return; }
+            if (helpers.has_attribute(txn, b, other, "required")) { any_required = true; }
+            if (b->forms_->state_of(txn, *b->atoms_, other).checked) { any_checked = true; }
+        });
         if (any_required && !any_checked) { flags |= value_missing; }
         return flags;
     }
