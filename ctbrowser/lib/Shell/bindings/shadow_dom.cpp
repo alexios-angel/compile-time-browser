@@ -245,17 +245,40 @@ void dom_bindings::copy_shadow_trees(const document & src, const read_txn & from
     }
 }
 
-// `setHTMLUnsafe(markup)`: `innerHTML` PLUS the declarative shadow roots.
+// `setHTMLUnsafe(markup, {runScripts})`: `innerHTML` PLUS the declarative
+// shadow roots, HTML 8.6.1 "unsafely set HTML".
 //
 // The fragment is parsed into a SCRATCH document whose "allow declarative
 // shadow roots" is on, so the tree builder attaches them there (see
 // tree_builder::declarative_shadow_root) and the copy carries the shadow trees
-// over.
-void dom_bindings::set_html_unsafe(node_id target, std::string_view markup) {
+// over. The context element is the element itself - or a shadow root's host -
+// and the children go where it keeps them: a <template>'s are its CONTENTS.
+//
+// `runScripts` (whatwg/html#12495): the parsed <script>s are not marked
+// already started, so each runs when it is connected - after the whole
+// fragment is in, in shadow-including tree order, a script an earlier one
+// removed not at all (the inserted-script batch in document/entry.cpp).
+void dom_bindings::set_html_unsafe(node_id target, std::string_view markup, bool run_scripts) {
     if (!target || atoms_ == nullptr) { return; }
+    node_id context = target;
+    if (const shadow_tree * tree = shadow_tree_of(target)) { context = tree->host; }
+    node_id into = target;
+    bool is_template = false;
     {
         const auto txn = doc_->read();
-        const std::span<const node_id> kids = txn.children(target);
+        is_template =
+            txn.element_ns(target) == node_ns::html && txn.local_name(target) == "template";
+    }
+    if (is_template) {
+        into = doc_->template_content(target);
+        if (!into) {
+            into = doc_->create_fragment();
+            doc_->set_template_content(target, into);
+        }
+    }
+    {
+        const auto txn = doc_->read();
+        const std::span<const node_id> kids = txn.children(into);
         const std::vector<node_id> existing{kids.begin(), kids.end()};
         for (const node_id child : existing) { (void)doc_->remove_child(child); }
     }
@@ -266,14 +289,31 @@ void dom_bindings::set_html_unsafe(node_id target, std::string_view markup) {
     node_id body;
     {
         const auto txn = doc_->read();
-        body = parse_html_fragment(scratch, markup, txn.local_name(target), txn.element_ns(target),
-                                   doc_->scripting(), true);
+        body = parse_html_fragment(scratch, markup, txn.local_name(context),
+                                   txn.element_ns(context), doc_->scripting(), true);
     }
     const auto from = scratch.read();
     const std::span<const node_id> kids = from.children(body);
     const std::vector<node_id> sources{kids.begin(), kids.end()};
     for (const node_id child : sources) {
-        copy_shadow_trees(scratch, from, child, copy_subtree(from, child, target));
+        copy_shadow_trees(scratch, from, child, copy_subtree(from, child, into));
+    }
+    if (run_scripts) {
+        std::vector<node_id> scripts;
+        {
+            const auto txn = doc_->read();
+            const auto walk = [&](auto && self, node_id at) -> void {
+                const node_ns ns = txn.element_ns(at);
+                if (txn.tag(at) && (ns == node_ns::html || ns == node_ns::svg) &&
+                    txn.local_name(at) == "script") {
+                    scripts.push_back(at);
+                }
+                if (const node_id shadow = shadow_root_of(at)) { self(self, shadow); }
+                for (const node_id child : txn.children(at)) { self(self, child); }
+            };
+            for (const node_id child : txn.children(into)) { walk(walk, child); }
+        }
+        for (const node_id script : scripts) { note_unstarted_script(script); }
     }
     mutated();
 }
@@ -487,7 +527,8 @@ void dom_bindings::install_shadow_dom(context & cx) {
             cx, *on, "setHTMLUnsafe",
             [this](context & c, std::span<value> args) {
                 if (const node_id id = handle_of(c.current_this())) {
-                    set_html_unsafe(id, arg_string(c, args, 0));
+                    set_html_unsafe(id, arg_string(c, args, 0),
+                                    dict_flag(c, arg(args, 1), "runScripts"));
                 }
                 return value::undefined();
             },

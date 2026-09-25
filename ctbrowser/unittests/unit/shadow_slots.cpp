@@ -166,6 +166,24 @@ void test_the_page_parser_attaches_declarative_roots() {
              "ran:in;true,1;true,null;null,2;null");
 }
 
+// setHTMLUnsafe's OPTIONS AND ITS TEMPLATE TARGET: with `runScripts` the
+// parsed scripts run once the whole fragment is in, one inside a declarative
+// shadow root included, and without it none does; a <template>'s markup goes
+// into its contents, never under the element.
+void test_set_html_unsafe_options() {
+    CHECK_EQ(said("<html><body><div id=w></div><script>"
+                  "var w = document.getElementById('w'); window.ran = [];"
+                  "w.setHTMLUnsafe('<script>ran.push(1)</scr' + 'ipt>');"
+                  "w.setHTMLUnsafe('<script>ran.push(2)</scr' + 'ipt><div>"
+                  "<template shadowrootmode=open><script>ran.push(3)</scr' + 'ipt>"
+                  "</template></div>', {runScripts: true});"
+                  "alert(ran.join());"
+                  "var t = document.createElement('template'); t.setHTMLUnsafe('<b>x</b>');"
+                  "alert(t.childNodes.length + ',' + t.content.firstChild.nodeName);"
+                  "</script></body></html>"),
+             "2,3;0,B");
+}
+
 } // namespace
 
 // slotchange-event.html: not synchronous, once per change however many
@@ -210,6 +228,7 @@ int main() {
     test_manual_slot_assignment();
     test_set_html_unsafe_attaches_a_declarative_root();
     test_the_page_parser_attaches_declarative_roots();
+    test_set_html_unsafe_options();
     test_slotchange_events();
     REPORT("shadow_slots");
 }
