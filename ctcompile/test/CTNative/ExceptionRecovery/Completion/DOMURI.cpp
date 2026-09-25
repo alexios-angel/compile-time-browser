@@ -15,6 +15,127 @@ namespace ctcompile::test::exception_recovery {
 
 using ctcompile::ctnative::host_detail::projectInvocationContinuation;
 
+static void testInvocationCallableReads(mlir::MLIRContext & context) {
+    const std::string source = R"MLIR(module {
+  ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %key = ctjs.constant #ctjs.string<"method">
+    %holder = ctjs.create_object
+    %helper = ctjs.create_closure %callee[1] this %u
+    ctjs.set_property %holder[%key], %helper
+    %answer = ctjs.try {
+      %method = ctjs.get_property %holder[%key]
+      %result = "ctjs.invoke"() ({
+        %called = ctjs.call %method(%holder)
+        ctjs.invoke_exit %called state(%u)
+      }, {
+      ^normal(%value: !ctjs.value):
+        %read = ctjs.get_property %holder[%key]
+        %called = ctjs.call %read(%holder)
+        "ctjs.invoke_yield"(%called) : (!ctjs.value) -> ()
+      }, {
+      ^unwind(%error: !ctjs.value, %saved: !ctjs.value):
+        %read = ctjs.get_property %holder[%key]
+        %called = ctjs.call %read(%holder)
+        "ctjs.invoke_yield"(%called) : (!ctjs.value) -> ()
+      }) : () -> !ctjs.value
+      %failed = arith.constant false
+      ctjs.try_exit %failed normal %result caught(%u)
+    } catch {
+    ^catch(%error: !ctjs.value):
+      %read = ctjs.get_property %holder[%key]
+      %called = ctjs.call %read(%holder)
+      ctjs.try_yield %called
+    } : !ctjs.value
+    ctjs.return %answer
+  }
+  ctjs.func private @method$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    ctjs.return %u
+  }
+})MLIR";
+    unsigned required = 0;
+    for (unsigned control = 0; control != 13; ++control) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+        if (!check(static_cast<bool>(module), "immutable invocation callable fixture parses")) {
+            return;
+        }
+        auto entry = module->lookupSymbol<ctjs::FuncOp>("entry$0");
+        auto & body = entry.getBody().front();
+        auto holder = *body.getOps<ctjs::CreateObjectOp>().begin();
+        auto store = *body.getOps<ctjs::SetPropertyOp>().begin();
+        auto closure = *body.getOps<ctjs::CreateClosureOp>().begin();
+        auto attempt = *body.getOps<ctjs::TryOp>().begin();
+        auto invocation = *attempt.getBody().front().getOps<ctjs::InvokeOp>().begin();
+        auto & normal = invocation.getNormalBody().front();
+        auto & unwind = invocation.getUnwindBody().front();
+        mlir::OpBuilder at(attempt);
+        if (control == 1) {
+            store->moveAfter(attempt);
+        } else if (control == 2 || control == 3) {
+            if (control == 2) { at.setInsertionPointToStart(&normal); }
+            at.clone(*store);
+        } else if (control == 4) {
+            at.setInsertionPointToStart(&unwind);
+            ctjs::StoreGlobalOp::create(at, holder.getLoc(), "published", holder);
+        } else if (control == 5) {
+            auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
+            exit.getStateMutable().assign(holder.getResult());
+        } else if (control == 6) {
+            attempt.getCatchBody().front().back().setOperand(0, holder.getResult());
+        } else if (control == 7 || control == 10) {
+            at.setInsertionPointToStart(&normal);
+            if (control == 7) {
+                auto scope =
+                    mlir::scf::ExecuteRegionOp::create(at, holder.getLoc(), mlir::TypeRange{});
+                auto & nested = scope.getRegion().emplaceBlock();
+                at.setInsertionPointToEnd(&nested);
+                ctjs::GetPropertyOp::create(at, holder.getLoc(), holder, store.getKey());
+                mlir::scf::YieldOp::create(at, holder.getLoc());
+            } else {
+                auto yes = mlir::arith::ConstantIntOp::create(at, holder.getLoc(), 1, 1);
+                auto branch = mlir::scf::IfOp::create(at, holder.getLoc(), yes, false);
+                at.setInsertionPoint(branch.getThenRegion().front().getTerminator());
+                ctjs::GetPropertyOp::create(at, holder.getLoc(), holder, store.getKey());
+            }
+        } else if (control == 8) {
+            auto read = *normal.getOps<ctjs::GetPropertyOp>().begin();
+            read.getObjectMutable().assign(body.getArgument(ctjs::arg_receiver));
+        } else if (control == 9) {
+            at.setInsertionPoint(store);
+            ctjs::GetPropertyOp::create(at, holder.getLoc(), holder, store.getKey());
+        }
+        if (!check(mlir::succeeded(mlir::verify(*module)),
+                   "invocation callable control verifies")) {
+            continue;
+        }
+        const auto before = printed(*module);
+        const unsigned budget = control == 11 ? 0 : control == 12 ? required - 1 : 100000;
+        unsigned remaining = budget;
+        auto proof = ctcompile::ctnative::analyzeLocalCallableObject(holder, [&] {
+            if (!remaining) { return false; }
+            --remaining;
+            return true;
+        });
+        const bool expected = control == 0 || control == 10;
+        check(static_cast<bool>(proof) == expected,
+              "only initialized immutable callable reads cross exception continuations");
+        check(printed(*module) == before, "callable proof and budget refusal never change IR");
+        if (!proof) {
+            llvm::consumeError(proof.takeError());
+            continue;
+        }
+        if (control == 0) { required = budget - remaining; }
+        check(proof->stores.size() == 1 && proof->stores.front() == store &&
+                  proof->calls.size() == 4 && proof->reads.size() == (control == 10 ? 5u : 4u),
+              "callable proof retains every slot, read and exact receiver call");
+        for (auto [read, target] : proof->reads) {
+            check(target == closure && read.getObject() == holder.getResult(),
+                  "all outcomes select the original initialized closure");
+        }
+    }
+}
+
 static void testInvocationCellReads(mlir::MLIRContext & context) {
     const std::string source = R"MLIR(module {
   ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %initial: !ctjs.value, %replacement: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -732,7 +853,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                   contract.moduleSha256 == ctcompile::ctnative::hostContractFingerprint(*module),
               "original observing iterator defers suppression without changing any source state");
         if (!close) { llvm::consumeError(close.takeError()); }
-        const auto boundary = structured ? "DOM helper object has nonlocal or unordered uses"
+        const auto boundary = structured ? "DOM helper call has unsupported arity or source order"
                               : method   ? "DOM Symbol.iterator must be a closed identity method"
                                          : "DOM iterator getter requires a terminal throw";
         for (unsigned budget : {0u, 100000u}) {
@@ -1654,6 +1775,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
 }
 
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    testInvocationCallableReads(context);
     testInvocationCellReads(context);
     testObservedIteratorRecovery(context);
     testInertHelperCompletion(context);

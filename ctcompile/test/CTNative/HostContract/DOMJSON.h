@@ -476,6 +476,9 @@ module {
         "scf.yield %called : !ctjs.value", "scf.yield %flag : !ctjs.value");
     for (const auto & valid :
          {protectedHolder,
+          replaced(protectedHolder, "^bb0(%error: !ctjs.value):",
+                   "^bb0(%error: !ctjs.value):\n"
+                   "        %escaped = ctjs.get_property %holder[%key]"),
           replaced(protectedHolder, "ctjs.call %method(%holder, %element)",
                    "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
           replaced(protectedHolder, "%answer = ctjs.compare strict_eq %element, %element",
@@ -3485,7 +3488,8 @@ module {
                    "        ctjs.store_global \"effect\", %error"),
           replaced(protectedHolder, "^bb0(%error: !ctjs.value):",
                    "^bb0(%error: !ctjs.value):\n"
-                   "        %escaped = ctjs.get_property %holder[%key]"),
+                   "        %escaped = ctjs.get_property %holder[%key]\n"
+                   "        ctjs.store_global \"effect\", %escaped"),
           replaced(
               replaced(protectedHolder, "state()", "state(%element)"),
               "^bb0(%error: !ctjs.value):", "^bb0(%error: !ctjs.value, %state: !ctjs.value):")}) {
@@ -3500,6 +3504,17 @@ module {
         input->walk([&](ctjs::InvokeOp) { ++invocations; });
         check(invocations == 1 && mlir::succeeded(mlir::verify(*input)),
               "refused protected expansion retains its valid suppression region");
+        if (invalid.find("%escaped =") != std::string::npos) {
+            ctjs::StoreGlobalOp observed;
+            input->walk([&](ctjs::StoreGlobalOp store) { observed = store; });
+            auto invocation =
+                observed ? observed->getParentOfType<ctjs::InvokeOp>() : ctjs::InvokeOp{};
+            auto closure = observed ? observed.getValue().getDefiningOp<ctjs::CreateClosureOp>()
+                                    : ctjs::CreateClosureOp{};
+            check(invocation && closure && closure.getFunction() == 1 &&
+                      observed->getParentRegion() == &invocation.getUnwindBody(),
+                  "proved own-slot read preserves its observed closure and unwind effect");
+        }
     }
     for (unsigned budget : {0U, 64U, 128U}) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(protectedHolder, &context);

@@ -11,19 +11,24 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
         return llvm::createStringError(llvm::inconvertibleErrorCode(), message);
     };
     const auto precedes = [&](mlir::Operation * definition, mlir::Operation * use) {
-        // Immutable slots may be read repeatedly in nested branches and loops.
+        // Immutable slots may be read in branches, loops and exception continuations.
         // The complete use census still requires unique unconditional stores;
         // no backedge can replace a slot or carry the holder into another scope.
         while (use->getBlock() != definition->getBlock()) {
             if (!spend()) { return false; }
             auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(use->getParentOp());
-            // Only the call executes before dispatch. Continuation uses need
-            // their own exception/state proof and cannot borrow this order.
+            // Only the call executes before dispatch. Direct continuation uses
+            // follow dispatch; the Invoke must follow initialization. Saved
+            // holder transport is still rejected by the complete use census.
             const bool protectedCall = invocation &&
                                        use->getParentRegion() == &invocation.getBody() &&
                                        llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(use);
-            if (!protectedCall &&
-                !llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp>(use->getParentOp())) {
+            const bool continuation =
+                invocation && (use->getParentRegion() == &invocation.getNormalBody() ||
+                               use->getParentRegion() == &invocation.getUnwindBody());
+            if (!protectedCall && !continuation &&
+                !llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp, ctjs::TryOp>(
+                    use->getParentOp())) {
                 return false;
             }
             use = use->getParentOp();
