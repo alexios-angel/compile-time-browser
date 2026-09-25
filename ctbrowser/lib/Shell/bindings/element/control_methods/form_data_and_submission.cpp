@@ -5,6 +5,10 @@ using namespace detail;
 using namespace input_types;
 
 namespace {
+// A form's "constructing entry list" and "firing submission events" flags.
+constexpr std::string_view constructing_slot = "__constructingEntryList";
+constexpr std::string_view firing_slot = "__firingSubmissionEvents";
+
 // `window[name].prototype`, or undefined when no such interface is defined.
 [[nodiscard]] value interface_prototype_of(context & c, std::string_view name) {
     if (!c.has_global(name)) { return value::undefined(); }
@@ -43,9 +47,14 @@ void dom_bindings::install_control_form_data(context & cx) {
         return static_cast<script::array_object *>(pair.as_heap())->items.at(1);
     };
     // "Construct the entry list" for a form: the submittable elements'
-    // successful controls, in tree order, then the `formdata` event.
+    // successful controls, in tree order, then the `formdata` event. FALSE -
+    // the specification's null - when the form is already constructing one
+    // (its "constructing entry list" flag, a slot on the form): a `formdata`
+    // listener that submits the form again must not recurse.
     const auto entry_list = [helpers, make_entry](context & c, dom_bindings * b, node_id form,
-                                                  node_id submitter, value form_data) {
+                                                  node_id submitter, value form_data) -> bool {
+        if (context::truthy(helpers.slot_of(c, b, form, constructing_slot))) { return false; }
+        helpers.set_slot(c, b, form, constructing_slot, value::boolean(true));
         auto * list = static_cast<script::array_object *>(
             static_cast<script::object_object *>(form_data.as_heap())
                 ->find(entries_slot)
@@ -203,6 +212,8 @@ void dom_bindings::install_control_form_data(context & cx) {
                                if (formdata_proto.is_object()) { event.prototype = formdata_proto; }
                                event.set("formData", form_data);
                            });
+        helpers.erase_slot(c, b, form, constructing_slot);
+        return true;
     };
     if (!secondary_) {
         helpers.install_data_transfer(cx);
@@ -386,7 +397,12 @@ void dom_bindings::install_control_form_data(context & cx) {
                         return value::undefined();
                     }
                 }
-                entry_list(c, b, form, submitter, self);
+                if (!entry_list(c, b, form, submitter, self)) {
+                    b->throw_dom_exception(c, "InvalidStateError",
+                                           "Failed to construct 'FormData': the form is already "
+                                           "constructing its entry list");
+                    return value::undefined();
+                }
                 return self;
             });
         form_data_ctor->define("prototype", form_data_proto_value, script::attr_none);
@@ -412,8 +428,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                                                 node_id submitter) {
         const value data = new_form_data(c);
         if (!data.is_object()) { return; }
-        entry_list(c, b, form, submitter, data);
-        if (c.throw_pending()) { return; }
+        if (!entry_list(c, b, form, submitter, data) || c.throw_pending()) { return; }
         // ...AND THE NAVIGATION, when the form aims a GET at a frame this
         // document names (frames.cpp): the entries as strings - a File by
         // its name, as the urlencoded serialiser says.
@@ -486,15 +501,27 @@ void dom_bindings::install_control_form_data(context & cx) {
                     validate = false;
                 }
             }
-            if (validate && !helpers.validate_form(c, this, form)) { return value::undefined(); }
-            const value submitter_value = submitter ? wrap(c, submitter) : value::null();
-            const value submit_proto = interface_prototype_of(c, "SubmitEvent");
-            const bool cancelled =
-                helpers.fire(c, this, form, "submit", true, true,
-                             [submitter_value, submit_proto](script::object_object & event) {
-                                 if (submit_proto.is_object()) { event.prototype = submit_proto; }
-                                 event.set("submitter", submitter_value);
-                             });
+            // THE FIRING-SUBMISSION-EVENTS FLAG (4.10.21.3 step 6): while this
+            // submission validates and fires `submit`, another one started
+            // from an `invalid` or `submit` listener returns at once.
+            if (context::truthy(helpers.slot_of(c, this, form, firing_slot))) {
+                return value::undefined();
+            }
+            helpers.set_slot(c, this, form, firing_slot, value::boolean(true));
+            bool cancelled = validate && !helpers.validate_form(c, this, form);
+            if (!cancelled && !c.throw_pending()) {
+                const value submitter_value = submitter ? wrap(c, submitter) : value::null();
+                const value submit_proto = interface_prototype_of(c, "SubmitEvent");
+                cancelled =
+                    helpers.fire(c, this, form, "submit", true, true,
+                                 [submitter_value, submit_proto](script::object_object & event) {
+                                     if (submit_proto.is_object()) {
+                                         event.prototype = submit_proto;
+                                     }
+                                     event.set("submitter", submitter_value);
+                                 });
+            }
+            helpers.erase_slot(c, this, form, firing_slot);
             if (cancelled || c.throw_pending()) { return value::undefined(); }
             build_submission(c, this, form, submitter);
             return value::undefined();
