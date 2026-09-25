@@ -597,9 +597,10 @@ struct ArrayContentsEvidence {
 /// children keep their original witness; no unique owner is inferred.
 /// For scf.if/scf.while, a charged census checks current operand/result lattices
 /// and direct Stored targets before the independent contents proof. The legacy
-/// top-level census remains incomplete. Nested allocations may refine only in a
-/// single root block with exclusively scf.if ancestors, proving at most one
-/// instance per call, and only when absent from every return's reachable sites.
+/// top-level census remains incomplete. Nested allocations require exclusively
+/// scf.if ancestors; the complete contents query rejects repeated root blocks
+/// except allocation/region-free counted loops, proving at most one instance per
+/// call. A site may refine only when absent from every return's reachable sites.
 /// This proves frame confinement, never region lifetime or native ownership.
 /// Unsupported operations, cycles, missing lattices or budget exhaustion leave
 /// every original verdict intact. No native admission consumes this refinement.

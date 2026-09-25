@@ -430,6 +430,33 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         "  }\n";
     const std::string nestedStore =
         receiverStart + localArray + "    ctjs.set_property %a[%zero], %fresh\n  }\n";
+    const std::string transportedSelection = selectedArrays +
+                                             "  cf.br ^next(%selected : !ctjs.value)\n"
+                                             "^next(%base: !ctjs.value):\n";
+    const std::string transportedStore =
+        nestedStore + "  cf.br ^next(%a : !ctjs.value)\n^next(%base: !ctjs.value):\n";
+    const std::string repeatedSelection =
+        localStart +
+        "  %initial = ctjs.create_array []\n"
+        "  cf.br ^loop(%initial : !ctjs.value)\n"
+        "^loop(%previous: !ctjs.value):\n"
+        "  %selected = scf.if %flag -> (!ctjs.value) {\n" +
+        localArray +
+        "    scf.yield %fresh : !ctjs.value\n"
+        "  } else {\n    scf.yield %previous : !ctjs.value\n  }\n";
+    const std::string countedStart = "  %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
+                                     "  %name = ctjs.constant #ctjs.string<\"length\">\n"
+                                     "  %guard = ctjs.create_array [%zero, %zero]\n"
+                                     "  cf.br ^header(%zero : !ctjs.value)\n"
+                                     "^header(%index: !ctjs.value):\n"
+                                     "  %length = ctjs.get_property %guard[%name]\n"
+                                     "  %test = ctjs.compare lt %index, %length\n"
+                                     "  %continue = ctjs.truthy %test\n"
+                                     "  cf.cond_br %continue, ^body(%index : !ctjs.value), ^exit\n"
+                                     "^body(%i: !ctjs.value):\n";
+    const std::string countedEnd = "  %step = ctjs.binary add %i, %one\n"
+                                   "  cf.br ^header(%step : !ctjs.value)\n^exit:\n" +
+                                   done;
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -653,9 +680,66 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  "  } do {\n    scf.if %flag {\n" +
                  localArray + "    }\n    scf.yield\n  }\n" + done,
          .complete = false},
-        {.what = "conditional instances across root CFG blocks need a separate lifetime proof",
+        {.what = "conditional instances across root CFG blocks reuse complete path nonrepetition",
          .body =
              localStart + "  cf.br ^next\n^next:\n  scf.if %flag {\n" + localArray + "  }\n" + done,
+         .confinedNested = "fresh"},
+        {.what = "a shared diamond join creates at most one conditional instance per call",
+         .body = localStart +
+                 "  cf.cond_br %flag, ^left, ^right\n"
+                 "^left:\n  cf.br ^join\n^right:\n  cf.br ^join\n"
+                 "^join:\n  scf.if %flag {\n" +
+                 localArray + "  }\n" + done,
+         .confinedNested = "fresh"},
+        {.what = "successor own reads preserve selected conditional identities",
+         .body = transportedSelection + "  %read = ctjs.get_property %base[%zero]\n"
+                                        "  ctjs.return %read\n",
+         .confinedNested = "fresh,other"},
+        {.what = "a successor return retains both selected conditional origins",
+         .body = transportedSelection + "  ctjs.return %base\n"},
+        {.what = "every duplicate successor edge retains its own selected operand",
+         .body = selectedArrays + "  cf.cond_br %flag, ^next(%zero : !ctjs.value), "
+                                  "^next(%selected : !ctjs.value)\n"
+                                  "^next(%saved: !ctjs.value):\n  ctjs.return %saved\n"},
+        {.what = "one retaining exit prevents confinement despite an earlier primitive exit",
+         .body = selectedArrays + "  cf.cond_br %flag, ^plain, ^retain\n"
+                                  "^plain:\n  ctjs.return %zero\n"
+                                  "^retain:\n  ctjs.return %selected\n"},
+        {.what = "successor replacement releases the conditional child from a returned holder",
+         .body = transportedStore + "  ctjs.set_property %base[%zero], %zero\n"
+                                    "  ctjs.return %base\n",
+         .confinedNested = "fresh"},
+        {.what = "successor saved reads retain the child after its holder is cleared",
+         .body = transportedStore + "  %saved = ctjs.get_property %base[%zero]\n"
+                                    "  ctjs.set_property %base[%zero], %zero\n"
+                                    "  ctjs.return %saved\n",
+         .confinedReceivers = "a"},
+        {.what = "successor publication refuses all conditional origin refinements",
+         .body = transportedSelection + "  ctjs.store_global \"held\", %base\n" + done,
+         .complete = false},
+        {.what = "transient successor cycles cannot borrow acyclic CFG authority",
+         .body = transportedSelection +
+                 "  ctjs.set_property %base[%zero], %base\n"
+                 "  ctjs.set_property %base[%zero], %zero\n" +
+                 done,
+         .complete = false},
+        {.what = "backedges cannot conflate the saved and current conditional instances",
+         .body = repeatedSelection + "  cf.cond_br %flag, ^loop(%selected : !ctjs.value), "
+                                     "^exit(%previous : !ctjs.value)\n"
+                                     "^exit(%saved: !ctjs.value):\n  ctjs.return %saved\n",
+         .complete = false},
+        {.what = "a solver-dead backedge still cannot grant conditional instance authority",
+         .body = repeatedSelection + "  %no = arith.constant false\n"
+                                     "  cf.cond_br %no, ^loop(%selected : !ctjs.value), "
+                                     "^exit(%previous : !ctjs.value)\n"
+                                     "^exit(%saved: !ctjs.value):\n  ctjs.return %saved\n",
+         .complete = false},
+        {.what = "a separate counted loop cannot repeat preheader conditional allocations",
+         .body = selectedArrays + countedStart + countedEnd,
+         .confinedNested = "fresh,other"},
+        {.what = "the counted CFG exception still rejects conditional allocations in its body",
+         .body =
+             localStart + countedStart + "  scf.if %flag {\n" + localArray + "  }\n" + countedEnd,
          .complete = false},
         {.what = "conditional origins cannot bypass raw-frame suspension refusal",
          .body = localStart + "  scf.if %flag {\n" + localArray +

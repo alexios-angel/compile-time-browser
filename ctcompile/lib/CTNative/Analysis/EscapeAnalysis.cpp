@@ -314,10 +314,10 @@ bool structuredRetentionInputs(const mlir::DataFlowSolver & solver, ctjs::FuncOp
         const AliasLattice * lattice = solver.lookupState<AliasLattice>(value);
         return lattice != nullptr && !lattice->getValue().isUninitialized();
     };
-    const auto singleInstance = [&](mlir::Operation * site) {
-        // ponytail: one root block and only conditional ancestors; repeated
-        // CFG/loop sites need distinct instance identities before refinement.
-        if (!llvm::hasSingleElement(function.getBody())) { return false; }
+    const auto conditionalAncestors = [&](mlir::Operation * site) {
+        // The complete contents query below rejects repeated root CFG blocks;
+        // its counted-loop exception excludes allocations and regions. Only
+        // conditional ancestors can therefore keep one instance per call.
         for (mlir::Operation * parent = site->getParentOp(); parent != function.getOperation();
              parent = parent->getParentOp()) {
             if (!spend() || !llvm::isa<mlir::scf::IfOp>(parent)) { return false; }
@@ -328,7 +328,7 @@ bool structuredRetentionInputs(const mlir::DataFlowSolver & solver, ctjs::FuncOp
     // Check every nested operand/result against the current solver instead of
     // presenting that partial census as complete. SCF supplies the region
     // branch alias transport; this walk supplies no new alias or contents fact.
-    // A nested site additionally needs the bounded nonrepetition proof above.
+    // A nested site needs this ancestry check and the complete contents proof.
     return !function.getBody()
                 .walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
                     if (!spend() ||
@@ -336,7 +336,7 @@ bool structuredRetentionInputs(const mlir::DataFlowSolver & solver, ctjs::FuncOp
                          !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) ||
                         (isTrackedSite(operation) &&
                          operation->getParentRegion() != &function.getBody() &&
-                         !singleInstance(operation)) ||
+                         !conditionalAncestors(operation)) ||
                         !llvm::all_of(operation->getOperands(), initialized) ||
                         !llvm::all_of(operation->getResults(), initialized)) {
                         return mlir::WalkResult::interrupt();
