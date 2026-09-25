@@ -247,6 +247,13 @@ bool context::has_property(value target, const std::string & name) {
     // then the implicit tables property lookup falls back to.
     property_descriptor found;
     if (own_property(target, name, found)) { return true; }
+    // 10.4.5.2: a typed array answers a numeric key itself - an element it
+    // does not have is absent, whatever its prototypes hold.
+    if (target.is_array() &&
+        static_cast<array_object *>(target.as_heap())->elements != element_kind::none &&
+        canonical_numeric_key(name)) {
+        return false;
+    }
     value link = target.is_object()  ? static_cast<object_object *>(target.as_heap())->prototype
                  : target.is_array() ? static_cast<array_object *>(target.as_heap())->prototype
                                      : value::null();

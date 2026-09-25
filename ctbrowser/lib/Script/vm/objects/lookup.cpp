@@ -122,6 +122,13 @@ value context::get_with_receiver(value base, const std::string & name, value rec
 value context::lookup_index(value target, value key) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
+        // A Number that is not an index is the property its ToString names:
+        // `a[1.5]` is a["1.5"], not a[1] - and on a typed array a numeric key
+        // that names no element is undefined, never the chain (10.4.5.4).
+        if (!array_index_number(key.as_number())) {
+            if (arr->elements != element_kind::none) { return value::undefined(); }
+            return lookup_property(target, to_string(key));
+        }
         const auto i = static_cast<std::ptrdiff_t>(key.as_number());
         if (arr->is_view()) {
             if (i < 0 || static_cast<std::size_t>(i) >= arr->length()) {
@@ -163,7 +170,7 @@ value context::lookup_index(value target, value key) {
         }
         return value::undefined();
     }
-    if (target.is_string() && key.is_number()) {
+    if (target.is_string() && key.is_number() && array_index_number(key.as_number())) {
         const std::string & text = static_cast<string_object *>(target.as_heap())->text;
         const auto i = static_cast<std::size_t>(key.as_number());
         return i < text.size() ? string(std::string{text[i]}) : value::undefined();
@@ -316,6 +323,11 @@ value context::lookup_property(value target, const std::string & name) {
         // PrintWriter walks its writers exactly this way.
         if (std::uint32_t at = 0; object_object::array_index_key(name, at)) {
             return lookup_index(target, value::number(static_cast<double>(at)));
+        }
+        // ...and every OTHER canonical numeric key names no element of a
+        // typed array: undefined, without asking the prototypes (10.4.5.4).
+        if (arr->elements != element_kind::none && canonical_numeric_key(name)) {
+            return value::undefined();
         }
         // A VIEW'S `buffer`, `byteLength` AND `byteOffset` ARE %TypedArray%.
         // prototype's getters (23.2.3.2-4), reached below: an inline answer

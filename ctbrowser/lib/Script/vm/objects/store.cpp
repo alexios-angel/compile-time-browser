@@ -30,6 +30,17 @@ void context::array_append(value target, value v) {
 void context::store_index(value target, value key, value v) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
+        // A Number that is not an index names the property its ToString
+        // spells (`a[-1] = v` is a["-1"]); a typed array coerces the value
+        // and writes nothing (10.4.5.5, TypedArraySetElement).
+        if (!array_index_number(key.as_number())) {
+            if (arr->elements != element_kind::none) {
+                (void)typed_element_set(*this, *arr, static_cast<std::size_t>(-1), v);
+                return;
+            }
+            store_property(target, to_string(key), v);
+            return;
+        }
         const auto i = static_cast<std::ptrdiff_t>(key.as_number());
         // A TYPED ARRAY COERCES ON WRITE AND DOES NOT GROW. Both are what makes
         // it typed: `pixels[i] = 300` is 255 in a clamped byte array, and a
@@ -282,6 +293,12 @@ void context::store_property(value target, const std::string & name, value v) {
         // `a["0"] = v` is the element, not a named property - see lookup_property.
         if (std::uint32_t at = 0; object_object::array_index_key(name, at)) {
             store_index(target, value::number(static_cast<double>(at)), v);
+            return;
+        }
+        // A typed array's other canonical numeric keys ("-0", "1.5") name no
+        // element: the value is coerced and nothing is written (10.4.5.5).
+        if (arr->elements != element_kind::none && canonical_numeric_key(name)) {
+            (void)typed_element_set(*this, *arr, static_cast<std::size_t>(-1), v);
             return;
         }
         // A TYPED ARRAY'S `length` is %TypedArray%.prototype's getter, so an

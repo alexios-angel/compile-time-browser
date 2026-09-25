@@ -2,8 +2,30 @@
 
 #include "../vm.hpp"
 #include "ctbrowser/core/number.hpp"
+#include "ctbrowser/core/number_format.hpp"
 
 namespace ctbrowser::script {
+
+// CanonicalNumericIndexString (7.1.21) is not undefined: the key is the
+// canonical spelling of a Number - every array index, and "-0", "1.5", "-1",
+// "NaN", "Infinity", "4294967295" besides. On a TYPED ARRAY every such key
+// names an element, valid or not, and never an ordinary property (10.4.5):
+// `ta["1.5"]` is undefined whatever %TypedArray%.prototype holds, while
+// `ta["1.0"]` and `ta["+1"]` are ordinary properties, not being canonical.
+[[nodiscard]] inline bool canonical_numeric_key(std::string_view key) {
+    if (key == "-0") { return true; }
+    if (key.empty()) { return false; }
+    const char c = key.front();
+    if (!((c >= '0' && c <= '9') || c == '-' || c == 'I' || c == 'N')) { return false; }
+    return ctbrowser::number_to_string(ctbrowser::string_to_number(key)) == key;
+}
+
+// Is this Number an ARRAY INDEX (6.1.7: an integral 0 .. 2^32-2)? -0 is: its
+// ToString is "0". A Number key that is not one - 1.5, -1, NaN - is the
+// property named by its ToString, never an element a truncation reached.
+[[nodiscard]] inline bool array_index_number(double d) noexcept {
+    return d >= 0 && d <= static_cast<double>(array_object::max_index) && d == std::trunc(d);
+}
 
 // ECMA-262 ToInt32 / ToUint32: NaN and the infinities are 0, everything
 // else truncates toward zero and wraps modulo 2^32.

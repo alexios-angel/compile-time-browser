@@ -58,20 +58,6 @@ bool array_set_length(array_object & arr, double n) {
 
 namespace {
 
-// CanonicalNumericIndexString (7.1.21) for a key that array_index_key already
-// refused: "-0", "1.5", "-1", "NaN", "Infinity" and the like. On a typed
-// array such a key names NO property (10.4.5.1, 10.4.5.3) - it is neither an
-// element nor a name the table may hold - where "01" or "foo" is an ordinary
-// property.
-[[nodiscard]] bool numeric_non_index_key(const std::string & name) {
-    if (name == "-0") { return true; }
-    if (name.empty() || !(std::isdigit(static_cast<unsigned char>(name.front())) ||
-                          name.front() == '-' || name.front() == 'I' || name.front() == 'N')) {
-        return false;
-    }
-    return number_to_string(string_to_number(name)) == name;
-}
-
 // 10.4.2.1 step 2 for a NEW element at `at`: a length that is not writable
 // refuses an index at or past it, and the slot is materialised the way
 // store_index would - dense up to array_object::dense_limit, sparse beyond.
@@ -289,7 +275,7 @@ bool context::own_property(value target, const std::string & name, property_desc
         }
         std::uint32_t at = 0;
         if (arr->elements != element_kind::none && !object_object::array_index_key(name, at) &&
-            numeric_non_index_key(name)) {
+            canonical_numeric_key(name)) {
             return false;
         }
         if (object_object::array_index_key(name, at)) {
@@ -557,10 +543,15 @@ bool context::delete_own_property(value target, const std::string & name) {
             return false; // non-configurable, 10.4.2
         }
         std::uint32_t at = 0;
+        const bool typed = arr->elements != element_kind::none;
+        // 10.4.5.6: a typed array's numeric key is deleted exactly when it
+        // names no element - `true` for "-0" or an index past the end, `false`
+        // for a live element - and never reaches the named table.
         if (!object_object::array_index_key(name, at)) {
+            if (typed && canonical_numeric_key(name)) { return true; }
             return arr->named ? delete_own_property(value::object(arr->named.get()), name) : true;
         }
-        if (arr->is_view()) { return at >= arr->length(); }
+        if (typed) { return at >= arr->length(); }
         // AN ELEMENT LEAVES A HOLE (10.4.2.1 via 10.1.10): `items` cannot shift
         // - `delete a[0]` must not change a.length - so the slot stays as a
         // placeholder and array_object::element_attrs records that it is not
@@ -660,7 +651,7 @@ bool context::define_own_property(value target, const std::string & name,
             if (wanted.has_value) { (void)typed_element_set(*this, *arr, at, wanted.held); }
             return true;
         }
-        if (arr->elements != element_kind::none && numeric_non_index_key(name)) { return false; }
+        if (arr->elements != element_kind::none && canonical_numeric_key(name)) { return false; }
     }
 
     property_descriptor current;
