@@ -298,6 +298,9 @@ void test_a_grouping_rule_inserts_and_deletes() {
         // A `{` in a bracket is no block (supports-conditionText).
         sheet.insertRule('@supports ({x}) {}', 1);
         console.log('braced=' + sheet.cssRules[1].conditionText);
+        // at-supports-at-rule-serialization.
+        sheet.insertRule('@supports at-rule( @--\\31 23) and AT-RULE(@a\\ b ) {}', 2);
+        console.log('atrule=' + sheet.cssRules[2].conditionText);
         group.deleteRule(0);
         console.log('gone=' + group.cssRules.length + ',' + group.cssText);
     </script></body></html>)");
@@ -318,6 +321,7 @@ void test_a_grouping_rule_inserts_and_deletes() {
     CHECK_EQ(logged(page, "refused="),
              std::string{"refused=SyntaxError,SyntaxError,SyntaxError,2"});
     CHECK_EQ(logged(page, "braced="), std::string{"braced=({x})"});
+    CHECK_EQ(logged(page, "atrule="), std::string{"atrule=at-rule(@--123) and AT-RULE(@a\\ b)"});
     CHECK_EQ(logged(page, "gone="),
              std::string{"gone=1,@media print {\n  #foo { z-index: 23; float: left; }\n}"});
 }

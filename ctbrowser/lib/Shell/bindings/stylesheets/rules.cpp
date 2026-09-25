@@ -30,6 +30,41 @@ namespace {
            name == "font-palette-values" || name == "view-transition";
 }
 
+// An `@supports` condition's `at-rule( <at-keyword-token> )` tests as CSS
+// Conditional 5 serialises them: no whitespace inside, the name escaped as an
+// identifier - `at-rule( @--\31 23)` is `at-rule(@--123)`. The rest of the
+// condition keeps the author's bytes.
+[[nodiscard]] std::string serialize_at_rule_tests(std::string_view prelude) {
+    std::string out;
+    std::size_t done = 0;
+    for (std::size_t at = 0; (at = prelude.find('(', at)) != std::string_view::npos; ++at) {
+        if (at < 7 || !ascii_iequals(prelude.substr(at - 7, 7), "at-rule") ||
+            (at > 7 && style::css::is_name(prelude[at - 8]))) {
+            continue;
+        }
+        const std::size_t close = scan_to(prelude, at + 1, ")");
+        if (close >= prelude.size()) { break; }
+        const style::css::token_stream s =
+            style::css::tokenize(prelude.substr(at + 1, close - at - 1));
+        const style::css::css_token * keyword = nullptr;
+        bool one = true;
+        for (const style::css::css_token & t : s.tokens) {
+            if (t.type == style::css::token_type::whitespace ||
+                t.type == style::css::token_type::eof) {
+                continue;
+            }
+            one = one && keyword == nullptr && t.type == style::css::token_type::at_keyword;
+            keyword = &t;
+        }
+        if (!one || keyword == nullptr) { continue; }
+        out += prelude.substr(done, at + 1 - done);
+        out += "@" + style::css::serialize_identifier(s.value_of(*keyword)) + ")";
+        done = close + 1;
+        at = close;
+    }
+    return out + std::string{prelude.substr(done)};
+}
+
 } // namespace
 
 namespace detail {
@@ -467,6 +502,7 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             made.type = namespace_rule;
         } else if (ascii_iequals(name, "supports")) {
             made.type = supports_rule;
+            made.prelude = serialize_at_rule_tests(made.prelude);
         } else if (ascii_iequals(name, "page")) {
             made.type = page_rule;
         } else if (ascii_iequals(name, "counter-style")) {
