@@ -154,9 +154,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     };
     const auto correspondingInputs = [&](mlir::Value left, mlir::Value right) {
         if (left == right) { return true; }
-        // ponytail: one If identity; separate branches need their own path proof.
         auto branch = left.getDefiningOp<mlir::scf::IfOp>();
-        if (!branch || branch != right.getDefiningOp<mlir::scf::IfOp>()) { return false; }
+        auto other = right.getDefiningOp<mlir::scf::IfOp>();
+        // Replay retains the choice of this exact immutable i1 value. Equal
+        // ranges or separately recomputed predicates establish no correspondence.
+        if (!branch || !other || branch.getCondition() != other.getCondition()) { return false; }
+        if (branch != other && (branch->getBlock() != body || other->getBlock() != body)) {
+            return false;
+        }
         const auto first = yieldedInputs(left);
         const auto second = yieldedInputs(right);
         return first.size() == 2 && second.size() == 2 && sameInput(first[0], second[0]) &&

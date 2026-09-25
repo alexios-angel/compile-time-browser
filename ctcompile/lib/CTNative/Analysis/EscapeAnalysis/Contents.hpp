@@ -54,6 +54,8 @@ struct ContentsValue {
     // Independent binary64 arithmetic result, never reconstructed from converted bits.
     std::optional<double> arithmeticNumber = std::nullopt;
     unsigned arithmeticDepth = 0;
+    // A selected i1 edge in a certified loop, cleared when its producer replays.
+    std::optional<bool> conditionChoice = std::nullopt;
 
     mlir::Value origin() const { return kind == ContentsKind::Opaque ? mlir::Value{} : original; }
     bool nonBigInt() const {
