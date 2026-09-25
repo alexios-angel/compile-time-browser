@@ -598,7 +598,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         if (!fn.is_callable()) {
             object_object * table = c.prototype(context::proto_kind::object);
             const value * intrinsic =
-                table == nullptr ? nullptr : table->find("@#IntrinsicObjectToString");
+                table == nullptr ? nullptr : table->find("@#IntrinsicObjectToString:");
             if (intrinsic == nullptr) { return c.string("[object Object]"); }
             fn = *intrinsic;
         }
