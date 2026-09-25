@@ -403,7 +403,9 @@ void dom_bindings::install_range(context & cx) {
             while (!at.none() && !inclusive_ancestor(at, end)) { at = parent_of(at); }
             return at.none() ? value::null() : to_value(c, at);
         });
-    method("cloneRange", [proto_value, store_points](context & c, std::span<value>) {
+    // A NEW LIVE RANGE, registered like createRange's: the clone follows the
+    // tree's edits from then on, and it is a Range the selection accepts.
+    method("cloneRange", [this, proto_value, store_points](context & c, std::span<value>) {
         script::object_object * self = self_object(c);
         if (self == nullptr) { return value::undefined(); }
         auto * made = c.allocate<script::object_object>();
@@ -411,6 +413,7 @@ void dom_bindings::install_range(context & cx) {
         store_points(*made, slot(self, start_node_slot),
                      context::to_number(slot(self, start_offset_slot)), slot(self, end_node_slot),
                      context::to_number(slot(self, end_offset_slot)));
+        register_live_range(value::object(made));
         return value::object(made);
     });
     method("detach", [](context &, std::span<value>) { return value::undefined(); });
