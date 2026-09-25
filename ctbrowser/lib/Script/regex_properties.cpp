@@ -107,6 +107,84 @@ rx_ranges_t rx_fold_closure(const rx_ranges_t & ranges) {
     return std::move(cc.ranges);
 }
 
+std::optional<std::string> rx_group_name(std::string_view raw) {
+    // RegExpIdentifierStart / RegExpIdentifierPart are code points: a
+    // `\uLEAD\uTRAIL` escape pair, a `\u{...}` escape, or a source character -
+    // whose WTF-8 may itself be a lead and a trail stored apart. A lone
+    // surrogate survives decoding and then fails the ID tests below.
+    std::vector<char32_t> points;
+    const auto hex4 = [&raw](std::size_t at) -> std::optional<char32_t> {
+        if (at + 4 > raw.size()) { return std::nullopt; }
+        char32_t v = 0;
+        for (std::size_t k = at; k < at + 4; ++k) {
+            const int d = hex_value(raw[k]);
+            if (d < 0) { return std::nullopt; }
+            v = v * 16 + static_cast<char32_t>(d);
+        }
+        return v;
+    };
+    const auto lead = [](char32_t c) { return c >= 0xD800 && c <= 0xDBFF; };
+    const auto trail = [](char32_t c) { return c >= 0xDC00 && c <= 0xDFFF; };
+    for (std::size_t i = 0; i < raw.size();) {
+        if (raw[i] != '\\') {
+            char32_t cp = decode_utf8(raw, i);
+            if (lead(cp) && i < raw.size()) {
+                std::size_t next = i;
+                if (const char32_t low = decode_utf8(raw, next); trail(low)) {
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                    i = next;
+                }
+            }
+            points.push_back(cp);
+            continue;
+        }
+        if (i + 1 >= raw.size() || raw[i + 1] != 'u') { return std::nullopt; }
+        if (i + 2 < raw.size() && raw[i + 2] == '{') {
+            const std::size_t close = raw.find('}', i + 3);
+            if (close == std::string_view::npos || close == i + 3) { return std::nullopt; }
+            char32_t v = 0;
+            for (std::size_t k = i + 3; k < close; ++k) {
+                const int d = hex_value(raw[k]);
+                if (d < 0 || v > 0x10FFFF) { return std::nullopt; }
+                v = v * 16 + static_cast<char32_t>(d);
+            }
+            if (v > 0x10FFFF) { return std::nullopt; }
+            points.push_back(v);
+            i = close + 1;
+            continue;
+        }
+        const std::optional<char32_t> unit = hex4(i + 2);
+        if (!unit) { return std::nullopt; }
+        i += 6;
+        char32_t cp = *unit;
+        if (lead(cp) && i + 1 < raw.size() && raw[i] == '\\' && raw[i + 1] == 'u') {
+            if (const std::optional<char32_t> low = hex4(i + 2); low && trail(*low)) {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (*low - 0xDC00);
+                i += 6;
+            }
+        }
+        points.push_back(cp);
+    }
+    if (points.empty()) { return std::nullopt; }
+    static const std::span<const rx_range> id_start = ranges_of(*find(rx_binary, "ID_Start"));
+    static const std::span<const rx_range> id_continue = ranges_of(*find(rx_binary, "ID_Continue"));
+    const auto in = [](std::span<const rx_range> set, char32_t cp) {
+        const auto it = std::lower_bound(set.begin(), set.end(), cp,
+                                         [](const rx_range & r, char32_t v) { return r.hi < v; });
+        return it != set.end() && it->lo <= cp;
+    };
+    std::string out;
+    for (std::size_t k = 0; k < points.size(); ++k) {
+        const char32_t cp = points[k];
+        const bool ok =
+            cp == '$' || cp == '_' ||
+            (k == 0 ? in(id_start, cp) : cp == 0x200C || cp == 0x200D || in(id_continue, cp));
+        if (!ok) { return std::nullopt; }
+        append_utf8(out, cp);
+    }
+    return out;
+}
+
 std::size_t rx_unfold(char32_t folded, char32_t (&out)[8]) {
     std::size_t n = 0;
     for (auto * it =
