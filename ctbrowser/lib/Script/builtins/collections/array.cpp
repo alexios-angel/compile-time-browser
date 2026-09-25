@@ -110,7 +110,9 @@ void install_array(context & cx) {
         value helper = c.global("__ctbrowser_from_async");
         if (!helper.is_callable()) {
             program compiled = compiler::compile(
-                "return (async function (items, mapfn, thisArg) {"
+                // The two symbols come IN from the native, the intrinsic ones:
+                // a page may have replaced the global `Symbol` by the first call.
+                "return (async function (items, mapfn, thisArg, asyncKey, syncKey) {"
                 // Strict, so `out.length = i` on a read-only length is the TypeError
                 // Set(O, 'length', len, true) throws (step 3.j.ix / 5.g.iv).
                 "  'use strict';"
@@ -125,7 +127,7 @@ void install_array(context & cx) {
                 // a TypeError rather than an endless push into nowhere.
                 "  const C = this;"
                 "  const custom = typeof C === 'function' && C !== Array;"
-                "  const out = custom ? new C() : [];"
+                "  let out;"
                 "  let i = 0;"
                 "  const put = function (v) {"
                 "    if (custom) {"
@@ -138,17 +140,24 @@ void install_array(context & cx) {
                 "  };"
                 // GetMethod (7.3.11): a present @@asyncIterator / @@iterator that is
                 // not callable is a TypeError, not an array-like.
-                "  const usingAsync = items[Symbol.asyncIterator];"
+                "  const usingAsync = items[asyncKey];"
                 "  if (usingAsync != null && typeof usingAsync !== 'function') {"
                 "    throw new TypeError('Array.fromAsync: @@asyncIterator is not callable');"
                 "  }"
-                "  const usingSync = usingAsync != null ? undefined : items[Symbol.iterator];"
+                "  const usingSync = usingAsync != null ? undefined : items[syncKey];"
                 "  if (usingSync != null && typeof usingSync !== 'function') {"
                 "    throw new TypeError('Array.fromAsync: @@iterator is not callable');"
                 "  }"
                 "  const iterable = usingAsync != null || usingSync != null;"
+                // Construct(C) with NO arguments for an iterable (step 3.e); and
+                // the method already read is the one iterated - `for await` over
+                // `items` itself would read both symbols a second time.
                 "  if (iterable) {"
-                "    for await (const v of items) { put(mapping ? await mapfn.call(thisArg, v, i) "
+                "    out = custom ? new C() : [];"
+                "    const source = usingAsync != null"
+                "      ? {[asyncKey]() { return usingAsync.call(items); }}"
+                "      : {[syncKey]() { return usingSync.call(items); }};"
+                "    for await (const v of source) { put(mapping ? await mapfn.call(thisArg, v, i) "
                 ": v); }"
                 "    if (custom) { out.length = i; }"
                 "    return out;"
@@ -159,6 +168,8 @@ void install_array(context & cx) {
                 "53 - 1);"
                 "  if (!custom && len > 4294967295) { throw new RangeError('Invalid array "
                 "length'); }"
+                // ...and Construct(C, [len]) for an array-like (step 5.c).
+                "  out = custom ? new C(len) : [];"
                 "  while (i < len) {"
                 "    const v = await items[i];"
                 "    put(mapping ? await mapfn.call(thisArg, v, i) : v);"
@@ -173,7 +184,14 @@ void install_array(context & cx) {
             helper = c.run_nested(c.own_program(std::move(compiled)));
             c.define_global("__ctbrowser_from_async", helper);
         }
-        return c.call(helper, a, c.current_this()); // `this` may be a constructor
+        // Each ROOTED before the next allocates: a collection between the two
+        // would free the first.
+        const value async_key = c.key_value("@@asyncIterator");
+        const context::rooted keep_async{c, async_key};
+        const value sync_key = c.key_value("@@iterator");
+        const context::rooted keep_sync{c, sync_key};
+        const value args[5] = {arg_at(a, 0), arg_at(a, 1), arg_at(a, 2), async_key, sync_key};
+        return c.call(helper, args, c.current_this()); // `this` may be a constructor
     });
     static_method(
         "from", 1, [through_constructor, create_element](context & c, std::span<value> a) {
