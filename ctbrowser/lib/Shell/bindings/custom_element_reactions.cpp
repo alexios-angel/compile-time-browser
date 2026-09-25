@@ -440,6 +440,7 @@ void dom_bindings::flush_custom_element_reactions(std::size_t from) {
             callback = def.form_disabled;
             args.push_back(value::boolean(reaction.flag));
             break;
+        case kind::form_reset: callback = def.form_reset; break;
         }
         if (!callback.is_callable()) { continue; }
         // FENCED, so one callback's throw is reported and the next still

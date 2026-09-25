@@ -56,6 +56,8 @@ struct control_helpers {
     std::string value_of(const read_txn & txn, dom_bindings * b, node_id id) const;
     node_id tree_top(const read_txn & txn, dom_bindings * b, node_id id) const;
     node_id form_owner(const read_txn & txn, dom_bindings * b, node_id id) const;
+    bool is_face(dom_bindings * b, node_id id) const;
+    bool face_invalid(dom_bindings * b, node_id id) const;
     bool is_listed(const read_txn & txn, dom_bindings * b, node_id id) const;
     bool is_submittable(const read_txn & txn, node_id id) const;
     bool is_labelable(const read_txn & txn, dom_bindings * b, node_id id) const;

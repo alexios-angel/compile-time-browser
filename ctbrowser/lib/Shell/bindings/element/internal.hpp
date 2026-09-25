@@ -144,6 +144,13 @@ inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Mat
 
 // --- helpers shared by more than one file of bindings/element/ ---------------
 
+// ElementInternals' private-name keys (element_internals.cpp): the internals
+// object on an element's wrapper, and one validity flag on the internals. The
+// form machinery reads a form-associated custom element's validity through
+// them.
+inline constexpr std::string_view internals_key = "@#ctbrowser:internals";
+inline constexpr std::string_view internals_flag_prefix = "@#ctbrowser:internals-flag:";
+
 // "NORMALIZE NEWLINES", Infra 4.7: every CR LF pair and then every lone CR
 // becomes one LF. setCustomValidity and ElementInternals.setValidity run it on
 // their message.

@@ -433,35 +433,74 @@ void dom_bindings::install_control_form_data(context & cx) {
             build_submission(c, this, form, submitter);
             return value::undefined();
         });
-    helpers.operation(cx, "HTMLFormElement", "reset", 0,
-                      [this, helpers](context & c, std::span<value>) {
-                          const node_id form = receiver(c);
-                          if (!form) { return value::undefined(); }
-                          if (helpers.fire(c, this, form, "reset", true, true, helpers.plain)) {
-                              return value::undefined();
-                          }
-                          {
-                              const auto txn = doc_->read();
-                              forms_->reset_form(txn, form);
-                              for (const node_id one : helpers.elements_of_form(this, form)) {
-                                  forms_->reset_form(txn, one);
-                                  if (helpers.is(txn, one, "select")) {
-                                      helpers.walk_tree(txn, one, [&](node_id at2) {
-                                          if (helpers.is(txn, at2, "option")) {
-                                              helpers.erase_slot(c, this, at2, selected_slot);
-                                              helpers.erase_slot(c, this, at2, dirty_slot);
-                                          }
-                                      });
-                                  }
-                                  if (helpers.is(txn, one, "output")) {
-                                      helpers.erase_slot(c, this, one, "__defaultValue");
-                                  }
-                              }
-                          }
-                          wrote_to_control_ = true;
-                          mutated();
-                          return value::undefined();
-                      });
+    helpers.operation(
+        cx, "HTMLFormElement", "reset", 0, [this, helpers](context & c, std::span<value>) {
+            const node_id form = receiver(c);
+            if (!form) { return value::undefined(); }
+            if (helpers.fire(c, this, form, "reset", true, true, helpers.plain)) {
+                return value::undefined();
+            }
+            // HTML 4.10.21.5: each RESETTABLE element whose form
+            // owner is this form runs its reset algorithm, in
+            // tree order - a control inside the form that names
+            // another with `form=` is not this form's, and one
+            // outside that names this one is.
+            std::vector<std::pair<node_id, std::string>> outputs;
+            std::vector<node_id> custom;
+            {
+                const auto txn = doc_->read();
+                for (const node_id one : helpers.elements_of_form(this, form)) {
+                    if (helpers.is_face(this, one)) {
+                        custom.push_back(one);
+                        continue;
+                    }
+                    // The store forgets the control and reseeds it
+                    // from its attributes - which is the reset -
+                    // but indeterminate is not the reset's to clear.
+                    const control_state * held = forms_->find(one);
+                    const bool indeterminate = held != nullptr && held->indeterminate;
+                    forms_->reset_form(txn, one);
+                    if (indeterminate) { forms_->state_of(txn, *atoms_, one).indeterminate = true; }
+                    if (helpers.is(txn, one, "select")) {
+                        helpers.erase_slot(c, this, one, "__syncedValue");
+                        helpers.walk_tree(txn, one, [&](node_id at2) {
+                            if (helpers.is(txn, at2, "option")) {
+                                helpers.erase_slot(c, this, at2, selected_slot);
+                                helpers.erase_slot(c, this, at2, dirty_slot);
+                            }
+                        });
+                    }
+                    // An output goes back to the default value
+                    // mode AND its text to the default value
+                    // (4.10.12, "string replace all").
+                    if (helpers.is(txn, one, "output")) {
+                        const value held_default = helpers.slot_of(c, this, one, "__defaultValue");
+                        if (held_default.is_string()) {
+                            outputs.emplace_back(one, c.to_string(held_default));
+                        }
+                        helpers.erase_slot(c, this, one, "__defaultValue");
+                    }
+                }
+            }
+            for (const auto & [one, text] : outputs) { set_text(one, text); }
+            wrote_to_control_ = true;
+            mutated();
+            // A form-associated custom element's reset is its
+            // formResetCallback, a reaction run as reset()
+            // returns - after every built-in control's.
+            const std::size_t from = custom_reactions_.size();
+            for (const node_id one : custom) {
+                const auto state = custom_elements_.find(one.key());
+                if (state == custom_elements_.end()) { continue; }
+                custom_element_reaction reaction;
+                reaction.target = one;
+                reaction.definition = state->second.definition;
+                reaction.what = custom_element_reaction::kind::form_reset;
+                custom_reactions_.push_back(std::move(reaction));
+            }
+            if (custom_reactions_.size() > from) { flush_custom_element_reactions(from); }
+            return value::undefined();
+        });
 }
 
 } // namespace ctbrowser::shell

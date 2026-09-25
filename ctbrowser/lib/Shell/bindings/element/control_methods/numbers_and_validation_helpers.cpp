@@ -272,9 +272,28 @@ bool control_helpers::validate_form(context & c, dom_bindings * b, node_id form)
     bool ok = true;
     for (const node_id one : helpers.elements_of_form(b, form)) {
         bool submittable = false;
+        bool face_candidate = false;
         {
             const auto txn = b->doc_->read();
             submittable = txn.contains(one) && helpers.is_submittable(txn, one);
+            // A form-associated custom element is a submittable candidate
+            // too, barred by the same three things ElementInternals'
+            // willValidate is - and invalid by the flags setValidity left.
+            if (txn.contains(one) && helpers.is_face(b, one)) {
+                bool in_datalist = false;
+                for (node_id up = txn.parent(one); up; up = txn.parent(up)) {
+                    if (helpers.is(txn, up, "datalist")) { in_datalist = true; }
+                }
+                face_candidate = !helpers.is_disabled(txn, b, one) &&
+                                 !helpers.has_attribute(txn, b, one, "readonly") && !in_datalist;
+            }
+        }
+        if (face_candidate) {
+            if (helpers.face_invalid(b, one)) {
+                (void)helpers.fire(c, b, one, "invalid", false, true, helpers.plain);
+                ok = false;
+            }
+            continue;
         }
         if (submittable && !helpers.check_one(c, b, one)) { ok = false; }
     }

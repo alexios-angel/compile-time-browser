@@ -42,7 +42,7 @@ namespace {
 
 // Private-name keys (the `@#` the VM gives `#x`): no page can spell one, and
 // neither getOwnPropertyNames nor getOwnPropertySymbols reports them.
-constexpr std::string_view internals_key = "@#ctbrowser:internals";
+using detail::internals_key;
 constexpr std::string_view target_key = "@#ctbrowser:internals-target";
 constexpr std::string_view validity_key = "@#ctbrowser:internals-validity";
 constexpr std::string_view message_key = "@#ctbrowser:internals-message";
@@ -51,7 +51,7 @@ constexpr std::string_view form_state_key = "@#ctbrowser:internals-form-state";
 constexpr std::string_view states_key = "@#ctbrowser:internals-states";
 constexpr std::string_view behaviors_key = "@#ctbrowser:internals-behaviors";
 constexpr std::string_view aria_prefix = "@#ctbrowser:internals-aria:";
-constexpr std::string_view flag_prefix = "@#ctbrowser:internals-flag:";
+constexpr std::string_view flag_prefix = detail::internals_flag_prefix;
 
 // ValidityState's ten flags, HTML 4.10.20.3, in interface order.
 constexpr std::string_view validity_flags[] = {

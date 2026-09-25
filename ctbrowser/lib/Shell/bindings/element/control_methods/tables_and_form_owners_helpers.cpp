@@ -120,13 +120,43 @@ node_id control_helpers::form_owner(const read_txn & txn, dom_bindings * b, node
     return node_id{};
 }
 
+bool control_helpers::is_face(dom_bindings * b, node_id id) const {
+    // A FORM-ASSOCIATED CUSTOM ELEMENT (HTML 4.13.7.2): a custom element -
+    // defined, not failed nor mid-upgrade - whose definition said
+    // `formAssociated`. It is listed, labelable, submittable and resettable,
+    // so every category below asks.
+    const auto state = b->custom_elements_.find(id.key());
+    return state != b->custom_elements_.end() &&
+           state->second.state == binding_detail::custom_element_state::status::custom &&
+           state->second.definition < b->primary().custom_definitions_.size() &&
+           b->primary().custom_definitions_[state->second.definition].form_associated;
+}
+
+bool control_helpers::face_invalid(dom_bindings * b, node_id id) const {
+    // Any of the validity flags setValidity() left on the element's
+    // ElementInternals (element_internals.cpp keeps them there).
+    const auto wrapper = b->wrappers_.find(id.key());
+    if (wrapper == b->wrappers_.end() || wrapper->second == nullptr) { return false; }
+    const value * internals = wrapper->second->find(std::string{internals_key});
+    if (internals == nullptr || !internals->is_object()) { return false; }
+    auto & held = *static_cast<script::object_object *>(internals->as_heap());
+    bool invalid = false;
+    held.each_own_key([&](const std::string & key) {
+        if (!key.starts_with(internals_flag_prefix)) { return; }
+        if (const value * flag = held.find(key); flag != nullptr && context::truthy(*flag)) {
+            invalid = true;
+        }
+    });
+    return invalid;
+}
+
 bool control_helpers::is_listed(const read_txn & txn, dom_bindings * b, node_id id) const {
     const auto helpers = *this;
     if (txn.element_ns(id) != node_ns::html) { return false; }
     const std::string_view local = txn.local_name(id);
     if (local == "input") { return helpers.input_type(txn, b, id) != "image"; }
     return local == "button" || local == "fieldset" || local == "object" || local == "output" ||
-           local == "select" || local == "textarea";
+           local == "select" || local == "textarea" || helpers.is_face(b, id);
 }
 
 bool control_helpers::is_submittable(const read_txn & txn, node_id id) const {
@@ -142,7 +172,7 @@ bool control_helpers::is_labelable(const read_txn & txn, dom_bindings * b, node_
     const std::string_view local = txn.local_name(id);
     if (local == "input") { return helpers.input_type(txn, b, id) != "hidden"; }
     return local == "button" || local == "meter" || local == "output" || local == "progress" ||
-           local == "select" || local == "textarea";
+           local == "select" || local == "textarea" || helpers.is_face(b, id);
 }
 
 std::vector<node_id> control_helpers::elements_of_form(dom_bindings * b, node_id form) const {
@@ -164,7 +194,8 @@ bool control_helpers::is_disabled(const read_txn & txn, dom_bindings * b, node_i
     if (txn.element_ns(id) != node_ns::html) { return false; }
     const std::string_view local = txn.local_name(id);
     if (local != "button" && local != "input" && local != "select" && local != "textarea" &&
-        local != "fieldset" && local != "optgroup" && local != "option") {
+        local != "fieldset" && local != "optgroup" && local != "option" &&
+        !helpers.is_face(b, id)) {
         return false;
     }
     if (txn.has_attribute(id, disabled)) { return true; }
