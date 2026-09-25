@@ -186,6 +186,25 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         return std::nullopt;
     };
+    const auto exactNumberComparison = [](ctjs::CompareOp comparison) -> std::optional<bool> {
+        auto lhs = comparison.getLhs().getDefiningOp<ctjs::ConstantOp>();
+        auto rhs = comparison.getRhs().getDefiningOp<ctjs::ConstantOp>();
+        auto left = lhs ? llvm::dyn_cast<ctjs::NumberAttr>(lhs.getValue()) : ctjs::NumberAttr{};
+        auto right = rhs ? llvm::dyn_cast<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
+        if (!left || !right) { return std::nullopt; }
+        // Original Numbers need no conversion or hooks. Binary64 comparisons
+        // preserve unordered NaNs and signed-zero equality.
+        const double a = left.getDouble(), b = right.getDouble();
+        switch (comparison.getKind()) {
+        case ctjs::CompareKind::Eq:
+        case ctjs::CompareKind::StrictEq: return a == b;
+        case ctjs::CompareKind::Lt: return a < b;
+        case ctjs::CompareKind::Le: return a <= b;
+        case ctjs::CompareKind::Gt: return a > b;
+        case ctjs::CompareKind::Ge: return a >= b;
+        default: return std::nullopt;
+        }
+    };
     const auto prepareTarget = [&](ctjs::CreateClosureOp closure) {
         ctjs::FuncOp found;
         for (auto function : candidate.getOps<ctjs::FuncOp>()) {
@@ -210,6 +229,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
                 if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
                     projectBranches |= unary.getKind() == ctjs::UnaryKind::Not;
+                }
+                if (auto comparison = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
+                    projectBranches |= exactNumberComparison(comparison).has_value();
                 }
                 size += uint64_t(1) + operation->getNumOperands() + operation->getNumResults() +
                         operation->getNumSuccessors();
@@ -237,7 +259,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (mlir::failed(mlir::verify(found))) { return ctjs::FuncOp{}; }
             mlir::PatternRewriter rewriter(candidate.getContext());
             // Projection exposes literal operands through block arguments and
-            // selected yields. Each successful rewrite removes a Not or a
+            // selected yields. Each successful rewrite removes a primitive operation or a
             // control-flow edge; the reserved input ceiling bounds rescans.
             bool changed = true;
             while (changed) {
@@ -260,6 +282,17 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     return mlir::WalkResult::advance();
                 });
                 if (folded.wasInterrupted()) { return ctjs::FuncOp{}; }
+                const auto compared = found.walk([&](ctjs::CompareOp comparison) {
+                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    const auto result = exactNumberComparison(comparison);
+                    if (!result) { return mlir::WalkResult::advance(); }
+                    rewriter.setInsertionPoint(comparison);
+                    rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(
+                        comparison, ctjs::BooleanAttr::get(candidate.getContext(), *result));
+                    changed = true;
+                    return mlir::WalkResult::advance();
+                });
+                if (compared.wasInterrupted()) { return ctjs::FuncOp{}; }
                 (void)mlir::eraseUnreachableBlocks(rewriter, found.getBody());
                 auto & root = found.getBody().front();
                 while (true) {

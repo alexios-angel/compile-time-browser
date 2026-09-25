@@ -910,7 +910,29 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::BooleanAttr::get(context, false), false},
         {ctjs::BooleanAttr::get(context, true), true},
     }};
-    for (unsigned control = 0; control != 176; ++control) {
+    struct Comparison {
+        ctjs::CompareKind kind;
+        unsigned lhs;
+        unsigned rhs;
+        bool value;
+    };
+    const std::array<Comparison, 14> comparisons{{
+        {ctjs::CompareKind::Eq, 0, 1, true},        // +0 == -0
+        {ctjs::CompareKind::Eq, 6, 7, false},       // 1 == -1
+        {ctjs::CompareKind::StrictEq, 0, 1, true},  // +0 === -0
+        {ctjs::CompareKind::StrictEq, 2, 2, false}, // quiet NaN === quiet NaN
+        {ctjs::CompareKind::Lt, 5, 8, true},        // -Infinity < minimum subnormal
+        {ctjs::CompareKind::Lt, 3, 0, false},       // signaling NaN < +0
+        {ctjs::CompareKind::Le, 1, 0, true},        // -0 <= +0
+        {ctjs::CompareKind::Le, 2, 0, false},       // quiet NaN <= +0
+        {ctjs::CompareKind::Gt, 8, 0, true},        // minimum subnormal > +0
+        {ctjs::CompareKind::Gt, 0, 3, false},       // +0 > signaling NaN
+        {ctjs::CompareKind::Ge, 4, 4, true},        // +Infinity >= +Infinity
+        {ctjs::CompareKind::Ge, 0, 3, false},       // +0 >= signaling NaN
+        {ctjs::CompareKind::Eq, 2, 0, false},       // quiet NaN == +0
+        {ctjs::CompareKind::StrictEq, 8, 0, false}, // minimum subnormal === +0
+    }};
+    for (unsigned control = 0; control != 226; ++control) {
         auto expected = baseline;
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
@@ -979,11 +1001,20 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             const auto payload = terminal->getOperand(0);
             const auto other = first.getArgument(ctjs::arg_receiver);
             const bool primitive = control < 104;
-            const bool computed = control >= 116;
-            const unsigned index = computed ? (control - 116) / 2 : (control - 76) / 2;
-            const bool transported = control >= 156;
-            const unsigned transport = transported ? index - 20 : 0;
-            const unsigned mutation = computed    ? index == 12 || index == 27 ? 0
+            const bool compared = control >= 176;
+            const bool computed = control >= 116 && !compared;
+            const unsigned index = compared   ? (control - 176) / 2
+                                   : computed ? (control - 116) / 2
+                                              : (control - 76) / 2;
+            const bool transported =
+                (computed && control >= 156) || (compared && (index == 14 || index == 15));
+            const unsigned transport = compared      ? index == 15 ? 2 : 0
+                                       : transported ? index - 20
+                                                     : 0;
+            const unsigned mutation = compared    ? index == 17   ? 0
+                                                    : index == 18 ? 1
+                                                                  : 6
+                                      : computed  ? index == 12 || index == 27 ? 0
                                                     : index == 13              ? 1
                                                                                : 6
                                       : primitive ? 6
@@ -991,8 +1022,47 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             bool selected = primitive ? predicates[index].second : true;
             at.setInsertionPoint(moved);
             mlir::Value input;
-            llvm::SmallVector<std::pair<ctjs::UnaryOp, bool>> evaluatedNots;
-            if (computed) {
+            llvm::SmallVector<std::pair<mlir::Operation *, bool>> evaluatedPredicates;
+            if (compared) {
+                const auto comparison = comparisons[index < comparisons.size() ? index : 0];
+                mlir::Value lhs;
+                if (index == 19) {
+                    lhs = other;
+                } else if (index == 20) {
+                    lhs = ctjs::CreateObjectOp::create(at, where, payload.getType());
+                } else if (index == 23) {
+                    lhs = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Plus), other);
+                } else if (index == 24) {
+                    lhs = ctjs::LoadGlobalOp::create(at, where, "condition-effect");
+                } else {
+                    const mlir::Attribute value =
+                        index == 21 ? mlir::Attribute(ctjs::StringAttr::get(context, "0"))
+                                    : predicates[comparison.lhs].first;
+                    lhs = ctjs::ConstantOp::create(at, where, value);
+                }
+                const mlir::Attribute rhsValue =
+                    index == 22 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "0"))
+                                : predicates[comparison.rhs].first;
+                auto rhs = ctjs::ConstantOp::create(at, where, rhsValue);
+                auto operation = ctjs::CompareOp::create(at, where, payload.getType(),
+                                                         comparison.kind, lhs, rhs);
+                selected = comparison.value;
+                evaluatedPredicates.emplace_back(operation.getOperation(), selected);
+                input = operation;
+                if (index == 14) {
+                    auto negated = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), input);
+                    selected = !selected;
+                    evaluatedPredicates.emplace_back(negated.getOperation(), selected);
+                    input = negated;
+                }
+                if (index == 16) {
+                    llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(input);
+                }
+            } else if (computed) {
                 const bool literal = index < negatedPredicates.size();
                 bool truth = transported ? transport == 3
                              : literal   ? negatedPredicates[index].second
@@ -1028,7 +1098,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                         at, where, payload.getType(),
                         ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), input);
                     truth = !truth;
-                    evaluatedNots.emplace_back(operation, truth);
+                    evaluatedPredicates.emplace_back(operation.getOperation(), truth);
                     input = operation;
                 }
                 selected = truth;
@@ -1050,14 +1120,15 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                                     : predicates[6].first;
                 input = ctjs::ConstantOp::create(at, where, value);
             }
-            if (primitive || (computed && (index < 12 || (transported && transport < 5)))) {
+            if (primitive || (computed && (index < 12 || (transported && transport < 5))) ||
+                (compared && index < 17)) {
                 // The input still evaluates after projection. Compare against
                 // the same operands and known pure results without the edges.
                 mlir::IRMapping mapping;
                 mlir::OwningOpRef<mlir::ModuleOp> evaluated(
                     llvm::cast<mlir::ModuleOp>((*candidate)->clone(mapping)));
-                for (auto [operation, value] : evaluatedNots) {
-                    auto copy = mapping.lookup(operation.getResult()).getDefiningOp();
+                for (auto [operation, value] : evaluatedPredicates) {
+                    auto copy = mapping.lookup(operation->getResult(0)).getDefiningOp();
                     mlir::OpBuilder replace(copy);
                     auto result = ctjs::ConstantOp::create(replace, copy->getLoc(),
                                                            ctjs::BooleanAttr::get(context, value));
@@ -1078,10 +1149,10 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             }
             if (transported) {
                 // The branchless reference above retains every evaluated input.
-                // These edges must expose the operand before its Not can fold.
-                for (auto [operation, value] : evaluatedNots) {
+                // These edges must expose the operand before its predicate can fold.
+                for (auto [operation, value] : evaluatedPredicates) {
                     (void)value;
-                    const auto operand = operation.getOperand();
+                    const auto operand = operation->getOperand(0);
                     at.setInsertionPoint(operation);
                     if (transport == 2 || transport == 3 || transport == 6 || transport == 8) {
                         const bool selectedInput = transport != 3;
@@ -1469,7 +1540,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             (control >= 36 && control <= 46) || control == 51 || control == 52 ||
             (control >= 54 && control <= 57) || control == 62 || control == 63 ||
             (control >= 65 && control <= 69) || (control >= 74 && control < 104) ||
-            (control >= 116 && control < 140) || (control >= 156 && control < 166);
+            (control >= 116 && control < 140) || (control >= 156 && control < 166) ||
+            (control >= 176 && control < 210);
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
@@ -1479,7 +1551,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                   "reachable helper budget refusal preserves the entire module and contract");
             if (limitedError) { llvm::consumeError(std::move(limitedError)); }
             if (control == 46 || control == 67 || control == 79 || control == 137 ||
-                control == 165) {
+                control == 165 || control == 209) {
                 const auto attempt = [&](unsigned budget) {
                     mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
                     auto limitedProof = proof;
