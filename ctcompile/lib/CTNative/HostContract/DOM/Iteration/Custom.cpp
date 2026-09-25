@@ -218,7 +218,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         result.changeSign();
         return ctjs::NumberAttr::get(unary.getContext(), result.bitcastToAPInt().getZExtValue());
     };
-    const auto exactComparison = [](ctjs::CompareOp comparison) -> std::optional<bool> {
+    const auto exactComparison = [&](ctjs::CompareOp comparison) -> std::optional<bool> {
         if (comparison->getNumOperands() != 2 || !comparison.getKindAttr()) { return std::nullopt; }
         auto lhs = comparison->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
         auto rhs = comparison->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
@@ -262,8 +262,33 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         } else if (llvm::isa<ctjs::StringAttr>(lhs.getValue()) &&
                    llvm::isa<ctjs::StringAttr>(rhs.getValue())) {
-            // String ordering needs UTF-16 comparison, never numeric conversion.
-            return std::nullopt;
+            const std::string_view a = llvm::cast<ctjs::StringAttr>(lhs.getValue()).getValue();
+            const std::string_view b = llvm::cast<ctjs::StringAttr>(rhs.getValue()).getValue();
+            // Charge the complete inputs before decoding or allocating. Core's
+            // total decoder also accepts malformed bytes; require a lossless,
+            // canonical WTF-8 roundtrip before interpreting them as JS Strings.
+            for (auto text : {a, b}) {
+                if (text.size() > work.remaining) {
+                    work.remaining = 0;
+                    return std::nullopt;
+                }
+                work.remaining -= static_cast<unsigned>(text.size());
+            }
+            const auto left = ctbrowser::wtf8_to_utf16(a), right = ctbrowser::wtf8_to_utf16(b);
+            if (ctbrowser::utf16_to_wtf8(left) != a || ctbrowser::utf16_to_wtf8(right) != b) {
+                return std::nullopt;
+            }
+            const auto order = left <=> right;
+            // ponytail: the VM still orders bytes. Refuse disagreements until
+            // its String ordering follows UTF-16 too; never alter the oracle.
+            if (order != (a <=> b)) { return std::nullopt; }
+            switch (comparison.getKind()) {
+            case ctjs::CompareKind::Lt: return order < 0;
+            case ctjs::CompareKind::Le: return order <= 0;
+            case ctjs::CompareKind::Gt: return order > 0;
+            case ctjs::CompareKind::Ge: return order >= 0;
+            default: return std::nullopt;
+            }
         }
         const auto left = number(lhs.getValue()), right = number(rhs.getValue());
         if (!left || !right) { return std::nullopt; }

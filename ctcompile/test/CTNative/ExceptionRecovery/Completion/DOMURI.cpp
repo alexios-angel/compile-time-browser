@@ -1095,7 +1095,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::BinaryKind::UShr, std::bit_cast<uint64_t>(4294967296.0),
          std::bit_cast<uint64_t>(1.0), 0, false},
     }};
-    const std::array<mlir::Attribute, 51> equalityValues{{
+    const std::array<mlir::Attribute, 76> equalityValues{{
         ctjs::BooleanAttr::get(context, false),
         ctjs::BooleanAttr::get(context, true),
         ctjs::NullAttr::get(context),
@@ -1147,6 +1147,31 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(0.5)),
         ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(100.0)),
         ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(17.0)),
+        ctjs::StringAttr::get(context, "\x7f"),
+        ctjs::StringAttr::get(context, "\xc2\x80"),
+        ctjs::StringAttr::get(context, "\xc3\xa8"),
+        ctjs::StringAttr::get(context, "\xef\xbf\xbf"),
+        ctjs::StringAttr::get(context, "\xe0\xa0\x80"),
+        ctjs::StringAttr::get(context, "\xef\xbf\xbd"),
+        ctjs::StringAttr::get(context, "\xed\xa0\x80"),
+        ctjs::StringAttr::get(context, "\xed\xb0\x80"),
+        ctjs::StringAttr::get(context, "\xf0\x90\x80\x80"),
+        ctjs::StringAttr::get(context, "ab"),
+        ctjs::StringAttr::get(context, std::string(64, 'a')),
+        ctjs::StringAttr::get(context, "b"),
+        ctjs::StringAttr::get(context, "\xc0\x80"),
+        ctjs::StringAttr::get(context, "\xc2"),
+        ctjs::StringAttr::get(context, "\x80"),
+        ctjs::StringAttr::get(context, "\xf4\x90\x80\x80"),
+        ctjs::StringAttr::get(context, "\xed\xa0\x80\xed\xb0\x80"),
+        ctjs::StringAttr::get(context, "\xe2\x28\xa1"),
+        ctjs::StringAttr::get(context, "\xf0\x9f\x98"),
+        ctjs::StringAttr::get(context, "\xe0\x80\x80"),
+        ctjs::StringAttr::get(context, "\xf0\x80\x80\x80"),
+        ctjs::StringAttr::get(context, "\xff"),
+        ctjs::StringAttr::get(context, "\xe2\x82"),
+        ctjs::StringAttr::get(context, "a\xf0\x90\x80\x80"),
+        ctjs::StringAttr::get(context, "a\xef\xbf\xbf"),
     }};
     const std::array<Comparison, 27> equalities{{
         {ctjs::CompareKind::StrictEq, 0, 0, true},    {ctjs::CompareKind::StrictEq, 1, 0, false},
@@ -1248,7 +1273,72 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::CompareKind::Eq, 6, 11, false},  // embedded NUL
         {ctjs::CompareKind::Eq, 9, 11, false},  // nonnumeric UTF-8
     }};
-    for (unsigned control = 0; control != 896; ++control) {
+    const std::array<Comparison, 60> stringComparisons{{
+        {ctjs::CompareKind::Lt, 43, 44, true}, // "10" < "2", lexical rather than numeric
+        {ctjs::CompareKind::Le, 43, 44, true},
+        {ctjs::CompareKind::Gt, 43, 44, false},
+        {ctjs::CompareKind::Ge, 43, 44, false},
+        {ctjs::CompareKind::Lt, 44, 43, false},
+        {ctjs::CompareKind::Le, 44, 43, false},
+        {ctjs::CompareKind::Gt, 44, 43, true},
+        {ctjs::CompareKind::Ge, 44, 43, true},
+        {ctjs::CompareKind::Lt, 4, 4, false}, // empty Strings
+        {ctjs::CompareKind::Le, 4, 4, true},
+        {ctjs::CompareKind::Gt, 8, 8, false}, // equal nonempty Strings
+        {ctjs::CompareKind::Ge, 8, 8, true},
+        {ctjs::CompareKind::Lt, 4, 8, true}, // empty prefix
+        {ctjs::CompareKind::Gt, 8, 4, true},
+        {ctjs::CompareKind::Lt, 8, 60, true}, // "a" is a prefix of "ab"
+        {ctjs::CompareKind::Ge, 60, 8, true},
+        {ctjs::CompareKind::Lt, 8, 7, true}, // "a" is a prefix of "a\0b"
+        {ctjs::CompareKind::Gt, 7, 8, true},
+        {ctjs::CompareKind::Lt, 6, 4, false}, // NUL is not an empty String
+        {ctjs::CompareKind::Gt, 6, 4, true},
+        {ctjs::CompareKind::Lt, 7, 60, true},  // embedded NUL precedes 'b'
+        {ctjs::CompareKind::Lt, 51, 52, true}, // U+007F < U+0080, unsigned bytes
+        {ctjs::CompareKind::Gt, 52, 51, true},
+        {ctjs::CompareKind::Lt, 53, 9, true}, // U+00E8 < U+00E9
+        {ctjs::CompareKind::Gt, 9, 53, true},
+        {ctjs::CompareKind::Lt, 10, 9, true}, // no Unicode normalization
+        {ctjs::CompareKind::Ge, 9, 10, true},
+        {ctjs::CompareKind::Lt, 14, 15, true}, // supplementary code points agree
+        {ctjs::CompareKind::Gt, 15, 14, true},
+        {ctjs::CompareKind::Le, 14, 14, true},
+        {ctjs::CompareKind::Ge, 14, 14, true},
+        {ctjs::CompareKind::Lt, 55, 54, true}, // three-byte BMP code points
+        {ctjs::CompareKind::Lt, 57, 58, true}, // lone high surrogate < lone low surrogate
+        {ctjs::CompareKind::Ge, 58, 57, true},
+        {ctjs::CompareKind::Lt, 57, 59, true}, // lone high surrogate prefixes U+10000
+        {ctjs::CompareKind::Ge, 59, 57, true},
+        {ctjs::CompareKind::Lt, 61, 62, true}, // String ordering has no 32-byte numeric limit
+        {ctjs::CompareKind::Gt, 62, 61, true},
+        {ctjs::CompareKind::Lt, 56, 54, true}, // literal replacement character is canonical
+        {ctjs::CompareKind::Le, 7, 7, true},   // equality includes embedded NUL
+        // Canonical inputs whose UTF-16 ordering disagrees with the current VM
+        // byte ordering cannot authorize either selected branch.
+        {ctjs::CompareKind::Lt, 59, 54, true},
+        {ctjs::CompareKind::Le, 59, 54, true},
+        {ctjs::CompareKind::Gt, 59, 54, false},
+        {ctjs::CompareKind::Ge, 59, 54, false},
+        {ctjs::CompareKind::Lt, 54, 59, false},
+        {ctjs::CompareKind::Gt, 54, 59, true},
+        {ctjs::CompareKind::Lt, 58, 59, false},
+        {ctjs::CompareKind::Lt, 74, 75, true}, // disagreement after a common ASCII prefix
+        // The public decoder is total; a lossy/noncanonical roundtrip is refused.
+        {ctjs::CompareKind::Lt, 63, 4, false},  // overlong NUL
+        {ctjs::CompareKind::Ge, 8, 64, false},  // truncated two-byte rhs
+        {ctjs::CompareKind::Gt, 65, 8, false},  // orphan continuation
+        {ctjs::CompareKind::Le, 8, 66, false},  // code point above U+10FFFF
+        {ctjs::CompareKind::Lt, 67, 59, false}, // separately encoded adjacent surrogates
+        {ctjs::CompareKind::Le, 67, 67, true},  // even identical CESU-8 is noncanonical
+        {ctjs::CompareKind::Ge, 68, 8, false},  // invalid continuation inside a sequence
+        {ctjs::CompareKind::Lt, 69, 8, false},  // truncated four-byte sequence
+        {ctjs::CompareKind::Gt, 70, 8, false},  // overlong three-byte sequence
+        {ctjs::CompareKind::Le, 71, 8, false},  // overlong four-byte sequence
+        {ctjs::CompareKind::Gt, 72, 8, false},  // invalid leading byte
+        {ctjs::CompareKind::Lt, 8, 73, false},  // truncated three-byte rhs
+    }};
+    for (unsigned control = 0; control != 1048; ++control) {
         auto expected = baseline;
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
@@ -1407,14 +1497,16 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             const auto payload = terminal->getOperand(0);
             const auto other = first.getArgument(ctjs::arg_receiver);
             const bool primitive = control < 104;
-            const bool convertedComparison = control >= 748;
+            const bool stringComparison = control >= 896;
+            const unsigned stringIndex = stringComparison ? (control - 896) / 2 : 0;
+            const bool convertedComparison = control >= 748 && control < 896;
             const unsigned convertedIndex = convertedComparison ? (control - 748) / 2 : 0;
             const bool looseEquality = control >= 644 && control < 748;
             const unsigned looseIndex = looseEquality ? (control - 644) / 2 : 0;
             const bool power = control >= 560 && control < 644;
             const unsigned powerIndex = power ? (control - 560) / 2 : 0;
-            const bool equality =
-                (control >= 434 && control < 536) || looseEquality || convertedComparison;
+            const bool equality = (control >= 434 && control < 536) || looseEquality ||
+                                  convertedComparison || stringComparison;
             const bool bitwiseUnary = control >= 326 && control < 372;
             const bool numericUnary = control >= 280 && control < 372;
             const bool staticCalculated = control >= 372 && !equality && !power;
@@ -1423,7 +1515,10 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             const bool compared = control >= 176 && control < 232;
             const bool computed = control >= 116 && control < 176;
             const unsigned index =
-                convertedComparison
+                stringComparison ? stringIndex < stringComparisons.size() ? 0
+                                   : stringIndex < 70                     ? stringIndex - 33
+                                                                          : stringIndex - 25
+                : convertedComparison
                     ? convertedIndex < convertedComparisons.size() ? 0 : convertedIndex - 23
                 : looseEquality    ? looseIndex < looseEqualities.size() ? 0 : looseIndex - 1
                 : power            ? powerIndex < powers.size() ? 0 : powerIndex - 18
@@ -1469,7 +1564,10 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             llvm::SmallVector<std::pair<mlir::Operation *, mlir::Attribute>> evaluatedResults;
             if (equality) {
                 auto row =
-                    convertedComparison
+                    stringComparison
+                        ? stringComparisons[stringIndex < stringComparisons.size() ? stringIndex
+                                                                                   : 36]
+                    : convertedComparison
                         ? convertedComparisons[convertedIndex < convertedComparisons.size()
                                                    ? convertedIndex
                                                    : 4]
@@ -1528,20 +1626,20 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 auto rhs = ctjs::ConstantOp::create(at, where, rhsValue);
                 auto operation =
                     ctjs::CompareOp::create(at, where, payload.getType(), row.kind, lhs, rhs);
-                if (control == 530 || control == 742 || control == 890) {
+                if (control == 530 || control == 742 || control == 890 || control == 1042) {
                     operation->eraseOperand(1);
                 }
-                if (control == 531 || control == 743 || control == 891) {
+                if (control == 531 || control == 743 || control == 891 || control == 1043) {
                     operation->removeAttr("kind");
                 }
-                if (control == 532 || control == 744 || control == 892) {
+                if (control == 532 || control == 744 || control == 892 || control == 1044) {
                     lhs.getDefiningOp()->removeAttr("value");
                 }
-                if (control == 533 || control == 745 || control == 893) {
+                if (control == 533 || control == 745 || control == 893 || control == 1045) {
                     rhs->removeAttr("value");
                 }
                 if (control == 534 || control == 535 || control == 746 || control == 747 ||
-                    control >= 894) {
+                    control == 894 || control == 895 || control >= 1046) {
                     mlir::OpBuilder invalid(operation);
                     auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
                     operation->setOperand(control % 2, flag);
@@ -1819,8 +1917,10 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 (calculated && (index < 15 || (!power && !staticCalculated && index == 20))) ||
                 (numericUnary && index < 15) ||
                 (equality &&
-                 (index < 31 ||
-                  (!convertedComparison && index >= (looseEquality ? 37u : 38u) && index <= 44)))) {
+                 ((stringComparison ? stringIndex < 40 || (index >= 27 && index < 31)
+                                    : index < 31) ||
+                  (!stringComparison && (convertedComparison ? index == 37 || index == 38
+                                                             : index >= 37 && index <= 44))))) {
                 // The input still evaluates after projection. Compare against
                 // the same operands and known pure results without the edges.
                 mlir::IRMapping mapping;
@@ -2230,7 +2330,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             (control >= 322 && control < 326) || (control >= 368 && control < 372) ||
             (control >= 426 && control < 434) || (control >= 530 && control < 536) ||
             control == 552 || control == 553 || (control >= 638 && control < 644) ||
-            (control >= 742 && control < 748) || control >= 890;
+            (control >= 742 && control < 748) || (control >= 890 && control < 896) ||
+            control >= 1042;
         if (!check(mlir::succeeded(mlir::verify(*candidate)) != malformed,
                    "only intentionally malformed helper operations fail verification")) {
             continue;
@@ -2256,8 +2357,10 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             (control >= 536 && control < 542) || control == 272 || control == 273 ||
             (control >= 560 && control < 626) || (control >= 516 && control < 524) ||
             (control >= 644 && control < 708) || control == 218 || control == 219 ||
-            (control >= 510 && control < 516) || (control >= 720 && control < 736) ||
-            (control >= 748 && control < 828) || (control >= 848 && control < 856);
+            (control >= 508 && control < 516) || (control >= 720 && control < 736) ||
+            (control >= 748 && control < 828) || (control >= 848 && control < 856) ||
+            (control >= 868 && control < 872) || (control >= 896 && control < 976) ||
+            (control >= 1016 && control < 1024);
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
@@ -2269,7 +2372,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             if (control == 46 || control == 67 || control == 79 || control == 137 ||
                 control == 165 || control == 209 || control == 259 || control == 307 ||
                 control == 353 || control == 411 || control == 493 || control == 541 ||
-                control == 623 || control == 703 || control == 851) {
+                control == 623 || control == 703 || control == 851 || control == 1019) {
                 const auto attempt = [&](unsigned budget) {
                     mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
                     auto limitedProof = proof;
