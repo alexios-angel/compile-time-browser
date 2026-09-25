@@ -561,6 +561,46 @@ void dom_bindings::install_control_form_data(context & cx) {
         }
         (void)b->navigate_form_target(form, pairs);
     };
+    // HTML 4.10.21.3 "submit" FROM A SUBMITTER - not from submit(): the form
+    // must be connected; interactive validation unless `novalidate` or the
+    // submitter's `formnovalidate`; the firing-submission-events flag (step
+    // 6: while this submission validates and fires `submit`, another one
+    // started from an `invalid` or `submit` listener returns at once); a
+    // cancelable `submit` SubmitEvent carrying the submitter; then the entry
+    // list and the navigation. requestSubmit() runs it after its own checks,
+    // and a submit button's activation behaviour is the same call
+    // (`submit_from_`, for the browser's default action).
+    const auto submit_from = [this, helpers, build_submission](context & c, node_id form,
+                                                               node_id submitter) {
+        if (!is_connected(form)) { return; }
+        bool validate = true;
+        {
+            const auto txn = doc_->read();
+            if (helpers.has_attribute(txn, this, form, "novalidate") ||
+                (submitter && helpers.has_attribute(txn, this, submitter, "formnovalidate"))) {
+                validate = false;
+            }
+        }
+        if (context::truthy(helpers.slot_of(c, this, form, firing_slot))) { return; }
+        helpers.set_slot(c, this, form, firing_slot, value::boolean(true));
+        bool cancelled = validate && !helpers.validate_form(c, this, form);
+        if (!cancelled && !c.throw_pending()) {
+            const value submitter_value = submitter ? wrap(c, submitter) : value::null();
+            const value submit_proto = interface_prototype_of(c, "SubmitEvent");
+            cancelled =
+                helpers.fire(c, this, form, "submit", true, true,
+                             [submitter_value, submit_proto](script::object_object & event) {
+                                 if (submit_proto.is_object()) { event.prototype = submit_proto; }
+                                 event.set("submitter", submitter_value);
+                             });
+        }
+        helpers.erase_slot(c, this, form, firing_slot);
+        if (cancelled || c.throw_pending()) { return; }
+        build_submission(c, this, form, submitter);
+    };
+    submit_from_ = [this, submit_from](node_id form, node_id submitter) {
+        if (cx_ != nullptr) { submit_from(*cx_, form, submitter); }
+    };
     submit_form_ = [this, build_submission](node_id form, node_id submitter) {
         if (cx_ != nullptr) { build_submission(*cx_, this, form, submitter); }
     };
@@ -573,7 +613,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                       });
     helpers.operation(
         cx, "HTMLFormElement", "requestSubmit", 0,
-        [this, helpers, build_submission](context & c, std::span<value> a) {
+        [this, helpers, submit_from](context & c, std::span<value> a) {
             const node_id form = receiver(c);
             if (!form) { return value::undefined(); }
             node_id submitter;
@@ -608,38 +648,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                     return value::undefined();
                 }
             }
-            if (!is_connected(form)) { return value::undefined(); }
-            bool validate = true;
-            {
-                const auto txn = doc_->read();
-                if (helpers.has_attribute(txn, this, form, "novalidate") ||
-                    (submitter && helpers.has_attribute(txn, this, submitter, "formnovalidate"))) {
-                    validate = false;
-                }
-            }
-            // THE FIRING-SUBMISSION-EVENTS FLAG (4.10.21.3 step 6): while this
-            // submission validates and fires `submit`, another one started
-            // from an `invalid` or `submit` listener returns at once.
-            if (context::truthy(helpers.slot_of(c, this, form, firing_slot))) {
-                return value::undefined();
-            }
-            helpers.set_slot(c, this, form, firing_slot, value::boolean(true));
-            bool cancelled = validate && !helpers.validate_form(c, this, form);
-            if (!cancelled && !c.throw_pending()) {
-                const value submitter_value = submitter ? wrap(c, submitter) : value::null();
-                const value submit_proto = interface_prototype_of(c, "SubmitEvent");
-                cancelled =
-                    helpers.fire(c, this, form, "submit", true, true,
-                                 [submitter_value, submit_proto](script::object_object & event) {
-                                     if (submit_proto.is_object()) {
-                                         event.prototype = submit_proto;
-                                     }
-                                     event.set("submitter", submitter_value);
-                                 });
-            }
-            helpers.erase_slot(c, this, form, firing_slot);
-            if (cancelled || c.throw_pending()) { return value::undefined(); }
-            build_submission(c, this, form, submitter);
+            submit_from(c, form, submitter);
             return value::undefined();
         });
     helpers.operation(
