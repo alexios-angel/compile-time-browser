@@ -140,5 +140,11 @@ int main() {
               " seen.push(typeof k + k); return k in t; }});"
               "Array.prototype.flat.call(p); return seen.join(); })()",
               "string0,string1");
+    // defineProperties reads each descriptor through the proxy's [[Get]].
+    js_expect("(function(){var log = []; var logger = new Proxy({}, {"
+              " get: function (t, k) { log.push(k); }});"
+              "Object.defineProperties({}, new Proxy({a: {value: 0}, b: {value: 1}}, logger));"
+              "return log.join(); })()",
+              "ownKeys,getOwnPropertyDescriptor,get,getOwnPropertyDescriptor,get");
     REPORT("receivers_and_throws");
 }

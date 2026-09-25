@@ -62,18 +62,25 @@ namespace {
     std::vector<std::pair<std::string, context::property_descriptor>> wanted;
     for (const std::string & key : own_property_names(cx, from, key_filter::all)) {
         context::property_descriptor found;
-        if (!cx.own_property(from, key, found) || !found.enumerable) { continue; }
+        const bool own = cx.own_property(from, key, found);
+        if (cx.throw_pending()) { return false; } // a getOwnPropertyDescriptor trap threw
+        if (!own || !found.enumerable) { continue; }
         // An own DATA property's [[Get]] is its value; only an accessor has to
         // be called. Reading every key back by NAME would have missed an
         // array's elements, whose values do not come out of lookup_property -
         // `Object.defineProperties(o, [{value: 1}])` is legal and defines "0".
-        const value descriptor = found.is_accessor() ? cx.lookup_property(from, key) : found.held;
+        // A PROXY's [[Get]] is its `get` trap, asked after the descriptor
+        // (20.1.2.3.1 steps 3.b.ii-iii), whatever the descriptor said.
+        const value descriptor = found.is_accessor() || from.is_kind(heap_kind::proxy)
+                                     ? cx.lookup_property(from, key)
+                                     : found.held;
+        if (cx.throw_pending()) { return false; }
         if (!descriptor.is_object_like()) {
             cx.throw_error("TypeError", "Property description must be an object");
             return false;
         }
         const context::property_descriptor read = cx.to_property_descriptor(descriptor);
-        if (!valid_descriptor(cx, read)) { return false; }
+        if (cx.throw_pending() || !valid_descriptor(cx, read)) { return false; }
         wanted.emplace_back(key, read);
     }
     // A trap that throws answers true, and the walk stops there.
