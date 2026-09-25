@@ -58,7 +58,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         enum Kind {
             returned,
             condition,
-            yielded
+            yielded,
+            tryExit,
+            tryYield
         } kind = returned;
         llvm::SmallVector<mlir::Type> types;
         mlir::scf::WhileOp loop;
@@ -78,6 +80,17 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         if (!step()) { return false; }
         mapping.map(argument, destination.addArgument(argument.getType(), argument.getLoc()));
     }
+    const auto copyMapping = [&](const mlir::IRMapping & from, mlir::IRMapping & to) {
+        const uint64_t cost =
+            from.getValueMap().size() + from.getOperationMap().size() + from.getBlockMap().size();
+        if (cost > remaining) {
+            remaining = 0;
+            return refuse("DOM helper expansion work budget exhausted");
+        }
+        remaining -= static_cast<unsigned>(cost);
+        to = from;
+        return true;
+    };
     const auto emit = [&](auto && self, mlir::Block & body, mlir::Block::iterator begin,
                           mlir::IRMapping & values, mlir::OpBuilder & at,
                           const Continuation * continuation, Terminal & terminal,
@@ -97,19 +110,20 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     return {};
                 }
             }
-            if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(operation)) {
+            if (llvm::isa<mlir::scf::YieldOp, ctjs::InvokeYieldOp>(operation)) {
+                auto * yield = &operation;
                 if (!continuation && terminal.kind == Terminal::yielded) {
                     const auto types = terminal.loop
                                            ? mlir::TypeRange(terminal.loop.getInits().getTypes())
                                            : mlir::TypeRange(terminal.types);
-                    if (yield.getOperandTypes() != types) {
+                    if (yield->getOperandTypes() != types) {
                         refuse("DOM helper loop lost its carried result correspondence");
                         return {};
                     }
                     llvm::SmallVector<mlir::Value> result;
                     for (unsigned index : terminal.carried) {
                         if (!step()) { return {}; }
-                        auto value = values.lookup(yield.getOperand(index));
+                        auto value = values.lookup(yield->getOperand(index));
                         if (value.getDefiningOp<mlir::ub::PoisonOp>()) {
                             refuse("DOM helper completion observes an inactive value");
                             return {};
@@ -118,12 +132,12 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     }
                     return result;
                 }
-                if (!continuation || yield.getOperandTypes() != continuation->results.getTypes()) {
+                if (!continuation || yield->getOperandTypes() != continuation->results.getTypes()) {
                     refuse("DOM helper completion lost its result correspondence");
                     return {};
                 }
                 for (auto [result, operand] :
-                     llvm::zip(continuation->results, yield.getOperands())) {
+                     llvm::zip(continuation->results, yield->getOperands())) {
                     if (!step()) { return {}; }
                     values.map(result, values.lookupOrDefault(operand));
                 }
@@ -133,6 +147,47 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
             if (auto poison = llvm::dyn_cast<mlir::ub::PoisonOp>(operation)) {
                 values.map(poison.getResult(), poison.getResult());
                 continue;
+            }
+            if (llvm::isa<ctjs::TryExitOp, ctjs::TryYieldOp>(operation)) {
+                const bool exiting = llvm::isa<ctjs::TryExitOp>(operation);
+                if (continuation ||
+                    terminal.kind != (exiting ? Terminal::tryExit : Terminal::tryYield) ||
+                    operation.getNumOperands() != terminal.types.size()) {
+                    refuse("DOM helper completion lost its protected terminal");
+                    return {};
+                }
+                llvm::SmallVector<mlir::Value> result;
+                bool caught = false;
+                for (auto [index, operand] : llvm::enumerate(operation.getOperands())) {
+                    if (!step()) { return {}; }
+                    auto value = values.lookup(operand);
+                    if (exiting && index == 0) {
+                        auto literal = value.getDefiningOp<mlir::arith::ConstantOp>();
+                        auto flag = literal ? llvm::dyn_cast<mlir::IntegerAttr>(literal.getValue())
+                                            : mlir::IntegerAttr{};
+                        if (!flag || !flag.getType().isInteger(1)) {
+                            refuse("DOM helper protected exit requires an exact completion flag");
+                            return {};
+                        }
+                        caught = !flag.getValue().isZero();
+                        value = ctjs::ConstantOp::create(
+                            at, operation.getLoc(),
+                            ctjs::BooleanAttr::get(function.getContext(), caught));
+                        ++operationCount;
+                    } else if (value.getDefiningOp<mlir::ub::PoisonOp>()) {
+                        if (!exiting || (index == 1 ? !caught : caught)) {
+                            refuse("DOM helper completion observes an inactive value");
+                            return {};
+                        }
+                        value = ctjs::ConstantOp::create(
+                            at, operation.getLoc(),
+                            ctjs::UndefinedAttr::get(function.getContext()));
+                        inactiveFillers.insert(value);
+                        ++operationCount;
+                    }
+                    result.push_back(value);
+                }
+                return result;
             }
             if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(operation)) {
                 if (continuation || terminal.kind != Terminal::condition ||
@@ -746,7 +801,16 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 auto constant = condition.getDefiningOp<mlir::arith::ConstantOp>();
                 auto integer = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
                                         : mlir::IntegerAttr{};
-                if (integer && integer.getType().isInteger(1)) {
+                bool protectedValues =
+                    terminal.kind == Terminal::tryExit || terminal.kind == Terminal::tryYield;
+                for (auto type : branch.getResultTypes()) {
+                    if (!step()) { return {}; }
+                    protectedValues &= llvm::isa<ctjs::ValueType>(type);
+                }
+                // Retain source effects behind a proved constant guard. Both
+                // value-only arms can normalize to the protected terminal;
+                // integer completion selectors still require exact selection.
+                if (integer && integer.getType().isInteger(1) && !protectedValues) {
                     auto & selected = integer.getValue().isZero() ? branch.getElseRegion()
                                                                   : branch.getThenRegion();
                     if (selected.empty() && branch.getNumResults() == 0) {
@@ -873,6 +937,19 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
             }
             if (llvm::isa<ctjs::InvokeOp, ctjs::TryOp>(operation)) {
                 auto * invocation = &operation;
+                bool recursive =
+                    terminal.kind == Terminal::tryExit || terminal.kind == Terminal::tryYield;
+                const auto inputs = invocation->walk([&](mlir::Operation * nested) {
+                    if (!step()) { return mlir::WalkResult::interrupt(); }
+                    for (mlir::Value operand : nested->getOperands()) {
+                        if (!step()) { return mlir::WalkResult::interrupt(); }
+                        auto mapped = values.lookupOrNull(operand);
+                        recursive |=
+                            mapped && static_cast<bool>(mapped.getDefiningOp<mlir::ub::PoisonOp>());
+                    }
+                    return mlir::WalkResult::advance();
+                });
+                if (inputs.wasInterrupted()) { return {}; }
                 // Preserve suppression and both continuations verbatim. The
                 // complete DOM admission still proves their host effects.
                 const auto checked = invocation->walk([&](mlir::Operation * nested) {
@@ -896,18 +973,19 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             }
                         }
                     }
-                    if (llvm::isa<mlir::ub::PoisonOp>(nested) &&
+                    if (!recursive && llvm::isa<mlir::ub::PoisonOp>(nested) &&
                         !llvm::isa<ctjs::TryOp>(invocation)) {
                         refuse("DOM helper invocation contains inactive source state");
                         return mlir::WalkResult::interrupt();
                     }
-                    visited.insert(nested);
+                    if (!recursive) { visited.insert(nested); }
                     for (mlir::Value operand : nested->getOperands()) {
                         if (!step()) { return mlir::WalkResult::interrupt(); }
                         auto * owner = operand.getParentBlock()->getParentOp();
                         if (owner == invocation || invocation->isAncestor(owner)) { continue; }
                         if (!values.contains(operand) || !dominance.dominates(operand, nested) ||
-                            values.lookup(operand).getDefiningOp<mlir::ub::PoisonOp>()) {
+                            (!recursive &&
+                             values.lookup(operand).getDefiningOp<mlir::ub::PoisonOp>())) {
                             refuse("DOM helper invocation observes an inactive or unbound value");
                             return mlir::WalkResult::interrupt();
                         }
@@ -920,12 +998,146 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     refuse("DOM helper completion has an invalid invocation");
                     return {};
                 }
+                if (recursive) {
+                    auto attempt = llvm::dyn_cast<ctjs::TryOp>(operation);
+                    auto invoke = llvm::dyn_cast<ctjs::InvokeOp>(operation);
+                    const auto types = attempt ? mlir::TypeRange(operation.getResultTypes())
+                                               : mlir::TypeRange(terminal.types);
+                    // ponytail: protected continuation results are JavaScript
+                    // values; loop-condition terminals need a separate proof.
+                    for (auto type : types) {
+                        if (!step()) { return {}; }
+                        if (!llvm::isa<ctjs::ValueType>(type)) {
+                            refuse("DOM helper invocation requires source result slots");
+                            return {};
+                        }
+                    }
+                    mlir::OperationState built(operation.getLoc(), operation.getName());
+                    built.addTypes(types);
+                    built.addAttributes(operation.getAttrs());
+                    for (auto & region : operation.getRegions()) {
+                        (void)region;
+                        if (!step()) { return {}; }
+                        built.addRegion();
+                    }
+                    // Saved poison is padding only if the original unwind
+                    // argument stays poison throughout its exact continuation.
+                    // Keep every live saved value and the original slot count.
+                    llvm::SmallVector<mlir::Value> saved;
+                    if (invoke) {
+                        auto exit = llvm::cast<ctjs::InvokeExitOp>(invoke.getBody().front().back());
+                        for (auto operand : exit.getState()) {
+                            if (!step()) { return {}; }
+                            auto value = values.lookupOrNull(operand);
+                            if (!value) {
+                                refuse("DOM helper invocation has unbound saved state");
+                                return {};
+                            }
+                            if (value.getDefiningOp<mlir::ub::PoisonOp>()) {
+                                value = ctjs::ConstantOp::create(
+                                    at, operation.getLoc(),
+                                    ctjs::UndefinedAttr::get(function.getContext()));
+                                inactiveFillers.insert(value);
+                                ++operationCount;
+                            }
+                            saved.push_back(value);
+                        }
+                    }
+                    auto * copied = at.create(built);
+                    ++operationCount;
+                    for (auto [source, target] :
+                         llvm::zip(operation.getRegions(), copied->getRegions())) {
+                        mlir::IRMapping path;
+                        if (!copyMapping(values, path)) { return {}; }
+                        auto & output = target.emplaceBlock();
+                        mlir::OpBuilder nested(&output, output.end());
+                        for (auto [index, argument] :
+                             llvm::enumerate(source.front().getArguments())) {
+                            if (!step()) { return {}; }
+                            mlir::Value replacement =
+                                output.addArgument(argument.getType(), argument.getLoc());
+                            if (invoke && &source == &invoke.getUnwindBody() && index) {
+                                auto exit =
+                                    llvm::cast<ctjs::InvokeExitOp>(invoke.getBody().front().back());
+                                auto original = values.lookup(exit.getState()[index - 1]);
+                                if (original.getDefiningOp<mlir::ub::PoisonOp>()) {
+                                    replacement = original;
+                                }
+                            }
+                            path.map(argument, replacement);
+                        }
+                        if (invoke && &source == &invoke.getBody()) {
+                            auto & call = source.front().front();
+                            for (auto operand : call.getOperands()) {
+                                if (!step()) { return {}; }
+                                auto value = path.lookupOrNull(operand);
+                                if (!value || value.getDefiningOp<mlir::ub::PoisonOp>()) {
+                                    refuse(
+                                        "DOM helper invocation observes an inactive call operand");
+                                    return {};
+                                }
+                            }
+                            auto * called = nested.clone(call, path);
+                            ctjs::InvokeExitOp::create(nested, operation.getLoc(),
+                                                       called->getResult(0), saved);
+                            visited.insert(&call);
+                            visited.insert(source.front().getTerminator());
+                            operationCount += 2;
+                            continue;
+                        }
+                        Terminal protectedTerminal;
+                        if (attempt) {
+                            const bool body = &source == &attempt.getBody();
+                            protectedTerminal.kind = body ? Terminal::tryExit : Terminal::tryYield;
+                            for (auto operand : source.front().getTerminator()->getOperands()) {
+                                (void)operand;
+                                if (!step()) { return {}; }
+                                protectedTerminal.types.push_back(
+                                    ctjs::ValueType::get(function.getContext()));
+                            }
+                        }
+                        auto result = self(self, source.front(), source.front().begin(), path,
+                                           nested, attempt ? nullptr : &tail,
+                                           attempt ? protectedTerminal : terminal, depth + 1);
+                        if (!result) { return {}; }
+                        if (attempt && &source == &attempt.getBody()) {
+                            auto flag =
+                                ctjs::TruthyOp::create(nested, operation.getLoc(), result->front());
+                            ctjs::TryExitOp::create(nested, operation.getLoc(), flag, (*result)[1],
+                                                    mlir::ValueRange(*result).drop_front(2));
+                            operationCount += 2;
+                        } else if (attempt) {
+                            ctjs::TryYieldOp::create(nested, operation.getLoc(), result->front());
+                            ++operationCount;
+                        } else {
+                            ctjs::InvokeYieldOp::create(nested, operation.getLoc(), *result);
+                            ++operationCount;
+                        }
+                    }
+                    if (invoke) { return llvm::SmallVector<mlir::Value>(copied->getResults()); }
+                    values.map(operation.getResults(), copied->getResults());
+                    continue;
+                }
                 at.clone(operation, values);
                 continue;
             }
             if (operation.getNumRegions() || operation.getNumSuccessors()) {
                 refuse("DOM helper completion requires acyclic structured source");
                 return {};
+            }
+            if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation);
+                truth &&
+                (terminal.kind == Terminal::tryExit || terminal.kind == Terminal::tryYield)) {
+                auto literal = values.lookup(truth.getValue()).getDefiningOp<ctjs::ConstantOp>();
+                auto flag = literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
+                                    : ctjs::BooleanAttr{};
+                if (flag) {
+                    auto bit = mlir::arith::ConstantIntOp::create(at, operation.getLoc(),
+                                                                  flag.getValue(), 1);
+                    values.map(truth.getResult(), bit.getResult());
+                    ++operationCount;
+                    continue;
+                }
             }
             if (auto truncate = llvm::dyn_cast<mlir::arith::TruncIOp>(operation)) {
                 auto operand = values.lookup(truncate.getIn());

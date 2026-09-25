@@ -1,5 +1,6 @@
 #include "DOMURI.hpp"
 #include "../../../../lib/CTNative/HostContract/Analysis.h"
+#include "../../../../lib/CTNative/HostContract/DOM/Source/Proof.hpp"
 #include "../../../../lib/CTNative/HostContract/Preparation.h"
 #include "ClassTransactions.hpp"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
@@ -1276,6 +1277,127 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                 check(kept == 3 && closes == 2 && advancing && attempts == 1 &&
                           caughtComparisons == 1,
                       "state transport retains next, both closes and the original local catch");
+                if (control == 0) {
+                    unsigned required = 0;
+                    for (unsigned mutation = 0; mutation != 9; ++mutation) {
+                        mlir::OwningOpRef<ctjs::FuncOp> input(
+                            llvm::cast<ctjs::FuncOp>(entry->clone()));
+                        ctjs::InvokeOp next;
+                        ctjs::TryOp protectedBody;
+                        input->walk([&](ctjs::TryOp found) { protectedBody = found; });
+                        input->walk([&](ctjs::InvokeOp found) {
+                            auto call = llvm::cast<ctjs::CallOp>(found.getBody().front().front());
+                            auto key = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                            if (key && ctjs::constantKey(key.getKey()) == "next") { next = found; }
+                        });
+                        auto exit = llvm::cast<ctjs::InvokeExitOp>(next.getBody().front().back());
+                        unsigned inactive = 0;
+                        while (inactive < exit.getState().size() &&
+                               !exit.getState()[inactive].getDefiningOp<mlir::ub::PoisonOp>()) {
+                            ++inactive;
+                        }
+                        if (!check(inactive < exit.getState().size(),
+                                   "original next retains an inactive saved slot")) {
+                            continue;
+                        }
+                        auto marker = exit.getState()[inactive];
+                        if (mutation == 1) {
+                            auto call = llvm::cast<ctjs::CallOp>(next.getBody().front().front());
+                            call.getReceiverMutable().assign(marker);
+                        } else if (mutation >= 2 && mutation <= 4) {
+                            auto & block = mutation == 2   ? next.getUnwindBody().front()
+                                           : mutation == 3 ? next.getNormalBody().front()
+                                                           : protectedBody.getCatchBody().front();
+                            auto at = mlir::OpBuilder::atBlockBegin(&block);
+                            ctjs::StoreGlobalOp::create(
+                                at, next.getLoc(), "inactive-observer",
+                                mutation == 2 ? block.getArgument(inactive + 1) : marker);
+                        } else if (mutation == 5) {
+                            auto terminal =
+                                llvm::cast<ctjs::TryExitOp>(protectedBody.getBody().front().back());
+                            mlir::OpBuilder at(terminal);
+                            auto unknown = ctjs::TruthyOp::create(
+                                at, terminal.getLoc(), input->getBody().front().getArgument(3));
+                            terminal->setOperand(0, unknown);
+                        } else if (mutation == 6) {
+                            auto & normal = next.getNormalBody().front();
+                            auto at = mlir::OpBuilder::atBlockBegin(&normal);
+                            ctjs::StoreGlobalOp::create(at, next.getLoc(), "normal-observer",
+                                                        normal.getArgument(0));
+                        }
+                        const auto snapshot = printed(*input);
+                        const unsigned budget = mutation == 7   ? 0
+                                                : mutation == 8 ? required - 1
+                                                                : 100000;
+                        ctcompile::ctnative::dom_source_detail::DOMSource completion(budget);
+                        const bool normalized = completion.normalizeCompletion(*input);
+                        if (mutation == 0 || mutation == 6) {
+                            if (!check(normalized, "observed iterator completion normalizes")) {
+                                llvm::errs() << "completion: " << completion.reason << '\n';
+                                continue;
+                            }
+                            if (mutation == 0) { required = budget - completion.remaining; }
+                            unsigned poison = 0, invocations = 0, tries = 0, effects = 0;
+                            input->walk([&](mlir::ub::PoisonOp) { ++poison; });
+                            input->walk([&](ctjs::InvokeOp found) {
+                                ++invocations;
+                                auto state =
+                                    llvm::cast<ctjs::InvokeExitOp>(found.getBody().front().back());
+                                check(state.getState().size() == 15 &&
+                                          llvm::all_of(found.getResultTypes(),
+                                                       [](mlir::Type type) {
+                                                           return llvm::isa<ctjs::ValueType>(type);
+                                                       }),
+                                      "normalized invocations retain saved slots and source result "
+                                      "types");
+                            });
+                            input->walk([&](ctjs::TryOp found) {
+                                ++tries;
+                                check(found->getNumResults() == 1 &&
+                                          found.getCatchBody().front().getNumArguments() ==
+                                              caughtArguments,
+                                      "normalization retains the Try result and caught tuple");
+                                found.getCatchBody().walk([&](ctjs::CompareOp compare) {
+                                    auto read = compare.getRhs().getDefiningOp<ctjs::CellGetOp>();
+                                    check(read &&
+                                              compare.getLhs() ==
+                                                  found.getCatchBody().front().getArgument(0) &&
+                                              read.getCell() ==
+                                                  found.getCatchBody().front().getArgument(
+                                                      caughtAnchor),
+                                          "normalized catch preserves thrown payload and saved "
+                                          "anchor identity");
+                                });
+                            });
+                            input->walk([&](ctjs::StoreGlobalOp store) {
+                                if (store.getName() != "normal-observer") { return; }
+                                ++effects;
+                                auto argument =
+                                    llvm::dyn_cast<mlir::BlockArgument>(store.getValue());
+                                auto invocation =
+                                    llvm::dyn_cast<ctjs::InvokeOp>(store->getParentOp());
+                                check(argument && invocation &&
+                                          argument ==
+                                              invocation.getNormalBody().front().getArgument(0),
+                                      "normal observer stays outside the call body with its "
+                                      "original payload");
+                            });
+                            check(!poison && invocations == 3 && tries == 1 &&
+                                      effects == (mutation == 6 ? 1u : 0u) &&
+                                      mlir::succeeded(mlir::verify(*input)),
+                                  "completion removes only inactive transport and preserves "
+                                  "guarded calls");
+                        } else {
+                            check(!normalized && printed(*input) == snapshot,
+                                  "live poison, unknown exit flags and incomplete budgets refuse "
+                                  "transactionally");
+                            if (mutation >= 7) {
+                                check(completion.reason.find("budget") != std::string::npos,
+                                      "completion budget refusal retains its diagnostic");
+                            }
+                        }
+                    }
+                }
             } else if ((control == 0 || control >= 11) && control != 35 && structured) {
                 check(openCall->getBlock() == openBlock &&
                           llvm::equal(openCall->getOperands(), openOperands) &&
