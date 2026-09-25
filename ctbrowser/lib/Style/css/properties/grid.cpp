@@ -566,17 +566,13 @@ bool match_grid(std::string_view property, const token_stream & ts, const scan &
 }
 
 // A canonical <grid-line> that is a custom ident and nothing else - which an
-// omitted line copies (CSS Grid 2 §8.4). `--a` and `-a-` are idents; `-3` is
-// an integer.
+// omitted line copies (CSS Grid 2 §8.4): one ident token. `--a`, `-a-` and
+// the escaped `\31 st` are idents; `-3` is an integer, `span a` two tokens.
 [[nodiscard]] bool ident_only_line(const std::string & line) {
-    if (line.empty() || line == "auto" || line.starts_with("span") ||
-        line.find(' ') != std::string::npos) {
-        return false;
-    }
-    const auto digit = [](char c) { return c >= '0' && c <= '9'; };
-    const char second = line.size() > 1 ? line[1] : ' ';
-    return !(digit(line.front()) ||
-             ((line.front() == '-' || line.front() == '+') && digit(second)));
+    const token_stream s = tokenize(line);
+    return s.tokens.size() == 2 && s.tokens[0].type == token_type::ident &&
+           !ascii_iequals(s.text_of(s.tokens[0]), "auto") &&
+           !ascii_iequals(s.text_of(s.tokens[0]), "span");
 }
 
 bool split_grid_lines(std::string_view shorthand, std::string_view value,
