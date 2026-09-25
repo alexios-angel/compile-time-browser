@@ -5,9 +5,9 @@
 // already LANDED on the page's handler (context::unwinds), must stop rather
 // than go on to throw a second time over the handler the first consumed - a
 // revoked proxy under `delete`, Object.defineProperty or JSON.stringify, a
-// Symbol handed to toPrecision. And a proxy with no `set` trap, or one on a
-// prototype chain, hands the write on with the ORIGINAL receiver (10.5.9 step
-// 6, 10.1.9.2), so its own traps and a setter's `this` see it.
+// Symbol handed to toPrecision. And a proxy on a prototype chain is asked
+// with the ORIGINAL receiver (10.1.9.2, 10.1.8.1), so its traps and a
+// setter's `this` see it.
 
 #include "js_expect.hpp"
 
@@ -31,17 +31,7 @@ int main() {
               "try { f.bind(); return 'bound'; } catch (e) { return e.name; } })()",
               "RangeError");
 
-    // A proxy with no `set` trap: the target's [[Set]] with the PROXY as the
-    // receiver, so the proxy's own getOwnPropertyDescriptor and
-    // defineProperty traps take the write.
-    js_expect("(function(){var seen = []; var p = new Proxy({a: 1}, {"
-              " getOwnPropertyDescriptor: function (t, k) { seen.push('g' + k);"
-              "   return Reflect.getOwnPropertyDescriptor(t, k); },"
-              " defineProperty: function (t, k, d) { seen.push('d' + k);"
-              "   return Reflect.defineProperty(t, k, d); }});"
-              "p.a = 2; p.b = 3; return seen.join() + '|' + p.a + p.b; })()",
-              "ga,da,gb,db|23");
-    // ...and a proxy on a chain is asked with the object the access began on.
+    // A proxy on a chain is asked with the object the access began on.
     js_expect("(function(){var who; var proto = new Proxy({}, {set: function (t, k, v, r) {"
               " who = r; return true; }}); var o = Object.create(proto); o.x = 1;"
               "return (who === o) + ',' + o.hasOwnProperty('x'); })()",

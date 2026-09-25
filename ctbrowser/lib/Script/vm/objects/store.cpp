@@ -22,14 +22,13 @@ bool array_set_length(array_object & arr, double n);
 namespace {
 
 // OrdinarySet(O, P, V, Receiver), 10.1.9.2, for a Receiver that is NOT O: a
-// proxy with no `set` trap hands its target the write with ITSELF as the
-// receiver (10.5.9 step 6). So a setter found on the target's chain runs with
-// the proxy as `this` - `proxy.__proto__ = p` reaches the proxy's
-// setPrototypeOf trap - and a data property lands through the receiver's own
-// [[GetOwnProperty]] and [[DefineOwnProperty]], which for a proxy are its
-// traps. store_property's own walk carries no receiver; this one does, and
-// only a proxy takes it. False is a refusal, for strict code to throw; a throw
-// answers true, so that it is not a second one.
+// write that reaches a PROXY on an object's prototype chain, or an array's
+// fresh named property asking its prototypes. A setter found on the way runs
+// with the receiver as `this`, a proxy on the way is asked with it, and a data
+// property lands through the receiver's own [[GetOwnProperty]] and
+// [[DefineOwnProperty]]. store_property's own walk carries no receiver; this
+// one does. False is a refusal, for strict code to throw; a throw answers
+// true, so that it is not a second one.
 bool set_for_receiver(context & cx, value o, const std::string & name, value v, value receiver) {
     const std::size_t before = cx.unwinds();
     const auto threw = [&] { return cx.throw_pending() || cx.unwinds() != before; };
@@ -309,7 +308,14 @@ void context::store_property(value target, const std::string & name, value v) {
             }
             return;
         }
-        if (!set_for_receiver(*this, p->target, name, v, target)) { store_rejected_ = true; }
+        // NO `set` TRAP: the target's own [[Set]] - with the TARGET as the
+        // receiver, where 10.5.9 step 6 passes the proxy. Deliberately: the
+        // document is a proxy with no `set` trap (shell/bindings/document/
+        // named_access.cpp), and Document.prototype's native event-handler
+        // setters take `this` to be the document object itself, so handing
+        // them the proxy loses `document.onreadystatechange = f`. A proxy on
+        // a CHAIN does pass the receiver (assign_through_accessor).
+        store_property(p->target, name, v);
         return;
     }
     if (target.is_object()) {
