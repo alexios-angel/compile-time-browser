@@ -22,6 +22,32 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## DOM source layout, 2026-09-25 UTC
+
+**6ff19c5b** groups all 20 former `HostContract/DOM*` files under
+`HostContract/DOM/`. `Entry/` and `Source/` retain their existing implementation
+splits; `Iteration/` owns iteration, custom protocol and close handling, and
+`Snapshot/` owns bounds and length handling. The entry, source and preparation
+coordinators live directly in `DOM/`.
+
+CMake registration and include paths are updated. Every non-include byte in
+the moved files is preserved; all 120 include references and 35 affected C++
+source-to-target assignments retain their original destinations.
+
+Devbox targets `ctjs-opt`, `ctjs-translate`, `ctcompile-test-host-contract` and
+`ctcompile-test-exception-recovery` pass (20 build steps). Exact CTests
+`ctcompile_host_contract` and `ctcompile_exception_recovery` pass **2/2, 7.97 s**.
+Formatting passes **1126 C++, 159 Python, 114 web files**; the staged diff check
+passes. Full CTest/compiler lit, broad matrices, WPT/test262, other platforms,
+sanitizers and performance runs were skipped. Evidence is in
+`../test-results/2026-09-25-dom-layout` relative to the monorepo root.
+
+The native boundary remains traversal/close coverage through retained
+result-bearing Invoke regions, then next/exhaustion and unsuppressed close
+failures through Try state. Saved returns, caught-node identity and effects
+must remain intact. The native application driver and full native Bootstrap
+remain unfinished. Continue on `main`.
+
 ## Main merge completed, 2026-09-24 UTC
 
 The user authorized parser publication, the prepared branch push, a fresh
