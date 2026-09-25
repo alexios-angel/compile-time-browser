@@ -586,7 +586,9 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
         cx.throw_error("TypeError", "Array species constructor is not a constructor");
         return value::undefined();
     }
-    const value args[1] = {value::number(len)};
+    // `length` is a mathematical value (10.4.2.3), so never -0: `slice(0, -0)`
+    // constructs with +0.
+    const value args[1] = {value::number(len + 0.0)};
     const value out = cx.construct(ctor, args);
     return watch.threw() || !out.is_object_like() ? value::undefined() : out;
 }

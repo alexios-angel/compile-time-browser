@@ -764,7 +764,7 @@ void install_array(context & cx) {
         for (; k < len; k += 1.0) {
             if (detail::has_element(c, self, k) &&
                 detail::element_at(c, self, k).strict_equals(target)) {
-                return value::number(k);
+                return value::number(k + 0.0); // an index is never -0
             }
         }
         return value::number(-1);
@@ -784,7 +784,7 @@ void install_array(context & cx) {
         for (; k >= 0; k -= 1.0) {
             if (detail::has_element(c, self, k) &&
                 detail::element_at(c, self, k).strict_equals(target)) {
-                return value::number(k);
+                return value::number(k + 0.0); // an index is never -0
             }
         }
         return value::number(-1);
