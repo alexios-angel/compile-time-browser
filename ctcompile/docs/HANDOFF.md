@@ -22,6 +22,39 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Exact conditional iterator helper edges, 2026-09-25 UTC
+
+Resumed the interrupted conditional-helper candidate after **d324b5c4**.
+**80f0f5f7** normalizes a raw helper branch only when its Boolean condition is
+exact, or both edges have the same destination and payload. Condition input
+producers remain; every surviving effect, receiver, capture and result still
+needs the existing DOM proof. Fourteen new controls (37 raw controls total)
+cover selected dead/live effects, transported identity, differing payloads,
+unknown conditions and private-candidate rollback. Independent read-only review
+of all seven helper-preparation callers found no defects.
+
+The devbox built `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate` and
+`ctcompile-test-native-reference`. Final exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 5.21 s** and
+`ctcompile_host_contract` **1/1, 2.67 s**. Formatting passed **1126 C++, 159
+Python, 114 web files**; diff checks passed. Full suites were skipped.
+
+**Source follow-up at this checkpoint:** both original iterator witnesses
+completed their raw/structured native checks. The new getter conditional
+witness executed from raw import, then its structured `scf.if` form refused
+with `DOM Symbol.iterator identity method has additional effects`. The Python
+follow-up preserves both derived source witnesses and explicitly checks that
+structured refusal. Its focused two-source gate is queued in
+`/tmp/ctcompile-iteration20/source-gate.sh`; do not count it as passed yet.
+No C++ or escape replay is needed for this test-only follow-up.
+
+**Next:** structured conditional helper normalization before the existing
+getter/identity/capture proofs; dynamic branches with differing payloads or
+effects remain unproved. Repeated allocation instances/lifetimes, mutable
+exceptional state, escaping owners, unguarded Bootstrap defaults, the native
+application driver and full native Bootstrap remain unfinished.
+
 ## Single-iteration allocation confinement, 2026-09-25 UTC
 
 Resumed **d324b5c4** and the conditional-helper/loop-instance boundary. The
@@ -29,7 +62,7 @@ parallel escape change landed as **aab7de9e**: the existing counted-loop proof
 now permits object and array allocations only in a body proved to execute once.
 Initialized inputs, current contents, every return and the all-write acyclic
 graph remain required. Headers, zero/multiple iterations, negative induction,
-overflow, publication and retained aliases keep their refusals. This proves
+overflow and publication keep their refusals; retained aliases remain unconfined. This proves
 frame confinement; it grants no region destruction or native ownership.
 
 The devbox built `ctcompile-test-escape-analysis-arrays` and
@@ -40,13 +73,10 @@ every incomplete budget. Formatting passed **1126 C++, 159 Python, 114 web files
 diff checks passed. Full CTest/compiler lit, broad matrices/corpora, raw escape
 oracle, WPT/test262, sanitizers and cross-platform/performance runs were skipped.
 
-**Native continuation at this checkpoint:** the three-file conditional-helper
-candidate remains uncommitted. Its first build needed an explicit `mlir::Value`
-conversion in a test; then eight positive controls exposed a missing rewriter
-insertion point. That fix is present. Rebuild and run exact exception recovery,
-host contract and the four-source selector in `/tmp/ctcompile-iteration20/`
-before landing it. The earlier host test passed **1/1, 2.86 s**, but production
-changed afterward; native source execution has not run. Escape checks need no
+The native continuation subsequently landed as **80f0f5f7**, described above.
+The first native build needed an explicit `mlir::Value` conversion in a test;
+eight positive controls then exposed a missing rewriter insertion point.
+Both were corrected before the final passing C++ gates. Escape checks need no
 replay. The shared devbox queue caused long waits; no browser files changed.
 
 Repeated allocation instances/lifetimes, dynamic helper branches with differing
