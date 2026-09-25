@@ -314,21 +314,53 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         default: return std::nullopt;
         }
     };
-    const auto exactNumberArithmetic = [](mlir::Operation * binary) -> ctjs::NumberAttr {
+    const auto exactNumberArithmetic = [&](mlir::Operation * binary) -> ctjs::NumberAttr {
         if (!llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(binary) ||
             binary->getNumOperands() != 2) {
             return {};
         }
         auto kind = binary->getAttrOfType<ctjs::BinaryKindAttr>("kind");
         if (!kind) { return {}; }
+        const bool isStatic = llvm::isa<ctjs::BinaryStaticOp>(binary);
+        switch (kind.getValue()) {
+        case ctjs::BinaryKind::Add: break;
+        case ctjs::BinaryKind::BitAnd:
+        case ctjs::BinaryKind::BitOr:
+        case ctjs::BinaryKind::BitXor:
+        case ctjs::BinaryKind::Shl:
+        case ctjs::BinaryKind::Shr:
+        case ctjs::BinaryKind::UShr:
+            if (!isStatic) { return {}; }
+            break;
+        case ctjs::BinaryKind::Sub:
+        case ctjs::BinaryKind::Mul:
+        case ctjs::BinaryKind::Div:
+        case ctjs::BinaryKind::Mod:
+        case ctjs::BinaryKind::Pow:
+            if (isStatic) { return {}; }
+            break;
+        default: return {};
+        }
         auto lhs = binary->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
         auto rhs = binary->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
-        auto left =
-            lhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(lhs.getValue()) : ctjs::NumberAttr{};
-        auto right =
-            rhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
+        if (!lhs || !rhs || !lhs.getValue() || !rhs.getValue()) { return {}; }
+        // Generic Add concatenates if either primitive is a String. Static
+        // Add is numeric; every other admitted kind also converts to Number.
+        if (!isStatic && kind.getValue() == ctjs::BinaryKind::Add &&
+            (llvm::isa<ctjs::StringAttr>(lhs.getValue()) ||
+             llvm::isa<ctjs::StringAttr>(rhs.getValue()))) {
+            return {};
+        }
+        const auto number = [&](mlir::Attribute value) -> ctjs::NumberAttr {
+            if (auto original = llvm::dyn_cast<ctjs::NumberAttr>(value)) { return original; }
+            const auto converted = exactNumber(value);
+            return converted ? ctjs::NumberAttr::get(binary->getContext(),
+                                                     std::bit_cast<uint64_t>(*converted))
+                             : ctjs::NumberAttr{};
+        };
+        auto left = number(lhs.getValue()), right = number(rhs.getValue());
         if (!left || !right) { return {}; }
-        if (llvm::isa<ctjs::BinaryStaticOp>(binary) && kind.getValue() != ctjs::BinaryKind::Add) {
+        if (isStatic && kind.getValue() != ctjs::BinaryKind::Add) {
             // Reuse the typed Number operators and their public Core conversions:
             // ToInt32/ToUint32, masked shift counts and unsigned left shifts.
             const ::ctnative::js_num a{left.getDouble()}, b{right.getDouble()};
