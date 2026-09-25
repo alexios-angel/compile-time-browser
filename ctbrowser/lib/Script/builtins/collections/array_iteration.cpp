@@ -562,6 +562,9 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         }
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "sort")) { return self; }
+        // A COMPARATOR THAT THROWS leaves the array as it was: the throw is
+        // SortIndexedProperties' and comes before any element is written back.
+        const detail::unwind_watch watch{c};
         if (array_object * dense = detail::dense_array_this(self)) {
             // ON A SNAPSHOT, which is a robustness fix rather than a speed one.
             // The old loop indexed `items` while calling out to the comparator,
@@ -571,6 +574,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             // what it likes to the array meanwhile.
             std::vector<value> work = dense->items;
             sort_values(c, work, comparator);
+            if (watch.threw()) { return self; }
             // ASSIGNED, not written slot by slot, so both arms agree about what
             // the array holds afterwards. Where nothing mutated during the sort
             // the two spellings are identical; where something did, this is
@@ -593,9 +597,14 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         const context::rooted keep(c, holder);
         auto & work = static_cast<array_object *>(holder.as_heap())->items;
         for (double k = 0; k < len; k += 1.0) {
-            if (detail::has_element(c, self, k)) { work.push_back(detail::element_at(c, self, k)); }
+            const bool present = detail::has_element(c, self, k);
+            if (watch.threw()) { return self; }
+            if (!present) { continue; }
+            work.push_back(detail::element_at(c, self, k));
+            if (watch.threw()) { return self; }
         }
         sort_values(c, work, comparator);
+        if (watch.threw()) { return self; }
         const auto kept = static_cast<double>(work.size());
         for (double k = 0; k < kept; k += 1.0) {
             if (!detail::put_element(c, self, k, work[static_cast<std::size_t>(k)])) {
