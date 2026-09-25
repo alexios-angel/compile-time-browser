@@ -1,4 +1,5 @@
 #include "../Source/Proof.hpp"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Transforms/RegionUtils.h"
 
@@ -180,10 +181,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 found = function;
             }
         }
+        if (found && found.getBody().empty()) { return ctjs::FuncOp{}; }
         if (found && found != entry && !found.getBody().hasOneBlock()) {
-            // Raw import retains unreachable returns after terminal return/throw.
-            // Prune those tails on this private candidate, without granting any
-            // authority over reachable control flow, effects or payloads.
+            // Raw import retains dead return tails and straight-line CFG edges.
+            // Normalize this private candidate before proving every live effect
+            // and payload; branching helpers still need their own proof.
             uint64_t size = 0;
             const auto counted = found.walk([&](mlir::Operation * operation) {
                 if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -205,8 +207,18 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return ctjs::FuncOp{};
             }
             work.remaining -= static_cast<unsigned>(size * size);
-            mlir::IRRewriter rewriter(candidate.getContext());
+            if (mlir::failed(mlir::verify(found))) { return ctjs::FuncOp{}; }
+            mlir::PatternRewriter rewriter(candidate.getContext());
             (void)mlir::eraseUnreachableBlocks(rewriter, found.getBody());
+            auto & root = found.getBody().front();
+            while (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(root.getTerminator())) {
+                if (!spend()) { return ctjs::FuncOp{}; }
+                if (branch.getDest() == &root ||
+                    branch.getDest()->getSinglePredecessor() != &root ||
+                    mlir::failed(mlir::cf::BranchOp::canonicalize(branch, rewriter))) {
+                    break;
+                }
+            }
         }
         return found;
     };

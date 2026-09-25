@@ -396,6 +396,13 @@ OUTER_SOURCES = {
 }
 
 
+# Keep the original witnesses intact; each helper gains a live unconditional edge.
+RAW_HELPER_SOURCES = {
+    name + "-helper-edges": source.replace("() {", "() { do { break; } while (false);")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
 def check_outer_catches(args):
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -431,7 +438,7 @@ def check_outer_catches(args):
         exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
         (void)pressed;
     """
-    for name, source in OUTER_SOURCES.items():
+    for name, source in (OUTER_SOURCES | RAW_HELPER_SOURCES).items():
         script = source + """
 function observe(exhausted) {
   const saved = {};

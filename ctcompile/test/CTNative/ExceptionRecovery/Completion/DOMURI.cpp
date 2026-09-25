@@ -871,7 +871,16 @@ static void testHelperCatchSource(mlir::MLIRContext & context) {
 
 static void testRawIteratorHelpers(mlir::ModuleOp original,
                                    const ctcompile::ctnative::HostContract & contract) {
-    for (unsigned control = 0; control != 10; ++control) {
+    mlir::OwningOpRef<mlir::ModuleOp> reference(original.clone());
+    auto referenceProof = contract;
+    auto referenceError = ctcompile::ctnative::prepareDOMEntry(*reference, referenceProof, 100000);
+    if (!check(!referenceError,
+               "original raw helpers establish exact prepared payload and effects")) {
+        llvm::consumeError(std::move(referenceError));
+        return;
+    }
+    const auto expected = printed(*reference);
+    for (unsigned control = 0; control != 23; ++control) {
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
         auto next = candidate->lookupSymbol<ctjs::FuncOp>("fn$3");
@@ -928,6 +937,51 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             }
             mlir::cf::SwitchOp::create(at, identity.getLoc(), flag, continuation,
                                        mlir::ValueRange{}, cases, destinations, operands);
+        } else if (control >= 20) {
+            auto helper = control == 20 ? identity : control == 21 ? next : close;
+            helper.eraseBody();
+            helper.setPrivate();
+        } else if (control >= 10) {
+            auto helper = control == 10 || control == 17                    ? identity
+                          : control == 11 || control == 16 || control == 19 ? next
+                                                                            : close;
+            auto & first = helper.getBody().front();
+            auto * terminal = first.getTerminator();
+            auto * split =
+                control >= 18 ? (*first.getOps<ctjs::CallOp>().begin()).getOperation() : terminal;
+            auto * continuation = first.splitBlock(split);
+            at.setInsertionPointToEnd(&first);
+            if (control <= 12 || control == 17) {
+                mlir::Value payload = terminal->getOperand(0);
+                if (control == 17) { payload = first.getArgument(ctjs::arg_callee); }
+                auto transported = continuation->addArgument(payload.getType(), helper.getLoc());
+                terminal->setOperand(0, transported);
+                mlir::cf::BranchOp::create(at, helper.getLoc(), continuation,
+                                           mlir::ValueRange{payload});
+            } else if (control == 14 || control == 15) {
+                auto * alternative = new mlir::Block;
+                helper.getBody().push_back(alternative);
+                if (control == 15) {
+                    mlir::cf::BranchOp::create(at, helper.getLoc(), alternative);
+                    at.setInsertionPointToEnd(alternative);
+                }
+                auto flag = ctjs::TruthyOp::create(at, helper.getLoc(), at.getI1Type(),
+                                                   first.getArgument(ctjs::arg_receiver));
+                mlir::cf::CondBranchOp::create(at, helper.getLoc(), flag, alternative,
+                                               continuation);
+                if (control == 14) {
+                    at.setInsertionPointToEnd(alternative);
+                    ctjs::ReturnOp::create(at, helper.getLoc(),
+                                           first.getArgument(ctjs::arg_receiver));
+                }
+            } else {
+                mlir::cf::BranchOp::create(at, helper.getLoc(), continuation);
+                if (control == 13 || control == 16) {
+                    at.setInsertionPoint(terminal);
+                    ctjs::StoreGlobalOp::create(at, helper.getLoc(), "continuation-effect",
+                                                terminal->getOperand(0));
+                }
+            }
         }
         if (!check(mlir::succeeded(mlir::verify(*candidate)), "raw helper control verifies")) {
             continue;
@@ -936,22 +990,34 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         proof.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*candidate);
         const auto fingerprint = proof.moduleSha256;
         const auto before = printed(*candidate);
+        const bool succeeds = control == 0 || (control >= 2 && control <= 4) ||
+                              (control >= 10 && control <= 12) || control == 18 || control == 19;
+        if (succeeds) {
+            mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
+            auto limitedProof = proof;
+            auto limitedError = ctcompile::ctnative::prepareDOMEntry(*limited, limitedProof, 0);
+            check(static_cast<bool>(limitedError) && printed(*limited) == before &&
+                      limitedProof.moduleSha256 == fingerprint,
+                  "reachable helper budget refusal preserves the entire module and contract");
+            if (limitedError) { llvm::consumeError(std::move(limitedError)); }
+        }
         auto error = ctcompile::ctnative::prepareDOMEntry(*candidate, proof, 100000);
         const auto reason = error ? llvm::toString(std::move(error)) : std::string{};
-        if (control == 0) {
-            check(reason.empty() &&
+        if (succeeds) {
+            check(reason.empty() && printed(*candidate) == expected &&
+                      mlir::succeeded(mlir::verify(*candidate)) &&
                       ctcompile::ctnative::DOMEntryAnalysis(*candidate, proof).proved(),
-                  "only unreachable helper effects are pruned before complete DOM proof");
+                  "helper continuations preserve the exact original payload and ordered effects");
         } else {
             check(!reason.empty() && printed(*candidate) == before &&
                       proof.moduleSha256 == fingerprint,
                   "raw helper shape, effect and receiver refusals roll back the whole module");
-            if (control >= 8) {
+            if (control == 8 || control == 9) {
                 check(reason.find("budget") != std::string::npos,
                       "helper operations and successor edges consume the normalization budget");
             }
         }
-        if ((control == 0) != reason.empty()) {
+        if (succeeds != reason.empty()) {
             llvm::errs() << "raw helper control " << control << ": " << reason << '\n';
         }
     }
