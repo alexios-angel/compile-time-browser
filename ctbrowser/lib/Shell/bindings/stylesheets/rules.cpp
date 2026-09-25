@@ -172,15 +172,11 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
     out += " {\n";
     for (const std::size_t child : rule.children) {
         if (child >= css_rule_store_.size()) { continue; }
-        // TWO SPACES ON EVERY LINE of the child rather than on its first, so a
-        // nested group indents cumulatively - which is what the recursion means
-        // and what a single leading indent would get wrong.
-        out += "  ";
-        for (const char c : rule_css_text(*css_rule_store_[child])) {
-            out += c;
-            if (c == '\n') { out += "  "; }
-        }
-        out += '\n';
+        // TWO SPACES BEFORE THE CHILD'S FIRST LINE ONLY: CSSOM appends the
+        // serialised child as it is, so a nested group's own lines keep the
+        // indentation it gave them and nothing accumulates
+        // (at-container-serialization, serialize-group-rules-with-decls).
+        out += "  " + rule_css_text(*css_rule_store_[child]) + "\n";
     }
     out += '}';
     return out;

@@ -258,9 +258,10 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
         const css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return c.string(""); }
         // The cascade's reading of the prelude, so `STYLE(--foo: bar)` is a
-        // query and not a name; the first condition of a list speaks.
+        // query and not a name; a list of several has no one name or query,
+        // and answers empty (`conditions` has each).
         const auto conditions = style::css::parse_container_conditions(rule->prelude);
-        if (!conditions || conditions->empty()) { return c.string(""); }
+        if (!conditions || conditions->size() != 1) { return c.string(""); }
         const style::css::container_query & first = conditions->front();
         if (want_name) { return c.string(first.name); }
         std::string query = collapse_whitespace(first.condition, html_whitespace);
