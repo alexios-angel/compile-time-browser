@@ -572,6 +572,23 @@ RAW_HELPER_SOURCES |= {
 }
 
 
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-wide-string-number": source.replace(
+        "return this;", "return '000000000000000000000000000000000000000016' == 16 ? this : null;"
+    )
+    .replace(
+        "return {done: done, value: anchor};",
+        "return '\\u00A0                                 +Infinity\\uFEFF' >= 1 ? {done: done, value: anchor} : null;",
+    )
+    .replace(
+        "throw anchor;",
+        "throw (true ? '0b000000000000000000000000000000000000000001' : '') >= true ? anchor : null;",
+    )
+    for name, source in OUTER_SOURCES.items()
+}
+
+
 # Retain the complete source-global witnesses; the initialized provider and
 # absence of source writes must prove the binding before helper projection.
 RAW_HELPER_SOURCES |= {
