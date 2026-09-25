@@ -257,6 +257,10 @@ int main() {
     js_expect("JSON.parse('[1,2,3]', function (k, v) { return k === '1' ? undefined : v; })"
               ".length",
               "3");
+    // A refused [[Delete]] is ignored, not a TypeError (step 2.b.iii.2.a).
+    js_expect("JSON.parse('[1,2]', function (k, v) { if (k === '0') { Object.defineProperty("
+              "this, '1', {configurable: false}); } return k === '1' ? undefined : v; })[1]",
+              "2");
 
     // --- JSON.rawJSON / JSON.isRawJSON (ES2025) ------------------------------
     js_expect("JSON.stringify({n: JSON.rawJSON('12345678901234567890')})",

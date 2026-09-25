@@ -470,18 +470,15 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
     if (cx.throw_pending()) { return value::undefined(); }
     if (held.is_object_like()) {
         const context::rooted keep{cx, held};
-        // Step 2.b: a deleted child is [[Delete]]d (a refusal is a TypeError);
-        // a revived one is CreateDataProperty'd, its refusal ignored.
+        // Step 2.b: a deleted child is [[Delete]]d and a revived one
+        // CreateDataProperty'd - each `? val.[[...]]`, so a throw (a proxy
+        // trap's) propagates but a REFUSAL is ignored: a reviver that made
+        // the property non-configurable first simply leaves it in place.
         const auto revive_child = [&](const std::string & k) {
             const value revived = internalize_json(cx, held, k, reviver, depth + 1);
             if (cx.throw_pending()) { return false; }
             if (revived.is_undefined()) {
-                if (!cx.delete_own_property(held, k)) {
-                    if (!cx.throw_pending()) {
-                        cx.throw_error("TypeError", "Cannot delete property " + k);
-                    }
-                    return false;
-                }
+                (void)cx.delete_own_property(held, k);
             } else {
                 const context::rooted keep_revived{cx, revived};
                 context::property_descriptor wanted;
