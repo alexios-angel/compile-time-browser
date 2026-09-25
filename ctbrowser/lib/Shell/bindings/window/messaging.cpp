@@ -100,9 +100,11 @@ void dom_bindings::install_post_message(context & cx, script::object_object & wi
                 }
                 const value event = make_event_object(t, "message", false, false);
                 auto * object = static_cast<script::object_object *>(event.as_heap());
-                if (message_event_prototype_.is_object()) {
-                    object->prototype = message_event_prototype_;
-                }
+                // The interfaces are the page's, whichever window receives -
+                // a frame's bindings adopt them (second_document.cpp).
+                const value proto =
+                    (primary_ == nullptr ? this : primary_)->message_event_prototype_;
+                if (proto.is_object()) { object->prototype = proto; }
                 object->set("data", data);
                 object->set("origin", t.string(source_origin));
                 object->set("lastEventId", t.string(""));
