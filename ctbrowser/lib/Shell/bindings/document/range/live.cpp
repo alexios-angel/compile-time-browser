@@ -167,12 +167,16 @@ void dom_bindings::settle_live_ranges(const std::vector<document::write_note> & 
     }
 }
 
+// "Split a Text node" step 7 - ONLY WHEN THE NODE HAS A PARENT. A detached
+// node's boundaries past the offset stay on it and are clamped by the replace
+// data of step 8 (Range-mutations-splitText.html's detached rows).
 void dom_bindings::split_live_ranges(node_id node, node_id made, double offset, node_id parent,
                                      double made_index) {
+    if (!parent) { return; }
     each_live_boundary([&](const live_boundary & at) {
         if (at.node == node && at.offset > offset) {
             move_live_boundary(at, made, at.offset - offset);
-        } else if (parent && at.node == parent && at.offset == made_index) {
+        } else if (at.node == parent && at.offset == made_index) {
             move_live_boundary(at, at.node, at.offset + 1);
         }
     });
