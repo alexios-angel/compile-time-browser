@@ -299,10 +299,58 @@ bool context::has_property(value target, const std::string & name) {
     return false;
 }
 
+// 13.10.2 InstanceofOperator, and 7.3.22 OrdinaryHasInstance after it.
+//
+// The right-hand side must be an object; its @@hasInstance, when it has one,
+// answers (ToBoolean of a call); otherwise it must be callable. The intrinsic
+// %Function.prototype[@@hasInstance]% IS OrdinaryHasInstance, so finding it -
+// which is what every ordinary `x instanceof F` does - skips the call and
+// walks the chain directly (builtins/objects/function.cpp has the method
+// itself, written over the public operations).
 bool context::instance_of(value target, value ctor) {
+    if (!ctor.is_object_like()) {
+        throw_error("TypeError", "Right-hand side of 'instanceof' is not an object");
+        return false;
+    }
+    const std::size_t before = unwinds();
+    const value handler = lookup_property(ctor, "@@hasInstance");
+    if (throw_pending() || unwinds() != before) { return false; }
+    if (!handler.is_nullish()) {
+        object_object * fn_proto = prototype(proto_kind::function);
+        const value * intrinsic = fn_proto == nullptr ? nullptr : fn_proto->find("@@hasInstance");
+        if (intrinsic == nullptr || !handler.same_value(*intrinsic)) {
+            if (!handler.is_callable()) {
+                throw_error("TypeError", "Symbol.hasInstance of the right-hand side of "
+                                         "'instanceof' is not callable");
+                return false;
+            }
+            const value args[1] = {target};
+            const value answered = call(handler, args, ctor);
+            if (throw_pending() || unwinds() != before) { return false; }
+            return truthy(answered);
+        }
+    }
+    if (!ctor.is_callable()) {
+        throw_error("TypeError", "Right-hand side of 'instanceof' is not callable");
+        return false;
+    }
+    // OrdinaryHasInstance step 2: a bound function asks about its target,
+    // with the whole operator.
+    if (ctor.is_kind(heap_kind::native)) {
+        if (const value * bound =
+                static_cast<native_object *>(ctor.as_heap())->find("@#BoundTargetFunction")) {
+            return instance_of(target, *bound);
+        }
+    }
+    // Step 3: a primitive is an instance of nothing - `5 instanceof Number`
+    // is false however many methods a number resolves.
+    if (!target.is_object_like()) { return false; }
     value wanted = value::undefined();
     if (ctor.is_kind(heap_kind::function)) {
         wanted = ensure_prototype(ctor);
+    } else if (ctor.is_kind(heap_kind::proxy)) {
+        wanted = lookup_property(ctor, "prototype");
+        if (throw_pending() || unwinds() != before) { return false; }
     } else if (ctor.is_kind(heap_kind::native)) {
         // A BUILT-IN constructor is a native, and every one of them is now
         // something a page can extend - `class E extends Error`. Without this,
@@ -310,10 +358,11 @@ bool context::instance_of(value target, value ctor) {
         if (value * p = static_cast<native_object *>(ctor.as_heap())->find("prototype")) {
             wanted = *p;
         }
-    } else if (ctor.is_object()) {
-        if (value * p = static_cast<object_object *>(ctor.as_heap())->find("prototype")) {
-            wanted = *p;
-        }
+    }
+    // Step 5: Get(C, "prototype") must be an object.
+    if (!wanted.is_object_like()) {
+        throw_error("TypeError", "Function has non-object prototype in instanceof check");
+        return false;
     }
     if (!wanted.is_object()) { return false; }
     // A PROXY IS ASKED THROUGH TO ITS TARGET. 7.3.21 OrdinaryHasInstance calls
@@ -349,7 +398,7 @@ bool context::instance_of(value target, value ctor) {
     // the rest of the chain - see lookup_property.
     if (link.is_heap() && !link.is_object() && !link.is_string()) {
         if (link.as_heap() == wanted.as_heap()) { return true; }
-        return instance_of(link, ctor);
+        return instance_of(link, ctor); // ctor's own @@hasInstance was the intrinsic
     }
     if (explicit_chain && link.is_undefined()) { return false; } // an explicit null
     // An array's explicit chain ended at the implicit Object.prototype: the

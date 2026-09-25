@@ -180,6 +180,24 @@ int main() {
               "return Object.keys(o).join();})()",
               "b,c");
 
+    // 13.10.2 InstanceofOperator: @@hasInstance first, then a callable check.
+    js_expect("(function(){var C={[Symbol.hasInstance](v){return v===1;}};"
+              "return (1 instanceof C)+','+(2 instanceof C);})()",
+              "true,false");
+    js_expect("(function(){try{({}) instanceof {};return 'no';}catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){try{({}) instanceof 1;return 'no';}catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){function F(){} F.prototype=1;"
+              "try{({}) instanceof F;return 'no';}catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){function F(){} var B=F.bind(null);"
+              "return (new F() instanceof B)+','+(1 instanceof B);})()",
+              "true,false");
+    js_expect("(function(){class A{static [Symbol.hasInstance](){return true;}}"
+              "return Function.prototype[Symbol.hasInstance].call(A,{})+','+({} instanceof A);})()",
+              "false,true");
+
     // A frozen function pins its synthesised length, name and prototype too.
     js_expect("(function(){function f(a){} Object.freeze(f);"
               "var d=Object.getOwnPropertyDescriptor(f,'prototype');"

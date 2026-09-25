@@ -227,17 +227,38 @@ void install_function(context & cx) {
     //
     // Its own descriptor is { false, false, false }, unlike every other method
     // on this table, and its `name` is the bracketed form 10.2.9 gives a
-    // symbol-keyed method. What it DOES is OrdinaryHasInstance, which is
-    // context::instance_of.
-    //
-    // The `instanceof` OPERATOR still does not consult it - lib/Script/vm's
-    // `instance_of` is OrdinaryHasInstance directly, with no @@hasInstance
-    // lookup in front - so a class defining its own does not change what
-    // `instanceof` answers here. This is the standard function, not the hook;
-    // the hook is a change to the opcode and is named rather than implied.
+    // symbol-keyed method. What it DOES is OrdinaryHasInstance (7.3.22) - over
+    // the public operations, because `instanceof` (context::instance_of)
+    // dispatches to a constructor's OWN @@hasInstance first, and this method
+    // called on such a constructor must not.
     auto * has_instance =
         cx.allocate<native_object>("[Symbol.hasInstance]", [](context & c, std::span<value> a) {
-            return value::boolean(c.instance_of(arg_at(a, 0), c.current_this()));
+            const value ctor = c.current_this();
+            value subject = arg_at(a, 0);
+            if (!ctor.is_callable()) { return value::boolean(false); }
+            if (ctor.is_kind(heap_kind::native)) {
+                if (const value * bound = static_cast<native_object *>(ctor.as_heap())
+                                              ->find("@#BoundTargetFunction")) {
+                    return value::boolean(c.instance_of(subject, *bound));
+                }
+            }
+            if (!subject.is_object_like()) { return value::boolean(false); }
+            const detail::unwind_watch watch{c};
+            const value wanted = c.lookup_property(ctor, "prototype");
+            if (watch.threw()) { return value::undefined(); }
+            if (!wanted.is_object_like()) {
+                c.throw_error("TypeError", "Function has non-object prototype in instanceof "
+                                           "check");
+                return value::undefined();
+            }
+            const context::rooted keep{c, wanted};
+            for (int depth = 0; depth < 4096; ++depth) {
+                subject = detail::prototype_of(c, subject);
+                if (watch.threw()) { return value::undefined(); }
+                if (!subject.is_object_like()) { return value::boolean(false); }
+                if (subject.same_value(wanted)) { return value::boolean(true); }
+            }
+            return value::boolean(false);
         });
     detail::install_arity(cx, has_instance, 1);
     has_instance->is_constructor = false;
