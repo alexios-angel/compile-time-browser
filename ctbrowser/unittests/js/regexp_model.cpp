@@ -202,6 +202,11 @@ void test_escapes_and_repetition() {
     expect_result("return String('abc'.match(/(?:(?=(abc)))?a/)[1]);", "undefined");
     expect_result("return 'abc'.match(/(?:(?=(abc))){1,1}a/)[1];", "abc");
     expect_result("return new RegExp('b{' + Number.MAX_SAFE_INTEGER + '}').test('b');", "false");
+    // An exec() result's index, input and groups are OWN data properties.
+    expect_result(
+        "const m = /(?<x>a)/.exec('a'); delete m.input;"
+        "return m.hasOwnProperty('groups') + ',' + Object.keys(m).join() + ',' + m.input;",
+        "true,0,1,index,groups,undefined");
 }
 
 // Annex B's legacy RegExp features: the static accessors RegExpBuiltinExec

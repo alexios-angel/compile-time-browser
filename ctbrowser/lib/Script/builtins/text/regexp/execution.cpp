@@ -125,6 +125,15 @@ namespace regexp_detail {
     arr->is_match = true;
     arr->index = value::number(static_cast<double>(m.begin));
     arr->input = cx.string(s);
+    // AND AS OWN DATA PROPERTIES, which is what CreateDataProperty makes them
+    // (steps 22-23 and 25): `hasOwnProperty("groups")`, a page's write, a
+    // delete, OwnPropertyKeys - index, input, groups, then `indices` - and no
+    // setter on Array.prototype runs. The slots above stay for the legacy
+    // statics, which read the match as it was made.
+    object_object & own = arr->named_table();
+    own.set("index", arr->index);
+    own.set("input", arr->input);
+    own.set("groups", groups);
     if (program.indices) {
         // MakeMatchIndicesIndexPairArray, 22.2.7.8: `[start, end]` per group,
         // undefined for one that did not participate, and its own `groups`.

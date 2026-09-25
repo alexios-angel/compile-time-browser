@@ -393,11 +393,8 @@ value context::lookup_property(value target, const std::string & name) {
         // prototype's getters (23.2.3.2-4), reached below: an inline answer
         // here used to make a FRESH bare object per `buffer` read, so
         // `ta.buffer === ta.buffer` was false and the answer was no ArrayBuffer.
-        if (arr->is_match) { // an exec() result carries index/input/groups
-            if (name == "index") { return arr->index; }
-            if (name == "input") { return arr->input; }
-            if (name == "groups") { return arr->groups; }
-        }
+        // (An exec() result's index/input/groups are named own properties,
+        // below, like any other - builtins/text/regexp/execution.cpp.)
         // A NAMED OWN PROPERTY - see array_object::named. Data or accessor,
         // before the prototypes, as on any object.
         if (arr->named) {
