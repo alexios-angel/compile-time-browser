@@ -22,6 +22,78 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Number power helpers and opposite predicates, 2026-09-25 UTC
+
+Resumed clean **1479707b** from HANDOFF and part 00. Iteration 31 was fully
+committed; `codex-wip-20260907` is already an ancestor. Parallel agents supplied
+native controls and the escape change. The independent native review and the
+implementing escape agent's final review found no blockers; the parent reviewed
+both changes and owned all focused gates.
+
+**e04edf09** folds generic Number power from exact literal operands inside
+private iterator helpers. It follows the existing guarded libm pattern, preserves
+JavaScript's zero-exponent priority and magnitude-one/nonfinite-exponent rules,
+and emits canonical NaN literals. Static Pow and non-Number operands still refuse.
+All source effects, shared uses, bounded CFG/SCF normalization and complete DOM
+proofs remain required. Eighty-four new controls (**644 total**) cover 30 numeric
+rows, raw/structured transport, shared results, effects, malformed inputs and
+public zero/late-budget rollback; the two original Pow controls execute unchanged.
+General powers use the compiler host's libm; cross-platform bitwise parity and
+changed floating-point environments were not measured.
+
+**5e9469a2** correlates a truthiness test and one logical Not of its exact
+SSA input, reversing the corresponding branch arms. Both counted-store proof and
+current replay use the same polarity and snapshot. Twenty-two new retention rows
+(**311 total**) and six live mutation states (**58 total**) retain independent
+finite Number bounds, single visits, guard dependencies, every exit, aliases,
+all-write cycle checks, stale-solver/forged-marker and incomplete-budget refusals.
+This establishes frame confinement, not ownership or shorter native lifetimes.
+
+**a1dce74e** adds two complete source witnesses exercising magnitude-one
+infinite power, negative-zero negative power and a transported negative base in
+iterator identity/next/close helpers. Each raw import retains three Pow producers.
+The initial raw run hit the default **100,000-step** budget; both full programs
+remain intact and now assert that refusal before using the existing
+**1,000,000-step** option. Structured preparation retains the default budget.
+Node/VM traces agree; **20 generated C++ files and 40 GCC/Clang binaries**, both
+printers/providers/optimization modes, ten zero-budget and two default-budget
+refusals pass. The driver checks ordered DOM writes, two documents and 16
+lifetimes. Source and linked-symbol checks find no Script/AOT dependency.
+The 30 numeric test rows were also independently checked against Node.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 11.18 s**,
+`ctcompile_host_contract` **1/1, 2.72 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.99 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+Passing CTests were not replayed after the source-only budget correction.
+
+All 24 earlier complete helper sources, ten C++ raw literals and 71 Python
+multiline values remain unchanged. Repository formatting passes **1126 C++,
+159 Python, 114 web files**; diff checks pass. All seven final
+local/devbox source hashes match. Inspected output uses typed values and borrowed
+element handles over ordinary document ownership and the existing public DOM seam.
+Logs, selectors, checksums and agent reports are in `/tmp/ctcompile-iteration32/`.
+
+**Next:** Boolean/null/undefined and mixed primitive loose equality, then
+non-Number relational proofs in the iterator-helper comparison matcher; existing `DOMURI.cpp` refusal controls
+516–523 cover Number/Boolean and null/undefined loose equality. General expression
+correspondence beyond one Not, differing receivers and repeated allocation
+identities remain. Protected numeric `setAttribute`, mutable exceptional state,
+escaping owners, unguarded Bootstrap defaults, the native application driver and
+full native Bootstrap remain unfinished. No full-Bootstrap admission or raw
+escape-oracle precision gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs, raw
+escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and performance
+measurements were skipped. Linux inspection identified Claude loop PID 2333739;
+Windows identity inspection succeeded (356 processes, no matches). Concurrent
+rules applied; the build waited for Claude's browser gate. No browser/runtime/shared
+implementation edits, local builds, push or history rewrite.
+
 ## Initialized undefined helpers and repeated truthiness, 2026-09-25 UTC
 
 Resumed clean **1a13f2f5** and its two complete global-`undefined` refusals.
