@@ -1110,14 +1110,29 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         indexBounds = {*start, last};
         return accepted;
     };
-    for (mlir::Block * block : {header, body}) {
+    llvm::SmallVector<mlir::Block *, 4> blocks{header, body};
+    for (std::size_t next = 0; next < blocks.size(); ++next) {
+        mlir::Block * block = blocks[next];
         for (mlir::Operation & operation : *block) {
             if (!spend()) { return ArrayContentsFailure::WorkLimit; }
             if (&operation == block->getTerminator()) { continue; }
+            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                // Each arm executes at most once in this one body visit. Reuse
+                // the full census for both arms; ordinary contents replay still
+                // proves their exact inputs, results and every structural path.
+                if (block == header || *start >= size || last != *start) { return unsupported; }
+                for (mlir::Region & region : branch->getRegions()) {
+                    if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                    if (region.empty()) { continue; }
+                    if (!llvm::hasSingleElement(region)) { return unsupported; }
+                    blocks.push_back(&region.front());
+                }
+                continue;
+            }
             if (isTrackedSite(&operation)) {
                 // ponytail: one allocation instance per path. Repeated bodies
                 // need distinct instance identities; headers execute again at exit.
-                if (block != body || *start >= size || last != *start) { return unsupported; }
+                if (block == header || *start >= size || last != *start) { return unsupported; }
                 continue;
             }
             if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {

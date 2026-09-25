@@ -488,6 +488,14 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string clearGuard = "  ctjs.set_property %guard[%zero], %zero\n";
     const std::string selectedStart = "  %start = scf.if %flag -> (!ctjs.value) {\n"
                                       "    scf.yield %one : !ctjs.value\n  } else {\n";
+    const std::string conditionalGraph =
+        "    %fresh = scf.if %flag -> (!ctjs.value) {\n" + localObject +
+        "      %selected = ctjs.create_array [%child] {storage_test_id = \"selected\"}\n"
+        "      scf.yield %selected : !ctjs.value\n"
+        "    } else {\n"
+        "      %other = ctjs.create_array [%zero] {storage_test_id = \"other\"}\n"
+        "      scf.yield %other : !ctjs.value\n    }\n";
+    const std::string conditionalObject = "    scf.if %flag {\n" + localObject + "    }\n";
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -768,7 +776,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         {.what = "a separate counted loop cannot repeat preheader conditional allocations",
          .body = selectedArrays + countedStart + countedEnd,
          .confinedNested = "fresh,other"},
-        {.what = "the counted CFG exception still rejects conditional allocations in its body",
+        {.what = "the counted CFG exception still rejects repeated conditional allocations",
          .body =
              localStart + countedStart + "  scf.if %flag {\n" + localArray + "  }\n" + countedEnd,
          .complete = false},
@@ -846,6 +854,100 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = localStart + countedStart + localObject +
                  "  %fresh = ctjs.create_array [%child]\n" + countedEnd,
          .complete = false},
+        {.what = "one counted visit preserves both conditional allocation graphs",
+         .body = loopValues + allocationLoop(conditionalGraph) + done,
+         .confinedNested = "child,selected,other"},
+        {.what = "nested no-result arms create at most one object per counted visit",
+         .body =
+             loopValues +
+             allocationLoop("    scf.if %flag {\n" + conditionalObject + "    }\n" + localArray) +
+             done,
+         .confinedNested = "child,fresh"},
+        {.what = "a returned conditional loop result retains every selected graph",
+         .body = loopValues + allocationLoop(conditionalGraph) + "  ctjs.return %loop#1\n"},
+        {.what = "a conditional loop result read retains only the selected child",
+         .body = loopValues + allocationLoop(conditionalGraph) +
+                 "  %read = ctjs.get_property %loop#1[%zero]\n  ctjs.return %read\n",
+         .confinedNested = "selected,other"},
+        {.what = "one retaining exit prevents conditional loop graph confinement",
+         .body = loopValues + allocationLoop(conditionalGraph) +
+                 "  cf.cond_br %flag, ^plain, ^retain\n"
+                 "^plain:\n  ctjs.return %zero\n"
+                 "^retain:\n  ctjs.return %loop#1\n"},
+        {.what = "a cleared holder releases both conditional loop graphs",
+         .body = loopValues + allocationLoop(conditionalGraph + storeFresh) + clearGuard +
+                 "  ctjs.return %guard\n",
+         .confinedNested = "child,selected,other"},
+        {.what = "a saved conditional loop alias survives clearing its holder",
+         .body = loopValues + allocationLoop(conditionalGraph + storeFresh) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "a cycle in one conditional loop arm refuses every refinement",
+         .body = loopValues +
+                 allocationLoop("    %fresh = scf.if %flag -> (!ctjs.value) {\n"
+                                "      %cyclic = ctjs.create_array [%guard]\n"
+                                "      scf.yield %cyclic : !ctjs.value\n"
+                                "    } else {\n      scf.yield %zero : !ctjs.value\n    }\n" +
+                                storeFresh) +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "publication in either counted arm refuses every refinement",
+         .body = loopValues +
+                 allocationLoop(conditionalObject +
+                                "    scf.if %flag {\n    } else {\n"
+                                "      ctjs.store_global \"held\", %guard\n"
+                                "    }\n" +
+                                localArray) +
+                 done,
+         .complete = false},
+        {.what = "nested counted allocations require initialized contents in every arm",
+         .body = loopValues +
+                 allocationLoop("    scf.if %flag {\n"
+                                "      %unknown = ctjs.create_array [%p]\n    }\n" +
+                                localArray) +
+                 done,
+         .complete = false},
+        {.what = "conditional counted allocations still require current solver lattices",
+         .body = loopValues + allocationLoop(conditionalGraph) + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "a solver-dead counted arm cannot supply an allocation instance lattice",
+         .body = loopValues + "  %no = arith.constant false\n" +
+                 allocationLoop("    scf.if %no {\n" + localObject + "    }\n" + localArray) + done,
+         .complete = false},
+        {.what = "conditional allocations in a zero-trip body remain unproved",
+         .body = loopValues + allocationLoop(conditionalGraph, "%one") + done,
+         .complete = false},
+        {.what = "conditional allocations in a multi-trip body remain unproved",
+         .body =
+             loopValues + allocationLoop(conditionalGraph, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "conditional header allocations still repeat at loop exit",
+         .body = loopValues +
+                 allocationLoop(localArray, "%zero", "%one", "%zero", conditionalObject) + done,
+         .complete = false},
+        {.what = "a nested conditional write cannot borrow top-level counted-store authority",
+         .body = loopValues +
+                 allocationLoop("    scf.if %flag {\n"
+                                "      ctjs.set_property %guard[%zero], %zero\n    }\n" +
+                                localArray) +
+                 done,
+         .complete = false},
+        {.what = "a nested loop cannot borrow the outer counted single-visit proof",
+         .body = loopValues +
+                 allocationLoop("    scf.if %flag {\n"
+                                "      scf.while : () -> () {\n        scf.condition(%flag)\n"
+                                "      } do {\n        scf.yield\n      }\n    }\n" +
+                                localArray) +
+                 done,
+         .complete = false},
+        {.what = "a root CFG single visit also confines a conditional object",
+         .body = localStart + "  %two = ctjs.constant #ctjs.number<4611686018427387904>\n" +
+                 countedStart + conditionalObject +
+                 "  %step = ctjs.binary add %i, %two\n"
+                 "  cf.br ^header(%step : !ctjs.value)\n^exit:\n" +
+                 done,
+         .confinedNested = "child"},
         {.what = "conditional origins cannot bypass raw-frame suspension refusal",
          .body = localStart + "  scf.if %flag {\n" + localArray +
                  "  }\n  %paused = ctjs.suspend await %p\n" + done,
@@ -954,7 +1056,47 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = mutation.what, .body = mutation.body, .expected = mutation.discharged},
              "the live retention mutation fixture did not parse");
     }
-    std::printf("array retention: %zu rows, seven live states, %zu budget cutoffs\n", rows.size(),
+    retention_row countedMutation{
+        .what = "conditional allocation confinement reproves the current body visit count",
+        .body =
+            loopValues + allocationLoop(conditionalGraph, "%one", "%one", "%zero, %zero") + done,
+        .confinedNested = "child,selected,other"};
+    auto countedModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + countedMutation.body + "}\n", &context);
+    if (countedModule) {
+        ctjs::FuncOp function = *countedModule->getOps<ctjs::FuncOp>().begin();
+        mlir::scf::WhileOp loop;
+        function.walk([&](mlir::scf::WhileOp op) { loop = op; });
+        const mlir::Value original = loop.getInits()[0];
+        const mlir::Value zero = loop.getInits()[1];
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*countedModule))) {
+            fail(row{.what = countedMutation.what, .body = countedMutation.body, .expected = ""},
+                 "the conditional loop stale solver did not converge");
+        }
+        mlir::OpBuilder builder(function);
+        function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+        for (const bool repeated : {false, true, false}) {
+            loop->setOperand(0, repeated ? zero : original);
+            countedMutation.complete = !repeated;
+            countedMutation.confinedNested = repeated ? "" : "child,selected,other";
+            budgets += checkArrayRetention(*countedModule, countedMutation);
+            const EscapeVerdicts current = computeVerdicts(stale, function);
+            if (current.arrayRetentionComplete != !repeated) {
+                fail(row{.what = countedMutation.what,
+                         .body = countedMutation.body,
+                         .expected = countedMutation.confinedNested},
+                     "a stale solver or forged marker supplied a single-visit proof");
+            }
+        }
+    } else {
+        fail(row{.what = countedMutation.what, .body = countedMutation.body, .expected = ""},
+             "the current counted retention fixture did not parse");
+    }
+    std::printf("array retention: %zu rows, ten live states, %zu budget cutoffs\n", rows.size(),
                 budgets);
 }
 
