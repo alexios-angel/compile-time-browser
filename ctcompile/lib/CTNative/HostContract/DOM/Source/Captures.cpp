@@ -437,14 +437,22 @@ bool DOMSource::resolveCell(ctjs::CreateCellOp cell) {
         auto * operation = use.getOwner();
         auto * position = operation;
         if (llvm::isa<ctjs::CellGetOp, ctjs::RootOp>(operation)) {
-            // Immutable snapshots may be read in a selected branch. The
-            // initialization must precede the entire enclosing branch;
-            // writes and callable scheduling still stay in the source block.
-            while (position->getBlock() != cell->getBlock() &&
-                   llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp, ctjs::TryOp>(
-                       position->getParentOp())) {
+            // Immutable reads may follow either outcome of a protected call.
+            // Initialization must precede the entire enclosing operation;
+            // writes, cell transport and callable scheduling stay unchanged.
+            while (position->getBlock() != cell->getBlock()) {
+                auto * parent = position->getParentOp();
+                auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(parent);
+                const bool continuation =
+                    invocation && (position->getParentRegion() == &invocation.getNormalBody() ||
+                                   position->getParentRegion() == &invocation.getUnwindBody());
+                if (!continuation &&
+                    !llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp, ctjs::TryOp>(
+                        parent)) {
+                    break;
+                }
                 if (!step()) { return false; }
-                position = position->getParentOp();
+                position = parent;
             }
         }
         if (position->getBlock() != cell->getBlock() || !cell->isBeforeInBlock(position)) {

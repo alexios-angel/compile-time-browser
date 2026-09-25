@@ -449,7 +449,7 @@ var outcome0 = observe(false), outcome1 = observe(true);
                     optimize=optimize,
                     success=False,
                 )
-                if "DOM helper capture cell has nonlocal or unordered uses" not in result:
+                if "DOM helper object has nonlocal or unordered uses" not in result:
                     raise RuntimeError(f"{name}: lost recovered protocol diagnostic: {result}")
 
 

@@ -15,6 +15,96 @@ namespace ctcompile::test::exception_recovery {
 
 using ctcompile::ctnative::host_detail::projectInvocationContinuation;
 
+static void testInvocationCellReads(mlir::MLIRContext & context) {
+    const std::string source = R"MLIR(module {
+  ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %initial: !ctjs.value, %replacement: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %frame = ctjs.frame_enter 1
+    %cell = ctjs.create_cell %initial
+    %result = "ctjs.invoke"() ({
+      %called = ctjs.call %callee(%this)
+      ctjs.invoke_exit %called state(%initial)
+    }, {
+    ^normal(%value: !ctjs.value):
+      %read = ctjs.cell_get %cell
+      ctjs.store_global "normal", %read
+      "ctjs.invoke_yield"(%value) : (!ctjs.value) -> ()
+    }, {
+    ^unwind(%error: !ctjs.value, %saved: !ctjs.value):
+      %read = ctjs.cell_get %cell
+      ctjs.store_global "unwind", %read
+      "ctjs.invoke_yield"(%error) : (!ctjs.value) -> ()
+    }) : () -> !ctjs.value
+    ctjs.frame_exit %frame
+    ctjs.return %result
+  }
+})MLIR";
+    unsigned required = 0;
+    for (unsigned control = 0; control != 11; ++control) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+        if (!check(static_cast<bool>(module), "immutable invocation cell fixture parses")) {
+            return;
+        }
+        auto entry = module->lookupSymbol<ctjs::FuncOp>("entry$0");
+        auto & body = entry.getBody().front();
+        auto cell = *body.getOps<ctjs::CreateCellOp>().begin();
+        auto invocation = *body.getOps<ctjs::InvokeOp>().begin();
+        const mlir::Value replacement = body.getArgument(4);
+        mlir::OpBuilder at(invocation);
+        if (control >= 1 && control <= 4) {
+            if (control == 2) { at.setInsertionPointAfter(invocation); }
+            if (control == 3) { at.setInsertionPointToStart(&invocation.getNormalBody().front()); }
+            ctjs::CellSetOp::create(at, cell.getLoc(), cell, replacement);
+            if (control == 4) { ctjs::CellSetOp::create(at, cell.getLoc(), cell, replacement); }
+        } else if (control == 5) {
+            ctjs::StoreGlobalOp::create(at, cell.getLoc(), "published", cell);
+        } else if (control == 6) {
+            auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
+            exit.getStateMutable().assign(cell.getResult());
+        } else if (control == 7 || control == 8) {
+            auto read = *invocation.getNormalBody().front().getOps<ctjs::CellGetOp>().begin();
+            at.setInsertionPoint(read);
+            if (control == 7) {
+                auto scope =
+                    mlir::scf::ExecuteRegionOp::create(at, cell.getLoc(), mlir::TypeRange{});
+                auto & nested = scope.getRegion().emplaceBlock();
+                read->moveBefore(&nested, nested.end());
+                at.setInsertionPointToEnd(&nested);
+                mlir::scf::YieldOp::create(at, cell.getLoc());
+            } else {
+                auto yes = mlir::arith::ConstantIntOp::create(at, cell.getLoc(), 1, 1);
+                auto branch = mlir::scf::IfOp::create(at, cell.getLoc(), yes, false);
+                read->moveBefore(branch.getThenRegion().front().getTerminator());
+            }
+            auto store = *invocation.getNormalBody().front().getOps<ctjs::StoreGlobalOp>().begin();
+            store->moveAfter(read);
+        }
+        if (!check(mlir::succeeded(mlir::verify(*module)), "invocation cell control verifies")) {
+            continue;
+        }
+        const auto before = printed(*module);
+        const unsigned budget = control == 9 ? 0 : control == 10 ? required - 1 : 100000;
+        ctcompile::ctnative::dom_source_detail::DOMSource proof(budget);
+        const bool resolved = proof.resolveCell(cell);
+        const bool expected = control == 0 || control == 1 || control == 8;
+        check(resolved == expected, "only ordered immutable invocation cell reads resolve");
+        if (!resolved) {
+            check(printed(*module) == before && proof.cells.empty(),
+                  "failed cell ordering, escape or budget proof preserves every read");
+            continue;
+        }
+        if (control == 0) { required = budget - proof.remaining; }
+        unsigned reads = 0, stores = 0;
+        entry.walk([&](ctjs::CellGetOp) { ++reads; });
+        entry.walk([&](ctjs::StoreGlobalOp store) {
+            ++stores;
+            check(store.getValue() == (control == 1 ? replacement : cell.getInitial()),
+                  "both invocation outcomes observe the same initialized snapshot");
+        });
+        check(!reads && stores == 2 && mlir::succeeded(mlir::verify(*module)),
+              "immutable snapshot substitution preserves both continuation effects");
+    }
+}
+
 static void testInertHelperCompletion(mlir::MLIRContext & context) {
     const std::string source = R"MLIR(module {
   ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %value: !ctjs.value, %saved: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -642,7 +732,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                   contract.moduleSha256 == ctcompile::ctnative::hostContractFingerprint(*module),
               "original observing iterator defers suppression without changing any source state");
         if (!close) { llvm::consumeError(close.takeError()); }
-        const auto boundary = structured ? "DOM helper capture cell has nonlocal or unordered uses"
+        const auto boundary = structured ? "DOM helper object has nonlocal or unordered uses"
                               : method   ? "DOM Symbol.iterator must be a closed identity method"
                                          : "DOM iterator getter requires a terminal throw";
         for (unsigned budget : {0u, 100000u}) {
@@ -1564,6 +1654,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
 }
 
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    testInvocationCellReads(context);
     testObservedIteratorRecovery(context);
     testInertHelperCompletion(context);
     testHelperCatchSource(context);
