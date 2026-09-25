@@ -175,6 +175,18 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         }
         if (!at.has_box || at.inline_non_replaced || at.frag == nullptr) { return as_computed(); }
         const bool horizontal = property == "width";
+        // AN ANIMATED SIZE IS NOT THE FRAGMENT'S: layout ran on the cascade's
+        // value, and a running animation's is the one owed - resolved, as a
+        // pseudo-element's is above, against the containing block. (The
+        // specified size IS the used one in whichever box box-sizing names.)
+        if (const std::string_view animated = declared(property);
+            !at.chain.empty() && animated != declared_on(at.chain.front(), property)) {
+            const layout::length len = layout::parse_length(animated);
+            if (!len.is_auto() && !len.is_intrinsic()) {
+                return used_px_text(std::max(
+                    0.0f, len.resolve(horizontal ? at.basis : at.basis_height, at.font_size)));
+            }
+        }
         float used = horizontal ? at.frag->bounds.width : at.frag->bounds.height;
         // The fragment is the border box; under content-box the padding AND
         // the border come off it, which is the same arithmetic layout's
