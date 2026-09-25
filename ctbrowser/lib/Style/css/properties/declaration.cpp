@@ -462,6 +462,36 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(indent + (hanging ? " hanging" : "") + (each_line ? " each-line" : ""));
     }
 
+    // `[ first | last ] || <'alignment-baseline'> || <'baseline-shift'>`, CSS
+    // Inline 3 §4.4, written in that order with the defaults - `baseline`
+    // and a zero shift - left out, and `baseline` when that is all of it.
+    if (ascii_iequals(property, "vertical-align")) {
+        static constexpr std::string_view alignments =
+            "baseline text-bottom alphabetic ideographic middle central mathematical text-top "
+            "hanging";
+        static const property_syntax shift_syntax{
+            "", k::length_percentage, "sub super top center bottom", "", false, false};
+        std::string source, alignment, shift;
+        for (const std::string_view raw : split_top_level(simplified, html_whitespace)) {
+            const std::string_view part = trim(raw, html_whitespace);
+            if (part.empty()) { continue; }
+            if (source.empty() && ascii_iequals_any(part, {"first", "last"})) {
+                source = ascii_lower_copy(part);
+            } else if (alignment.empty() && has_keyword(alignments, part)) {
+                alignment = ascii_lower_copy(part);
+            } else if (!shift.empty() || !typed_component(part, shift_syntax, shift)) {
+                return {};
+            }
+        }
+        std::string out = source;
+        const auto add = [&out](std::string_view part) {
+            out += (out.empty() ? "" : " ") + std::string{part};
+        };
+        if (!alignment.empty() && alignment != "baseline") { add(alignment); }
+        if (!shift.empty() && shift != "0px") { add(shift); }
+        return yes(out.empty() ? std::string{"baseline"} : out);
+    }
+
     // `<visual-box> || <length [0,∞]>`, CSS Overflow 4 §3.2: the box first,
     // `padding-box` (the default) and a zero length after a box left out,
     // and `0px` when that leaves nothing.
