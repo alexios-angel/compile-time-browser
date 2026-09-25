@@ -677,16 +677,26 @@ inline void global_fn(context & cx, std::string name, double arity, native_fn fn
 // and a namespace - `Object(x)` coerces and `Object.keys` is a static - has to
 // be a native carrying properties, and its statics are installed exactly like
 // a table's.
+//
+// A method KEYED BY A WELL-KNOWN SYMBOL - `"@@iterator"` - is NAMED
+// "[Symbol.iterator]" (10.2.8 SetFunctionName on a symbol with a
+// description); the key stays the key.
+[[nodiscard]] inline std::string method_name_for_key(const std::string & key) {
+    if (key.starts_with("@@") && !key.starts_with("@@sym:") && !key.starts_with("@@for:")) {
+        return "[Symbol." + key.substr(2) + "]";
+    }
+    return key;
+}
 template <class Table> void method(context & cx, Table * table, std::string name, native_fn fn) {
-    auto * made = method_native(cx, std::move(name), std::move(fn));
+    auto * made = method_native(cx, method_name_for_key(name), std::move(fn));
     made->define("name", cx.string(made->name), attr_configurable);
-    table->define(made->name, value::object(made), attr_builtin);
+    table->define(name, value::object(made), attr_builtin);
 }
 template <class Table>
 void method(context & cx, Table * table, std::string name, double arity, native_fn fn) {
-    auto * made = method_native(cx, std::move(name), std::move(fn));
+    auto * made = method_native(cx, method_name_for_key(name), std::move(fn));
     install_arity(cx, made, arity);
-    table->define(made->name, value::object(made), attr_builtin);
+    table->define(name, value::object(made), attr_builtin);
 }
 
 // WHICH HALF OF OwnPropertyKeys A CALLER WANTS. 20.1.2.10
