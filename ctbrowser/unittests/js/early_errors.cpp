@@ -655,6 +655,18 @@ int main() {
     accepted("try { throw 1; } catch (e) {}");
     accepted("try { throw (\n1); } catch (e) {}");
     accepted("var thrower; try { thrower\n1; } catch (e) {}");
+    // A "use strict" body makes a declaration's own name strict code.
+    refused("function arguments() { 'use strict'; }");
+    refused("function eval() { 'use strict'; }");
+    accepted("function evaluate() { 'use strict'; }");
+    // Tokens the parser took where only a name may stand.
+    refused("try {} catch (\"22\") {}");
+    accepted("try {} catch (e) {} try {} catch ({message}) {} try {} catch {}");
+    refused("var o = {}; o.\"x\";");
+    accepted("var o = {a: {}}; o.a.b; o?.a; o.default; o.$x; o._y;");
+    refused("catch");
+    refused("finally");
+    accepted("debugger;");
 
     REPORT("early_errors");
 }

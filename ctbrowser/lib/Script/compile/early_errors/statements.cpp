@@ -85,7 +85,17 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         return;
     }
 
-    case nk::expr_stmt: walk_expression(n.a); return;
+    case nk::expr_stmt:
+        // A STATEMENT THAT IS ONE RESERVED WORD - a `catch` or a `finally`
+        // with no `try` before it - is the parser's leniency in expression
+        // position reaching the top of a statement, where no valid program
+        // puts a keyword the statement parser did not take.
+        if (n.a >= 0 && at(n.a).kind == nk::ident && reserved_word(at(n.a).text)) {
+            report(quoted(at(n.a).text) + " cannot start a statement here", n.a);
+            return;
+        }
+        walk_expression(n.a);
+        return;
     case nk::throw_stmt:
         // 14.14: `throw [no LineTerminator here] Expression`. ASI cannot end
         // a throw early, so `throw` then a line break is the SyntaxError -
@@ -546,6 +556,11 @@ void checker::check_try(std::int32_t idx, std::vector<binding> & vars) {
         const vp::node & clause = at(n.b);
         std::vector<binding> parameter;
         if (!clause.text.empty()) {
+            // 14.15: a CatchParameter is a BindingIdentifier or a pattern;
+            // the parser takes any token there, `catch ("22")` included.
+            if (clause.text.starts_with('#') || !identifier_start(clause.text)) {
+                report("a catch parameter must be a name or a pattern", n.b);
+            }
             parameter.push_back(binding{clause.text, binding_kind::let_, n.b});
             check_strict_binding(clause.text, n.b);
         } else if (clause.b >= 0) { // `catch ({message})`: a pattern's names

@@ -559,6 +559,10 @@ void checker::walk_expression(std::int32_t idx) {
     // SuperProperty is `super . IdentifierName`, never a private name.
     case nk::member:
     case nk::opt_member:
+        // 13.3: `.` is followed by an IdentifierName - `x."y"` is not one.
+        if (!identifier_start(n.text)) {
+            report("a property name after `.` must be an identifier", idx);
+        }
         if (n.text.starts_with('#')) {
             if (at(n.a).kind == nk::super_lit) {
                 report("`super` has no private members", idx);
