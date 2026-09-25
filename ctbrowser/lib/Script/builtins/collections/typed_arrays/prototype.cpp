@@ -13,10 +13,8 @@
 // - and the kind decides the coercion on the way in (internal.hpp).
 //
 // NOT HERE: `toString`, which 23.2.3.32 says IS Array.prototype.toString.
-// install_array runs after this installer, so the function does not exist yet
-// - and a typed array's lookup chain falls through to Array.prototype anyway
-// (vm/objects/lookup.cpp), so `ta.toString()` finds it; only the property on
-// %TypedArray%.prototype itself is missing.
+// install_array runs after this installer, so the function does not exist yet;
+// install_array puts it on %TypedArray%.prototype (array_iteration.cpp).
 
 #include "internal.hpp"
 

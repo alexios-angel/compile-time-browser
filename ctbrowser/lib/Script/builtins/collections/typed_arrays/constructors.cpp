@@ -351,8 +351,16 @@ bool coerce_for_kind(context & cx, element_kind kind, value v, value & out) {
             out = v;
             return true;
         }
+        // ToPrimitive HERE, so a valueOf that throws stops the write with
+        // ITS throw: it is parked by the time to_primitive_hint returns, and
+        // to_bigint went on to refuse the undefined it was left with.
+        value prim = v;
+        if (v.is_object_like() &&
+            (!cx.to_primitive_hint(v, "number", prim) || cx.throw_pending())) {
+            return false;
+        }
         bigint n;
-        if (!to_bigint(cx, v, n)) { return false; }
+        if (!to_bigint(cx, prim, n)) { return false; }
         out = value::object(cx.allocate<bigint_object>(std::move(n)));
         return true;
     }

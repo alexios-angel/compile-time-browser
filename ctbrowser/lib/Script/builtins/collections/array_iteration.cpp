@@ -647,6 +647,13 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         }
         return c.call(fn, {}, self);
     });
+    // 23.2.3.32: %TypedArray%.prototype.toString IS this function object -
+    // installed here because install_typed_arrays runs first.
+    if (object_object * typed = cx.prototype(context::proto_kind::typed_array)) {
+        if (const value * fn = array_proto->find("toString")) {
+            typed->define("toString", *fn, attr_builtin);
+        }
+    }
     // 23.1.3.5 entries, 23.1.3.19 keys, 23.1.3.38 values: ToObject(this),
     // then CreateArrayIterator - LIVE over any array-like, not a copy of an
     // Array's items (see array_iterator).

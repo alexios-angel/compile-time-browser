@@ -338,6 +338,15 @@ int main() {
     throws("(() => { const a = new BigInt64Array(1); a[0] = 1; })()", "TypeError");
     throws("new BigInt64Array([1])", "TypeError");
     throws("new BigInt64Array(1).fill(1)", "TypeError");
+    // ...and a valueOf that throws stops the write with ITS throw.
+    throws("(() => { const a = new BigInt64Array(1);"
+           " a[0] = {valueOf() { throw new RangeError('mine'); }}; })()",
+           "RangeError");
+    // %TypedArray%.prototype.toString IS Array.prototype.toString (23.2.3.32).
+    js_expect("Object.getPrototypeOf(Int8Array.prototype).hasOwnProperty('toString') +"
+              " '|' + (Object.getPrototypeOf(Int8Array.prototype).toString ==="
+              " Array.prototype.toString) + '|' + new Int8Array([1, 2])",
+              "true|true|1,2");
     js_expect("(() => { const a = new BigInt64Array(1); a[0] = '12'; return a[0]; })()", "12");
     js_expect("(() => { const a = new BigInt64Array(1); a[0] = {valueOf() { return 7n; }}; "
               "return a[0]; })()",
