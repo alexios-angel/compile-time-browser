@@ -22,6 +22,42 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Callable continuations and nested-site inventory, 2026-09-25 UTC
+
+Resumed clean **ed11eedd** and its callable-holder ordering boundary, then
+finished the interrupted tests and validation. **366027ba** proves immutable
+own callable slots through Try and Invoke normal/unwind ancestry. The original
+holders have two root stores, three reads and three exact receiver calls; no
+saved-holder transport remains. Complete use, initialization, receiver and
+callable/effect proofs remain required. Thirteen direct controls pass.
+
+The original getter/method sources now reach **`DOM helper call has unsupported
+arity or source order`**. No new native JavaScript or full Bootstrap admission
+is claimed. The host gate identified an unused own-slot unwind read that is now
+provably removable; its exact source remains a positive control, while an
+observed closure/store remains a refusal with its unwind effect preserved.
+
+**9118c71e** pins the nested-allocation prerequisite without changing analysis:
+the unchanged historical fixture has complete contents for two arrays, but the
+legacy verdict inventory contains only its root array. Retention still refuses;
+no confinement gain or raw-oracle measurement is claimed.
+
+Focused recovery **1/1, 5.41 s**, host contract **1/1, 2.74 s**, arrays
+**1/1, 4.77 s**, and the selected three-source differential check pass. All 24
+generated C++ files pass namespace checks; five final source hashes match the
+devbox. Formatting passes **1127 C++, 159 Python, 114 web files**. Independent
+four-file native static review is clean. Full suites were skipped.
+
+**Next:** trace `DOMSource::precedesInStructuredBody` and closure scheduling at
+`Source/Expansion.cpp` after holder reads become original closures. Prove
+initialization and capture assignments before the enclosing Invoke and retain
+normal/unwind effects; audit all shared ordering callers before extending it.
+Nested allocation sites still need a complete inventory and instance proof.
+Mutable exceptional state, raw helper CFGs, escaping owners, unguarded Bootstrap
+defaults, the native application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-25-callable-continuations.md).
+
 ## Captured-cell continuation ordering, 2026-09-25 UTC
 
 Resumed clean **2979bd1f** and its captured-cell ordering boundary, then
