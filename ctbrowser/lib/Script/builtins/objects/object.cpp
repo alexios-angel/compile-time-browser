@@ -128,8 +128,10 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
         // answers `undefined` for a string's INDEX - `"ab"[0]` goes through
         // lookup_index, which is a different entry point - so reading back by
         // name would have made `Object.values('ab')` two undefineds. An
-        // accessor is the one case that has to be a call.
-        visit(key, found.is_accessor() ? cx.lookup_property(of, key) : found.held);
+        // accessor has to be a call, and so does a PROXY's every property:
+        // step 2.c.ii.2 is a [[Get]], and its `get` trap is observable.
+        visit(key, found.is_accessor() || of.is_kind(heap_kind::proxy) ? cx.lookup_property(of, key)
+                                                                       : found.held);
     }
 }
 
