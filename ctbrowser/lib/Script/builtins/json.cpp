@@ -451,6 +451,110 @@ value materialize_json(context & cx, const json_value & source) {
         source.data);
 }
 
+// JSON PARSE RECORDS (the JSON.parse source text access proposal, test262's
+// json-parse-with-source): what the reviver's third argument is built from.
+// A record keeps the value materialize made and, for a primitive, the exact
+// source text it was parsed from; an array's keeps its elements' records, an
+// object's its members' (the LAST of a repeated key, as the object holds).
+struct parse_entry;
+struct parse_record {
+    value made = value::undefined();
+    std::string source; // a primitive's text; empty for an array or object
+    std::vector<parse_record> elements;
+    std::vector<parse_entry> entries;
+};
+struct parse_entry {
+    std::string key;
+    parse_record record;
+};
+
+// The JSON grammar's white space (25.5.1: tab, LF, CR, space).
+void skip_json_space(std::string_view text, std::size_t & at) {
+    while (at < text.size() &&
+           (text[at] == ' ' || text[at] == '\t' || text[at] == '\n' || text[at] == '\r')) {
+        ++at;
+    }
+}
+// Past one primitive token of text the Core parser has already accepted: a
+// string (escapes and all), or a number / true / false / null.
+void skip_json_token(std::string_view text, std::size_t & at) {
+    if (at < text.size() && text[at] == '"') {
+        for (++at; at < text.size() && text[at] != '"'; ++at) {
+            if (text[at] == '\\') { ++at; }
+        }
+        ++at;
+        return;
+    }
+    while (at < text.size() &&
+           std::string_view{" \t\n\r,]}:"}.find(text[at]) == std::string_view::npos) {
+        ++at;
+    }
+}
+
+// materialize_json, walking the source text in step with the parsed tree so
+// every primitive's record carries its text. `made` gathers every value a
+// record holds, for the caller to root through the reviver walk.
+value materialize_recorded(context & cx, const json_value & node, std::string_view text,
+                           std::size_t & at, parse_record & rec, std::vector<value> & made) {
+    skip_json_space(text, at);
+    if (const auto * list = std::get_if<json_value::array>(&node.data)) {
+        const value held = cx.make_array();
+        const context::rooted keep{cx, held};
+        auto * arr = static_cast<array_object *>(held.as_heap());
+        ++at; // [
+        rec.elements.resize(list->size());
+        for (std::size_t i = 0; i < list->size(); ++i) {
+            arr->items.push_back(
+                materialize_recorded(cx, (*list)[i], text, at, rec.elements[i], made));
+            skip_json_space(text, at);
+            ++at; // , or ]
+        }
+        if (list->empty()) {
+            skip_json_space(text, at);
+            ++at; // ]
+        }
+        rec.made = held;
+        made.push_back(held);
+        return held;
+    }
+    if (const auto * members = std::get_if<json_value::object>(&node.data)) {
+        auto * obj = new_table(cx);
+        const value held = value::object(obj);
+        const context::rooted keep{cx, held};
+        ++at; // {
+        for (const auto & [key, child] : *members) {
+            skip_json_space(text, at);
+            skip_json_token(text, at); // the key
+            skip_json_space(text, at);
+            ++at; // :
+            parse_record child_record;
+            obj->set(key, materialize_recorded(cx, child, text, at, child_record, made));
+            const auto same = std::find_if(rec.entries.begin(), rec.entries.end(),
+                                           [&](const parse_entry & e) { return e.key == key; });
+            if (same != rec.entries.end()) {
+                same->record = std::move(child_record);
+            } else {
+                rec.entries.push_back(parse_entry{key, std::move(child_record)});
+            }
+            skip_json_space(text, at);
+            ++at; // , or }
+        }
+        if (members->empty()) {
+            skip_json_space(text, at);
+            ++at; // }
+        }
+        rec.made = held;
+        made.push_back(held);
+        return held;
+    }
+    const std::size_t start = at;
+    skip_json_token(text, at);
+    rec.source = std::string{text.substr(start, at - start)};
+    rec.made = materialize_json(cx, node);
+    made.push_back(rec.made);
+    return rec.made;
+}
+
 // InternalizeJSONProperty, 25.5.1.1 - the reviver walk, through the ordinary
 // object operations so a reviver that grafts a Proxy in sees its traps run.
 //
@@ -460,7 +564,7 @@ value materialize_json(context & cx, const json_value & source) {
 // is how one filters, and is why this cannot be a plain map. Undefined with a
 // throw pending is an abrupt completion.
 value internalize_json(context & cx, value holder, const std::string & key, value reviver,
-                       std::uint32_t depth) {
+                       std::uint32_t depth, const parse_record * record) {
     // The recursion follows the parsed document's shape, so it is bounded by
     // nesting - but a reviver may graft an object onto itself and this walk
     // would then never end. The ceiling is the VM's own for the same reason the
@@ -468,14 +572,18 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
     if (depth > context::reentry_ceiling) { return value::undefined(); }
     const value held = cx.lookup_property(holder, key); // step 1: Get(holder, name)
     if (cx.throw_pending()) { return value::undefined(); }
+    const context::rooted keep_held{cx, held};
+    // The parse record still describes this value only while the value is
+    // the one parsed (SameValue): a reviver that replaced it forward
+    // (`this.q = ...` from p's call) gets no source for it, nor its children.
+    const bool recorded = record != nullptr && record->made.same_value(held);
     if (held.is_object_like()) {
-        const context::rooted keep{cx, held};
         // Step 2.b: a deleted child is [[Delete]]d and a revived one
         // CreateDataProperty'd - each `? val.[[...]]`, so a throw (a proxy
         // trap's) propagates but a REFUSAL is ignored: a reviver that made
         // the property non-configurable first simply leaves it in place.
-        const auto revive_child = [&](const std::string & k) {
-            const value revived = internalize_json(cx, held, k, reviver, depth + 1);
+        const auto revive_child = [&](const std::string & k, const parse_record * child) {
+            const value revived = internalize_json(cx, held, k, reviver, depth + 1, child);
             if (cx.throw_pending()) { return false; }
             if (revived.is_undefined()) {
                 (void)cx.delete_own_property(held, k);
@@ -496,7 +604,10 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
             const double len = array_like_length(cx, held);
             if (cx.throw_pending() || !generic_walk_ok(cx, len)) { return value::undefined(); }
             for (double i = 0; i < len; i += 1.0) {
-                if (!revive_child(number_to_string(i))) { return value::undefined(); }
+                const auto at = static_cast<std::size_t>(i);
+                const parse_record * child =
+                    recorded && at < record->elements.size() ? &record->elements[at] : nullptr;
+                if (!revive_child(number_to_string(i), child)) { return value::undefined(); }
             }
         } else {
             // EnumerableOwnProperties: the key list is taken BEFORE the walk
@@ -510,11 +621,28 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
                 const bool present = cx.own_property(held, each, found);
                 if (cx.throw_pending()) { return value::undefined(); }
                 if (!present || !found.enumerable) { continue; }
-                if (!revive_child(each)) { return value::undefined(); }
+                const parse_record * child = nullptr;
+                if (recorded) {
+                    for (const parse_entry & e : record->entries) {
+                        if (e.key == each) { child = &e.record; }
+                    }
+                }
+                if (!revive_child(each, child)) { return value::undefined(); }
             }
         }
     }
-    const value args[2] = {cx.string(key), held};
+    // The third argument (the source text access proposal): a plain object,
+    // with `source` - the primitive's exact text - while the value is still
+    // the one parsed; an object or array's context is empty.
+    const value context_object = cx.make_object();
+    const context::rooted keep_context{cx, context_object};
+    if (recorded && !held.is_object_like()) {
+        static_cast<object_object *>(context_object.as_heap())
+            ->set("source", cx.string(record->source));
+    }
+    const value name = cx.string(key);
+    const context::rooted keep_name{cx, name};
+    const value args[3] = {name, held, context_object};
     return cx.call(reviver, args, holder);
 }
 
@@ -566,17 +694,24 @@ void install_json(context & cx) {
                           "Unexpected token in JSON at position " + std::to_string(parsed.error()));
             return value::undefined();
         }
-        const value out = detail::materialize_json(c, *parsed);
-        const context::rooted keep_out{c, out};
         const value reviver = arg_at(a, 1);
-        if (!reviver.is_callable()) { return out; }
+        if (!reviver.is_callable()) { return detail::materialize_json(c, *parsed); }
+        // With a reviver, the tree is made beside its parse records (the
+        // source each primitive came from), every value of which stays
+        // rooted through the walk - a SameValue against a collected one would
+        // read freed memory.
+        std::vector<value> recorded_values;
+        detail::parse_record root;
+        std::size_t at = 0;
+        const value out = detail::materialize_recorded(c, *parsed, text, at, root, recorded_values);
+        const context::rooted_values keep_records{c, recorded_values};
         // Step 7: the reviver walks a WRAPPER whose one property is "", for the
         // same reason stringify's does - the root has to be a (holder, key)
         // pair so the reviver can replace it.
         const value wrapper = c.make_object();
         const context::rooted keep_wrapper{c, wrapper};
         static_cast<object_object *>(wrapper.as_heap())->set("", out);
-        return detail::internalize_json(c, wrapper, "", reviver, 0);
+        return detail::internalize_json(c, wrapper, "", reviver, 0, &root);
     });
     // 25.5.3 JSON.rawJSON / 25.5.2 JSON.isRawJSON (ES2025): a frozen,
     // null-prototype object whose `rawJSON` is the text, serialised verbatim
