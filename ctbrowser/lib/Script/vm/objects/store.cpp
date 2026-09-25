@@ -357,7 +357,9 @@ void context::store_property(value target, const std::string & name, value v) {
         // sized once, and resizing it here would leave the view and its buffer
         // disagreeing. The spec makes the write a no-op, not an error.
         if (arr->elements != element_kind::none) { return; }
-        // `Object.defineProperty(a, "length", {writable: false})`, or a freeze.
+        // `Object.defineProperty(a, "length", {writable: false})`, or a freeze
+        // - asked BEFORE the coercions (OrdinarySet step 2.a) and again after
+        // them (ArraySetLength step 12), since a valueOf may pin it between.
         if (!arr->length_writable) {
             store_rejected_ = true;
             return;
@@ -368,11 +370,20 @@ void context::store_property(value target, const std::string & name, value v) {
         // throw (S15.4.5.2_A3_T3) - and, for a length in range, of a resize
         // that asked for 34 GB. set_js_length records what it will not
         // materialise; see array_object::dense_limit.
-        // ToNumber runs a valueOf: `a.length = new Number(6)` is 6 (10.4.2.4).
+        // ToUint32 and then ToNumber (10.4.2.4 steps 3-4), each running a
+        // valueOf: `a.length = new Number(6)` is 6, and an object's hint is
+        // asked twice.
+        const std::size_t before = unwinds();
+        const double first = to_number_value(v);
+        if (throw_pending() || unwinds() != before) { return; }
         const double n = to_number_value(v);
-        if (throw_pending()) { return; }
-        if (!(n >= 0) || n > array_object::max_length || n != std::trunc(n)) {
+        if (throw_pending() || unwinds() != before) { return; }
+        if (static_cast<double>(number_to_uint32(first)) != n) {
             throw_error("RangeError", "Invalid array length");
+            return;
+        }
+        if (!arr->length_writable && n != static_cast<double>(arr->js_length())) {
+            store_rejected_ = true;
             return;
         }
         // A non-configurable element stops the shrink (descriptors.cpp).

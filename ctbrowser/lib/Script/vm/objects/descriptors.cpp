@@ -633,6 +633,41 @@ bool context::define_own_property(value target, const std::string & name,
         return true;
     }
 
+    // 10.4.2.4 ArraySetLength, when the descriptor carries a value: IN ITS
+    // ORDER, which is observable. ToUint32 and then ToNumber of the value -
+    // two coercions, each of which may run a valueOf that redefines `length`
+    // - and the RangeError, all BEFORE any check against the property; only
+    // then is `length` as it stands NOW asked whether it may change. A throw
+    // answers true: the caller's own answer to false is a TypeError.
+    if (target.is_array() && name == "length" && wanted.has_value &&
+        static_cast<array_object *>(target.as_heap())->elements == element_kind::none) {
+        auto * arr = static_cast<array_object *>(target.as_heap());
+        const std::size_t before = unwinds();
+        const rooted keep{*this, wanted.held};
+        const double first = to_number_value(wanted.held);
+        if (throw_pending() || unwinds() != before) { return true; }
+        const auto new_len = static_cast<double>(ctbrowser::number_to_uint32(first));
+        const double number_len = to_number_value(wanted.held);
+        if (throw_pending() || unwinds() != before) { return true; }
+        if (new_len != number_len) {
+            throw_error("RangeError", "Invalid array length");
+            return true;
+        }
+        // `length` is { configurable: false, enumerable: false } and data.
+        if ((wanted.has_configurable && wanted.configurable) ||
+            (wanted.has_enumerable && wanted.enumerable) || wanted.is_accessor()) {
+            return false;
+        }
+        const auto old_len = static_cast<double>(arr->js_length());
+        if (!arr->length_writable &&
+            (new_len != old_len || (wanted.has_writable && wanted.writable))) {
+            return false;
+        }
+        const bool ok = new_len == old_len || array_set_length(*arr, new_len);
+        if (wanted.has_writable && !wanted.writable) { arr->length_writable = false; }
+        return ok;
+    }
+
     // 10.4.5.3: A TYPED ARRAY'S INTEGER INDEX is its own algorithm, before
     // ValidateAndApplyPropertyDescriptor. The index must be valid now, the
     // descriptor may not make the element non-configurable, non-enumerable,
