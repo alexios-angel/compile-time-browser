@@ -1,7 +1,7 @@
 #include "../../../Analysis/StringNumber.h"
 #include "../../Prefix.h"
 #include "../Source/Proof.hpp"
-#include "ctcompile/CTNative/Runtime/Number.hpp"
+#include "ctcompile/CTNative/Runtime/String.hpp"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Transforms/RegionUtils.h"
@@ -314,7 +314,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         default: return std::nullopt;
         }
     };
-    const auto exactNumberArithmetic = [&](mlir::Operation * binary) -> ctjs::NumberAttr {
+    const auto exactArithmetic = [&](mlir::Operation * binary) -> mlir::Attribute {
         if (!llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(binary) ||
             binary->getNumOperands() != 2) {
             return {};
@@ -349,7 +349,40 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (!isStatic && kind.getValue() == ctjs::BinaryKind::Add &&
             (llvm::isa<ctjs::StringAttr>(lhs.getValue()) ||
              llvm::isa<ctjs::StringAttr>(rhs.getValue()))) {
-            return {};
+            if (!ctjs::isPrimitiveAttr(lhs.getValue()) || !ctjs::isPrimitiveAttr(rhs.getValue())) {
+                return {};
+            }
+            const auto text = [&](mlir::Attribute value) -> std::optional<::ctnative::js_string> {
+                if (auto string = llvm::dyn_cast<ctjs::StringAttr>(value)) {
+                    const std::string_view bytes = string.getValue();
+                    // Charge before decoding/copying. Canonical operands leave
+                    // at most one surrogate pair for concatenation to join.
+                    if (!chargeText(bytes) ||
+                        ctbrowser::utf16_to_wtf8(ctbrowser::wtf8_to_utf16(bytes)) != bytes) {
+                        return std::nullopt;
+                    }
+                    return ::ctnative::js_string{bytes};
+                }
+                if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(value)) {
+                    return ::ctnative::js_string{ctbrowser::number_to_string(number.getDouble())};
+                }
+                if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(value)) {
+                    return boolean.getValue() ? ::ctnative::js_string{"true"}
+                                              : ::ctnative::js_string{"false"};
+                }
+                if (llvm::isa<ctjs::NullAttr>(value)) { return ::ctnative::js_string{"null"}; }
+                if (llvm::isa<ctjs::UndefinedAttr>(value)) {
+                    return ::ctnative::js_string{"undefined"};
+                }
+                return std::nullopt;
+            };
+            auto left = text(lhs.getValue()), right = text(rhs.getValue());
+            if (!left || !right || !chargeText(left->value()) || !chargeText(right->value())) {
+                return {};
+            }
+            // Native String addition and the VM share Core's surrogate join.
+            const auto joined = std::move(*left) + *right;
+            return ctjs::StringAttr::get(binary->getContext(), joined.value());
         }
         const auto number = [&](mlir::Attribute value) -> ctjs::NumberAttr {
             if (auto original = llvm::dyn_cast<ctjs::NumberAttr>(value)) { return original; }
@@ -453,7 +486,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     projectBranches |= exactComparison(comparison).has_value();
                 }
                 if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(operation)) {
-                    projectBranches |= static_cast<bool>(exactNumberArithmetic(operation));
+                    projectBranches |= static_cast<bool>(exactArithmetic(operation));
                 }
                 if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
                     projectBranches |= exactUndefined(load);
@@ -504,7 +537,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         return mlir::WalkResult::advance();
                     }
                     if (!spend()) { return mlir::WalkResult::interrupt(); }
-                    auto result = exactNumberArithmetic(binary);
+                    auto result = exactArithmetic(binary);
                     if (!result) { return mlir::WalkResult::advance(); }
                     rewriter.setInsertionPoint(binary);
                     rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(binary, result);
