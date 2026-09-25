@@ -130,5 +130,15 @@ int main() {
               "var t; try { [].sort.call('ba'); t = 'sorted'; } catch (e) { t = e.name; }"
               "return (s instanceof String) + ',' + (r instanceof String) + ',' + t; })()",
               "true,true,TypeError");
+    // An array whose length runs past its vector is not the fast path's.
+    js_expect("(function(){var x = []; x.length = 4294967295; var n = x.push(); var e;"
+              "try { x.push('x'); } catch (err) { e = err.name; }"
+              "return n + ',' + e + ',' + x[4294967295] + ',' + x.length; })()",
+              "4294967295,RangeError,x,4294967295");
+    // A `has` trap is asked with a property KEY, a string, for an index.
+    js_expect("(function(){var seen = []; var p = new Proxy([[1], 2], {has: function (t, k) {"
+              " seen.push(typeof k + k); return k in t; }});"
+              "Array.prototype.flat.call(p); return seen.join(); })()",
+              "string0,string1");
     REPORT("receivers_and_throws");
 }

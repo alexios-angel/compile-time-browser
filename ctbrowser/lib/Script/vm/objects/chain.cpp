@@ -276,7 +276,10 @@ bool context::has_property(value target, value key) {
         const value trap = proxy_trap(target, "has", &failed);
         if (failed || throw_pending()) { return false; }
         if (trap.is_callable()) {
-            const value args[2] = {p->target, key};
+            // The trap gets a PROPERTY KEY (ToPropertyKey): the index a
+            // generic walk asks about arrives as "3", never as 3.
+            const value property = key.is_number() ? string(to_string(key)) : key;
+            const value args[2] = {p->target, property};
             const std::size_t before = unwinds();
             const bool answered = truthy(call(trap, args, p->handler));
             if (throw_pending() || unwinds() != before) { return false; }

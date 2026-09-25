@@ -450,8 +450,13 @@ struct unwind_watch {
     if (!self.is_array()) { return nullptr; }
     auto * arr = static_cast<array_object *>(self.as_heap());
     if (arr->is_view() || arr->elements != element_kind::none) { return nullptr; }
-    return arr->element_attrs.empty() && !arr->has_hole_run() && arr->length_writable ? arr
-                                                                                      : nullptr;
+    // ...and every element in `items`: a SPARSE tail (array_object::sparse,
+    // or a length set far past the end) is elements the vector does not
+    // hold, so `x.length = 4294967295; x.push()` answered 0.
+    return arr->element_attrs.empty() && !arr->has_hole_run() && arr->length_writable &&
+                   arr->js_length() == arr->items.size()
+               ? arr
+               : nullptr;
 }
 
 // A STRING RECEIVER CANNOT BE MUTATED, and the mutating methods have to say so.
