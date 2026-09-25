@@ -799,10 +799,25 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
             // `!` or its comparisons pointing both ways is unknown.
             return word == "n" || range == true ? css::truth::no : css::truth::unknown;
         };
+        // A var() IN THE QUERY is the container's custom property
+        // (size-query-with-var): `(width > var(--w, 100px))`. One that
+        // substitutes to nothing leaves the query false.
+        std::string substituted;
+        std::string_view condition = e.condition;
+        if (css::may_have_var(condition)) {
+            const css::custom_lookup lookup = [&style](atom n) -> std::optional<std::string_view> {
+                const std::string_view v = style->get(n);
+                if (v.empty() || v == guaranteed_invalid) { return std::nullopt; }
+                return v;
+            };
+            std::optional<std::string> done = css::substitute_var(condition, lookup, *atoms_);
+            if (!done) { break; }
+            substituted = std::move(*done);
+            condition = substituted;
+        }
         // A name alone asks only that there be such a container.
-        held =
-            e.condition.empty() || css::evaluate_container_condition(e.condition, env, box, query)
-                                           .value_or(css::truth::unknown) == css::truth::yes;
+        held = condition.empty() || css::evaluate_container_condition(condition, env, box, query)
+                                            .value_or(css::truth::unknown) == css::truth::yes;
         break; // the nearest eligible container decides, §2.2
     }
     return held;

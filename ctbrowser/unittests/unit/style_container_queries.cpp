@@ -125,6 +125,25 @@ void test_units() {
     expect_value(f, span, "padding-top", "76.8px", "10cqh: no block container, the viewport");
 }
 
+// size-query-with-var: a var() in a size query is the container's.
+void test_var() {
+    fixture f;
+    (void)parse_html(f.doc, "<div id=c><span>x</span></div>");
+    f.styles.add_sheet("#c { container-type: inline-size; --w: 150px; --n: 200 } "
+                       "@container (width > var(--w)) { span { z-index: 1 } } "
+                       "@container (width > var(--missing)) { span { order: 1 } } "
+                       "@container (width > var(--missing, 100px)) { span { opacity: 0.5 } } "
+                       "@container (width > var(--n)) { span { color: red } }",
+                       1);
+    f.styles.set_container_size([](node_id) { return engine::container_size{200, 40}; });
+    f.resolved = f.styles.resolve_all(f.doc.read());
+    const node_id span = f.find("span");
+    expect_value(f, span, "z-index", "1", "var() from the container");
+    CHECK(f.value_of(span, "order").empty());
+    expect_value(f, span, "opacity", "0.5", "the fallback");
+    CHECK(f.value_of(span, "color").empty()); // a length against a number
+}
+
 // font-variant-shorthand-serialization and font-shorthand-variant.
 void test_font_variant() {
     using css::declaration_block;
@@ -188,6 +207,7 @@ int main() {
     test_selection();
     test_scroll_state();
     test_units();
+    test_var();
     test_font_variant();
     test_line_clamp();
     REPORT("style_container_queries");
