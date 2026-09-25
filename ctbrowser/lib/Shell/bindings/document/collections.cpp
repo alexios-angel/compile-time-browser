@@ -141,13 +141,15 @@ namespace {
 // A property key that is a whole non-negative integer and nothing else. "1x" is
 // not index 1, and neither is " 1", "+1" or "1.0" - a collection has to say no
 // to those or `hasOwnProperty` starts agreeing to keys nobody indexed.
+// AND BELOW 2^32 - 1, which is WebIDL's "array index": "4294967295" is a NAME,
+// and a collection answers it with the element whose id it is.
 [[nodiscard]] std::optional<std::size_t> whole_index(std::string_view key) {
     if (key.empty() || (key.size() > 1 && key.front() == '0')) { return std::nullopt; }
     std::size_t at = 0;
     const char * first = key.data();
     const char * last = first + key.size();
     const auto [stopped, failed] = std::from_chars(first, last, at);
-    if (failed != std::errc{} || stopped != last) { return std::nullopt; }
+    if (failed != std::errc{} || stopped != last || at >= 4294967295u) { return std::nullopt; }
     return at;
 }
 
@@ -570,12 +572,13 @@ value dom_bindings::make_live_collection(context & cx,
                               if (what == "length") {
                                   return value::number(static_cast<double>(held->members.size()));
                               }
+                              // `item(unsigned long index)`: WebIDL's
+                              // conversion wraps modulo 2^32, so item(2^32)
+                              // is item(0) and item(-1) is past any end.
                               if (what == "item") {
-                                  const double at = arg_number(a, 1);
-                                  if (at < 0 || at >= static_cast<double>(held->members.size())) {
-                                      return value::null();
-                                  }
-                                  return member(c, held->members[static_cast<std::size_t>(at)]);
+                                  const std::uint32_t at = context::to_uint32(arg(a, 1));
+                                  if (at >= held->members.size()) { return value::null(); }
+                                  return member(c, held->members[at]);
                               }
                               if (what == "namedItem") {
                                   const std::string want = arg_string(c, a, 1);
