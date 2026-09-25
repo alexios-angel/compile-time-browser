@@ -428,6 +428,12 @@ int main() {
               "Reflect.set(new Int8Array(2), 9, v, r); Reflect.set(new Int8Array(2), 0, v, r); "
               "return n + ',' + (r[0] === v) + ',' + Object.keys(r).join(); })()",
               "0,true,0");
+    // OwnPropertyKeys: indices, then strings, then symbols - arrays alike
+    js_expect("(() => { const s = Symbol('s'); const a = new Uint8Array(2); a[s] = 1; a.x = 2; "
+              "const b = [7]; b[s] = 1; b.y = 2; return Reflect.ownKeys(a).map(String).join() + "
+              "'|' + Reflect.ownKeys(b).map(String).join() + '|' + "
+              "Object.getOwnPropertySymbols(b).length; })()",
+              "0,1,x,Symbol(s)|0,length,y,Symbol(s)|1");
     // an ordinary array's non-index Number key is the property its ToString names
     js_expect("(() => { const a = [1, 2, 3]; a[-1] = 'm'; a[1.5] = 'h'; "
               "return [a[1.5], a['-1'], a.length, Object.keys(a).join('|')].join(); })()",

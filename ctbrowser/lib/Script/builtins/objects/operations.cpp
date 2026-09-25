@@ -123,11 +123,18 @@ namespace {
         }
         return out;
     }
-    // Nothing but an object_object can hold a symbol key: the other three
-    // tables are only ever written by the engine itself.
-    if (which == key_filter::symbols) { return out; }
     if (of.is_array()) {
         auto * arr = static_cast<array_object *>(of.as_heap());
+        // An array's SYMBOL keys live in its named table, and come last
+        // (10.1.11.1; 10.4.5.7 for a typed array): indices, strings, symbols.
+        if (which == key_filter::symbols) {
+            if (arr->named) {
+                arr->named->each_own_key([&](const std::string & k) {
+                    if (wanted_key(which, k)) { out.push_back(k); }
+                });
+            }
+            return out;
+        }
         for (std::size_t i = 0; i < arr->length(); ++i) {
             if (!arr->is_hole(static_cast<std::uint32_t>(i))) { out.push_back(std::to_string(i)); }
         }
@@ -139,6 +146,7 @@ namespace {
         if (arr->elements == element_kind::none) { out.emplace_back("length"); }
         // Then the named own properties - see array_object::named.
         if (arr->named) {
+            const std::size_t named_from = out.size();
             arr->named->each_own_key([&](const std::string & k) {
                 // An accessor ELEMENT's pair also lives here, under its
                 // index; it was reported above.
@@ -147,9 +155,14 @@ namespace {
                     out.push_back(k);
                 }
             });
+            std::stable_partition(out.begin() + static_cast<std::ptrdiff_t>(named_from), out.end(),
+                                  [](const std::string & k) { return !k.starts_with("@@"); });
         }
         return out;
     }
+    // Nothing else but an object_object can hold a symbol key: the other
+    // tables are only ever written by the engine itself.
+    if (which == key_filter::symbols) { return out; }
     if (of.is_string()) {
         const std::size_t n = static_cast<string_object *>(of.as_heap())->text.size();
         for (std::size_t i = 0; i < n; ++i) { out.push_back(std::to_string(i)); }
