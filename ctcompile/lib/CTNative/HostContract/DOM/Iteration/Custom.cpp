@@ -1910,7 +1910,108 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
     }
-    if (observedNext) { return error("DOM iterator observed completions require state transport"); }
+    if (observedNext) {
+        // ponytail: one root Try with protocol-only state. Mutable private
+        // fields need exceptional write transport before this can broaden.
+        if (!attempt || !stateInitials.empty() || sourceLoop ||
+            !attempt.getBody().isAncestor(observedNext->getParentRegion())) {
+            return error("DOM iterator observed completions require protocol-only Try state");
+        }
+        for (auto & [invocation, call] : observedInvocations) {
+            if (!spend() || !attempt.getBody().isAncestor(invocation->getParentRegion()) ||
+                (call != next && !llvm::is_contained(closes, call))) {
+                return error("DOM iterator observed completions require one protected protocol");
+            }
+        }
+        // Try has one result. Do not discard state merely because its original
+        // record was forwarded through a tuple: follow every saved alias, and
+        // reject transport to catch or the normal result as well as escapes.
+        for (auto seed : {object.getResult(), open.getResult()}) {
+            llvm::SmallVector<mlir::Value> pending{seed};
+            llvm::DenseSet<mlir::Value> visited;
+            while (!pending.empty()) {
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                auto value = pending.pop_back_val();
+                if (!visited.insert(value).second) { continue; }
+                for (mlir::OpOperand & use : value.getUses()) {
+                    if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                    auto * user = use.getOwner();
+                    if (llvm::isa<ctjs::RootOp>(user) && use.getOperandNumber() == 1) { continue; }
+                    if (seed == object.getResult() && value == seed &&
+                        llvm::isa<ctjs::SetPropertyOp>(user) && use.getOperandNumber() == 0) {
+                        continue; // Already checked every own initializer.
+                    }
+                    if (!attempt.getBody().isAncestor(user->getParentRegion())) {
+                        return error("DOM iterator protocol state outlives its Try body");
+                    }
+                    bool inactive = false;
+                    for (auto * nested = user; nested->getParentOp() != attempt;
+                         nested = nested->getParentOp()) {
+                        if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                        auto branch = llvm::dyn_cast<mlir::scf::IfOp>(nested->getParentOp());
+                        auto truth = branch ? branch.getCondition().getDefiningOp<ctjs::TruthyOp>()
+                                            : ctjs::TruthyOp{};
+                        auto compare = truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>()
+                                             : ctjs::CompareOp{};
+                        if (compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
+                            nested->getParentRegion() == &branch.getThenRegion() &&
+                            ((compare.getLhs() == open.getResult() &&
+                              undefined(compare.getRhs())) ||
+                             (compare.getRhs() == open.getResult() &&
+                              undefined(compare.getLhs())))) {
+                            inactive = true;
+                            break;
+                        }
+                    }
+                    // A proved custom open cannot select the eager-array arm.
+                    // Keep its source operations for completion normalization.
+                    if (inactive) { continue; }
+                    if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(user);
+                        yield && llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(
+                                     yield->getParentOp())) {
+                        pending.push_back(yield->getParentOp()->getResult(use.getOperandNumber()));
+                        continue;
+                    }
+                    if (auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(user);
+                        exit && use.getOperandNumber() > 0 &&
+                        observedInvocations.contains(exit->getParentOp())) {
+                        auto invocation = llvm::cast<ctjs::InvokeOp>(exit->getParentOp());
+                        pending.push_back(
+                            invocation.getUnwindBody().front().getArgument(use.getOperandNumber()));
+                        continue;
+                    }
+                    if (llvm::isa<ctjs::InvokeYieldOp>(user) &&
+                        observedInvocations.contains(user->getParentOp())) {
+                        pending.push_back(user->getParentOp()->getResult(use.getOperandNumber()));
+                        continue;
+                    }
+                    if (seed == object.getResult()) {
+                        if (user == open && use.getOperandNumber() == 2) { continue; }
+                    } else if (value == seed) {
+                        if ((user == next || llvm::is_contained(closes, user)) &&
+                            use.getOperandNumber() == 2) {
+                            continue;
+                        }
+                        if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                            get && use.getOperandNumber() == 0 &&
+                            ctjs::constantKey(get.getKey()) == "done") {
+                            continue; // Its complete truth-only census above rejects Try exits.
+                        }
+                        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(user);
+                            compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
+                            undefined(use.getOperandNumber() == 0 ? compare.getRhs()
+                                                                  : compare.getLhs())) {
+                            continue;
+                        }
+                    }
+                    return error(("DOM iterator protocol state has an unproved Try observer: " +
+                                  user->getName().getStringRef())
+                                     .str());
+                }
+            }
+        }
+        return error("DOM iterator observed completions require state transport");
+    }
 
     if (!stateInitials.empty() || suppressedThrow) {
         for (mlir::Operation * user : object->getUsers()) {

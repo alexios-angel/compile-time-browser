@@ -677,7 +677,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                   countChecks(*recovered.original) == checks &&
                   mlir::succeeded(mlir::verify(*module)),
               "iterator recovery retains the complete original snapshot and verifies");
-        for (unsigned control = 0; control < (structured ? 35u : 7u); ++control) {
+        for (unsigned control = 0; control < (structured ? 43u : 7u); ++control) {
             mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
             auto entry = candidate->lookupSymbol<ctjs::FuncOp>(contract.entry);
             ctjs::InvokeOp invocation, opening;
@@ -876,7 +876,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                     wrapped->moveBefore(&body, body.end());
                     at.setInsertionPointToEnd(&body);
                     mlir::scf::YieldOp::create(at, call.getLoc(), wrapped->getResults());
-                } else if (control >= 28) {
+                } else if (control >= 28 && control <= 34) {
                     mlir::scf::IfOp done;
                     entry.walk([&](mlir::scf::IfOp branch) {
                         auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
@@ -937,6 +937,64 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                     }
                     ctjs::StoreGlobalOp::create(at, call.getLoc(), "observed-item", item);
                 }
+            }
+            if (control == 35) {
+                at.setInsertionPointAfter(attempt);
+                ctjs::StoreGlobalOp::create(at, call.getLoc(), "late-holder", holder);
+            } else if (control == 36 || control == 37) {
+                auto terminal = llvm::cast<ctjs::TryExitOp>(attempt.getBody().front().back());
+                terminal.getCaughtValuesMutable().append(holder);
+                auto argument =
+                    attempt.getCatchBody().front().addArgument(holder.getType(), call.getLoc());
+                if (control == 37) {
+                    at.setInsertionPoint(attempt.getCatchBody().front().getTerminator());
+                    ctjs::StoreGlobalOp::create(at, call.getLoc(), "caught-holder", argument);
+                }
+            } else if (control == 38) {
+                // Follow the exact saved slot, not just the holder's direct uses.
+                exit.getStateMutable().slice(0, 1).assign(holder);
+                at.setInsertionPointAfter(invocation);
+                ctjs::StoreGlobalOp::create(at, call.getLoc(), "saved-holder",
+                                            invocation.getResult(3));
+            } else if (control == 39) {
+                at.setInsertionPoint(attempt);
+                auto key = ctjs::ConstantOp::create(at, call.getLoc(),
+                                                    ctjs::StringAttr::get(&context, "counter"));
+                auto zero =
+                    ctjs::ConstantOp::create(at, call.getLoc(), ctjs::NumberAttr::get(&context, 0));
+                ctjs::SetPropertyOp::create(at, call.getLoc(), holder, key, zero);
+            }
+            if (control == 40 || control == 41) {
+                // Only the exact proved eager fallback is inactive. A similar
+                // test of an unrelated value supplies no state-lifetime proof.
+                mlir::scf::IfOp fallback;
+                entry.walk([&](mlir::scf::IfOp branch) {
+                    auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                    auto compare = truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>()
+                                         : ctjs::CompareOp{};
+                    if (compare && compare.getLhs() == recordAlias) { fallback = branch; }
+                });
+                if (!check(static_cast<bool>(fallback), "original eager fallback is present")) {
+                    continue;
+                }
+                if (control == 41) {
+                    at.setInsertionPointAfter(opening);
+                    auto absent = ctjs::ConstantOp::create(at, call.getLoc(),
+                                                           ctjs::UndefinedAttr::get(&context));
+                    auto compare = ctjs::CompareOp::create(
+                        at, call.getLoc(), holder.getType(), ctjs::CompareKind::StrictEq,
+                        entry.getBody().front().getArgument(3), absent);
+                    auto condition =
+                        ctjs::TruthyOp::create(at, call.getLoc(), at.getI1Type(), compare);
+                    fallback = mlir::scf::IfOp::create(at, call.getLoc(), condition, true);
+                }
+                at.setInsertionPoint(fallback.getThenRegion().front().getTerminator());
+                selectionEffect =
+                    ctjs::StoreGlobalOp::create(at, call.getLoc(), "fallback-holder", holder);
+            }
+            if (control == 42) {
+                at.setInsertionPointAfter(opening);
+                ctjs::IterableOp::create(at, call.getLoc(), holder.getType(), holder);
             }
             const auto rewrittenClose = [&](ctjs::CallOp found) {
                 if (!structured || control == 12 || control == 13 || control == 19 ||
@@ -1022,7 +1080,11 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                 *candidate, proof, control == 6 ? 0 : 100000);
             const auto reason = failure ? llvm::toString(std::move(failure)) : std::string{};
             const auto expected =
-                control == 29 || control == 30 || control == 31 || control == 32 || control == 34
+                control == 39 ? "DOM iterator observed completions require protocol-only Try state"
+                : control == 35 ? "holder has an earlier observer"
+                : control == 11 || (control >= 36 && control <= 38) || control >= 41
+                    ? "DOM iterator protocol state has an unproved Try observer"
+                : control == 29 || control == 30 || control == 31 || control == 32 || control == 34
                     ? "DOM iterator item requires its not-done continuation"
                 : control == 33 ? "DOM iterator record has an unsupported observer"
                 : control == 17 || control == 18 || control == 20 ||
@@ -1048,7 +1110,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
             if (reason.find(expected) == std::string::npos) {
                 llvm::errs() << "iterator control " << control << ": " << reason << '\n';
             }
-            if ((control == 0 || control >= 11) && structured) {
+            if ((control == 0 || control >= 11) && control != 35 && structured) {
                 check(openCall->getBlock() == openBlock &&
                           llvm::equal(openCall->getOperands(), openOperands) &&
                           mlir::succeeded(mlir::verify(*candidate)),
