@@ -66,10 +66,13 @@ void install_function(context & cx) {
                // anything else that is not an object is a TypeError (step 2).
                const value list = arg_at(a, 1);
                std::vector<value> args;
-               if (list.is_array()) {
+               if (list.is_array() &&
+                   static_cast<array_object *>(list.as_heap())->elements == element_kind::none) {
                    // A REAL ARRAY IS ITS ELEMENTS, unchanged: `items` is already the
                    // list and its size is bounded by what was actually allocated, so
-                   // `Math.max.apply(null, twoHundredThousand)` keeps working.
+                   // `Math.max.apply(null, twoHundredThousand)` keeps working. NOT a
+                   // typed array, whose elements are bytes in a buffer (a view's
+                   // `items` is empty): that one is read index by index below.
                    args = static_cast<array_object *>(list.as_heap())->items;
                } else if (!list.is_undefined() && !list.is_null()) {
                    if (!list.is_object_like()) {
