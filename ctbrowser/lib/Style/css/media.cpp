@@ -812,6 +812,116 @@ std::optional<std::vector<container_query>> parse_container_conditions(std::stri
 
 namespace {
 
+// --- a style() query, serialised (CSS Conditional 5 §3.3, CSSOM) ------------
+
+// [a, b) with the whitespace at either end left out.
+void trim_run(const token_stream & s, std::size_t & a, std::size_t & b) {
+    while (a < b && s.tokens[a].type == token_type::whitespace) { ++a; }
+    while (b > a && s.tokens[b - 1].type == token_type::whitespace) { --b; }
+}
+
+// One style FEATURE: `--name: value` with the value as written but for the
+// whitespace at its ends, `--name` alone, or a range with one space either
+// side of each comparison - a custom property's name escaped as an
+// identifier. nullopt for anything else, which is written as it came.
+[[nodiscard]] std::optional<std::string> style_feature_text(const token_stream & s, std::size_t a,
+                                                            std::size_t b) {
+    trim_run(s, a, b);
+    if (a >= b) { return std::nullopt; }
+    const auto custom = [&](std::size_t i) {
+        return s.tokens[i].type == token_type::ident && s.text_of(s.tokens[i]).starts_with("--");
+    };
+    // The top-level comparisons, if it is a range.
+    std::vector<std::size_t> ops;
+    int depth = 0;
+    for (std::size_t i = a; i < b; ++i) {
+        const token_type type = s.tokens[i].type;
+        if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+        if (type == token_type::close_paren) { --depth; }
+        if (depth == 0 &&
+            (is_delim_text(s, i, '<') || is_delim_text(s, i, '>') || is_delim_text(s, i, '='))) {
+            ops.push_back(i);
+            if (!is_delim_text(s, i, '=') && is_delim_text(s, i + 1, '=')) { ++i; }
+        }
+    }
+    const auto operand = [&](std::size_t x, std::size_t y) -> std::string {
+        trim_run(s, x, y);
+        if (y == x + 1 && custom(x)) { return serialize_identifier(s.text_of(s.tokens[x])); }
+        return std::string{slice(s, x, y)};
+    };
+    if (!ops.empty()) {
+        std::string out;
+        std::size_t from = a;
+        for (const std::size_t at : ops) {
+            const bool two = !is_delim_text(s, at, '=') && is_delim_text(s, at + 1, '=');
+            out += operand(from, at) + " " + std::string{s.text_of(s.tokens[at])} +
+                   (two ? "=" : "") + " ";
+            from = at + (two ? 2 : 1);
+        }
+        return out + operand(from, b);
+    }
+    if (!custom(a)) { return std::nullopt; }
+    std::string out = serialize_identifier(s.text_of(s.tokens[a]));
+    std::size_t k = a + 1;
+    while (k < b && s.tokens[k].type == token_type::whitespace) { ++k; }
+    if (k == b) { return out; }
+    if (s.tokens[k].type != token_type::colon) { return std::nullopt; }
+    std::size_t v = k + 1;
+    std::size_t end = b;
+    trim_run(s, v, end);
+    return out + ": " + std::string{slice(s, v, end)};
+}
+
+// A style CONDITION or feature over [a, b): `not` a group, groups joined by
+// `and`/`or` (lowercased), each a nested condition, a feature in
+// parentheses, or a <general-enclosed> written exactly as it came.
+[[nodiscard]] std::string style_query_text(const token_stream & s, std::size_t a, std::size_t b) {
+    trim_run(s, a, b);
+    const bool condition =
+        a < b && (s.tokens[a].type == token_type::open_paren || is_ident_named(s, a, "not"));
+    if (!condition) {
+        const std::optional<std::string> one = style_feature_text(s, a, b);
+        return one ? *one : std::string{slice(s, a, b)};
+    }
+    std::string out;
+    for (std::size_t i = a; i < b;) {
+        if (s.tokens[i].type == token_type::whitespace) {
+            ++i;
+            continue;
+        }
+        if (s.tokens[i].type == token_type::ident) {
+            out += ascii_lower_copy(s.text_of(s.tokens[i])) + " ";
+            ++i;
+            continue;
+        }
+        const std::size_t close = std::min(end_of_block(s, i), b);
+        if (s.tokens[i].type != token_type::open_paren) {
+            out += std::string{slice(s, i, close)} + " ";
+            i = close;
+            continue;
+        }
+        std::size_t x = i + 1;
+        std::size_t y =
+            close > x && s.tokens[close - 1].type == token_type::close_paren ? close - 1 : close;
+        trim_run(s, x, y);
+        const auto test = [](std::string_view, std::size_t, std::size_t) { return truth::unknown; };
+        const auto enclosed = [](std::size_t, std::size_t) { return truth::unknown; };
+        const bool nested =
+            x < y && (s.tokens[x].type == token_type::open_paren || is_ident_named(s, x, "not")) &&
+            boolean_expression(s, x, y, test, enclosed).has_value();
+        if (nested) {
+            out += "(" + style_query_text(s, x, y) + ") ";
+        } else if (const std::optional<std::string> one = style_feature_text(s, x, y)) {
+            out += "(" + *one + ") ";
+        } else {
+            out += std::string{slice(s, i, close)} + " ";
+        }
+        i = close;
+    }
+    if (!out.empty()) { out.pop_back(); }
+    return out;
+}
+
 // The tokens [from, to) of a container query, serialised: whitespace
 // collapsed, none just inside a parenthesis, `: ` after a feature, one space
 // either side of a comparison, and a feature's name - or, with `lower_all`,
@@ -848,8 +958,7 @@ void serialize_query_run(const token_stream & s, std::size_t from, std::size_t t
                 out += ')';
             } else if (ascii_iequals(text, "style(")) {
                 emit("style(");
-                out += collapse_whitespace(trim(slice(s, i + 1, last), html_whitespace),
-                                           html_whitespace);
+                out += style_query_text(s, i + 1, last);
                 out += ')';
             } else {
                 emit(slice(s, i, close));
