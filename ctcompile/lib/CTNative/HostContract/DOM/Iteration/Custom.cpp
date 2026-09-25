@@ -195,7 +195,30 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         return std::nullopt;
     };
-    const auto exactUnary = [](ctjs::UnaryOp unary) -> mlir::Attribute {
+    const auto chargeText = [&](std::string_view text) {
+        if (text.size() > work.remaining) {
+            work.remaining = 0;
+            return false;
+        }
+        work.remaining -= static_cast<unsigned>(text.size());
+        return true;
+    };
+    const auto exactNumber = [&](mlir::Attribute value) -> std::optional<double> {
+        if (auto numeric = llvm::dyn_cast<ctjs::NumberAttr>(value)) { return numeric.getDouble(); }
+        if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(value)) {
+            return boolean.getValue() ? 1.0 : 0.0;
+        }
+        if (llvm::isa<ctjs::NullAttr>(value)) { return 0.0; }
+        if (llvm::isa<ctjs::UndefinedAttr>(value)) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+        if (auto text = llvm::dyn_cast<ctjs::StringAttr>(value)) {
+            if (!chargeText(text.getValue())) { return std::nullopt; }
+            return literalStringNumber(text.getValue());
+        }
+        return std::nullopt;
+    };
+    const auto exactUnary = [&](ctjs::UnaryOp unary) -> mlir::Attribute {
         if (unary->getNumOperands() != 1 || !unary.getKindAttr()) { return {}; }
         auto input = unary->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
         if (!input || !input.getValue()) { return {}; }
@@ -204,15 +227,22 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return value.known ? ctjs::BooleanAttr::get(unary.getContext(), !value.truthy)
                                : mlir::Attribute{};
         }
+        if (unary.getKind() != ctjs::UnaryKind::Plus && unary.getKind() != ctjs::UnaryKind::Neg &&
+            unary.getKind() != ctjs::UnaryKind::BitNot) {
+            return {};
+        }
         auto number = llvm::dyn_cast<ctjs::NumberAttr>(input.getValue());
-        if (!number) { return {}; }
+        if (!number) {
+            const auto converted = exactNumber(input.getValue());
+            if (!converted) { return {}; }
+            number = ctjs::NumberAttr::get(unary.getContext(), std::bit_cast<uint64_t>(*converted));
+        }
         if (unary.getKind() == ctjs::UnaryKind::Plus) { return number; }
         if (unary.getKind() == ctjs::UnaryKind::BitNot) {
             return ctjs::NumberAttr::get(
                 unary.getContext(),
                 std::bit_cast<uint64_t>((~::ctnative::js_num{number.getDouble()}).value()));
         }
-        if (unary.getKind() != ctjs::UnaryKind::Neg) { return {}; }
         // Number negation changes only the sign, including zero and NaN.
         llvm::APFloat result(llvm::APFloat::IEEEdouble(), llvm::APInt(64, number.getBits()));
         result.changeSign();
@@ -231,31 +261,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (auto result = llvm::dyn_cast_if_present<ctjs::BooleanAttr>(primitive.literal)) {
             return result.getValue();
         }
-        const auto chargeText = [&](std::string_view text) {
-            if (text.size() > work.remaining) {
-                work.remaining = 0;
-                return false;
-            }
-            work.remaining -= static_cast<unsigned>(text.size());
-            return true;
-        };
-        const auto number = [&](mlir::Attribute value) -> std::optional<double> {
-            if (auto numeric = llvm::dyn_cast<ctjs::NumberAttr>(value)) {
-                return numeric.getDouble();
-            }
-            if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(value)) {
-                return boolean.getValue() ? 1.0 : 0.0;
-            }
-            if (llvm::isa<ctjs::NullAttr>(value)) { return 0.0; }
-            if (llvm::isa<ctjs::UndefinedAttr>(value)) {
-                return std::numeric_limits<double>::quiet_NaN();
-            }
-            if (auto text = llvm::dyn_cast<ctjs::StringAttr>(value)) {
-                if (!chargeText(text.getValue())) { return std::nullopt; }
-                return literalStringNumber(text.getValue());
-            }
-            return std::nullopt;
-        };
         if (comparison.getKind() == ctjs::CompareKind::Eq) {
             // Absence compares by tag, before any numeric conversion. Only
             // exact primitives can bypass conversion; objects/BigInts refuse.
@@ -295,7 +300,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             default: return std::nullopt;
             }
         }
-        const auto left = number(lhs.getValue()), right = number(rhs.getValue());
+        const auto left = exactNumber(lhs.getValue()), right = exactNumber(rhs.getValue());
         if (!left || !right) { return std::nullopt; }
         // These exact primitive conversions cannot call hooks. Binary64
         // comparisons preserve unordered NaNs and signed-zero equality.
