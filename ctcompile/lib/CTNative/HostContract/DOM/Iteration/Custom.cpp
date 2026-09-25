@@ -7,6 +7,8 @@
 #include "llvm/ADT/APFloat.h"
 
 #include <bit>
+#include <cmath>
+#include <limits>
 
 namespace ctcompile::ctnative {
 
@@ -276,6 +278,18 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
             return ctjs::NumberAttr::get(binary->getContext(),
                                          std::bit_cast<uint64_t>(result.value()));
+        }
+        if (kind.getValue() == ctjs::BinaryKind::Pow) {
+            const double base = left.getDouble(), exponent = right.getDouble();
+            // Match native Number exponentiation: libm differs at magnitude one
+            // with a NaN/infinite exponent. Keep NaN literals canonical.
+            const double nan = std::numeric_limits<double>::quiet_NaN();
+            const double result = exponent == 0 ? 1
+                                  : std::abs(base) == 1 && !std::isfinite(exponent)
+                                      ? nan
+                                      : std::pow(base, exponent);
+            return ctjs::NumberAttr::get(
+                binary->getContext(), std::bit_cast<uint64_t>(std::isnan(result) ? nan : result));
         }
         // Exact Number operands cannot invoke conversion hooks. LLVM supplies
         // binary64 rounding independently of the host's floating-point state.
