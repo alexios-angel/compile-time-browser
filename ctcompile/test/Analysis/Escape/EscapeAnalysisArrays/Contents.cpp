@@ -402,6 +402,13 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string captureEnd = "  }\n  ctjs.set_property %a[%zero], %zero\n";
     const std::string capturedStore = captureStart + captureWrite + "  }\n";
     const std::string clearedCapture = captureStart + captureWrite + captureEnd;
+    const std::string receiverStart = "  %zero = ctjs.constant #ctjs.number<0>\n"
+                                      "  %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
+                                      "  %a = ctjs.create_array [%zero] {storage_test_id = \"a\"}\n"
+                                      "  %flag = ctjs.truthy %p\n"
+                                      "  scf.if %flag {\n";
+    const std::string receiverWrite = "    ctjs.set_property %a[%zero], %one\n";
+    const std::string receiverRead = "    %read = ctjs.get_property %a[%zero]\n";
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -515,7 +522,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .complete = false},
         {.what = "an earlier non-storage capture cannot borrow a later Stored role",
          .body = captureStart + "    %used = ctjs.truthy %x\n" + captureWrite + captureEnd + done,
-         .complete = false},
+         .confinedReceivers = "a"},
         {.what = "an earlier global capture cannot borrow a later Stored role",
          .body = captureStart + "    ctjs.store_global \"held\", %x\n" + captureWrite + captureEnd +
                  done,
@@ -524,6 +531,64 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = captureStart + "    %fresh = ctjs.create_array []\n" + captureWrite + captureEnd +
                  done,
          .complete = false},
+        {.what = "an exact nested own-element write confines its private array receiver",
+         .body = receiverStart + receiverWrite + "  }\n" + done,
+         .confinedReceivers = "a"},
+        {.what = "an exact nested own-element read confines its private array receiver",
+         .body = receiverStart + receiverRead + "  }\n" + done,
+         .confinedReceivers = "a"},
+        {.what = "a directly returned nested receiver retains its original capture witness",
+         .body = receiverStart + receiverWrite + "  }\n  ctjs.return %a\n",
+         .confinedReceivers = ""},
+        {.what = "a later returned selection retains the captured receiver on either path",
+         .body = receiverStart + receiverRead +
+                 "  }\n"
+                 "  %saved = scf.if %flag -> (!ctjs.value) {\n"
+                 "    scf.yield %a : !ctjs.value\n"
+                 "  } else {\n"
+                 "    scf.yield %zero : !ctjs.value\n"
+                 "  }\n"
+                 "  ctjs.return %saved\n",
+         .confinedReceivers = ""},
+        {.what = "late implicit publication cannot hide behind an own receiver access",
+         .body = receiverStart + receiverRead + "    ctjs.store_global \"held\", %a\n  }\n" + done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "a nested array receiver still requires an existing own write slot",
+         .body = receiverStart + "    ctjs.set_property %a[%one], %zero\n  }\n" + done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "a nested array receiver still requires an exact own read index",
+         .body = receiverStart + "    %read = ctjs.get_property %a[%p]\n  }\n" + done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "an earlier nonreceiver capture cannot borrow a later receiver role",
+         .body = receiverStart + "    %used = ctjs.truthy %a\n" + receiverRead + "  }\n" + done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "a captured array key cannot borrow the receiver operand's role",
+         .body = receiverStart + "    %read = ctjs.get_property %p[%a]\n  }\n" + done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "a captured append receiver remains outside Get/Set refinement",
+         .body = receiverStart + "    ctjs.append %one to %a\n  }\n" + done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "a private receiver with an overwritten structured cycle remains refused",
+         .body = receiverStart + "    ctjs.set_property %a[%zero], %a\n" + receiverWrite + "  }\n" +
+                 done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "nested allocation origins remain outside receiver refinement",
+         .body =
+             receiverStart + "    %fresh = ctjs.create_array []\n" + receiverWrite + "  }\n" + done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "a nested receiver without solver lattices retains its gap refusal",
+         .body = receiverStart + receiverWrite + "  }\n" + done,
+         .complete = false,
+         .withAnalysis = false,
+         .confinedReceivers = ""},
     };
     std::size_t budgets = 0;
     for (const retention_row & r : rows) {

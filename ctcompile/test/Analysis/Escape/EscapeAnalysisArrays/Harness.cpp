@@ -240,6 +240,7 @@ std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & exp
         return true;
     };
     std::vector<std::string> discharged;
+    std::vector<std::string> receivers;
     for (const auto & [site, verdict] : original.sites) {
         auto found = refined.sites.find(site);
         if (found == refined.sites.end()) {
@@ -251,12 +252,16 @@ std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & exp
             verdict.reason == EscapeReason::UnknownOp && verdict.by != nullptr &&
             verdict.by->getParentRegion() != &function.getBody() &&
             operandRole(verdict.by, verdict.position).reason == EscapeReason::Stored;
+        const bool receiverCapture =
+            verdict.reason == EscapeReason::UnknownOp && verdict.by != nullptr &&
+            verdict.by->getParentRegion() != &function.getBody() &&
+            operandRole(verdict.by, verdict.position).reason == EscapeReason::Passed;
         if (after.reason == verdict.reason) {
             if (after.by != verdict.by || after.position != verdict.position) {
                 fail(r, "an unchanged retained site lost its original witness");
             }
         } else if ((verdict.reason != EscapeReason::Stored && !storedCapture &&
-                    !(verdict.reason == EscapeReason::Passed &&
+                    !((verdict.reason == EscapeReason::Passed || receiverCapture) &&
                       llvm::isa<ctjs::CreateArrayOp>(site) && verdict.position == 0 &&
                       llvm::isa_and_nonnull<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(
                           verdict.by))) ||
@@ -266,12 +271,19 @@ std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & exp
         } else if (verdict.reason == EscapeReason::Stored || storedCapture) {
             // This counter remains about retained contents, not private receivers.
             discharged.push_back(contentsLabel(site));
+        } else {
+            receivers.push_back(contentsLabel(site));
         }
     }
     const std::string actual = llvm::join(discharged, ",");
     if (actual != expected.discharged || discharged.size() != refined.confinedStoredSites) {
         fail(r,
              "expected discharged sites " + std::string{expected.discharged} + ", got " + actual);
+    }
+    if (expected.confinedReceivers != nullptr &&
+        llvm::join(receivers, ",") != expected.confinedReceivers) {
+        fail(r, "expected confined receivers " + std::string{expected.confinedReceivers} +
+                    ", got " + llvm::join(receivers, ","));
     }
     if (refined.directStorage.writes.size() != original.directStorage.writes.size() ||
         refined.directLoads.reads.size() != original.directLoads.reads.size() ||
