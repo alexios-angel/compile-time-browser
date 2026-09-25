@@ -10,6 +10,8 @@
 
 #include "checker.hpp"
 
+#include <algorithm>
+
 #include <ctbrowser/core/algorithms.hpp>
 
 namespace ctbrowser::script::detail::early {
@@ -269,11 +271,14 @@ void checker::check_module_items(std::int32_t root, const std::vector<binding> &
             }
         }
         // `export default function f() {}` BINDS f as well as exporting
-        // `default` (16.2.3.7: the HoistableDeclaration's BoundNames). The
-        // parser reads the function in expression position, so its name is
-        // on a func_expr that lexical_names cannot see (a class it can).
+        // `default` (16.2.3.7: the HoistableDeclaration's BoundNames), and a
+        // named `export default class C {}` binds C. The parser reads either
+        // in expression position, where lexical_names mostly cannot see the
+        // name - so it is declared here unless lexical_names already recorded
+        // this very node, which would report it as its own duplicate.
         if (item.kind == nk::export_decl && item.c == 1 && item.a >= 0 &&
-            !at(item.a).text.empty() && at(item.a).kind == nk::func_expr) {
+            !at(item.a).text.empty() &&
+            std::ranges::none_of(declared, [&](const binding & b) { return b.node == item.a; })) {
             declare(at(item.a).text, item.a);
         }
     }
