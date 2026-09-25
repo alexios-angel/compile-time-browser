@@ -413,6 +413,9 @@ void checker::check_for_in_of(std::int32_t idx, std::vector<binding> & vars) {
         case nk::array_pattern:
         case nk::object_pattern: break;
         default:
+            // ...or a call in sloppy code, ~web-compat~ as an assignment's
+            // is: each iteration evaluates it and throws the ReferenceError.
+            if (web_compat_call(target.b)) { break; }
             report("the head of this `for` loop is not something a value can be assigned to",
                    target.b);
             break;

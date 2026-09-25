@@ -135,6 +135,11 @@ int main() {
             " try { f() += g(); } catch (e) { r.push(e.name); }"
             " try { f()++; } catch (e) { r.push(e.name); } return r.join() + ':' + log;",
             "ReferenceError,ReferenceError,ReferenceError:fff");
+    answers("var n = 0; function f() { ++n; return {}; } var r = [];"
+            " try { for (f() in [1]) {} } catch (e) { r.push(e.name); }"
+            " try { for (f() of [1]) {} } catch (e) { r.push(e.name); }"
+            " for (f() in {}) {} return r.join() + ':' + n;",
+            "ReferenceError,ReferenceError:2");
     refused("'use strict'; function f() {} f() = 1;");
     refused("function f() {} f() &&= 1;");
     refused("var a; a?.b() = 1;");
