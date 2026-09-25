@@ -22,6 +22,49 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Iterator state lifetime and structured retention, 2026-09-25 UTC
+
+Resumed clean **82b3c7c4**, following the recorded Try/Invoke state boundary.
+**edbb1eb8** proves that the original observed iterator's holder and record
+aliases stay inside one root Try body. It follows exact selection and saved
+unwind slots, rejects caught/late/saved escapes and live Iterable uses, and
+recognizes only the proved inactive eager-array arm. Eight new controls pass.
+Mutable scalar state still refuses. The explicit state-transport refusal remains:
+**no new native JavaScript source admission** is claimed. Both close(false)
+flags, three Invokes, 15 saved registers, source effects and rollback remain.
+
+**d5b74486** adds a bounded region-input prerequisite for array retention using
+existing solver lattices and the independent contents proof. The frozen lifted
+**d1302d9a** witness now discharges its overwritten child from Stored to Confined;
+returned children remain retained. Two existing SCF loop cases gain the same
+proof. Replacement preserves saved receivers; live publication, transient cycles,
+missing evidence and nested allocations still refuse. The public legacy
+storage/load census remains incomplete for regions and unchanged. Raw program
+**502bee7b1676c84d** remains **2/4 confined sites**, all four observed, zero VM
+violations and three unlimited frame pops.
+
+Focused recovery **1/1, 5.44 s**, host contract **1/1, 2.75 s**, arrays
+**1/1, 4.70 s**, the existing cached-shortcut lit case **1/1, 0.10 s**, and the
+selected three-source native differential check pass. Formatting passes
+**1126 C++, 159 Python, 114 web files**. Full suites were skipped. Both agents
+were resumed after interruption, then hit rate limits; the parent finished the
+escape candidate, applied the native review finding and completed validation.
+No independent final signoff is claimed.
+
+**Next:** implement next/exhaustion/failure and both unsuppressed closes through
+Try/Invoke state, now with the lifetime prerequisite in place. Keep Invoke's
+call/exit body; extract next's result in normal, and route the normalized throwing
+close helper's payload through the original unwind projection. Completion
+normalization currently treats the enclosing Try as opaque, so its inner saved
+tuples and inactive values need proof before the final native census can accept
+this shape. Preserve saved returns, caught-anchor identity and every effect.
+The unbuilt scratch rewrite is evidence only, not a candidate to apply blindly.
+Nested allocation origins, mutable exceptional state, raw helper CFGs, escaping
+node owners, unguarded Bootstrap defaults, the application driver and full native
+Bootstrap remain unfinished. Continue on `ctcompile-v1`.
+
+[Exact checks and next boundary](handoff/2026-09-25-iterator-state-lifetime.md).
+
 ## Observed iterator items and structured array selections, 2026-09-25 UTC
 
 Resumed clean **a3abb74e** and the recorded normal-item boundary.
