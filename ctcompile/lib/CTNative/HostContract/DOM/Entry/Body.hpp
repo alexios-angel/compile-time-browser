@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Analysis.h"
+#include "../../Analysis.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 

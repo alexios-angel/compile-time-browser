@@ -1,5 +1,5 @@
-#include "Analysis.h"
-#include "DOMSource/Proof.hpp"
+#include "../Analysis.h"
+#include "Source/Proof.hpp"
 #include "ctbrowser/core/algorithms.hpp"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"

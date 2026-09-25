@@ -1,4 +1,4 @@
-#include "DOMSnapshotBounds.h"
+#include "../Snapshot/Bounds.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"

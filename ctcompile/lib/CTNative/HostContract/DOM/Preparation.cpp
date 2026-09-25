@@ -1,8 +1,8 @@
-#include "../Lowering/ClosureLifting/ClosureLifter.h"
-#include "../Lowering/Exceptions/Recovery.h"
-#include "Analysis.h"
-#include "DOMSource/Proof.hpp"
-#include "Preparation.h"
+#include "../Preparation.h"
+#include "../../Lowering/ClosureLifting/ClosureLifter.h"
+#include "../../Lowering/Exceptions/Recovery.h"
+#include "../Analysis.h"
+#include "Source/Proof.hpp"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"

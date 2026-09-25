@@ -1,4 +1,4 @@
-#include "DOMSource/Proof.hpp"
+#include "../Source/Proof.hpp"
 #include "mlir/IR/Verifier.h"
 
 #include <bit>

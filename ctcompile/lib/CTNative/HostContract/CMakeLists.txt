@@ -1,11 +1,5 @@
 target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   Contract.cpp
-  DOMEntry.cpp
-  DOMSource.cpp
-  DOMIteration.cpp
-  DOMCustomIteration.cpp
-  DOMIteratorClose.cpp
-  DOMSnapshotLengths.cpp
   Values.cpp
   CapturedMapBody.cpp
   ScalarCallbacks.cpp
@@ -34,13 +28,11 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
 target_sources(ctcompile-ctnative-lowering PRIVATE
   Pass.cpp
   ClassInitialization.cpp
-  DOMPreparation.cpp
   PrefixPass.cpp
   Preparation.h
 )
 
 add_subdirectory(CapturedMapBody)
 add_subdirectory(ClassInitialization)
-add_subdirectory(DOMEntry)
-add_subdirectory(DOMSource)
+add_subdirectory(DOM)
 add_subdirectory(Values)

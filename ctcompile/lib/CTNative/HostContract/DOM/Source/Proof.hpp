@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Analysis.h"
+#include "../../Analysis.h"
 #include "ctbrowser/core/algorithms.hpp"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"

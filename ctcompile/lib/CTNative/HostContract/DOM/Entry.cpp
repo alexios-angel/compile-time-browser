@@ -1,5 +1,5 @@
-#include "Analysis.h"
-#include "DOMEntry/Body.hpp"
+#include "../Analysis.h"
+#include "Entry/Body.hpp"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
