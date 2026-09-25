@@ -22,6 +22,74 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Initialized undefined helpers and repeated truthiness, 2026-09-25 UTC
+
+Resumed clean **1a13f2f5** and its two complete global-`undefined` refusals.
+Iteration 30 was fully committed; the old WIP branch is already an ancestor.
+The escape agent completed its candidate and review. The parent completed native
+controls after a test-agent service limit. The independent native reviewer resumed
+and completed its review; both final reviews found no blockers.
+
+**c730fda7** proves the initialized DOM provider's `undefined` binding
+inside private iterator helpers, before bounded CFG/SCF projection. The existing
+charged module census checks every named source write before helper pruning;
+even an unreachable write disables this substitution. Other loads, implicit
+inputs, global-object mutations and source effects retain their complete proofs.
+Twenty-four new controls (**560 total**) cover raw/structured identity, next and
+close helpers, shared snapshots, strict equality/Not, source writes, malformed
+loads, provider/fingerprint changes and public zero/late-budget rollback.
+
+**bef3c656** shares a branch choice between repeated `ctjs.truthy` operations
+only when they consume the exact same SSA input. Both counted-store correspondence
+and current replay use that input's snapshot. Separate or mutated reads and other
+recomputed expressions retain independent choices. Sixteen new rows (**289 total**),
+two unchanged former refusal bodies and five live mutations (**52 states total**)
+retain finite Number bounds, single visits, guard dependencies, every exit, alias
+retention, all-write cycles, stale-solver/forged-marker and incomplete-budget checks.
+This establishes frame confinement, not native ownership or shorter lifetimes.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 10.57 s**,
+`ctcompile_host_contract` **1/1, 2.78 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 5.02 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.05 s**.
+The initial build caught a typed-setter error in the new malformed-load test;
+the raw MLIR result setter fixed it. The first arrays run caught three negative
+mutations that still used the original `%p`; they now use distinct `%q`, retaining
+the intended refusal and unchanged same-input successes. No production change
+or native CTest replay followed that correction. The measured retention counter
+is 289 rows; the pre-gate projection of 288 was incorrect.
+
+**4c3b73a4** promotes both original complete `undefined` source witnesses
+without changing their JavaScript. Raw and structured preparation use the default
+**100,000-step** budget. Node/VM traces agree; **20 generated C++ files and 40 GCC/Clang binaries**,
+both printers/providers/optimization modes and ten zero-budget refusals pass.
+The driver checks ordered DOM writes, two documents and 16 lifetimes. Generated
+source and linked-symbol checks find no Script/AOT dependency.
+All 24 helper source values, ten original C++ raw literals and 71 Python multiline
+values remain unchanged. All seven final local/devbox file hashes match. Inspected
+C++ uses typed values, document ownership and the existing public DOM seam.
+Repository formatting passes **1126 C++, 159 Python, 114 web files**; diff checks pass. Logs, selectors, checkpoints and hashes are
+in `/tmp/ctcompile-iteration31/`.
+
+**Next:** exact Number power in the iterator helper arithmetic matcher (the
+`Pow` refusal remains in `ExceptionRecovery/Completion/DOMURI.cpp`), then coercing
+primitive equality and non-Number relational helper proofs; general expression correspondence, differing receivers and repeated
+allocation identities. Protected numeric `setAttribute`, mutable exceptional
+state, escaping owners, unguarded Bootstrap defaults, the native application
+driver and full native Bootstrap remain unfinished. No full-Bootstrap admission
+or raw escape-oracle precision gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs, raw
+escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and performance
+measurements were skipped. Linux process inspection found Claude CLI PID 2467946
+and loop PID 2333739; Windows identity inspection succeeded (362 processes,
+no matches). Concurrent rules applied; gates waited for Claude's browser batches.
+No browser/runtime/shared implementation edits, local builds, push or history rewrite.
+
 ## Primitive helper equality and nested conditional keys, 2026-09-25 UTC
 
 Resumed clean **de1bb41e** from HANDOFF and part 00. Iteration 29 was fully
