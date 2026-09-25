@@ -482,6 +482,18 @@ RAW_HELPER_SOURCES |= {
 }
 
 
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-number-unary": source.replace("return this;", "return +0 ? null : this;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return -(+0) ? null : {done: done, value: anchor};",
+    )
+    .replace("throw anchor;", "throw -(true ? 2 : 0) < +0 ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
 def check_outer_catches(args):
     compilers = find_compilers()
     compilers[1] = args.clang
