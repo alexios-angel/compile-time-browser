@@ -4,6 +4,15 @@ namespace ctbrowser::shell {
 using namespace detail;
 using namespace input_types;
 
+namespace {
+// `window[name].prototype`, or undefined when no such interface is defined.
+[[nodiscard]] value interface_prototype_of(context & c, std::string_view name) {
+    if (!c.has_global(name)) { return value::undefined(); }
+    const value ctor = c.global(name);
+    return ctor.is_object_like() ? c.lookup_property(ctor, "prototype") : value::undefined();
+}
+} // namespace
+
 void dom_bindings::install_control_form_data(context & cx) {
     const control_helpers helpers{this};
     // --- the entry list and FormData, HTML 4.10.21.4 and XHR's FormData -----------------
@@ -186,9 +195,14 @@ void dom_bindings::install_control_form_data(context & cx) {
                 add(helpers.attribute_of(txn, b, one, "dirname"), c.string(rtl ? "rtl" : "ltr"));
             }
         }
-        (void)helpers.fire(
-            c, b, form, "formdata", true, false,
-            [form_data](script::object_object & event) { event.set("formData", form_data); });
+        // A FormDataEvent when the interface exists (the events' installer
+        // defines it), so `e instanceof FormDataEvent` holds.
+        const value formdata_proto = interface_prototype_of(c, "FormDataEvent");
+        (void)helpers.fire(c, b, form, "formdata", true, false,
+                           [form_data, formdata_proto](script::object_object & event) {
+                               if (formdata_proto.is_object()) { event.prototype = formdata_proto; }
+                               event.set("formData", form_data);
+                           });
     };
     if (!secondary_) {
         helpers.install_data_transfer(cx);
@@ -480,10 +494,13 @@ void dom_bindings::install_control_form_data(context & cx) {
             }
             if (validate && !helpers.validate_form(c, this, form)) { return value::undefined(); }
             const value submitter_value = submitter ? wrap(c, submitter) : value::null();
-            const bool cancelled = helpers.fire(c, this, form, "submit", true, true,
-                                                [submitter_value](script::object_object & event) {
-                                                    event.set("submitter", submitter_value);
-                                                });
+            const value submit_proto = interface_prototype_of(c, "SubmitEvent");
+            const bool cancelled =
+                helpers.fire(c, this, form, "submit", true, true,
+                             [submitter_value, submit_proto](script::object_object & event) {
+                                 if (submit_proto.is_object()) { event.prototype = submit_proto; }
+                                 event.set("submitter", submitter_value);
+                             });
             if (cancelled || c.throw_pending()) { return value::undefined(); }
             build_submission(c, this, form, submitter);
             return value::undefined();
