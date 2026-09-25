@@ -906,6 +906,9 @@ public:
     // A data property DEFINED on `target` through define_own_name.
     void emit_define_own(std::uint16_t target, std::string_view key, std::uint16_t v,
                          bool enumerable);
+    // The same with the key in a register - a computed one.
+    void emit_define_own_key(std::uint16_t target, std::uint16_t key, std::uint16_t v,
+                             bool enumerable);
     void emit_computed_accessor(std::uint16_t target, std::int32_t key, std::int32_t fn_node,
                                 bool setter);
     // An array pattern over the iterator protocol - see iterator_open_name.
