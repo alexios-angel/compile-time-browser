@@ -44,8 +44,18 @@ std::optional<double> control_helpers::bound_of(const read_txn & txn, dom_bindin
 }
 
 bool control_helpers::is_step_aligned(double number, double base, double step) const {
-    const double quotient = (number - base) / step;
-    return std::fabs(quotient - std::round(quotient)) < 1e-9 * std::max(1.0, std::fabs(quotient));
+    // "An integral multiple of the allowed value step", decided the way the
+    // browsers decide it: past step * 2^53 the value's own precision is
+    // coarser than the step and no remainder means anything, so it is
+    // aligned; otherwise the remainder against the nearest multiple - in
+    // extended precision, where 17 against 3e-15 is not lost - counts only
+    // beyond step / 2^24, the tolerance a decimal step like 0.003 needs.
+    const long double value = std::fabs(static_cast<long double>(number) - base);
+    const long double unit = step;
+    if (value / 9007199254740992.0L > unit) { return true; }
+    const long double remainder = std::fabs(value - unit * std::round(value / unit));
+    const long double acceptable = unit / 16777216.0L;
+    return !(acceptable < remainder && remainder < unit - acceptable);
 }
 
 bool control_helpers::will_validate(const read_txn & txn, dom_bindings * b, node_id id) const {
@@ -236,11 +246,16 @@ unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id 
         const std::optional<double> number = helpers.to_number(txn, b, id, text);
         if (!text.empty() && !number) { flags |= bad_input; }
         if (number && type != "range") {
-            if (const auto min = helpers.bound_of(txn, b, id, "min"); min && *number < *min) {
-                flags |= range_underflow;
-            }
-            if (const auto max = helpers.bound_of(txn, b, id, "max"); max && *number > *max) {
-                flags |= range_overflow;
+            const auto min = helpers.bound_of(txn, b, id, "min");
+            const auto max = helpers.bound_of(txn, b, id, "max");
+            if (type == "time" && min && max && *max < *min) {
+                // A REVERSED RANGE (4.10.5.3.7: time has a periodic domain):
+                // only a value in the gap between max and min is out of range,
+                // and it underflows and overflows at once.
+                if (*number > *max && *number < *min) { flags |= range_underflow | range_overflow; }
+            } else {
+                if (min && *number < *min) { flags |= range_underflow; }
+                if (max && *number > *max) { flags |= range_overflow; }
             }
         }
         if (number) {
