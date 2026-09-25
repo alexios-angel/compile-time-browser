@@ -11,6 +11,82 @@
 
 namespace ctbrowser::script::builtins_detail {
 
+namespace {
+
+// FlattenIntoArray, 23.1.3.13.1 - `flat` and `flatMap` - IN ITS ORDER, which
+// a proxy source shows trap by trap: for each index ascending, HasProperty,
+// Get, the mapper (flatMap's, on the top level only), then IsArray of the
+// element while depth remains, and either a descent into it - its own
+// LengthOfArrayLike, its own indices - or CreateDataPropertyOrThrow onto the
+// target at the next index.
+//
+// An explicit stack of levels rather than the specification's recursion:
+// `flat(Infinity)` on a deep structure must not be bounded by the C++ stack,
+// and one that contains itself is the RangeError a recursion would reach.
+// The sources are held in a rooted array - a getter can collect.
+// False with a throw in flight.
+[[nodiscard]] bool flatten_into_array(context & c, value target, value source, double len,
+                                      double depth, value mapper, value this_arg) {
+    struct level {
+        double len;
+        double index;
+        double depth;
+    };
+    detail::generic_walk walk{c};
+    const value sources_value = c.make_array();
+    const context::rooted keep_sources(c, sources_value);
+    auto & sources = static_cast<array_object *>(sources_value.as_heap())->items;
+    sources.push_back(source);
+    std::vector<level> levels{level{len, 0, depth}};
+    double target_index = 0;
+    while (!levels.empty()) {
+        if (levels.back().index >= levels.back().len) {
+            levels.pop_back();
+            sources.pop_back();
+            continue;
+        }
+        if (!walk.step()) { return false; }
+        const double k = levels.back().index;
+        levels.back().index += 1.0;
+        const double left = levels.back().depth;
+        const value from = sources.back();
+        const bool exists = detail::has_element(c, from, k);
+        if (walk.threw()) { return false; }
+        if (!exists) { continue; }
+        value element = detail::element_at(c, from, k);
+        if (walk.threw()) { return false; }
+        if (levels.size() == 1 && mapper.is_callable()) {
+            const context::rooted keep_element(c, element);
+            const value args[3] = {element, value::number(k), from};
+            element = c.call(mapper, args, this_arg);
+            if (walk.threw()) { return false; }
+        }
+        const context::rooted keep_element(c, element);
+        bool flatten = false;
+        if (left > 0 && !detail::is_array_value(c, element, flatten)) { return false; }
+        if (flatten) {
+            if (levels.size() >= 10000) {
+                c.throw_error("RangeError", "Maximum call stack size exceeded");
+                return false;
+            }
+            const double inner = detail::array_like_length(c, element);
+            if (walk.threw()) { return false; }
+            sources.push_back(element);
+            levels.push_back(level{inner, 0, left - 1});
+            continue;
+        }
+        if (target_index >= max_safe_integer) {
+            c.throw_error("TypeError", "flat: the result would be longer than 2^53 - 1");
+            return false;
+        }
+        if (!detail::create_element(c, target, target_index, element)) { return false; }
+        target_index += 1.0;
+    }
+    return true;
+}
+
+} // namespace
+
 // Array.prototype
 void install_array(context & cx) {
     using detail::method;
@@ -352,54 +428,23 @@ void install_array(context & cx) {
     // `flat({})` and `flat(-Infinity)` are all depth 0. The old spelling tested
     // the argument COUNT for the default - so an explicit undefined flattened
     // nothing - and then coerced with the STATIC to_number, which answers NaN
-    // for an object and compares false against every bound.
+    // for an object and compares false against every bound. The length is
+    // read BEFORE the depth is coerced (steps 2 and 4), and the result is
+    // ArraySpeciesCreate(O, 0) (step 5).
     method(cx, array_proto, "flat", 0, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "flat")) { return out; }
-        const double depth = has_index(a, 0) ? integer_arg(c, a, 0) : 1.0;
+        const detail::unwind_watch watch{c};
         const double len = detail::array_like_length(c, self);
-        if (!detail::generic_walk_ok(c, len)) { return out; }
+        if (watch.threw()) { return out; }
+        double depth = has_index(a, 0) ? integer_arg(c, a, 0) : 1.0;
+        if (watch.threw()) { return out; }
+        if (depth < 0) { depth = 0; }
+        out = detail::array_species_create(c, self, 0);
+        if (out.is_undefined()) { return out; }
         const context::rooted keep(c, out);
-        auto * result = static_cast<array_object *>(out.as_heap());
-        // An explicit worklist rather than recursion: `flat(Infinity)` on a
-        // deep structure must not be bounded by the C++ stack.
-        //
-        // THE WORKLIST LIVES IN A ROOTED ARRAY, which is what reading through
-        // [[Get]] costs. A getter allocates, an allocation can collect, and a
-        // value sitting only in a std::vector<value> is in none of the
-        // collector's roots - the hazard `map` and `sort` document at length.
-        // `scratch` holds the pending VALUES and is rooted; the depths beside
-        // them are plain doubles with nothing to trace.
-        const value scratch = c.make_array();
-        const context::rooted keep_scratch(c, scratch);
-        auto & pending = static_cast<array_object *>(scratch.as_heap())->items;
-        std::vector<double> depths;
-        for (double k = len; k-- > 0;) {
-            if (!detail::has_element(c, self, k)) { continue; }
-            pending.push_back(detail::element_at(c, self, k));
-            depths.push_back(depth);
-        }
-        while (!pending.empty()) {
-            const value item = pending.back();
-            const double left = depths.back();
-            pending.pop_back();
-            depths.pop_back();
-            // ONLY A REAL Array IS FLATTENED - IsArray (7.2.2) and nothing
-            // else, so an array-LIKE element is one element however many
-            // indices it claims to have.
-            if (!item.is_array() || left <= 0) {
-                result->items.push_back(item);
-                continue;
-            }
-            const double inner = detail::array_like_length(c, item);
-            if (!detail::generic_walk_ok(c, inner)) { return out; }
-            for (double k = inner; k-- > 0;) {
-                if (!detail::has_element(c, item, k)) { continue; }
-                pending.push_back(detail::element_at(c, item, k));
-                depths.push_back(left - 1);
-            }
-        }
+        (void)flatten_into_array(c, out, self, len, depth, value::undefined(), value::undefined());
         return out;
     });
     // 23.1.3.14, whose depth is ALWAYS 1. Generic, it takes its `thisArg` - the
@@ -418,35 +463,10 @@ void install_array(context & cx) {
         if (watch.threw()) { return out; }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return out; }
-        const value this_arg = arg_at(a, 1);
-        if (!detail::generic_walk_ok(c, len)) { return out; }
         out = detail::array_species_create(c, self, 0); // step 5
         if (out.is_undefined()) { return out; }
         const context::rooted keep(c, out); // as `map` - see the note there
-        double n = 0;
-        for (double k = 0; k < len; k += 1.0) {
-            if (!detail::has_element(c, self, k)) { continue; }
-            const value args[3] = {detail::element_at(c, self, k), value::number(k), self};
-            value mapped = c.call(callback, args, this_arg);
-            if (!mapped.is_array()) {
-                if (!detail::create_element(c, out, n, mapped)) { return out; }
-                n += 1.0;
-                continue;
-            }
-            // THE MAPPED ARRAY IS A C++ LOCAL and, once the callback's frame
-            // has gone, the only reference to it there is - and reading it can
-            // run a getter, which can collect.
-            const context::rooted keep_mapped(c, mapped);
-            const double inner = detail::array_like_length(c, mapped);
-            if (!detail::generic_walk_ok(c, inner)) { return out; }
-            for (double j = 0; j < inner; j += 1.0) {
-                if (!detail::has_element(c, mapped, j)) { continue; }
-                if (!detail::create_element(c, out, n, detail::element_at(c, mapped, j))) {
-                    return out;
-                }
-                n += 1.0;
-            }
-        }
+        (void)flatten_into_array(c, out, self, len, 1.0, callback, arg_at(a, 1));
         return out;
     });
     method(cx, array_proto, "findLast", 1, [](context & c, std::span<value> a) {
