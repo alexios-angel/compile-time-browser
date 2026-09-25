@@ -22,6 +22,40 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Raw iterator helper tails and conditional confinement, 2026-09-25 UTC
+
+Resumed clean **dcf9ce9d** and its raw-helper boundary, then completed the
+interrupted candidates and build. **395b4a75** removes unreachable imported
+return tails before the existing custom-iterator helper proofs. The original
+getter and method sources now prepare from **raw import** and execute natively;
+live control flow, callable identity, effects and caught-node payloads still
+require the complete proofs. Ten raw controls cover live effects, reachable CFGs,
+wrong receiver/payload, invalid names and operation/successor budget ceilings.
+
+**10d875dc** proves frame confinement for nested allocations with one root block
+and only `scf.if` ancestors. Complete current contents, every return, initialized
+inputs and all-write acyclicity remain mandatory. Sixteen new controls preserve
+returned/saved children, publication, repeated sites, raw-frame and missing-proof
+refusals. This grants no shorter region lifetime, unique ownership or native
+lowering authority; no raw-oracle precision measurement was made.
+
+Final recovery **1/1, 5.46 s**, host contract **1/1, 2.82 s**, escape completion
+**1/1, 0.01 s** and arrays **1/1, 4.76 s** pass. The selected two-original raw and
+structured native execution check passes, with **20** generated C++ files and
+**40** checked binaries. All eight final source hashes match the devbox.
+Formatting passes **1127 C++, 159 Python, 114 web files**, plus final scoped
+checks. Independent native review found two budget-path defects; both were
+fixed and the native CTests rerun. Full suites were skipped.
+
+**Next:** reachable raw helper CFGs still refuse at the existing one-block
+getter/identity/capture checks; the new direct controls pin these boundaries.
+Normalize those live edges with source effects and rollback preserved before
+widening helper admission. Repeated nested allocation instances and ownership,
+mutable exceptional state, escaping owners, unguarded Bootstrap defaults, the
+native application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-25-raw-helper-tails.md).
+
 ## Native iterator closure scheduling and nested inventory, 2026-09-25 UTC
 
 Resumed clean **dcec1bd6** and its closure-scheduling boundary, including the
