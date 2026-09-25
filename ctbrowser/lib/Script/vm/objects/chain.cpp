@@ -76,8 +76,7 @@ value context::own_keys(value source) {
         auto * closure = static_cast<closure_object *>(source.as_heap());
         for (std::size_t i = 0; i < closure->props.size(); ++i) {
             const std::string & name = closure->props[i].first;
-            if ((closure->attrs_of(name) & attr_enumerable) != 0 &&
-                !name.starts_with(symbol_key_prefix)) {
+            if ((closure->attrs_of(name) & attr_enumerable) != 0 && !name.starts_with("@@")) {
                 keys->items.push_back(string(name));
             }
         }
@@ -85,8 +84,7 @@ value context::own_keys(value source) {
         auto * fn = static_cast<native_object *>(source.as_heap());
         for (std::size_t i = 0; i < fn->props.size(); ++i) {
             const std::string & name = fn->props[i].first;
-            if ((fn->attrs_of(name) & attr_enumerable) != 0 &&
-                !name.starts_with(symbol_key_prefix)) {
+            if ((fn->attrs_of(name) & attr_enumerable) != 0 && !name.starts_with("@@")) {
                 keys->items.push_back(string(name));
             }
         }

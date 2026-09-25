@@ -322,10 +322,12 @@ struct object_object final : heap_object {
     // Object.assign, object spread and JSON.stringify are each specified to
     // see. getOwnPropertyNames and Reflect.ownKeys keep the unfiltered walks
     // above, because those two report every own property by definition.
+    // STRING keys only: every symbol spelling starts "@@" - `@@sym:<n>:`,
+    // a registered `@@for:<key>` and a well-known `@@iterator` - and the
+    // last two were enumerated by the narrower symbol_key_prefix test.
     template <typename Fn> void each_own_enumerable_key(Fn && visit) const {
         each_own_entry([&](const std::string & key, std::uint8_t a) {
-            if ((a & attr_enumerable) != 0 && !key.starts_with(symbol_key_prefix) &&
-                !is_private_key(key)) {
+            if ((a & attr_enumerable) != 0 && !key.starts_with("@@") && !is_private_key(key)) {
                 visit(key);
             }
         });
