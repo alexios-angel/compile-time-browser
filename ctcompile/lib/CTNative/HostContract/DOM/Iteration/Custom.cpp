@@ -230,6 +230,29 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (auto result = llvm::dyn_cast_if_present<ctjs::BooleanAttr>(primitive.literal)) {
             return result.getValue();
         }
+        if (comparison.getKind() == ctjs::CompareKind::Eq) {
+            // Normalize only the proof operands. Loose scalar equality maps
+            // Boolean to Number and identifies null with undefined; the shared
+            // strict comparison then preserves tags, NaNs and signed zeros.
+            const auto scalar = [](mlir::Attribute value) -> mlir::Attribute {
+                if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(value)) {
+                    return ctjs::NumberAttr::get(
+                        value.getContext(),
+                        std::bit_cast<uint64_t>(boolean.getValue() ? 1.0 : 0.0));
+                }
+                if (llvm::isa<ctjs::UndefinedAttr>(value)) {
+                    return ctjs::NullAttr::get(value.getContext());
+                }
+                return llvm::isa<ctjs::NumberAttr, ctjs::NullAttr>(value) ? value
+                                                                          : mlir::Attribute{};
+            };
+            const auto a = scalar(lhs.getValue()), b = scalar(rhs.getValue());
+            if (!a || !b) { return std::nullopt; }
+            const auto equal = host_detail::prefixCompare(
+                ctjs::CompareKind::StrictEq, host_detail::prefixValue::constant(a),
+                host_detail::prefixValue::constant(b), comparison.getContext());
+            return llvm::cast<ctjs::BooleanAttr>(equal.literal).getValue();
+        }
         auto left =
             lhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(lhs.getValue()) : ctjs::NumberAttr{};
         auto right =
@@ -239,7 +262,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         // preserve unordered NaNs and signed-zero equality.
         const double a = left.getDouble(), b = right.getDouble();
         switch (comparison.getKind()) {
-        case ctjs::CompareKind::Eq:
         case ctjs::CompareKind::StrictEq: return a == b;
         case ctjs::CompareKind::Lt: return a < b;
         case ctjs::CompareKind::Le: return a <= b;
