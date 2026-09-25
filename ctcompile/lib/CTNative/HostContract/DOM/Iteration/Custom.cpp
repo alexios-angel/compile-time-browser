@@ -1,5 +1,6 @@
 #include "../Source/Proof.hpp"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Transforms/RegionUtils.h"
 
 #include <bit>
 
@@ -170,7 +171,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (object->getBlock() != openAnchor->getBlock() || !object->isBeforeInBlock(openAnchor)) {
         return error("DOM custom iterator holder lacks preceding local allocation");
     }
-    const auto targetOf = [&](ctjs::CreateClosureOp closure) {
+    const auto prepareTarget = [&](ctjs::CreateClosureOp closure) {
         ctjs::FuncOp found;
         for (auto function : candidate.getOps<ctjs::FuncOp>()) {
             if (!spend()) { return ctjs::FuncOp{}; }
@@ -178,6 +179,34 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (found) { return ctjs::FuncOp{}; }
                 found = function;
             }
+        }
+        if (found && found != entry && !found.getBody().hasOneBlock()) {
+            // Raw import retains unreachable returns after terminal return/throw.
+            // Prune those tails on this private candidate, without granting any
+            // authority over reachable control flow, effects or payloads.
+            uint64_t size = 0;
+            const auto counted = found.walk([&](mlir::Operation * operation) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                size += uint64_t(1) + operation->getNumOperands() + operation->getNumResults() +
+                        operation->getNumSuccessors();
+                for (auto & region : operation->getRegions()) {
+                    for (auto & block : region) {
+                        if (!spend()) { return mlir::WalkResult::interrupt(); }
+                        size += uint64_t(1) + block.getNumArguments();
+                    }
+                }
+                return size > work.remaining ? mlir::WalkResult::interrupt()
+                                             : mlir::WalkResult::advance();
+            });
+            // ponytail: upstream has no step callback; reserve a quadratic
+            // input ceiling until larger helper CFGs need a tighter bound.
+            if (counted.wasInterrupted() || size > work.remaining / size) {
+                work.remaining = 0;
+                return ctjs::FuncOp{};
+            }
+            work.remaining -= static_cast<unsigned>(size * size);
+            mlir::IRRewriter rewriter(candidate.getContext());
+            (void)mlir::eraseUnreachableBlocks(rewriter, found.getBody());
         }
         return found;
     };
@@ -190,7 +219,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
         if (auto accessor = llvm::dyn_cast<ctjs::DefineAccessorOp>(user)) {
             auto getter = accessor.getGetter().getDefiningOp<ctjs::CreateClosureOp>();
-            auto body = getter ? targetOf(getter) : ctjs::FuncOp{};
+            auto body = getter ? prepareTarget(getter) : ctjs::FuncOp{};
             auto thrown = body && body.getBody().hasOneBlock() && !body.getBody().front().empty()
                               ? llvm::dyn_cast<ctjs::ThrowOp>(body.getBody().front().back())
                               : ctjs::ThrowOp{};
@@ -260,7 +289,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return error("DOM custom iterator lacks its own iterator and next methods");
     }
     auto identity = iteratorSlot.getValue().getDefiningOp<ctjs::CreateClosureOp>();
-    auto identityBody = targetOf(identity);
+    auto identityBody = prepareTarget(identity);
     if (!identityBody || identityBody->hasAttr("ctjs.skipped") ||
         !undefined(identity.getEnclosingThis()) ||
         identity.getEnclosingClosure() != entry.getBody().front().getArgument(ctjs::arg_callee) ||
@@ -357,7 +386,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     for (auto & [name, slot] : slots) {
         (void)name;
         auto closure = slot.getValue().getDefiningOp<ctjs::CreateClosureOp>();
-        auto body = targetOf(closure);
+        auto body = prepareTarget(closure);
         auto indices = closure.getEnclosingIndicesAttr();
         if (body == entry) { return error("DOM iterator method must not alias the entry"); }
         if (!body || body->hasAttr("ctjs.skipped") || !body.getBody().hasOneBlock() ||
@@ -545,7 +574,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     for (auto closure : entry.getBody().front().getOps<ctjs::CreateClosureOp>()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         if (!siblingHelpers.contains(closure)) { continue; }
-        auto body = targetOf(closure);
+        auto body = prepareTarget(closure);
         auto indices = closure.getEnclosingIndicesAttr();
         if (!body || body == entry || body->hasAttr("ctjs.skipped") ||
             !body.getBody().hasOneBlock() || body.getBody().front().empty() ||
@@ -1272,7 +1301,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     // Projecting these records cannot invoke getters, consult a prototype or
     // lose evaluation of a field producer. Complete DOM proof checks values.
     for (auto & [name, store] : slots) {
-        auto body = targetOf(store.getValue().getDefiningOp<ctjs::CreateClosureOp>());
+        auto body = prepareTarget(store.getValue().getDefiningOp<ctjs::CreateClosureOp>());
         if (!body || !body.getBody().hasOneBlock() ||
             body.getBody().front().getNumArguments() != ctjs::implicit_arguments) {
             return error("DOM iterator methods require complete zero-argument bodies");
@@ -2028,7 +2057,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     for (auto & [name, store] : slots) {
         if (stateInitials.empty()) { break; }
         auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
-        auto body = targetOf(closure);
+        auto body = prepareTarget(closure);
+        if (!body) { return error("DOM custom iterator budget exhausted"); }
         auto & block = body.getBody().front();
         llvm::SmallVector<mlir::Value> current;
         for (auto initial : stateInitials) {
@@ -2633,7 +2663,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (!stateInitials.empty()) {
         for (auto & [name, store] : slots) {
             (void)name;
-            completed.push_back(targetOf(store.getValue().getDefiningOp<ctjs::CreateClosureOp>()));
+            completed.push_back(
+                prepareTarget(store.getValue().getDefiningOp<ctjs::CreateClosureOp>()));
             if (!completed.back()) { return error("DOM custom iterator budget exhausted"); }
         }
     }

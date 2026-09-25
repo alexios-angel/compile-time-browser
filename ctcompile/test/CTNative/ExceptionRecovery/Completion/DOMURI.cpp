@@ -869,6 +869,94 @@ static void testHelperCatchSource(mlir::MLIRContext & context) {
     }
 }
 
+static void testRawIteratorHelpers(mlir::ModuleOp original,
+                                   const ctcompile::ctnative::HostContract & contract) {
+    for (unsigned control = 0; control != 10; ++control) {
+        mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
+        auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
+        auto next = candidate->lookupSymbol<ctjs::FuncOp>("fn$3");
+        auto close = candidate->lookupSymbol<ctjs::FuncOp>("fn$4");
+        for (auto helper : {identity, next, close}) {
+            check(std::distance(helper.getBody().begin(), helper.getBody().end()) == 2 &&
+                      helper.getBody().back().hasNoPredecessors(),
+                  "raw iterator helper retains its unreachable return tail");
+        }
+        auto & body = identity.getBody().front();
+        mlir::OpBuilder at(body.getTerminator());
+        if (control == 0 || control == 1) {
+            if (control == 0) { at.setInsertionPoint(identity.getBody().back().getTerminator()); }
+            ctjs::StoreGlobalOp::create(at, identity.getLoc(), "identity-effect",
+                                        body.getArgument(ctjs::arg_receiver));
+        } else if (control >= 2 && control <= 4) {
+            auto helper = control == 2 ? identity : control == 3 ? next : close;
+            auto & first = helper.getBody().front();
+            auto * terminal = first.getTerminator();
+            auto * continuation = first.splitBlock(terminal);
+            at.setInsertionPointToEnd(&first);
+            mlir::cf::BranchOp::create(at, helper.getLoc(), continuation);
+        } else if (control == 5 || control == 6) {
+            auto receiver = close.getBody().front().getArgument(ctjs::arg_receiver);
+            if (control == 5) {
+                auto call = *close.getBody().front().getOps<ctjs::CallOp>().begin();
+                call.getReceiverMutable().assign(receiver);
+            } else {
+                close.getBody().front().getTerminator()->setOperand(0, receiver);
+            }
+        } else if (control == 7) {
+            for (auto literal : next.getBody().front().getOps<ctjs::ConstantOp>()) {
+                if (ctjs::constantKey(literal) == "data-next") {
+                    literal.setValueAttr(ctjs::StringAttr::get(original.getContext(), "bad name"));
+                }
+            }
+        } else if (control == 8) {
+            at.setInsertionPoint(identity.getBody().back().getTerminator());
+            for (unsigned i = 0; i != 300; ++i) {
+                ctjs::ConstantOp::create(at, identity.getLoc(),
+                                         ctjs::UndefinedAttr::get(original.getContext()));
+            }
+        } else if (control == 9) {
+            auto * continuation = body.splitBlock(body.getTerminator());
+            at.setInsertionPointToEnd(&body);
+            auto flag = mlir::arith::ConstantIntOp::create(at, identity.getLoc(), 0, 32);
+            llvm::SmallVector<int32_t> cases;
+            llvm::SmallVector<mlir::Block *> destinations;
+            llvm::SmallVector<mlir::ValueRange> operands;
+            for (int32_t i = 0; i != 400; ++i) {
+                cases.push_back(i);
+                destinations.push_back(continuation);
+                operands.emplace_back();
+            }
+            mlir::cf::SwitchOp::create(at, identity.getLoc(), flag, continuation,
+                                       mlir::ValueRange{}, cases, destinations, operands);
+        }
+        if (!check(mlir::succeeded(mlir::verify(*candidate)), "raw helper control verifies")) {
+            continue;
+        }
+        auto proof = contract;
+        proof.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*candidate);
+        const auto fingerprint = proof.moduleSha256;
+        const auto before = printed(*candidate);
+        auto error = ctcompile::ctnative::prepareDOMEntry(*candidate, proof, 100000);
+        const auto reason = error ? llvm::toString(std::move(error)) : std::string{};
+        if (control == 0) {
+            check(reason.empty() &&
+                      ctcompile::ctnative::DOMEntryAnalysis(*candidate, proof).proved(),
+                  "only unreachable helper effects are pruned before complete DOM proof");
+        } else {
+            check(!reason.empty() && printed(*candidate) == before &&
+                      proof.moduleSha256 == fingerprint,
+                  "raw helper shape, effect and receiver refusals roll back the whole module");
+            if (control >= 8) {
+                check(reason.find("budget") != std::string::npos,
+                      "helper operations and successor edges consume the normalization budget");
+            }
+        }
+        if ((control == 0) != reason.empty()) {
+            llvm::errs() << "raw helper control " << control << ": " << reason << '\n';
+        }
+    }
+}
+
 static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
     const std::string getter = R"js(function customElements(anchor) {
   const values = {
@@ -912,6 +1000,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
         contract.initialIntrinsics = {"Object", "Symbol", "__ctbrowser_for_of_open",
                                       "__ctbrowser_iter_next", "__ctbrowser_iter_close"};
         contract.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*module);
+        if (!structured && !method) { testRawIteratorHelpers(*module, contract); }
         const auto originalModule = printed(*module);
         auto close = ctcompile::ctnative::normalizeDOMIteratorClose(*module, contract);
         check(close && !*close && printed(*module) == originalModule &&
@@ -925,23 +1014,19 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
             auto proof = contract;
             auto error = ctcompile::ctnative::prepareDOMEntry(*candidate, proof, budget);
             const auto reason = error ? llvm::toString(std::move(error)) : std::string{};
-            if (structured && budget) {
+            if (budget) {
                 check(reason.empty() && mlir::succeeded(mlir::verify(*candidate)) &&
                           proof.moduleSha256 ==
                               ctcompile::ctnative::hostContractFingerprint(*candidate) &&
                           ctcompile::ctnative::DOMEntryAnalysis(*candidate, proof).proved(),
-                      "original structured iterator prepares and passes fresh complete DOM proof");
+                      "original iterator prepares and passes fresh complete DOM proof");
                 if (!reason.empty()) { llvm::errs() << reason << '\n'; }
                 continue;
             }
-            check(reason.find(budget ? boundary : "budget") != std::string::npos &&
+            check(reason.find("budget") != std::string::npos &&
                       printed(*candidate) == originalModule &&
                       proof.moduleSha256 == contract.moduleSha256,
-                  "observing iterator reaches protocol proof while late or budget refusal rolls "
-                  "back");
-            if (budget && reason.find(boundary) == std::string::npos) {
-                llvm::errs() << reason << '\n';
-            }
+                  "observing iterator budget refusal rolls back");
         }
         const auto checks = countChecks(function);
         mlir::DominanceInfo dominance(function);
@@ -1284,8 +1369,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                 ctjs::IterableOp::create(at, call.getLoc(), holder.getType(), holder);
             }
             const auto rewrittenClose = [&](ctjs::CallOp found) {
-                if (!structured || control == 12 || control == 13 || control == 19 ||
-                    control == 22) {
+                if (control == 12 || control == 13 || control == 19 || control == 22) {
                     return false;
                 }
                 if (control == 17 || control == 18 || control == 20) {
@@ -1314,8 +1398,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                            : mlir::Attribute{};
             };
             const bool transported =
-                structured &&
-                (control == 0 || control == 15 || control == 21 || control == 28 || control == 40);
+                control == 0 || control == 15 || control == 21 || control == 28 || control == 40;
             unsigned caughtArguments = 0, caughtAnchor = 0;
             if (transported) {
                 auto & caught = attempt.getCatchBody().front();
@@ -1533,7 +1616,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                 check(!poison && kept == 3 && closes == 2 && advancing && attempts == 1 &&
                           caughtComparisons == 1,
                       "state transport retains next, both closes and the original local catch");
-                if (control == 0) {
+                if (control == 0 && structured) {
                     unsigned required = 0;
                     for (unsigned mutation = 0; mutation != 9; ++mutation) {
                         auto staged = mlir::parseSourceString<mlir::ModuleOp>(observedIteratorState,

@@ -473,6 +473,16 @@ var outcome0 = observe(false), outcome1 = observe(true);
             if output != expected:
                 raise RuntimeError(f"{name}: outer catch oracle differs: {result}")
         ir, contract = dom.prepare(args, name, source, 1, entry_name="customElements")
+        raw = args.work / f"{name}.raw.mlir"
+        raw_manifest = dict(
+            contract,
+            module_sha256=dom.fingerprint(args.opt, raw),
+            initial_intrinsics=INTRINSICS,
+        )
+        raw_label = f"{name}-raw-helpers"
+        native = dom.lower(args, raw, raw_manifest, raw_label)
+        dom.standalone(args, native, raw_label, checks, compilers, includes, libraries)
+        dom.lower(args, raw, raw_manifest, raw_label + "-zero-budget", success=False, max_steps=0)
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
                 label = f"{name}-{provider}-{optimize}"
