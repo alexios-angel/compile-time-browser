@@ -22,6 +22,77 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Primitive helper equality and nested conditional keys, 2026-09-25 UTC
+
+Resumed clean **de1bb41e** from HANDOFF and part 00. Iteration 29 was fully
+committed; the old WIP branch is already an ancestor. Parallel agents completed
+the native controls and escape change. The parent reviewed both changes and ran
+the gates; the separate native reviewer hit service limits before producing a
+report, so no independent final review is claimed.
+
+**ed843687** reuses the existing source-prefix comparison proof for strict
+equality of exact Number/Boolean/String/null/undefined literals, including mixed
+tags, and loose equality of two Strings. Existing Number comparisons remain.
+Input evaluation, shared uses, guarded malformed inputs, bounded CFG/SCF
+normalization and complete helper/DOM proofs still govern publication.
+102 new controls (**536 total**) cover UTF-8 and embedded-NUL Strings,
+transported compare/Not chains, effects and unsupported coercions, with public
+zero/late-budget rollback. Global reads and object conversion gain no authority.
+
+**191664e2** extends exact same-i1 condition replay to nested result branches
+inside the already-certified single-visit loop body. Both producers must be
+reached by the census, and subtraction still needs independent finite Number
+bounds and corresponding per-arm values. No-result branches retain structural
+replay. Nineteen new rows (**272 total**) and five live mutation states
+(**47 total**) cover nested/root correspondence, guard gaps/overlap, aliases,
+every exit, cycles and zero/repeated visits, retaining stale-solver,
+forged-marker and every-incomplete-budget rollback checks. This establishes
+frame confinement, not native ownership or shorter lifetimes.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 9.79 s**,
+`ctcompile_host_contract` **1/1, 2.72 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.90 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+Passing CTests were not replayed for the source-fixture correction.
+
+**cc342030** executes two complete literal-equality source witnesses. Raw and
+structured preparation use the default **100,000-step** budget. Their helpers
+retain strict equality, String equality and logical-not through raw import.
+The initial source used global `undefined`, which imports as `ctjs.load_global`
+and correctly fails the closed-identity proof. Both complete original programs
+are retained byte-for-byte as explicit refusals at **1,000,000 steps**; the
+successful witnesses use literal `false` in that mixed-tag comparison.
+All four programs agree with Node/VM. The successful sources pass **20 generated
+C++ files and 40 GCC/Clang binaries**, both printers/providers/optimization modes,
+ten zero-budget refusals, ordered DOM writes, two documents and 16 lifetimes.
+Source and linked-symbol checks find no Script/AOT dependency.
+
+The original ten C++ raw literals and 71 Python multiline values remain intact.
+Repository formatting passes **1126 C++, 159 Python, 114 web files**; diff checks
+pass. Six final file hashes are recorded with logs, selectors and agent traces
+in `/tmp/ctcompile-iteration30/`; generated artifacts are on the devbox in
+`/tmp/ctcompile-iteration30-branches/`.
+
+**Next:** source global-`undefined` identity, power, coercing primitive equality
+and non-Number relational helper proofs; recomputed-condition correlation,
+broader expression correspondence, differing receivers and repeated allocation
+identities. Protected numeric `setAttribute`, mutable exceptional state,
+escaping owners, unguarded Bootstrap defaults, the native application driver
+and full native Bootstrap remain unfinished. No full-Bootstrap admission or
+raw escape-oracle precision gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs, raw
+escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. Initial Linux executable inspection was
+incomplete; Windows identity inspection succeeded (356 processes, no matches).
+A subsequent `ps` check identified the actual Claude CLI (PID 2467946), so
+concurrent rules applied. No browser/runtime/shared implementation edits,
+local builds, push or history rewrite.
+
 ## Static Number/bitwise helpers and sibling conditional keys, 2026-09-25 UTC
 
 Resumed clean **35d19c4d** from HANDOFF and part 00. Iteration 28 was
