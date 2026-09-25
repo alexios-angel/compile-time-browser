@@ -113,9 +113,37 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         at.box_abs = abs_rect(id);
         at.containing = rect{0, 0, static_cast<float>(viewport_width_),
                              fragments_ != nullptr ? fragments_->bounds.height : 0.0f};
-        for (std::size_t up = 1; up < at.chain.size(); ++up) {
+        // A FIXED box's containing block is the viewport - unless an ancestor
+        // establishes one for fixed boxes too: a transform, a perspective, a
+        // filter, paint or layout containment, or a will-change of one of them
+        // (CSS Position 3 §2.1, CSS Transforms 1 §2, Filter Effects 1 §5).
+        const auto holds_fixed = [&](node_id node) {
+            if (styles_ == nullptr) { return false; }
+            const auto found = styles_->find(style::engine::key_of(node));
+            if (found == styles_->end() || !found->second) { return false; }
+            const auto value = [&](std::string_view property) {
+                return collapse_keyword(found->second->get(atoms_->intern(property)));
+            };
+            const auto set = [](const std::string & v) { return !v.empty() && v != "none"; };
+            const std::string contain = value("contain");
+            const std::string will = value("will-change");
+            return set(value("transform")) || set(value("perspective")) || set(value("filter")) ||
+                   set(value("backdrop-filter")) || set(value("rotate")) || set(value("scale")) ||
+                   set(value("translate")) || contain.find("paint") != std::string::npos ||
+                   contain.find("layout") != std::string::npos || contain == "strict" ||
+                   contain == "content" || will.find("transform") != std::string::npos ||
+                   will.find("perspective") != std::string::npos ||
+                   will.find("filter") != std::string::npos;
+        };
+        const bool fixed = at.position == layout::position_kind::fixed;
+        // Only an out-of-flow box has one; the walk is not paid for the rest.
+        const bool out_of_flow = fixed || at.position == layout::position_kind::absolute;
+        for (std::size_t up = 1; out_of_flow && up < at.chain.size(); ++up) {
             const layout::box_node * ancestor = box_for(boxes_, at.chain[up]);
-            if (ancestor == nullptr || !ancestor->is_positioned()) { continue; }
+            if (ancestor == nullptr) { continue; }
+            // ...and what holds a fixed box holds an absolute one too.
+            const bool holds = holds_fixed(at.chain[up]);
+            if (fixed ? !holds : !(ancestor->is_positioned() || holds)) { continue; }
             const rect outer = abs_rect(at.chain[up]);
             const layout::constraints c{outer.width, outer.height, ancestor->font_size};
             const layout::resolved_edges e = layout::resolve_edges(*ancestor, c);
