@@ -288,6 +288,13 @@ void test_a_grouping_rule_inserts_and_deletes() {
         caught = '';
         try { group.insertRule('@import url("foo.css");', 0); } catch (e) { caught = e.name; }
         console.log('import=' + caught);
+        // conditional-CSSGroupingRule: no block, garbage after it, two rules.
+        const refused = [];
+        for (const text of ['@media bad syntax;', '@media print {} foo',
+                            '@media print {} @media print {}']) {
+            try { group.insertRule(text, 0); refused.push('ok'); } catch (e) { refused.push(e.name); }
+        }
+        console.log('refused=' + refused.join(',') + ',' + group.cssRules.length);
         group.deleteRule(0);
         console.log('gone=' + group.cssRules.length + ',' + group.cssText);
     </script></body></html>)");
@@ -305,6 +312,8 @@ void test_a_grouping_rule_inserts_and_deletes() {
     // `@import` and `@namespace` are TOP-LEVEL rules, so a grouping rule refuses
     // them with a HierarchyRequestError rather than a SyntaxError.
     CHECK_EQ(logged(page, "import="), std::string{"import=HierarchyRequestError"});
+    CHECK_EQ(logged(page, "refused="),
+             std::string{"refused=SyntaxError,SyntaxError,SyntaxError,2"});
     CHECK_EQ(logged(page, "gone="),
              std::string{"gone=1,@media print {\n  #foo { z-index: 23; float: left; }\n}"});
 }

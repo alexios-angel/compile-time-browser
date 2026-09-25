@@ -487,6 +487,19 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             open == std::string_view::npos || close == std::string_view::npos
                 ? std::string_view{}
                 : trimmed.substr(open + 1, close - open - 1);
+        // ONE RULE (CSSOM 6.4.3 "parse a rule"): a block at-rule with no
+        // block - `@media bad syntax;` - is invalid, and text after the block
+        // is garbage or a second rule (conditional-CSSGroupingRule).
+        const bool trailing = open != std::string_view::npos && close != std::string_view::npos &&
+                              !trim(trimmed.substr(close + 1), html_whitespace).empty();
+        const bool blockless =
+            open == std::string_view::npos && made.at_name != "layer" &&
+            (at_rule_holds_rules(made.at_name) || at_rule_holds_declarations(made.at_name));
+        if (trailing || blockless) {
+            css_rule_store_.pop_back();
+            error = "SyntaxError";
+            return no_index;
+        }
 
         if (made.type == media_rule) {
             // THE AUTHOR'S BYTES, which is the whole reason a media rule made
