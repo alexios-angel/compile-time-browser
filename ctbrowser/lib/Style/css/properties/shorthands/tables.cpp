@@ -7,6 +7,19 @@ namespace ctbrowser::style::css::shorthand_detail {
         ascii_iequals(name.substr(name.size() - 7), "-radius") && find_property(name) != nullptr) {
         return name.substr(8);
     }
+    // THE OTHER LEGACY NAME ALIASES (CSS Cascade 5 §legacy name alias): a
+    // name that IS another property's at parse time - set, read and written
+    // back under the new one, and no property of its own. Flexbox 1 §9's
+    // twelve `-webkit-` names and CSS UI 4's `-webkit-appearance`.
+    static constexpr std::string_view webkit[] = {
+        "align-content",   "align-items", "align-self", "flex",        "flex-basis",
+        "flex-direction",  "flex-flow",   "flex-grow",  "flex-shrink", "flex-wrap",
+        "justify-content", "order",       "appearance"};
+    if (ascii_istarts_with(name, "-webkit-")) {
+        for (const std::string_view target : webkit) {
+            if (ascii_iequals(name.substr(8), target)) { return target; }
+        }
+    }
     return name;
 }
 
