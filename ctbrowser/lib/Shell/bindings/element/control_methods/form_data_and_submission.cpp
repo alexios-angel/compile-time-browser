@@ -1,5 +1,7 @@
 #include "helpers.hpp"
 
+#include <ctbrowser/dom/encoding.hpp>
+
 namespace ctbrowser::shell {
 using namespace detail;
 using namespace input_types;
@@ -54,8 +56,11 @@ void dom_bindings::install_control_form_data(context & cx) {
     // the specification's null - when the form is already constructing one
     // (its "constructing entry list" flag, a slot on the form): a `formdata`
     // listener that submits the form again must not recurse.
+    // `encoding` is the one "_charset_" reports: the submission's picked
+    // encoding, and UTF-8 for a FormData (which has none).
     const auto entry_list = [helpers, make_entry](context & c, dom_bindings * b, node_id form,
-                                                  node_id submitter, value form_data) -> bool {
+                                                  node_id submitter, value form_data,
+                                                  std::string_view encoding = "UTF-8") -> bool {
         if (context::truthy(helpers.slot_of(c, b, form, constructing_slot))) { return false; }
         helpers.set_slot(c, b, form, constructing_slot, value::boolean(true));
         auto * list = static_cast<script::array_object *>(
@@ -159,7 +164,7 @@ void dom_bindings::install_control_form_data(context & cx) {
             }
             if (type == "hidden" && ascii_lower_copy(name) == "_charset_" &&
                 !helpers.has_attribute(txn, b, one, "value")) {
-                add(name, c.string("UTF-8"));
+                add(name, c.string(std::string{encoding}));
                 continue;
             }
             if (local == "textarea") {
@@ -500,7 +505,30 @@ void dom_bindings::install_control_form_data(context & cx) {
                                                 node_id submitter) {
         const value data = new_form_data(c);
         if (!data.is_object()) { return; }
-        if (!entry_list(c, b, form, submitter, data) || c.throw_pending()) { return; }
+        // "Picking an encoding for the form" (4.10.21.3): the first label in
+        // `accept-charset` that names an encoding - UTF-8 when the attribute
+        // names none - else the document's, and UTF-8 for the three an output
+        // encoding cannot be.
+        std::string encoding;
+        {
+            const auto txn = b->doc_->read();
+            encoding = b->doc_->encoding();
+            if (txn.has_attribute(form, b->atoms_->intern("accept-charset"))) {
+                encoding = "UTF-8";
+                for (const std::string_view label :
+                     split_top_level(txn.attribute_value(form, b->atoms_->intern("accept-charset")),
+                                     html_whitespace)) {
+                    if (const std::string_view named = encoding_from_label(label); !named.empty()) {
+                        encoding = std::string{named};
+                        break;
+                    }
+                }
+            }
+            if (encoding == "UTF-16BE" || encoding == "UTF-16LE" || encoding == "replacement") {
+                encoding = "UTF-8";
+            }
+        }
+        if (!entry_list(c, b, form, submitter, data, encoding) || c.throw_pending()) { return; }
         // ...AND THE NAVIGATION, when the form aims a GET at a frame this
         // document names (frames.cpp): the entry list "converted to a list
         // of name-value pairs" (4.10.21.6) - a File by its name, and in the
