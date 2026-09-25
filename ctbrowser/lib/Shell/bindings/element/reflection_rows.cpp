@@ -365,6 +365,7 @@ constexpr reflected_attribute reflection_table[] = {
     nullable_enum_attr("HTMLImageElement", "crossOrigin", cors_keywords, "anonymous",
                        "crossorigin"),
     text_attr("HTMLImageElement", "srcset"),
+    text_attr("HTMLImageElement", "sizes"),
     text_attr("HTMLImageElement", "useMap", "usemap"),
     text_attr("HTMLImageElement", "name"),
     text_attr("HTMLImageElement", "align"),

@@ -378,7 +378,10 @@ void dom_bindings::install_control_select_options(context & cx) {
                          dom_bindings * b = where.first;
                          const node_id id = where.second;
                          if (!id) { return value::null(); }
-                         return b->make_live_collection(c, [b, id, helpers] {
+                         // [SameObject]: one live collection per select.
+                         const value held = helpers.slot_of(c, b, id, "__selectedOptions");
+                         if (held.is_object_like()) { return held; }
+                         const value list = b->make_live_collection(c, [b, id, helpers] {
                              const auto txn = b->doc_->read();
                              std::vector<node_id> options;
                              std::vector<node_id> out;
@@ -390,6 +393,8 @@ void dom_bindings::install_control_select_options(context & cx) {
                              }
                              return out;
                          });
+                         helpers.set_slot(c, b, id, "__selectedOptions", list);
+                         return list;
                      });
     // `length`: the number of options; setting it appends blank options or
     // removes the surplus from the end.

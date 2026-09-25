@@ -59,6 +59,12 @@ bool control_helpers::will_validate(const read_txn & txn, dom_bindings * b, node
         if (helpers.has_attribute(txn, b, id, "readonly")) { return false; }
     }
     if (local == "textarea" && helpers.has_attribute(txn, b, id, "readonly")) { return false; }
+    // A <button> that is not a submit button (4.10.6: type=reset or
+    // type=button; a missing or invalid type is the submit state).
+    if (local == "button") {
+        const std::string type = ascii_lower_copy(helpers.attribute_of(txn, b, id, "type"));
+        if (type == "reset" || type == "button") { return false; }
+    }
     for (node_id up = txn.parent(id); up; up = txn.parent(up)) {
         if (helpers.is(txn, up, "datalist")) { return false; }
     }

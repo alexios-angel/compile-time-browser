@@ -58,6 +58,19 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
         cx.throw_error("TypeError", "attachShadow: the receiver is not an Element");
         return value::undefined();
     }
+    // DOM 4.8 step 3: a custom element whose definition (looked up by name
+    // and `is`, upgraded or not) lists "shadow" in disabledFeatures cannot
+    // host one - checked before the existing-root rules below.
+    {
+        const auto txn = doc_->read();
+        if (const std::size_t def = custom_definition_for(txn, host);
+            def < primary().custom_definitions_.size() &&
+            primary().custom_definitions_[def].disable_shadow) {
+            throw_dom_exception(cx, "NotSupportedError",
+                                "attachShadow: this custom element disables shadow roots");
+            return value::undefined();
+        }
+    }
     // A ROOT THE PARSER ATTACHED IS CLAIMED, NOT REFUSED. DOM 4.8 step 4: a
     // shadow root that is still declarative and whose mode MATCHES is emptied
     // and handed back, so a page can reach into a `<template shadowrootmode>`
