@@ -560,6 +560,18 @@ RAW_HELPER_SOURCES |= {
 }
 
 
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-string-order": source.replace("return this;", "return '10' < '2' ? this : null;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return '\\uD800\\uDC01' >= '\\uD800\\uDC00' ? {done: done, value: anchor} : null;",
+    )
+    .replace("throw anchor;", "throw (true ? 'a\\0' : '') > 'a' ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
 # Retain the complete source-global witnesses; the initialized provider and
 # absence of source writes must prove the binding before helper projection.
 RAW_HELPER_SOURCES |= {
@@ -703,6 +715,47 @@ var outcome0 = observe(false), outcome1 = observe(true);
                     success=False,
                     max_steps=0,
                 )
+        if name.endswith("-helper-string-order"):
+            # Preserve the complete witness at the VM's known byte/UTF-16
+            # disagreement. A larger proof budget must not admit it.
+            label = name + "-unicode-disagreement"
+            refused_source = source.replace("'10' < '2'", "'\\uD800\\uDC00' < '\\uE000'")
+            refused_oracle = args.work / f"{label}.oracle.js"
+            refused_node = args.work / f"{label}.node.js"
+            refused_oracle.write_text(script.replace(source, refused_source, 1))
+            refused_node.write_text(node.read_text().replace(source, refused_source, 1))
+            if run([args.node, str(refused_node)]).stdout != expected:
+                raise RuntimeError(f"{label}: JavaScript UTF-16 ordering changed")
+            vm_expected = 'outcome0="return:false:"\noutcome1="return:false:"\n'
+            if unquote(run([args.reference, str(refused_oracle)]).stdout) != vm_expected:
+                raise RuntimeError(f"{label}: revisit the VM String-order refusal")
+            refused_ir, refused_contract = dom.prepare(
+                args, label, refused_source, 1, entry_name="customElements"
+            )
+            for stage, input_ir in (
+                ("raw", args.work / f"{label}.raw.mlir"),
+                ("structured", refused_ir),
+            ):
+                manifest = dict(
+                    refused_contract,
+                    module_sha256=dom.fingerprint(args.opt, input_ir),
+                    initial_intrinsics=INTRINSICS,
+                )
+                diagnostic = dom.lower(
+                    args,
+                    input_ir,
+                    manifest,
+                    label + "-" + stage,
+                    success=False,
+                    max_steps=1_000_000,
+                )
+                expected_reason = (
+                    "DOM Symbol.iterator must be a closed identity method"
+                    if stage == "raw"
+                    else "DOM Symbol.iterator identity method has additional effects"
+                )
+                if expected_reason not in diagnostic:
+                    raise RuntimeError(f"{label}: lost String-order refusal: {diagnostic}")
 
 
 if __name__ == "__main__":
