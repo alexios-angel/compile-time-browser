@@ -490,6 +490,11 @@ namespace detail {
         (ascii_iequals(parts[i], "not") || ascii_iequals(parts[i], "only"))) {
         prefix = ascii_lower_copy(parts[i]) + " ";
         ++i;
+        // ...and a prefix needs something to apply to: `@media not` is not a
+        // query, and `only` exists only in front of a type.
+        if (i >= parts.size() || (prefix == "only " && parts[i].front() == '(')) {
+            return std::string{not_all};
+        }
     }
     std::string type;
     if (i < parts.size() && parts[i].front() != '(') {
@@ -509,7 +514,11 @@ namespace detail {
         for (std::size_t c = 0; c < word.size() && ident; ++c) {
             ident = ident_char(static_cast<unsigned char>(word[c]), c == 0);
         }
-        if (!ident || ascii_iequals(word, "and")) { return std::string{not_all}; }
+        // Nor is it one of the five words the grammar reserves (Media
+        // Queries 4 §3): `@media not or` is malformed, not an unknown type.
+        if (!ident || ascii_iequals_any(word, {"and", "not", "only", "or", "layer"})) {
+            return std::string{not_all};
+        }
         type = ascii_lower_copy(word);
         ++i;
     }
