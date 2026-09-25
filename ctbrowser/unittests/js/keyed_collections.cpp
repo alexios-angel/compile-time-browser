@@ -92,6 +92,15 @@ void test_algebra() {
 }
 
 void test_extras() {
+    // forEach walks the live list: a deleted-then-re-added member is visited
+    // again at the end, and deleting the current one skips nothing.
+    expect_result("const s = new Set([1, 2, 3]); const seen = []; s.forEach(v => { seen.push(v);"
+                  " if (v === 1) { s.delete(1); s.add(1); } }); return seen.join();",
+                  "1,2,3,1");
+    expect_result("const m = new Map([['a', 1], ['b', 2], ['c', 3]]); const seen = [];"
+                  " m.forEach((v, k) => { seen.push(k); if (k === 'a') m.delete('a'); });"
+                  " return seen.join();",
+                  "a,b,c");
     expect_result("const m = Map.groupBy([1, 2, 3, 4], v => v % 2 ? 'odd' : 'even'); "
                   "return m.get('odd').join() + '|' + m.get('even').join();",
                   "1,3|2,4");

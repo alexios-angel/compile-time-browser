@@ -234,6 +234,46 @@ template <typename Fn> [[nodiscard]] bool each_key(context & c, const set_record
     return entries_of(c, c.current_this(), k, method);
 }
 
+// A WALK IN PROGRESS over an entry list - forEach, and the set algebra that
+// calls a set-like's `has` between members - and the index it visits next.
+//
+// The specification's [[MapData]] and [[SetData]] never shrink: a delete
+// leaves an ~empty~ slot the walk steps over, so an entry deleted before its
+// turn is not visited and one deleted and re-added is visited again at the
+// end. This list COMPACTS, which moved every later entry one place left
+// under the walk and made it skip the next one. So a delete or a clear moves
+// each live walk's cursor with the entries it moved; the registry only ever
+// holds walks whose C++ frames are running.
+struct live_walk {
+    const array_object * entries;
+    std::size_t next;
+};
+[[nodiscard]] std::vector<live_walk *> & live_walks() {
+    static thread_local std::vector<live_walk *> walks;
+    return walks;
+}
+struct walk_scope {
+    live_walk walk;
+    explicit walk_scope(const array_object * entries) : walk{entries, 0} {
+        live_walks().push_back(&walk);
+    }
+    ~walk_scope() { std::erase(live_walks(), &walk); }
+    walk_scope(const walk_scope &) = delete;
+    walk_scope & operator=(const walk_scope &) = delete;
+};
+// The entry at `at` is gone and everything after it moved down one.
+void entry_removed(const array_object & entries, std::size_t at) {
+    for (live_walk * w : live_walks()) {
+        if (w->entries == &entries && at < w->next) { --w->next; }
+    }
+}
+// Every entry is gone: a walk resumes with whatever is added next.
+void entries_cleared(const array_object & entries) {
+    for (live_walk * w : live_walks()) {
+        if (w->entries == &entries) { w->next = 0; }
+    }
+}
+
 } // namespace
 
 void install_collections(context & cx) {
@@ -401,6 +441,7 @@ void install_collections(context & cx) {
                 auto * pair = static_cast<array_object *>(entries->items[i].as_heap());
                 if (!pair->items.empty() && pair->items[0].same_value_zero(arg_at(a, 0))) {
                     entries->items.erase(entries->items.begin() + static_cast<std::ptrdiff_t>(i));
+                    entry_removed(*entries, i);
                     return value::boolean(true);
                 }
             }
@@ -450,6 +491,7 @@ void install_collections(context & cx) {
             array_object * entries = self_entries(c, k, "Map.prototype.clear");
             if (entries == nullptr) { return value::undefined(); }
             entries->items.clear();
+            entries_cleared(*entries);
             return value::undefined();
         });
         m("forEach", 1, [k](context & c, std::span<value> a) -> value {
@@ -460,9 +502,11 @@ void install_collections(context & cx) {
             const detail::unwind_watch watch{c};
             // BY INDEX over the live list, not a snapshot: 24.1.3.5 visits an
             // entry added during the walk and skips one deleted before its
-            // turn, which a callback that mutates the map can see.
-            for (std::size_t i = 0; i < entries->items.size(); ++i) {
-                const value entry = entries->items[i];
+            // turn, which a callback that mutates the map can see - the
+            // cursor is a live_walk, which delete and clear keep in step.
+            walk_scope live{entries};
+            while (live.walk.next < entries->items.size()) {
+                const value entry = entries->items[live.walk.next++];
                 const auto & pair = static_cast<array_object *>(entry.as_heap())->items;
                 const value args[3] = {pair[1], pair[0], self};
                 // 24.1.3.5 step 5: the callback's `this` is thisArg. Phaser's
@@ -471,6 +515,7 @@ void install_collections(context & cx) {
                 if (watch.threw()) { return value::undefined(); }
                 entries = self_entries(c, k, "Map.prototype.forEach");
                 if (entries == nullptr) { return value::undefined(); }
+                live.walk.entries = entries;
             }
             return value::undefined();
         });
@@ -585,6 +630,7 @@ void install_collections(context & cx) {
             const std::ptrdiff_t at = find_member(*entries, arg_at(a, 0));
             if (at < 0) { return value::boolean(false); }
             entries->items.erase(entries->items.begin() + at);
+            entry_removed(*entries, static_cast<std::size_t>(at));
             return value::boolean(true);
         });
         if (weak(k)) { continue; }
@@ -592,6 +638,7 @@ void install_collections(context & cx) {
             array_object * entries = self_entries(c, k, "Set.prototype.clear");
             if (entries == nullptr) { return value::undefined(); }
             entries->items.clear();
+            entries_cleared(*entries);
             return value::undefined();
         });
         m("forEach", 1, [k](context & c, std::span<value> a) -> value {
@@ -600,13 +647,16 @@ void install_collections(context & cx) {
             if (!detail::callable_arg(c, arg_at(a, 0), "callback")) { return value::undefined(); }
             const value self = c.current_this();
             const detail::unwind_watch watch{c};
-            for (std::size_t i = 0; i < entries->items.size(); ++i) {
-                const value item = entries->items[i];
+            // Live, as Map's forEach is - see live_walk.
+            walk_scope live{entries};
+            while (live.walk.next < entries->items.size()) {
+                const value item = entries->items[live.walk.next++];
                 const value args[3] = {item, item, self};
                 (void)c.call(a[0], args, arg_at(a, 1)); // thisArg, 24.2.3.6 step 5
                 if (watch.threw()) { return value::undefined(); }
                 entries = self_entries(c, k, "Set.prototype.forEach");
                 if (entries == nullptr) { return value::undefined(); }
+                live.walk.entries = entries;
             }
             return value::undefined();
         });
@@ -774,8 +824,9 @@ void install_collections(context & cx) {
                     // O.[[SetData]] as it is at each step): `has` may mutate
                     // the receiver, and an element it removes is not asked about.
                     const detail::unwind_watch watch{c};
-                    for (std::size_t i = 0; i < self.items.size(); ++i) {
-                        const value e = self.items[i];
+                    walk_scope live{&self};
+                    while (live.walk.next < self.items.size()) {
+                        const value e = self.items[live.walk.next++];
                         const bool in = record_has(c, other, e);
                         if (watch.threw()) { return value::undefined(); }
                         if (!in) { return value::boolean(false); }
@@ -802,8 +853,9 @@ void install_collections(context & cx) {
                     const detail::unwind_watch watch{c};
                     if (static_cast<double>(self.items.size()) <= other.size) {
                         // Live, as isSubsetOf's walk is.
-                        for (std::size_t i = 0; i < self.items.size(); ++i) {
-                            const value e = self.items[i];
+                        walk_scope live{&self};
+                        while (live.walk.next < self.items.size()) {
+                            const value e = self.items[live.walk.next++];
                             const bool in = record_has(c, other, e);
                             if (watch.threw()) { return value::undefined(); }
                             if (in) { return value::boolean(false); }
