@@ -314,6 +314,22 @@ bool context::has_property(value target, const std::string & name) {
         return table != nullptr &&
                (table->find(name) != nullptr || table->find_accessor(name) != nullptr);
     }
+    // A TYPED array's implicit chain starts at its KIND's prototype -
+    // Float64Array.prototype, which the lookup reads first too - and only
+    // then reaches %TypedArray%.prototype and the tables below.
+    if (target.is_array() &&
+        static_cast<array_object *>(target.as_heap())->elements != element_kind::none) {
+        for (object_object * table = typed_array_prototype(
+                 *this, static_cast<array_object *>(target.as_heap())->elements);
+             table != nullptr;
+             table = table->prototype.is_object()
+                         ? static_cast<object_object *>(table->prototype.as_heap())
+                         : nullptr) {
+            if (table->find(name) != nullptr || table->find_accessor(name) != nullptr) {
+                return true;
+            }
+        }
+    }
     for (object_object * table : implicit_prototypes(target)) {
         if (table != nullptr &&
             (table->find(name) != nullptr || table->find_accessor(name) != nullptr)) {
