@@ -323,7 +323,8 @@ void dom_bindings::scan_custom_elements() {
             state.connected = false;
             state.parent = node_id{};
             state.seen = 0;
-            if (fresh && state.state == custom_element_state::status::custom) {
+            if (fresh && state.state == custom_element_state::status::custom &&
+                primary().custom_definitions_[state.definition].adopted.is_callable()) {
                 bool noted = false;
                 for (const auto & [other, from] : adoptees_) { noted = noted || other == now; }
                 if (!noted) { adoptees_.emplace_back(now, now->custom_reactions_.size()); }
@@ -331,6 +332,9 @@ void dom_bindings::scan_custom_elements() {
                 // pending here - a connectedCallback its adopter's own callback
                 // interrupted - is ahead of adoptedCallback in the one queue
                 // an element has, and runs first when the adoption drains it.
+                // With no adoptedCallback nothing is enqueued, the element
+                // joins no element queue, and what it has pending stays where
+                // it is (it still runs on the wrapper, which went with it).
                 const node_id old = unpack(key);
                 for (std::size_t i = 0; i < custom_reactions_.size();) {
                     if (custom_reactions_[i].target != old) {
@@ -346,15 +350,15 @@ void dom_bindings::scan_custom_elements() {
                     moved.target = fresh;
                     now->custom_reactions_.push_back(std::move(moved));
                 }
-                if (primary().custom_definitions_[state.definition].adopted.is_callable()) {
-                    custom_element_reaction reaction;
-                    reaction.target = fresh;
-                    reaction.definition = state.definition;
-                    reaction.what = custom_element_reaction::kind::adopted;
-                    reaction.old_document = document_;
-                    reaction.new_document = now->document_;
-                    now->custom_reactions_.push_back(std::move(reaction));
-                }
+                custom_element_reaction reaction;
+                reaction.target = fresh;
+                reaction.definition = state.definition;
+                reaction.what = custom_element_reaction::kind::adopted;
+                reaction.old_document = document_;
+                reaction.new_document = now->document_;
+                now->custom_reactions_.push_back(std::move(reaction));
+            }
+            if (fresh && state.state == custom_element_state::status::custom) {
                 now->watch_loose(fresh.key(), state);
                 now->custom_elements_.insert_or_assign(fresh.key(), std::move(state));
             }
