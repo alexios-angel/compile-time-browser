@@ -142,6 +142,14 @@ constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
         cx.throw_error("TypeError", "The provided value cannot be converted to a sequence.");
         return false;
     }
+    // GetMethod(V, @@iterator): a method that is present and not callable -
+    // `{[Symbol.iterator]: 1}` - is a TypeError, not an empty list.
+    const value method = cx.lookup_property(from, "@@iterator");
+    if (cx.throw_pending()) { return false; }
+    if (!method.is_callable()) {
+        cx.throw_error("TypeError", "The provided value cannot be converted to a sequence.");
+        return false;
+    }
     const value items = cx.iterable_values(from);
     if (cx.throw_pending()) { return false; }
     if (!items.is_array()) {
