@@ -93,9 +93,12 @@ void test_algebra() {
 
 void test_extras() {
     // forEach walks the live list: a deleted-then-re-added member is visited
-    // again at the end, and deleting the current one skips nothing.
-    expect_result("const s = new Set([1, 2, 3]); const seen = []; s.forEach(v => { seen.push(v);"
-                  " if (v === 1) { s.delete(1); s.add(1); } }); return seen.join();",
+    // again at the end, and deleting the current one skips nothing. ONCE - a
+    // callback that re-adds on every visit walks forever, in every engine.
+    expect_result("const s = new Set([1, 2, 3]); const seen = []; let again = true;"
+                  " s.forEach(v => { seen.push(v);"
+                  " if (v === 1 && again) { again = false; s.delete(1); s.add(1); } });"
+                  " return seen.join();",
                   "1,2,3,1");
     expect_result("const m = new Map([['a', 1], ['b', 2], ['c', 3]]); const seen = [];"
                   " m.forEach((v, k) => { seen.push(k); if (k === 'a') m.delete('a'); });"
