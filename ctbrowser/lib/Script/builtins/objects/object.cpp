@@ -251,8 +251,21 @@ inline void set_integrity(context & cx, value target, bool frozen) {
             (frozen && arr->length_writable)) {
             return false;
         }
-        // ...and its named table, which set_integrity pins separately.
-        return arr->named == nullptr || test_integrity(cx, value::object(arr->named.get()), frozen);
+        // ...and its named table's properties, which set_integrity pins
+        // separately. Only the properties: the array's own [[Extensible]]
+        // was asked above, and a table pinned by hand (a template object's
+        // `raw`) never had its own flag cleared.
+        bool pinned = true;
+        if (arr->named) {
+            object_object & named = *arr->named;
+            named.each_own_entry([&](const std::string & key, std::uint8_t a) {
+                if ((a & attr_configurable) != 0 ||
+                    (frozen && (a & attr_writable) != 0 && named.find_accessor(key) == nullptr)) {
+                    pinned = false;
+                }
+            });
+        }
+        return pinned;
     }
     // EVERY own key, symbols included: 7.3.16 walks OwnPropertyKeys, and a
     // symbol-keyed property that is still configurable makes the object neither

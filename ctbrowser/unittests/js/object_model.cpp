@@ -104,7 +104,10 @@ int main() {
               "{value:1,configurable:true}:undefined;}});"
               "return ['b' in p, p.hasOwnProperty('b'), p.hasOwnProperty('a')].join();})()",
               "true,false,true");
-    js_expect("(function(){var p=new Proxy({},{getOwnPropertyDescriptor:function(){return "
+    // (Over a target that HAS such a property: 10.5.5 step 16 refuses a
+    // non-configurable answer for one the target lacks - see below.)
+    js_expect("(function(){var t={};Object.defineProperty(t,'a',{value:1});"
+              "var p=new Proxy(t,{getOwnPropertyDescriptor:function(){return "
               "{value:1};}});var d=Object.getOwnPropertyDescriptor(p,'a');"
               "return d.writable+','+d.enumerable+','+d.configurable;})()",
               "false,false,false");
