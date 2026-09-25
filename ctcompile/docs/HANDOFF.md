@@ -22,6 +22,43 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Observed iterator items and structured array selections, 2026-09-25 UTC
+
+Resumed clean **a3abb74e** and the recorded normal-item boundary.
+**c1686b5f** follows iterator items through exact completion and saved-unwind
+tuple slots. Dead spills are allowed; real reads require the exact next-success
+and not-done guards. Original getter **1a7fb166** and method **7acf503b** now pass
+that proof. The explicit observed-state-transport refusal remains: **no new
+native JavaScript source admission** is claimed. Both close(false) flags,
+three invocations, 15 saved registers, effects and complete rollback remain.
+
+**320701bf** proves cached lengths from arrays selected by structured branches.
+The byte-identical lifted **d1302d9a** witness changes from UnsupportedControlFlow
+to exact two-path contents `[0,0,0]`. This is a contents proof only: the legacy
+storage census still refuses regions, and structured confinement is unchanged.
+Raw program **502bee7b1676c84d** remains **2/4 confined sites**, all four observed,
+zero VM violations and three unlimited frame pops. Eight controls preserve
+retained children, distinct receivers and existing refusal boundaries.
+
+Focused recovery **1/1, 5.39 s**, host contract **1/1, 2.82 s**, arrays
+**1/1, 4.62 s**, one existing escape lit case **1/1, 0.10 s**, and the selected
+three-source native differential check pass. Formatting passes **1126 C++,
+159 Python, 114 web files**. All four implementation/test hashes match the
+devbox and final independent reviews. The 24 generated C++ files and binary
+checks retain the no-Script invariant. Full suites were skipped.
+
+**Next:** rewrite next/exhaustion/failure and both unsuppressed closes through
+Try/Invoke state, preserving saved returns, caught-node identity and every effect.
+Keep Invoke's call/exit body shape, place successful result extraction in its
+normal continuation, and route the throwing close helper's payload through its
+original unwind tuple. Try is single-result; state disposal needs a complete
+use census. Escape retention still needs region-aware storage/alias evidence.
+Raw helper CFG normalization, nested escape origins, escaping node owners,
+broader iterators, unguarded Bootstrap defaults, the native application driver
+and full native Bootstrap remain unfinished. Continue on `ctcompile-v1`.
+
+[Exact checks, review limits and next boundary](handoff/2026-09-25-observed-item-tuples.md).
+
 ## Observed iterator coverage and exact CFG predecessors, 2026-09-25 UTC
 
 Resumed the iterator thread interrupted in iteration 162. The clean checkout
