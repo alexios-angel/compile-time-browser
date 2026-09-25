@@ -6,9 +6,11 @@
 #include "DOMObservedState.hpp"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/IRMapping.h"
 
 #include "check.hpp"
 
+#include <array>
 #include <bit>
 
 namespace ctcompile::test::exception_recovery {
@@ -879,8 +881,256 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         llvm::consumeError(std::move(referenceError));
         return;
     }
-    const auto expected = printed(*reference);
-    for (unsigned control = 0; control != 23; ++control) {
+    const auto baseline = printed(*reference);
+    auto * context = original.getContext();
+    const std::array<std::pair<mlir::Attribute, bool>, 14> predicates{{
+        {ctjs::NumberAttr::get(context, 0x0000000000000000ULL), false}, // +0
+        {ctjs::NumberAttr::get(context, 0x8000000000000000ULL), false}, // -0
+        {ctjs::NumberAttr::get(context, 0x7ff8000000000001ULL), false}, // quiet NaN
+        {ctjs::NumberAttr::get(context, 0xfff0000000000001ULL), false}, // negative signaling NaN
+        {ctjs::NumberAttr::get(context, 0x7ff0000000000000ULL), true},  // +Infinity
+        {ctjs::NumberAttr::get(context, 0xfff0000000000000ULL), true},  // -Infinity
+        {ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(1.0)), true},
+        {ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(-1.0)), true},
+        {ctjs::NumberAttr::get(context, 1), true}, // minimum positive subnormal
+        {ctjs::StringAttr::get(context, ""), false},
+        {ctjs::StringAttr::get(context, "0"), true},
+        {ctjs::StringAttr::get(context, llvm::StringRef("\0", 1)), true},
+        {ctjs::NullAttr::get(context), false},
+        {ctjs::UndefinedAttr::get(context), false},
+    }};
+    const std::array<std::pair<mlir::Attribute, bool>, 9> negatedPredicates{{
+        predicates[0],
+        predicates[2],
+        predicates[6],
+        predicates[9],
+        predicates[10],
+        predicates[12],
+        predicates[13],
+        {ctjs::BooleanAttr::get(context, false), false},
+        {ctjs::BooleanAttr::get(context, true), true},
+    }};
+    struct Comparison {
+        ctjs::CompareKind kind;
+        unsigned lhs;
+        unsigned rhs;
+        bool value;
+    };
+    const std::array<Comparison, 14> comparisons{{
+        {ctjs::CompareKind::Eq, 0, 1, true},        // +0 == -0
+        {ctjs::CompareKind::Eq, 6, 7, false},       // 1 == -1
+        {ctjs::CompareKind::StrictEq, 0, 1, true},  // +0 === -0
+        {ctjs::CompareKind::StrictEq, 2, 2, false}, // quiet NaN === quiet NaN
+        {ctjs::CompareKind::Lt, 5, 8, true},        // -Infinity < minimum subnormal
+        {ctjs::CompareKind::Lt, 3, 0, false},       // signaling NaN < +0
+        {ctjs::CompareKind::Le, 1, 0, true},        // -0 <= +0
+        {ctjs::CompareKind::Le, 2, 0, false},       // quiet NaN <= +0
+        {ctjs::CompareKind::Gt, 8, 0, true},        // minimum subnormal > +0
+        {ctjs::CompareKind::Gt, 0, 3, false},       // +0 > signaling NaN
+        {ctjs::CompareKind::Ge, 4, 4, true},        // +Infinity >= +Infinity
+        {ctjs::CompareKind::Ge, 0, 3, false},       // +0 >= signaling NaN
+        {ctjs::CompareKind::Eq, 2, 0, false},       // quiet NaN == +0
+        {ctjs::CompareKind::StrictEq, 8, 0, false}, // minimum subnormal === +0
+    }};
+    struct Arithmetic {
+        ctjs::BinaryKind kind;
+        uint64_t lhs;
+        uint64_t rhs;
+        uint64_t value;
+        bool truth;
+    };
+    const std::array<Arithmetic, 12> arithmetic{{
+        // Nearest-ties-even rounds both an even and an odd significand correctly.
+        {ctjs::BinaryKind::Add, 0x3ff0000000000000ULL, 0x3ca0000000000000ULL, 0x3ff0000000000000ULL,
+         true},
+        {ctjs::BinaryKind::Add, 0x3ff0000000000001ULL, 0x3ca0000000000000ULL, 0x3ff0000000000002ULL,
+         true},
+        {ctjs::BinaryKind::Add, 0x8000000000000000ULL, 0x8000000000000000ULL, 0x8000000000000000ULL,
+         false}, // -0 + -0
+        {ctjs::BinaryKind::Sub, 0x3ff0000000000000ULL, 0x3ff0000000000000ULL, 0, false},
+        {ctjs::BinaryKind::Mul, 0x8000000000000000ULL, 0x3ff0000000000000ULL, 0x8000000000000000ULL,
+         false}, // -0 * 1
+        {ctjs::BinaryKind::Mul, 0x7fefffffffffffffULL, 0x4000000000000000ULL, 0x7ff0000000000000ULL,
+         true}, // finite overflow
+        {ctjs::BinaryKind::Div, 0x3ff0000000000000ULL, 0x8000000000000000ULL, 0xfff0000000000000ULL,
+         true}, // 1 / -0
+        {ctjs::BinaryKind::Div, 0, 0, 0x7ff8000000000000ULL, false},
+        {ctjs::BinaryKind::Div, 1, 0x4000000000000000ULL, 0, false}, // subnormal tie to zero
+        {ctjs::BinaryKind::Mod, 0xc010000000000000ULL, 0x4000000000000000ULL, 0x8000000000000000ULL,
+         false}, // -4 % 2
+        {ctjs::BinaryKind::Mod, 0x4016000000000000ULL, 0x4000000000000000ULL, 0x3ff8000000000000ULL,
+         true}, // 5.5 % 2 is 1.5, not IEEE remainder -0.5
+        {ctjs::BinaryKind::Add, 0xfff0000000000001ULL, 0x3ff0000000000000ULL, 0xfff8000000000001ULL,
+         false}, // signaling NaN becomes quiet, retaining its payload
+    }};
+    const std::array<Arithmetic, 30> powers{{
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(2.0), std::bit_cast<uint64_t>(3.0),
+         std::bit_cast<uint64_t>(8.0), true},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(-2.0), std::bit_cast<uint64_t>(3.0),
+         std::bit_cast<uint64_t>(-8.0), true},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(-2.0), std::bit_cast<uint64_t>(4.0),
+         std::bit_cast<uint64_t>(16.0), true},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(-2.0), std::bit_cast<uint64_t>(-3.0),
+         std::bit_cast<uint64_t>(-0.125), true},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(-4.0), std::bit_cast<uint64_t>(0.5),
+         0x7ff8000000000000ULL, false},
+        {ctjs::BinaryKind::Pow, 0x8000000000000000ULL, std::bit_cast<uint64_t>(3.0),
+         0x8000000000000000ULL, false},
+        {ctjs::BinaryKind::Pow, 0x8000000000000000ULL, std::bit_cast<uint64_t>(2.0), 0, false},
+        {ctjs::BinaryKind::Pow, 0x8000000000000000ULL, std::bit_cast<uint64_t>(-3.0),
+         0xfff0000000000000ULL, true},
+        {ctjs::BinaryKind::Pow, 0x8000000000000000ULL, std::bit_cast<uint64_t>(-2.0),
+         0x7ff0000000000000ULL, true},
+        {ctjs::BinaryKind::Pow, 0xfff0000000000001ULL, 0, std::bit_cast<uint64_t>(1.0), true},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(1.0), 0xfff0000000000001ULL,
+         0x7ff8000000000000ULL, false},
+        {ctjs::BinaryKind::Pow, 0xfff8000000000042ULL, std::bit_cast<uint64_t>(1.0),
+         0x7ff8000000000000ULL, false},
+        // JavaScript returns NaN for |base| == 1 with either infinite exponent.
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(1.0), 0x7ff0000000000000ULL,
+         0x7ff8000000000000ULL, false},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(-1.0), 0xfff0000000000000ULL,
+         0x7ff8000000000000ULL, false},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(2.0), 0x7ff0000000000000ULL,
+         0x7ff0000000000000ULL, true},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(2.0), 0xfff0000000000000ULL, 0, false},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(0.5), 0x7ff0000000000000ULL, 0, false},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(0.5), 0xfff0000000000000ULL,
+         0x7ff0000000000000ULL, true},
+        {ctjs::BinaryKind::Pow, 0xfff0000000000000ULL, std::bit_cast<uint64_t>(3.0),
+         0xfff0000000000000ULL, true},
+        {ctjs::BinaryKind::Pow, 0xfff0000000000000ULL, std::bit_cast<uint64_t>(2.0),
+         0x7ff0000000000000ULL, true},
+        {ctjs::BinaryKind::Pow, 0xfff0000000000000ULL, std::bit_cast<uint64_t>(-3.0),
+         0x8000000000000000ULL, false},
+        {ctjs::BinaryKind::Pow, 0xfff0000000000000ULL, std::bit_cast<uint64_t>(-2.0), 0, false},
+        {ctjs::BinaryKind::Pow, 0xfff0000000000000ULL, std::bit_cast<uint64_t>(0.5),
+         0x7ff0000000000000ULL, true},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(2.0), std::bit_cast<uint64_t>(1024.0),
+         0x7ff0000000000000ULL, true},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(2.0), std::bit_cast<uint64_t>(-1074.0), 1,
+         true},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(2.0), std::bit_cast<uint64_t>(-1075.0), 0,
+         false},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(-1.0),
+         std::bit_cast<uint64_t>(9007199254740991.0), std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(-1.0),
+         std::bit_cast<uint64_t>(9007199254740992.0), std::bit_cast<uint64_t>(1.0), true},
+        {ctjs::BinaryKind::Pow, std::bit_cast<uint64_t>(4.0), std::bit_cast<uint64_t>(0.5),
+         std::bit_cast<uint64_t>(2.0), true},
+        {ctjs::BinaryKind::Pow, 0, 0x8000000000000000ULL, std::bit_cast<uint64_t>(1.0), true},
+    }};
+    struct NumericUnary {
+        ctjs::UnaryKind kind;
+        uint64_t operand;
+        uint64_t value;
+        bool truth;
+    };
+    const std::array<NumericUnary, 12> numericUnaries{{
+        {ctjs::UnaryKind::Plus, 0, 0, false},
+        {ctjs::UnaryKind::Plus, 0x8000000000000000ULL, 0x8000000000000000ULL, false},
+        {ctjs::UnaryKind::Plus, 0xfff8000000000042ULL, 0xfff8000000000042ULL, false},
+        {ctjs::UnaryKind::Plus, 0xfff0000000000001ULL, 0xfff0000000000001ULL, false},
+        {ctjs::UnaryKind::Plus, 0x7ff0000000000000ULL, 0x7ff0000000000000ULL, true},
+        {ctjs::UnaryKind::Plus, 1, 1, true},
+        {ctjs::UnaryKind::Neg, 0, 0x8000000000000000ULL, false},
+        {ctjs::UnaryKind::Neg, 0x8000000000000000ULL, 0, false},
+        {ctjs::UnaryKind::Neg, 0x7ff8000000000042ULL, 0xfff8000000000042ULL, false},
+        {ctjs::UnaryKind::Neg, 0xfff0000000000001ULL, 0x7ff0000000000001ULL, false},
+        {ctjs::UnaryKind::Neg, 0x7ff0000000000000ULL, 0xfff0000000000000ULL, true},
+        {ctjs::UnaryKind::Neg, 0x8000000000000001ULL, 1, true},
+    }};
+    const std::array<NumericUnary, 12> bitwiseUnaries{{
+        {ctjs::UnaryKind::BitNot, 0, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, 0x8000000000000000ULL, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, 0xfff0000000000001ULL, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, 0x7ff0000000000000ULL, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, 0xfff0000000000000ULL, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, 1, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(-1.0), 0, false},
+        {ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(4294967296.0),
+         std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(4294967295.0), 0, false},
+        {ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(2147483648.0),
+         std::bit_cast<uint64_t>(2147483647.0), true},
+        {ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(3.9), std::bit_cast<uint64_t>(-4.0),
+         true},
+        {ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(-3.9), std::bit_cast<uint64_t>(2.0),
+         true},
+    }};
+    const std::array<Arithmetic, 18> staticArithmetic{{
+        {ctjs::BinaryKind::Add, 0x3ff0000000000000ULL, 0x3ca0000000000000ULL, 0x3ff0000000000000ULL,
+         true}, // static Add retains binary64 ties-to-even
+        {ctjs::BinaryKind::BitAnd, std::bit_cast<uint64_t>(4294967295.0),
+         std::bit_cast<uint64_t>(2147483648.0), std::bit_cast<uint64_t>(-2147483648.0), true},
+        {ctjs::BinaryKind::BitAnd, std::bit_cast<uint64_t>(-1.9),
+         std::bit_cast<uint64_t>(4294967298.9), std::bit_cast<uint64_t>(2.0), true},
+        {ctjs::BinaryKind::BitOr, 0x8000000000000000ULL, 0x7ff8000000000001ULL, 0, false},
+        {ctjs::BinaryKind::BitOr, std::bit_cast<uint64_t>(4294967296.0),
+         std::bit_cast<uint64_t>(1.0), std::bit_cast<uint64_t>(1.0), true},
+        {ctjs::BinaryKind::BitXor, std::bit_cast<uint64_t>(4294967295.0),
+         std::bit_cast<uint64_t>(-1.0), 0, false},
+        {ctjs::BinaryKind::BitXor, 0x7ff0000000000000ULL, std::bit_cast<uint64_t>(3.9),
+         std::bit_cast<uint64_t>(3.0), true},
+        {ctjs::BinaryKind::Shl, std::bit_cast<uint64_t>(2147483647.0), std::bit_cast<uint64_t>(1.0),
+         std::bit_cast<uint64_t>(-2.0), true},
+        {ctjs::BinaryKind::Shl, std::bit_cast<uint64_t>(1.0), std::bit_cast<uint64_t>(-1.0),
+         std::bit_cast<uint64_t>(-2147483648.0), true},
+        {ctjs::BinaryKind::Shr, std::bit_cast<uint64_t>(-2147483648.0),
+         std::bit_cast<uint64_t>(33.0), std::bit_cast<uint64_t>(-1073741824.0), true},
+        {ctjs::BinaryKind::Shr, std::bit_cast<uint64_t>(-3.9), std::bit_cast<uint64_t>(1.9),
+         std::bit_cast<uint64_t>(-2.0), true},
+        {ctjs::BinaryKind::UShr, std::bit_cast<uint64_t>(-1.0), 0,
+         std::bit_cast<uint64_t>(4294967295.0), true},
+        {ctjs::BinaryKind::UShr, std::bit_cast<uint64_t>(-1.0), std::bit_cast<uint64_t>(-1.0),
+         std::bit_cast<uint64_t>(1.0), true},
+        {ctjs::BinaryKind::Shl, std::bit_cast<uint64_t>(1.0), std::bit_cast<uint64_t>(32.0),
+         std::bit_cast<uint64_t>(1.0), true},
+        {ctjs::BinaryKind::Shr, std::bit_cast<uint64_t>(-1.0), 0x7ff8000000000001ULL,
+         std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::BinaryKind::UShr, std::bit_cast<uint64_t>(-1.0), 0x7ff0000000000000ULL,
+         std::bit_cast<uint64_t>(4294967295.0), true},
+        {ctjs::BinaryKind::Shl, std::bit_cast<uint64_t>(1.0), std::bit_cast<uint64_t>(4294967327.0),
+         std::bit_cast<uint64_t>(-2147483648.0), true},
+        {ctjs::BinaryKind::UShr, std::bit_cast<uint64_t>(4294967296.0),
+         std::bit_cast<uint64_t>(1.0), 0, false},
+    }};
+    const std::array<mlir::Attribute, 16> equalityValues{{
+        ctjs::BooleanAttr::get(context, false),
+        ctjs::BooleanAttr::get(context, true),
+        ctjs::NullAttr::get(context),
+        ctjs::UndefinedAttr::get(context),
+        ctjs::StringAttr::get(context, ""),
+        ctjs::StringAttr::get(context, "0"),
+        ctjs::StringAttr::get(context, llvm::StringRef("\0", 1)),
+        ctjs::StringAttr::get(context, llvm::StringRef("a\0b", 3)),
+        ctjs::StringAttr::get(context, "a"),
+        ctjs::StringAttr::get(context, "\xc3\xa9"),
+        ctjs::StringAttr::get(context, "e\xcc\x81"),
+        predicates[0].first,
+        predicates[6].first,
+        predicates[2].first,
+        ctjs::StringAttr::get(context, "\xf0\x9f\x98\x80"),
+        ctjs::StringAttr::get(context, "\xf0\x9f\x98\x81"),
+    }};
+    const std::array<Comparison, 27> equalities{{
+        {ctjs::CompareKind::StrictEq, 0, 0, true},    {ctjs::CompareKind::StrictEq, 1, 0, false},
+        {ctjs::CompareKind::StrictEq, 2, 2, true},    {ctjs::CompareKind::StrictEq, 3, 3, true},
+        {ctjs::CompareKind::StrictEq, 2, 3, false},   {ctjs::CompareKind::StrictEq, 3, 2, false},
+        {ctjs::CompareKind::StrictEq, 4, 4, true},    {ctjs::CompareKind::StrictEq, 5, 4, false},
+        {ctjs::CompareKind::StrictEq, 6, 6, true},    {ctjs::CompareKind::StrictEq, 6, 4, false},
+        {ctjs::CompareKind::StrictEq, 7, 8, false},   {ctjs::CompareKind::StrictEq, 9, 9, true},
+        {ctjs::CompareKind::StrictEq, 9, 10, false},  {ctjs::CompareKind::StrictEq, 14, 14, true},
+        {ctjs::CompareKind::StrictEq, 14, 15, false}, {ctjs::CompareKind::StrictEq, 0, 11, false},
+        {ctjs::CompareKind::StrictEq, 1, 12, false},  {ctjs::CompareKind::StrictEq, 4, 11, false},
+        {ctjs::CompareKind::StrictEq, 5, 11, false},  {ctjs::CompareKind::StrictEq, 11, 2, false},
+        {ctjs::CompareKind::StrictEq, 3, 13, false},  {ctjs::CompareKind::Eq, 4, 4, true},
+        {ctjs::CompareKind::Eq, 5, 4, false},         {ctjs::CompareKind::Eq, 6, 6, true},
+        {ctjs::CompareKind::Eq, 7, 8, false},         {ctjs::CompareKind::Eq, 9, 9, true},
+        {ctjs::CompareKind::Eq, 9, 10, false},
+    }};
+    for (unsigned control = 0; control != 644; ++control) {
+        auto expected = baseline;
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
         auto next = candidate->lookupSymbol<ctjs::FuncOp>("fn$3");
@@ -892,7 +1142,97 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         }
         auto & body = identity.getBody().front();
         mlir::OpBuilder at(body.getTerminator());
-        if (control == 0 || control == 1) {
+        if (control >= 536 && control < 560) {
+            const unsigned row = control - 536;
+            auto helper = row < 6 ? row / 2 == 0   ? identity
+                                    : row / 2 == 1 ? next
+                                                   : close
+                                  : identity;
+            auto & first = helper.getBody().front();
+            auto * terminal = first.getTerminator();
+            const auto where = helper.getLoc();
+            const auto payload = terminal->getOperand(0);
+            at.setInsertionPoint(terminal);
+            auto load =
+                ctjs::LoadGlobalOp::create(at, where, row == 14 || row == 15 ? "NaN" : "undefined");
+            auto comparison = ctjs::CompareOp::create(at, where, payload.getType(),
+                                                      ctjs::CompareKind::StrictEq, load, load);
+            auto negated = ctjs::UnaryOp::create(
+                at, where, payload.getType(),
+                ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), comparison);
+            if (row < 6) {
+                // Independent literal reference preserves every evaluated value,
+                // including the global snapshot shared by both comparison inputs.
+                mlir::IRMapping mapping;
+                mlir::OwningOpRef<mlir::ModuleOp> evaluated(
+                    llvm::cast<mlir::ModuleOp>((*candidate)->clone(mapping)));
+                for (auto [value, attribute] :
+                     {std::pair{load.getResult(),
+                                mlir::Attribute(ctjs::UndefinedAttr::get(context))},
+                      std::pair{comparison.getResult(),
+                                mlir::Attribute(ctjs::BooleanAttr::get(context, true))},
+                      std::pair{negated.getResult(),
+                                mlir::Attribute(ctjs::BooleanAttr::get(context, false))}}) {
+                    auto copy = mapping.lookup(value).getDefiningOp();
+                    mlir::OpBuilder replace(copy);
+                    auto result = ctjs::ConstantOp::create(replace, where, attribute);
+                    copy->getResult(0).replaceAllUsesWith(result.getResult());
+                    copy->erase();
+                }
+                auto evaluatedProof = contract;
+                evaluatedProof.moduleSha256 =
+                    ctcompile::ctnative::hostContractFingerprint(*evaluated);
+                auto error =
+                    ctcompile::ctnative::prepareDOMEntry(*evaluated, evaluatedProof, 100000);
+                if (!check(!error, "literal undefined establishes the complete helper reference")) {
+                    llvm::consumeError(std::move(error));
+                    continue;
+                }
+                expected = printed(*evaluated);
+            }
+            if (row == 16) { load->removeAttr("name"); }
+            if (row == 17) { load->getResult(0).setType(at.getI1Type()); }
+            if (row == 22 || row == 23) {
+                comparison->setOperand(1, first.getArgument(ctjs::arg_callee));
+            }
+            if (row == 6 || row == 7) {
+                ctjs::StoreGlobalOp::create(at, where, "undefined", payload);
+            } else if (row == 10 || row == 11) {
+                auto wrapper = *candidate->getOps<ctjs::FuncOp>().begin();
+                mlir::OpBuilder store(wrapper.getBody().front().getTerminator());
+                ctjs::StoreGlobalOp::create(store, where, "undefined",
+                                            wrapper.getBody().front().getArgument(0));
+            } else if (row == 12 || row == 13) {
+                mlir::OpBuilder store(next.getBody().back().getTerminator());
+                ctjs::StoreGlobalOp::create(store, where, "undefined",
+                                            next.getBody().front().getArgument(0));
+            } else if (row == 20 || row == 21) {
+                auto global = ctjs::LoadGlobalOp::create(at, where, "globalThis");
+                auto key = ctjs::ConstantOp::create(at, where,
+                                                    ctjs::StringAttr::get(context, "undefined"));
+                ctjs::SetPropertyOp::create(at, where, global, key, payload);
+            }
+            auto flag = ctjs::TruthyOp::create(at, where, at.getI1Type(), negated);
+            if (row % 2 == 0) {
+                auto * continuation = first.splitBlock(terminal);
+                auto * dead = &helper.getBody().emplaceBlock();
+                at.setInsertionPointToEnd(&first);
+                mlir::cf::CondBranchOp::create(at, where, flag, dead, continuation);
+                at.setInsertionPointToEnd(dead);
+                if (row == 8) { ctjs::StoreGlobalOp::create(at, where, "undefined", payload); }
+                ctjs::ReturnOp::create(at, where, payload);
+            } else {
+                auto branch = mlir::scf::IfOp::create(at, where, payload.getType(), flag, true);
+                for (auto [index, region] : llvm::enumerate(branch->getRegions())) {
+                    at.setInsertionPointToEnd(&region.front());
+                    if (row == 9 && index == 0) {
+                        ctjs::StoreGlobalOp::create(at, where, "undefined", payload);
+                    }
+                    mlir::scf::YieldOp::create(at, where, mlir::ValueRange{payload});
+                }
+                terminal->setOperand(0, branch.getResult(0));
+            }
+        } else if (control == 0 || control == 1) {
             if (control == 0) { at.setInsertionPoint(identity.getBody().back().getTerminator()); }
             ctjs::StoreGlobalOp::create(at, identity.getLoc(), "identity-effect",
                                         body.getArgument(ctjs::arg_receiver));
@@ -937,6 +1277,744 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             }
             mlir::cf::SwitchOp::create(at, identity.getLoc(), flag, continuation,
                                        mlir::ValueRange{}, cases, destinations, operands);
+        } else if (control >= 76) {
+            // Both representations must retain the close call and its thrown
+            // identity, while discarding only the unselected payload/effects.
+            close.getBody().back().erase();
+            auto & first = close.getBody().front();
+            auto * terminal = first.getTerminator();
+            auto * moved = (*first.getOps<ctjs::CallOp>().begin()).getOperation();
+            const auto where = close.getLoc();
+            const auto payload = terminal->getOperand(0);
+            const auto other = first.getArgument(ctjs::arg_receiver);
+            const bool primitive = control < 104;
+            const bool power = control >= 560;
+            const unsigned powerIndex = power ? (control - 560) / 2 : 0;
+            const bool equality = control >= 434 && control < 536;
+            const bool bitwiseUnary = control >= 326 && control < 372;
+            const bool numericUnary = control >= 280 && control < 372;
+            const bool staticCalculated = control >= 372 && !equality && !power;
+            const unsigned staticIndex = staticCalculated ? (control - 372) / 2 : 0;
+            const bool calculated = control >= 232 && !numericUnary && !equality;
+            const bool compared = control >= 176 && control < 232;
+            const bool computed = control >= 116 && control < 176;
+            const unsigned index = power      ? powerIndex < powers.size() ? 0 : powerIndex - 18
+                                   : equality ? (control - 434) / 2
+                                   : staticCalculated
+                                       ? staticIndex < staticArithmetic.size() ? 0 : staticIndex - 6
+                                   : bitwiseUnary ? (control - 326) / 2
+                                   : numericUnary ? (control - 280) / 2
+                                   : calculated   ? (control - 232) / 2
+                                   : compared     ? (control - 176) / 2
+                                   : computed     ? (control - 116) / 2
+                                                  : (control - 76) / 2;
+            const bool transported = (computed && control >= 156) ||
+                                     (compared && (index == 14 || index == 15)) ||
+                                     (calculated && (index == 12 || index == 13)) ||
+                                     (numericUnary && (index == 12 || index == 13)) ||
+                                     (equality && (index == 27 || index == 28));
+            const unsigned transport = equality       ? index == 28 ? 2 : 0
+                                       : numericUnary ? index == 13 ? 2 : 0
+                                       : calculated   ? index == 13 ? 2 : 0
+                                       : compared     ? index == 15 ? 2 : 0
+                                       : transported  ? index - 20
+                                                      : 0;
+            const unsigned mutation = equality       ? index == 31   ? 0
+                                                       : index == 32 ? 1
+                                                                     : 6
+                                      : numericUnary ? index == 15   ? 0
+                                                       : index == 16 ? 1
+                                                                     : 6
+                                      : calculated   ? index == 15   ? 0
+                                                       : index == 16 ? 1
+                                                                     : 6
+                                      : compared     ? index == 17   ? 0
+                                                       : index == 18 ? 1
+                                                                     : 6
+                                      : computed     ? index == 12 || index == 27 ? 0
+                                                       : index == 13              ? 1
+                                                                                  : 6
+                                      : primitive    ? 6
+                                                     : (control - 104) / 2;
+            bool selected = primitive ? predicates[index].second : true;
+            at.setInsertionPoint(moved);
+            mlir::Value input;
+            llvm::SmallVector<std::pair<mlir::Operation *, mlir::Attribute>> evaluatedResults;
+            if (equality) {
+                auto row = equalities[index < equalities.size() ? index : 0];
+                if (index >= 37 && index <= 40) {
+                    row = index == 37   ? Comparison{ctjs::CompareKind::Lt, 4, 5, true}
+                          : index == 38 ? Comparison{ctjs::CompareKind::Le, 0, 1, true}
+                          : index == 39 ? Comparison{ctjs::CompareKind::Gt, 2, 2, false}
+                                        : Comparison{ctjs::CompareKind::Ge, 3, 3, false};
+                } else if (index >= 41 && index <= 44) {
+                    row = index == 41   ? Comparison{ctjs::CompareKind::Eq, 0, 11, true}
+                          : index == 42 ? Comparison{ctjs::CompareKind::Eq, 0, 0, true}
+                          : index == 43 ? Comparison{ctjs::CompareKind::Eq, 2, 3, true}
+                                        : Comparison{ctjs::CompareKind::Eq, 3, 3, true};
+                }
+                mlir::Value lhs;
+                if (index == 33) {
+                    lhs = other;
+                } else if (index == 34) {
+                    lhs = ctjs::CreateObjectOp::create(at, where, payload.getType());
+                } else if (index == 35) {
+                    lhs = ctjs::LoadGlobalOp::create(at, where, "equality-input-effect");
+                } else if (index == 47) {
+                    lhs = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Plus), other);
+                } else {
+                    const mlir::Attribute value =
+                        index == 45 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "0"))
+                                    : equalityValues[row.lhs];
+                    lhs = ctjs::ConstantOp::create(at, where, value);
+                }
+                const mlir::Attribute rhsValue =
+                    index == 46 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "0"))
+                                : equalityValues[row.rhs];
+                auto rhs = ctjs::ConstantOp::create(at, where, rhsValue);
+                auto operation =
+                    ctjs::CompareOp::create(at, where, payload.getType(), row.kind, lhs, rhs);
+                if (control == 530) { operation->eraseOperand(1); }
+                if (control == 531) { operation->removeAttr("kind"); }
+                if (control == 532) { lhs.getDefiningOp()->removeAttr("value"); }
+                if (control == 533) { rhs->removeAttr("value"); }
+                if (control >= 534) {
+                    mlir::OpBuilder invalid(operation);
+                    auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
+                    operation->setOperand(control - 534, flag);
+                }
+                selected = row.value;
+                evaluatedResults.emplace_back(operation.getOperation(),
+                                              ctjs::BooleanAttr::get(context, selected));
+                input = operation;
+                if (index == 27 || index == 28) {
+                    auto negated = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), input);
+                    selected = !selected;
+                    evaluatedResults.emplace_back(negated.getOperation(),
+                                                  ctjs::BooleanAttr::get(context, selected));
+                    input = negated;
+                }
+                if (index == 29 || index == 30) {
+                    llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(
+                        index == 29 ? input : lhs);
+                }
+                if (index == 36) {
+                    ctjs::StoreGlobalOp::create(at, where, "equality-prefix-effect", other);
+                }
+            } else if (numericUnary) {
+                const auto & rows = bitwiseUnary ? bitwiseUnaries : numericUnaries;
+                const auto row =
+                    index < rows.size() ? rows[index]
+                    : bitwiseUnary
+                        ? NumericUnary{ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(-2.0),
+                                       std::bit_cast<uint64_t>(1.0), true}
+                        : NumericUnary{ctjs::UnaryKind::Plus, 0x3ff0000000000000ULL,
+                                       0x3ff0000000000000ULL, true};
+                const mlir::Attribute value =
+                    index == 18   ? mlir::Attribute(ctjs::StringAttr::get(context, "1"))
+                    : index == 19 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
+                                  : ctjs::NumberAttr::get(context, row.operand);
+                mlir::Value operand = index == 17
+                                          ? mlir::Value(other)
+                                          : ctjs::ConstantOp::create(at, where, value).getResult();
+                if (index == 20) {
+                    operand = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Plus), other);
+                }
+                auto operation = ctjs::UnaryOp::create(
+                    at, where, payload.getType(),
+                    ctjs::UnaryKindAttr::get(
+                        context, !bitwiseUnary && (index == 17 || index == 19 || index == 20)
+                                     ? ctjs::UnaryKind::Neg
+                                     : row.kind),
+                    operand);
+                const unsigned unaryControl = bitwiseUnary ? control - 46 : control;
+                if (unaryControl == 322) { operation->eraseOperand(0); }
+                if (unaryControl == 323) { operation->removeAttr("kind"); }
+                if (unaryControl == 324) { operand.getDefiningOp()->removeAttr("value"); }
+                if (unaryControl == 325) {
+                    mlir::OpBuilder invalid(operation);
+                    auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
+                    operation->setOperand(0, flag);
+                }
+                selected = row.truth;
+                evaluatedResults.emplace_back(operation.getOperation(),
+                                              ctjs::NumberAttr::get(context, row.value));
+                input = operation;
+                if (index == 12 || index == 13) {
+                    auto negated = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Neg), input);
+                    evaluatedResults.emplace_back(
+                        negated.getOperation(),
+                        ctjs::NumberAttr::get(context, 0xbff0000000000000ULL));
+                    // The result feeds both Neg and Add across transported edges.
+                    auto sum = ctjs::BinaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::BinaryKindAttr::get(context, ctjs::BinaryKind::Add), negated, input);
+                    evaluatedResults.emplace_back(sum.getOperation(),
+                                                  ctjs::NumberAttr::get(context, 0));
+                    input = sum;
+                }
+                if (index >= 12 && index <= 14) {
+                    auto comparison = ctjs::CompareOp::create(
+                        at, where, payload.getType(), ctjs::CompareKind::StrictEq, input, input);
+                    selected = true;
+                    evaluatedResults.emplace_back(comparison.getOperation(),
+                                                  ctjs::BooleanAttr::get(context, selected));
+                    input = comparison;
+                    if (index == 14) {
+                        llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(input);
+                    } else {
+                        auto negated = ctjs::UnaryOp::create(
+                            at, where, payload.getType(),
+                            ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), input);
+                        selected = false;
+                        evaluatedResults.emplace_back(negated.getOperation(),
+                                                      ctjs::BooleanAttr::get(context, selected));
+                        input = negated;
+                    }
+                }
+            } else if (calculated) {
+                const auto row =
+                    power ? powers[powerIndex < powers.size() ? powerIndex : 0]
+                    : staticCalculated
+                        ? staticArithmetic[staticIndex < staticArithmetic.size() ? staticIndex : 1]
+                        : arithmetic[index < arithmetic.size() ? index : 0];
+                const mlir::Attribute lhsValue =
+                    index == 18 ? mlir::Attribute(ctjs::StringAttr::get(context, "1"))
+                                : ctjs::NumberAttr::get(context, row.lhs);
+                mlir::Value lhs = index == 17
+                                      ? mlir::Value(other)
+                                      : ctjs::ConstantOp::create(at, where, lhsValue).getResult();
+                if (power && index == 20) {
+                    lhs = ctjs::LoadGlobalOp::create(at, where, "power-input-effect");
+                }
+                const mlir::Attribute rhsValue =
+                    index == 19 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
+                                : ctjs::NumberAttr::get(context, row.rhs);
+                auto rhs = ctjs::ConstantOp::create(at, where, rhsValue);
+                const auto kind = ctjs::BinaryKindAttr::get(
+                    context, control == 432 ? ctjs::BinaryKind::Sub
+                             : control == 433 || (index == 20 && !staticCalculated)
+                                 ? ctjs::BinaryKind::Pow
+                                 : row.kind);
+                auto * operation =
+                    staticCalculated && index != 20
+                        ? ctjs::BinaryStaticOp::create(at, where, payload.getType(), kind, lhs, rhs)
+                              .getOperation()
+                        : ctjs::BinaryOp::create(at, where, payload.getType(), kind, lhs, rhs)
+                              .getOperation();
+                const unsigned binaryControl = power              ? control - 364
+                                               : staticCalculated ? control - 152
+                                                                  : control;
+                if (binaryControl == 274) { operation->eraseOperand(1); }
+                if (binaryControl == 275) { operation->removeAttr("kind"); }
+                if (binaryControl == 276) { lhs.getDefiningOp()->removeAttr("value"); }
+                if (binaryControl == 277) { rhs->removeAttr("value"); }
+                if (binaryControl == 278 || binaryControl == 279) {
+                    mlir::OpBuilder invalid(operation);
+                    auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
+                    operation->setOperand(binaryControl - 278, flag);
+                }
+                selected = row.truth;
+                evaluatedResults.emplace_back(operation, ctjs::NumberAttr::get(context, row.value));
+                input = operation->getResult(0);
+                if (index >= 12 && index <= 14) {
+                    auto comparison = ctjs::CompareOp::create(
+                        at, where, payload.getType(), ctjs::CompareKind::StrictEq, input, input);
+                    selected = true;
+                    evaluatedResults.emplace_back(comparison.getOperation(),
+                                                  ctjs::BooleanAttr::get(context, selected));
+                    input = comparison;
+                    if (index == 14) {
+                        llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(input);
+                    } else {
+                        auto negated = ctjs::UnaryOp::create(
+                            at, where, payload.getType(),
+                            ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), input);
+                        selected = false;
+                        evaluatedResults.emplace_back(negated.getOperation(),
+                                                      ctjs::BooleanAttr::get(context, selected));
+                        input = negated;
+                    }
+                }
+            } else if (compared) {
+                const auto comparison = comparisons[index < comparisons.size() ? index : 0];
+                mlir::Value lhs;
+                if (index == 19) {
+                    lhs = other;
+                } else if (index == 20) {
+                    lhs = ctjs::CreateObjectOp::create(at, where, payload.getType());
+                } else if (index == 23) {
+                    lhs = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Plus), other);
+                } else if (index == 24) {
+                    lhs = ctjs::LoadGlobalOp::create(at, where, "condition-effect");
+                } else {
+                    const mlir::Attribute value =
+                        index == 21 ? mlir::Attribute(ctjs::StringAttr::get(context, "0"))
+                                    : predicates[comparison.lhs].first;
+                    lhs = ctjs::ConstantOp::create(at, where, value);
+                }
+                const mlir::Attribute rhsValue =
+                    index == 22 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "0"))
+                                : predicates[comparison.rhs].first;
+                auto rhs = ctjs::ConstantOp::create(at, where, rhsValue);
+                auto operation = ctjs::CompareOp::create(at, where, payload.getType(),
+                                                         comparison.kind, lhs, rhs);
+                if (control == 226) { operation->eraseOperand(1); }
+                if (control == 227) { operation->removeAttr("kind"); }
+                if (control == 228) { lhs.getDefiningOp()->removeAttr("value"); }
+                if (control == 229) { rhs->removeAttr("value"); }
+                if (control >= 230) {
+                    mlir::OpBuilder invalid(operation);
+                    auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
+                    operation->setOperand(control - 230, flag);
+                }
+                selected = comparison.value;
+                evaluatedResults.emplace_back(operation.getOperation(),
+                                              ctjs::BooleanAttr::get(context, selected));
+                input = operation;
+                if (index == 14) {
+                    auto negated = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), input);
+                    selected = !selected;
+                    evaluatedResults.emplace_back(negated.getOperation(),
+                                                  ctjs::BooleanAttr::get(context, selected));
+                    input = negated;
+                }
+                if (index == 16) {
+                    llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(input);
+                }
+            } else if (computed) {
+                const bool literal = index < negatedPredicates.size();
+                bool truth = transported ? transport == 3
+                             : literal   ? negatedPredicates[index].second
+                                         : index != 9;
+                if (index == 14 || index == 25) {
+                    input = other;
+                } else if (index == 15) {
+                    input = ctjs::CreateObjectOp::create(at, where, payload.getType());
+                } else if (index == 16) {
+                    input = ctjs::LoadGlobalOp::create(at, where, "condition-effect");
+                } else if (index == 18 || index == 29) {
+                    input = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Plus), other);
+                } else {
+                    const mlir::Attribute value =
+                        transported && transport == 4
+                            ? mlir::Attribute(ctjs::BooleanAttr::get(context, false))
+                        : literal     ? negatedPredicates[index].first
+                        : index == 17 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
+                                      : predicates[truth ? 6 : 0].first;
+                    input = ctjs::ConstantOp::create(at, where, value);
+                }
+                if (index == 19) {
+                    ctjs::StoreGlobalOp::create(at, where, "predicate-prefix-effect", other);
+                }
+                if (transported && transport == 4) {
+                    llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(input);
+                }
+                const unsigned depth = index == 9 ? 2 : index == 10 || index == 21 ? 3 : 1;
+                for (unsigned i = 0; i != depth; ++i) {
+                    auto operation = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), input);
+                    truth = !truth;
+                    evaluatedResults.emplace_back(operation.getOperation(),
+                                                  ctjs::BooleanAttr::get(context, truth));
+                    input = operation;
+                }
+                selected = truth;
+                if (index == 11) {
+                    llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(input);
+                }
+            } else if (mutation == 2) {
+                input = ctjs::CreateObjectOp::create(at, where, payload.getType());
+            } else if (mutation == 3) {
+                input = ctjs::UnaryOp::create(
+                    at, where, payload.getType(),
+                    ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Plus), other);
+            } else if (mutation == 4) {
+                input = ctjs::LoadGlobalOp::create(at, where, "condition-effect");
+            } else {
+                const mlir::Attribute value =
+                    primitive       ? predicates[index].first
+                    : mutation == 5 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
+                                    : predicates[6].first;
+                input = ctjs::ConstantOp::create(at, where, value);
+            }
+            if (primitive || (computed && (index < 12 || (transported && transport < 5))) ||
+                (compared && index < 17) ||
+                (calculated && (index < 15 || (!power && !staticCalculated && index == 20))) ||
+                (numericUnary && index < 15) || (equality && index < 31)) {
+                // The input still evaluates after projection. Compare against
+                // the same operands and known pure results without the edges.
+                mlir::IRMapping mapping;
+                mlir::OwningOpRef<mlir::ModuleOp> evaluated(
+                    llvm::cast<mlir::ModuleOp>((*candidate)->clone(mapping)));
+                for (auto [operation, value] : evaluatedResults) {
+                    auto copy = mapping.lookup(operation->getResult(0)).getDefiningOp();
+                    mlir::OpBuilder replace(copy);
+                    auto result = ctjs::ConstantOp::create(replace, copy->getLoc(), value);
+                    copy->getResult(0).replaceAllUsesWith(result.getResult());
+                    copy->erase();
+                }
+                auto evaluatedProof = contract;
+                evaluatedProof.moduleSha256 =
+                    ctcompile::ctnative::hostContractFingerprint(*evaluated);
+                auto error =
+                    ctcompile::ctnative::prepareDOMEntry(*evaluated, evaluatedProof, 100000);
+                if (!check(!error, "proved helper input establishes its branchless reference")) {
+                    llvm::errs() << "raw iterator helper control " << control << ": "
+                                 << llvm::toString(std::move(error)) << '\n';
+                    continue;
+                }
+                expected = printed(*evaluated);
+            }
+            if (transported) {
+                // The branchless reference above retains every evaluated input.
+                // These edges must expose the operand before its predicate can fold.
+                for (auto [operation, value] : evaluatedResults) {
+                    (void)value;
+                    const auto operand = operation->getOperand(0);
+                    at.setInsertionPoint(operation);
+                    if (transport == 2 || transport == 3 || transport == 6 || transport == 8) {
+                        const bool selectedInput = transport != 3;
+                        const mlir::Value condition =
+                            transport == 6
+                                ? mlir::Value(
+                                      ctjs::TruthyOp::create(at, where, at.getI1Type(), other))
+                                : mlir::Value(mlir::arith::ConstantIntOp::create(at, where,
+                                                                                 selectedInput, 1));
+                        auto branch =
+                            mlir::scf::IfOp::create(at, where, operand.getType(), condition, true);
+                        for (auto [armIndex, region] : llvm::enumerate(branch->getRegions())) {
+                            at.setInsertionPointToEnd(&region.front());
+                            mlir::Value yielded = operand;
+                            if ((armIndex == 0) == selectedInput) {
+                                if (transport == 3) {
+                                    auto flag = mlir::arith::ConstantIntOp::create(at, where, 1, 1);
+                                    auto nested = mlir::scf::IfOp::create(
+                                        at, where, operand.getType(), flag, true);
+                                    at.setInsertionPointToEnd(&nested.getThenRegion().front());
+                                    mlir::scf::YieldOp::create(at, where,
+                                                               mlir::ValueRange{operand});
+                                    at.setInsertionPointToEnd(&nested.getElseRegion().front());
+                                    ctjs::StoreGlobalOp::create(at, where, "nested-input-effect",
+                                                                other);
+                                    mlir::scf::YieldOp::create(at, where, mlir::ValueRange{other});
+                                    at.setInsertionPointAfter(nested);
+                                    yielded = nested.getResult(0);
+                                }
+                                if (transport == 8) {
+                                    ctjs::StoreGlobalOp::create(at, where, "selected-input-effect",
+                                                                other);
+                                }
+                            } else {
+                                ctjs::StoreGlobalOp::create(at, where, "discarded-input-effect",
+                                                            other);
+                                yielded = transport == 6 ? mlir::Value(ctjs::ConstantOp::create(
+                                                               at, where, predicates[6].first))
+                                                         : mlir::Value(other);
+                            }
+                            mlir::scf::YieldOp::create(at, where, mlir::ValueRange{yielded});
+                        }
+                        operation->setOperand(0, branch.getResult(0));
+                    } else {
+                        auto * source = operation->getBlock();
+                        auto * continuation = source->splitBlock(operation);
+                        operation->setOperand(0,
+                                              continuation->addArgument(operand.getType(), where));
+                        at.setInsertionPointToEnd(source);
+                        mlir::cf::BranchOp::create(at, where, continuation,
+                                                   mlir::ValueRange{operand});
+                    }
+                }
+                at.setInsertionPoint(moved);
+            }
+            auto flag = ctjs::TruthyOp::create(at, where, at.getI1Type(), input);
+            const mlir::Value livePayload = mutation == 0 ? mlir::Value(other) : payload;
+            auto & selectedBody = *moved->getBlock();
+            if (control % 2 == 0) {
+                auto * continuation = selectedBody.splitBlock(terminal);
+                terminal->setOperand(0, continuation->addArgument(payload.getType(), where));
+                auto * dead = &close.getBody().emplaceBlock();
+                at.setInsertionPointToEnd(&selectedBody);
+                mlir::cf::CondBranchOp::create(
+                    at, where, flag, selected ? continuation : dead,
+                    selected ? mlir::ValueRange{livePayload} : mlir::ValueRange{},
+                    selected ? dead : continuation,
+                    selected ? mlir::ValueRange{} : mlir::ValueRange{livePayload});
+                at.setInsertionPointToEnd(dead);
+                ctjs::StoreGlobalOp::create(at, where, "dead-arm-effect", other);
+                ctjs::ThrowOp::create(at, where, other);
+                if (mutation == 1) {
+                    at.setInsertionPoint(moved);
+                    ctjs::StoreGlobalOp::create(at, where, "live-arm-effect", other);
+                }
+            } else {
+                auto branch = mlir::scf::IfOp::create(at, where, payload.getType(), flag, true);
+                for (auto [armIndex, region] : llvm::enumerate(branch->getRegions())) {
+                    auto & arm = region.front();
+                    const bool live = (armIndex == 0) == selected;
+                    if (live) {
+                        arm.getOperations().splice(arm.end(), selectedBody.getOperations(),
+                                                   moved->getIterator(), terminal->getIterator());
+                    }
+                    at.setInsertionPointToEnd(&arm);
+                    if (!live || mutation == 1) {
+                        ctjs::StoreGlobalOp::create(
+                            at, where, live ? "live-arm-effect" : "dead-arm-effect", other);
+                    }
+                    mlir::scf::YieldOp::create(
+                        at, where, mlir::ValueRange{live ? livePayload : mlir::Value(other)});
+                }
+                terminal->setOperand(0, branch.getResult(0));
+            }
+        } else if (control >= 56) {
+            auto helper = control == 66 || control == 67 || control == 70 || control == 71 ? close
+                          : control == 68 || control == 69 ? next
+                                                           : identity;
+            helper.getBody().back().erase();
+            auto & first = helper.getBody().front();
+            auto * terminal = first.getTerminator();
+            mlir::Value payload = terminal->getOperand(0);
+            auto receiver = first.getArgument(ctjs::arg_receiver);
+            auto other = first.getArgument(ctjs::arg_callee);
+            auto * moved = control == 67
+                               ? (*first.getOps<ctjs::LoadUpvalueOp>().begin()).getOperation()
+                           : control == 68 || control == 69 ? payload.getDefiningOp()
+                                                            : nullptr;
+            at.setInsertionPoint(moved ? moved : terminal);
+            const bool selected = control != 57 && control != 59 && control != 63 &&
+                                  control != 67 && control != 69 && control != 75;
+            mlir::Value flag;
+            if (control == 60 || control == 61 || control >= 73) {
+                mlir::Value input = receiver;
+                if (control == 73) {
+                    input = ctjs::LoadGlobalOp::create(at, helper.getLoc(), "condition-effect");
+                } else if (control >= 74) {
+                    input = ctjs::ConstantOp::create(
+                        at, helper.getLoc(),
+                        ctjs::BooleanAttr::get(original.getContext(), selected));
+                }
+                flag = ctjs::TruthyOp::create(at, helper.getLoc(), at.getI1Type(), input);
+            } else {
+                flag = mlir::arith::ConstantIntOp::create(at, helper.getLoc(), selected, 1);
+            }
+            const bool tuple = control >= 62 && control <= 64;
+            llvm::SmallVector<mlir::Type> types(tuple ? 2u : 1u, payload.getType());
+            auto branch = mlir::scf::IfOp::create(at, helper.getLoc(), types, flag, true);
+            for (auto [index, region] : llvm::enumerate(branch->getRegions())) {
+                auto & arm = region.front();
+                const bool live = (index == 0) == selected;
+                mlir::Value yielded = live || control == 60 ? payload : mlir::Value(other);
+                if (live && moved) {
+                    // Move the complete producer suffix: captures, record fields
+                    // and ordered effects must survive the selected arm together.
+                    arm.getOperations().splice(arm.end(), first.getOperations(),
+                                               moved->getIterator(), terminal->getIterator());
+                }
+                at.setInsertionPointToEnd(&arm);
+                if (!live || control == 71) {
+                    ctjs::StoreGlobalOp::create(at, helper.getLoc(),
+                                                live ? "live-arm-effect" : "dead-arm-effect",
+                                                receiver);
+                    if (control == 72) {
+                        for (unsigned i = 0; i != 300; ++i) {
+                            ctjs::ConstantOp::create(
+                                at, helper.getLoc(),
+                                ctjs::UndefinedAttr::get(original.getContext()));
+                        }
+                    }
+                }
+                if (live && (control == 58 || control == 59 || control == 70)) { yielded = other; }
+                if (live && (control == 65 || control == 67)) {
+                    auto no = mlir::arith::ConstantIntOp::create(at, helper.getLoc(), 0, 1);
+                    auto nested =
+                        mlir::scf::IfOp::create(at, helper.getLoc(), payload.getType(), no, true);
+                    at.setInsertionPointToEnd(&nested.getThenRegion().front());
+                    mlir::scf::YieldOp::create(at, helper.getLoc(), mlir::ValueRange{other});
+                    at.setInsertionPointToEnd(&nested.getElseRegion().front());
+                    mlir::scf::YieldOp::create(at, helper.getLoc(), mlir::ValueRange{yielded});
+                    yielded = nested.getResult(0);
+                    at.setInsertionPointToEnd(&arm);
+                }
+                llvm::SmallVector<mlir::Value> values{yielded};
+                if (tuple) {
+                    values.push_back(other);
+                    if (control == 63) { std::swap(values[0], values[1]); }
+                }
+                mlir::scf::YieldOp::create(at, helper.getLoc(), values);
+            }
+            terminal->setOperand(0, branch.getResult(control == 63 || control == 64 ? 1 : 0));
+        } else if (control >= 37) {
+            auto helper = (control >= 44 && control <= 46) || control == 48 ? close : identity;
+            // Exercise the already-one-block path, without an imported dead tail
+            // triggering CFG normalization on the helper's behalf.
+            helper.getBody().back().erase();
+            auto & first = helper.getBody().front();
+            auto * terminal = first.getTerminator();
+            auto * moved =
+                helper == close ? (*first.getOps<ctjs::CallOp>().begin()).getOperation() : terminal;
+            if (helper == close &&
+                !check(moved->use_empty(), "structured close effect has no escaping result")) {
+                continue;
+            }
+            at.setInsertionPoint(moved);
+            auto receiver = first.getArgument(ctjs::arg_receiver);
+            const bool selected =
+                control != 38 && control != 40 && control != 41 && control != 45 && control != 52;
+            mlir::Value flag;
+            if (control == 39 || control == 40 || (control >= 49 && control <= 50) ||
+                control == 52) {
+                mlir::Value input = receiver;
+                if (control == 50) {
+                    input = ctjs::LoadGlobalOp::create(at, helper.getLoc(), "condition-effect");
+                } else if (control == 52) {
+                    input = ctjs::ConstantOp::create(
+                        at, helper.getLoc(), ctjs::NumberAttr::get(original.getContext(), 0));
+                } else if (control == 39 || control == 40) {
+                    input = ctjs::ConstantOp::create(
+                        at, helper.getLoc(),
+                        ctjs::BooleanAttr::get(original.getContext(), selected));
+                }
+                flag = ctjs::TruthyOp::create(at, helper.getLoc(), at.getI1Type(), input);
+            } else {
+                flag = mlir::arith::ConstantIntOp::create(at, helper.getLoc(), selected, 1);
+            }
+            if (control == 54) {
+                auto * continuation = first.splitBlock(terminal);
+                at.setInsertionPointToEnd(&first);
+                mlir::cf::BranchOp::create(at, helper.getLoc(), continuation,
+                                           mlir::ValueRange{flag});
+                flag = continuation->addArgument(at.getI1Type(), helper.getLoc());
+                at.setInsertionPoint(terminal);
+            }
+            if (control == 51) {
+                auto branch =
+                    mlir::scf::IfOp::create(at, helper.getLoc(), receiver.getType(), flag, true);
+                for (auto & region : branch->getRegions()) {
+                    at.setInsertionPointToEnd(&region.front());
+                    mlir::scf::YieldOp::create(at, helper.getLoc(), mlir::ValueRange{receiver});
+                }
+                terminal->setOperand(0, branch.getResult(0));
+            } else {
+                auto branch = mlir::scf::IfOp::create(at, helper.getLoc(), flag,
+                                                      control != 41 && control != 42);
+                auto & dead = selected ? branch.getElseRegion() : branch.getThenRegion();
+                if (!dead.empty()) {
+                    at.setInsertionPoint(dead.front().getTerminator());
+                    ctjs::StoreGlobalOp::create(at, helper.getLoc(), "dead-arm-effect", receiver);
+                    if (control == 53) {
+                        for (unsigned i = 0; i != 300; ++i) {
+                            ctjs::ConstantOp::create(
+                                at, helper.getLoc(),
+                                ctjs::UndefinedAttr::get(original.getContext()));
+                        }
+                    }
+                }
+                auto & live = selected ? branch.getThenRegion() : branch.getElseRegion();
+                if (!live.empty()) {
+                    auto * destination = &live.front();
+                    if (control == 43 || control == 46 || control == 55) {
+                        at.setInsertionPoint(destination->getTerminator());
+                        mlir::Value nestedFlag = flag;
+                        if (control != 55) {
+                            nestedFlag =
+                                mlir::arith::ConstantIntOp::create(at, helper.getLoc(), 0, 1);
+                        }
+                        auto nested =
+                            mlir::scf::IfOp::create(at, helper.getLoc(), nestedFlag, true);
+                        auto & discarded =
+                            control == 55 ? nested.getElseRegion() : nested.getThenRegion();
+                        at.setInsertionPoint(discarded.front().getTerminator());
+                        ctjs::StoreGlobalOp::create(at, helper.getLoc(), "nested-dead-effect",
+                                                    receiver);
+                        destination =
+                            &(control == 55 ? nested.getThenRegion() : nested.getElseRegion())
+                                 .front();
+                    }
+                    if (helper == close) { moved->moveBefore(destination->getTerminator()); }
+                    if (control == 47 || control == 48) {
+                        at.setInsertionPoint(destination->getTerminator());
+                        ctjs::StoreGlobalOp::create(at, helper.getLoc(), "live-arm-effect",
+                                                    receiver);
+                    }
+                }
+            }
+        } else if (control >= 23) {
+            auto helper = control == 28                                     ? close
+                          : control == 27 || control == 33 || control >= 35 ? next
+                                                                            : identity;
+            auto & first = helper.getBody().front();
+            auto * terminal = first.getTerminator();
+            ctjs::CallOp call;
+            if (helper != identity) { call = *first.getOps<ctjs::CallOp>().begin(); }
+            auto * split = control == 36 ? call->getNextNode()
+                           : call        ? call.getOperation()
+                                         : terminal;
+            auto * continuation = first.splitBlock(split);
+            at.setInsertionPointToEnd(&first);
+            auto receiver = first.getArgument(ctjs::arg_receiver);
+            llvm::SmallVector<mlir::Value> payload;
+            if (helper == identity) {
+                payload.push_back(control == 34 ? first.getArgument(ctjs::arg_callee)
+                                                : terminal->getOperand(0));
+                terminal->setOperand(
+                    0, continuation->addArgument(payload.front().getType(), helper.getLoc()));
+            }
+            if (control == 35) {
+                ctjs::StoreGlobalOp::create(at, helper.getLoc(), "live-prefix-effect", receiver);
+            }
+            const bool dynamic = (control >= 29 && control <= 32) || control == 36;
+            const bool selected = control != 24 && control != 26 && control != 28 && control != 34;
+            mlir::Value flag;
+            if (dynamic || control == 25 || control == 26) {
+                mlir::Value input = control == 36 ? mlir::Value(call.getResult()) : receiver;
+                if (control == 32) {
+                    input = ctjs::LoadGlobalOp::create(at, helper.getLoc(), "condition-effect");
+                } else if (!dynamic) {
+                    input = ctjs::ConstantOp::create(
+                        at, helper.getLoc(),
+                        ctjs::BooleanAttr::get(original.getContext(), selected));
+                }
+                flag = ctjs::TruthyOp::create(at, helper.getLoc(), at.getI1Type(), input);
+            } else {
+                flag = mlir::arith::ConstantIntOp::create(at, helper.getLoc(), selected, 1);
+            }
+            if (dynamic && control != 31) {
+                auto alternative = payload;
+                if (control == 30) { alternative.front() = first.getArgument(ctjs::arg_callee); }
+                mlir::cf::CondBranchOp::create(at, helper.getLoc(), flag, continuation, payload,
+                                               continuation, alternative);
+            } else {
+                auto * alternative = &helper.getBody().emplaceBlock();
+                mlir::cf::CondBranchOp::create(
+                    at, helper.getLoc(), flag, selected ? continuation : alternative,
+                    selected ? mlir::ValueRange(payload) : mlir::ValueRange{},
+                    selected ? alternative : continuation,
+                    selected ? mlir::ValueRange{} : mlir::ValueRange(payload));
+                at.setInsertionPointToEnd(alternative);
+                if (control != 31) {
+                    ctjs::StoreGlobalOp::create(at, helper.getLoc(), "dead-arm-effect", receiver);
+                }
+                ctjs::ReturnOp::create(at, helper.getLoc(), receiver);
+            }
+            if (control == 33) {
+                at.setInsertionPointToStart(continuation);
+                ctjs::StoreGlobalOp::create(at, helper.getLoc(), "live-arm-effect", receiver);
+            }
         } else if (control >= 20) {
             auto helper = control == 20 ? identity : control == 21 ? next : close;
             helper.eraseBody();
@@ -983,15 +2061,35 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 }
             }
         }
-        if (!check(mlir::succeeded(mlir::verify(*candidate)), "raw helper control verifies")) {
+        const bool malformed =
+            (control >= 226 && control < 232) || (control >= 274 && control < 280) ||
+            (control >= 322 && control < 326) || (control >= 368 && control < 372) ||
+            (control >= 426 && control < 434) || (control >= 530 && control < 536) ||
+            control == 552 || control == 553 || control >= 638;
+        if (!check(mlir::succeeded(mlir::verify(*candidate)) != malformed,
+                   "only intentionally malformed helper operations fail verification")) {
             continue;
         }
         auto proof = contract;
         proof.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*candidate);
+        if (control == 554) { proof.moduleSha256 = "stale"; }
+        if (control == 555) {
+            proof.provider = ctcompile::ctnative::HostContract::Provider::closedSource;
+        }
         const auto fingerprint = proof.moduleSha256;
         const auto before = printed(*candidate);
-        const bool succeeds = control == 0 || (control >= 2 && control <= 4) ||
-                              (control >= 10 && control <= 12) || control == 18 || control == 19;
+        const bool succeeds =
+            control == 0 || (control >= 2 && control <= 4) || (control >= 10 && control <= 12) ||
+            control == 18 || control == 19 || (control >= 23 && control <= 29) ||
+            (control >= 36 && control <= 46) || control == 51 || control == 52 ||
+            (control >= 54 && control <= 57) || control == 62 || control == 63 ||
+            (control >= 65 && control <= 69) || (control >= 74 && control < 104) ||
+            (control >= 116 && control < 140) || (control >= 156 && control < 166) ||
+            (control >= 176 && control < 210) || (control >= 232 && control < 262) ||
+            (control >= 280 && control < 310) || (control >= 326 && control < 356) ||
+            (control >= 372 && control < 414) || (control >= 434 && control < 496) ||
+            (control >= 536 && control < 542) || control == 272 || control == 273 ||
+            (control >= 560 && control < 626);
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
@@ -1000,6 +2098,37 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                       limitedProof.moduleSha256 == fingerprint,
                   "reachable helper budget refusal preserves the entire module and contract");
             if (limitedError) { llvm::consumeError(std::move(limitedError)); }
+            if (control == 46 || control == 67 || control == 79 || control == 137 ||
+                control == 165 || control == 209 || control == 259 || control == 307 ||
+                control == 353 || control == 411 || control == 493 || control == 541 ||
+                control == 623) {
+                const auto attempt = [&](unsigned budget) {
+                    mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
+                    auto limitedProof = proof;
+                    auto error =
+                        ctcompile::ctnative::prepareDOMEntry(*limited, limitedProof, budget);
+                    if (!error) {
+                        check(printed(*limited) == expected,
+                              "complete structured helper budget retains exact effects");
+                        return true;
+                    }
+                    llvm::consumeError(std::move(error));
+                    check(printed(*limited) == before && limitedProof.moduleSha256 == fingerprint,
+                          "partial structured helper projection rolls back all IR and proof");
+                    return false;
+                };
+                unsigned lower = 1, upper = 100000;
+                while (lower < upper) {
+                    const unsigned middle = lower + (upper - lower) / 2;
+                    if (attempt(middle)) {
+                        upper = middle;
+                    } else {
+                        lower = middle + 1;
+                    }
+                }
+                check(attempt(lower) && !attempt(lower - 1),
+                      "structured helper needs its complete nonzero projection budget");
+            }
         }
         auto error = ctcompile::ctnative::prepareDOMEntry(*candidate, proof, 100000);
         const auto reason = error ? llvm::toString(std::move(error)) : std::string{};
@@ -1012,7 +2141,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             check(!reason.empty() && printed(*candidate) == before &&
                       proof.moduleSha256 == fingerprint,
                   "raw helper shape, effect and receiver refusals roll back the whole module");
-            if (control == 8 || control == 9) {
+            if (control == 8 || control == 9 || control == 53 || control == 72) {
                 check(reason.find("budget") != std::string::npos,
                       "helper operations and successor edges consume the normalization budget");
             }

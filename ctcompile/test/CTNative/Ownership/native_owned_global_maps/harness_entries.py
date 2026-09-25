@@ -1,3 +1,4 @@
+from .harness_map_results import run_sanitized_lifetime
 from .harness_objects import (
     instrument_leaf_objects,
 )
@@ -127,31 +128,7 @@ def leaf_absence_lifetime(args, cpp, name, mode, compiler):
     build = leaf_clear_lifetime_cpp if name in LEAF_CLEAR_LIFETIMES else leaf_absence_lifetime_cpp
     source.write_text(build(cpp, name))
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
+    result = run_sanitized_lifetime(source, binary, compiler)
     if result.returncode or result.stdout != "trace=1\n" * 2:
         raise RuntimeError(
             f"{name}/{mode}: absence lifetime failure (exit {result.returncode})\n"
@@ -794,31 +771,7 @@ def numeric_entry_lifetime(args, cpp, name, mode, compiler):
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(numeric_entry_lifetime_cpp(cpp, name))
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
+    result = run_sanitized_lifetime(source, binary, compiler)
     if result.returncode or result.stdout != scalar_global_output(name, 14) * 2:
         raise RuntimeError(
             f"{name}/{mode}: saved numeric lifetime failure (exit {result.returncode})\n"

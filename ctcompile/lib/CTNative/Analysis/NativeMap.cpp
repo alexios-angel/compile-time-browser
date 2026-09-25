@@ -230,23 +230,6 @@ bool unify(closedValueFlow & flow, mlir::Value left, mlir::Value right) {
     return true;
 }
 
-// The Map-specific edges around closedValueFlow::build: an environment read
-// is its captured slot, and `.set` returns its receiver.
-void connectEnvironmentReads(closedValueFlow & flow, mlir::ModuleOp module) {
-    llvm::StringMap<ctjs::CreateClosureOp> environments;
-    module.walk([&](ctjs::CreateClosureOp made) {
-        if (!environmentTarget(made).empty()) { environments[environmentTarget(made)] = made; }
-    });
-    module.walk([&](ctjs::LoadUpvalueOp read) {
-        if (!read->hasAttr(kNativeEnvironmentRead)) { return; }
-        auto made = environments.lookup(environmentTarget(read));
-        if (made && read.getIndex() >= 0 &&
-            static_cast<size_t>(read.getIndex()) < made.getUpvalues().size()) {
-            flow.join(read.getResult(), made.getUpvalues()[static_cast<size_t>(read.getIndex())]);
-        }
-    });
-}
-
 void connectSetReceivers(closedValueFlow & flow, mlir::ModuleOp module) {
     module.walk([&](ctjs::CallOp call) {
         auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -581,7 +564,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
     }
     closedValueFlow graph;
     for (ctjs::ConstructOp made : madeSites) { graph.add(made.getResult()); }
-    connectEnvironmentReads(graph, module);
+    graph.connectEnvironmentReads(module);
     graph.build(module);
     connectSetReceivers(graph, module);
     connectPayloads(graph, module, madeSites);

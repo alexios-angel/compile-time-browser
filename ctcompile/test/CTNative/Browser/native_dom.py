@@ -491,6 +491,20 @@ INVALID_SELECTOR_CHECKS = r"""
 """
 
 
+def parse_args(description, *, oracles=False):
+    parser = argparse.ArgumentParser(description=description)
+    tools = ("translate", "opt", "clang") + (("node", "reference") if oracles else ())
+    for name in tools:
+        parser.add_argument("--" + name, required=True)
+    for name in ("build", "include", "work"):
+        parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--nm", default=shutil.which("nm"))
+    args = parser.parse_args()
+    args.work = args.work.resolve()
+    args.work.mkdir(parents=True, exist_ok=True)
+    return args
+
+
 def prepare(args, name, source, parameters, *, entry_name=None):
     js = args.work / f"{name}.js"
     raw = args.work / f"{name}.raw.mlir"

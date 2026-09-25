@@ -1,9 +1,14 @@
+#include "../../Prefix.h"
 #include "../Source/Proof.hpp"
+#include "ctcompile/CTNative/Runtime/Number.hpp"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "llvm/ADT/APFloat.h"
 
 #include <bit>
+#include <cmath>
+#include <limits>
 
 namespace ctcompile::ctnative {
 
@@ -23,10 +28,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return load ? load.getName() : llvm::StringRef{};
     };
     const auto undefined = dom_source_detail::DOMSource::undefined;
-    bool custom = false;
+    bool custom = false, undefinedWritten = false;
     const auto census = candidate.walk([&](mlir::Operation * operation) {
         for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
             if (!spend()) { return mlir::WalkResult::interrupt(); }
+        }
+        if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
+            undefinedWritten |= store.getNameAttr() && store.getName() == "undefined";
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
             call && helper(call) == "__ctbrowser_for_of_open" && call.getArgs().size() == 1) {
@@ -172,6 +180,150 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (object->getBlock() != openAnchor->getBlock() || !object->isBeforeInBlock(openAnchor)) {
         return error("DOM custom iterator holder lacks preceding local allocation");
     }
+    const auto exactBoolean = [](mlir::Value condition) -> std::optional<bool> {
+        if (auto constant = condition.getDefiningOp<mlir::arith::ConstantOp>()) {
+            if (auto value = llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())) {
+                return !value.getValue().isZero();
+            }
+        } else if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
+            auto constant = truthy.getValue().getDefiningOp<ctjs::ConstantOp>();
+            if (constant) {
+                auto value = PrimitiveAlternatives::literal(constant.getValue());
+                if (value.known) { return value.truthy != 0; }
+            }
+        }
+        return std::nullopt;
+    };
+    const auto exactUnary = [](ctjs::UnaryOp unary) -> mlir::Attribute {
+        if (unary->getNumOperands() != 1 || !unary.getKindAttr()) { return {}; }
+        auto input = unary->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
+        if (!input || !input.getValue()) { return {}; }
+        if (unary.getKind() == ctjs::UnaryKind::Not) {
+            const auto value = PrimitiveAlternatives::literal(input.getValue());
+            return value.known ? ctjs::BooleanAttr::get(unary.getContext(), !value.truthy)
+                               : mlir::Attribute{};
+        }
+        auto number = llvm::dyn_cast<ctjs::NumberAttr>(input.getValue());
+        if (!number) { return {}; }
+        if (unary.getKind() == ctjs::UnaryKind::Plus) { return number; }
+        if (unary.getKind() == ctjs::UnaryKind::BitNot) {
+            return ctjs::NumberAttr::get(
+                unary.getContext(),
+                std::bit_cast<uint64_t>((~::ctnative::js_num{number.getDouble()}).value()));
+        }
+        if (unary.getKind() != ctjs::UnaryKind::Neg) { return {}; }
+        // Number negation changes only the sign, including zero and NaN.
+        llvm::APFloat result(llvm::APFloat::IEEEdouble(), llvm::APInt(64, number.getBits()));
+        result.changeSign();
+        return ctjs::NumberAttr::get(unary.getContext(), result.bitcastToAPInt().getZExtValue());
+    };
+    const auto exactComparison = [](ctjs::CompareOp comparison) -> std::optional<bool> {
+        if (comparison->getNumOperands() != 2 || !comparison.getKindAttr()) { return std::nullopt; }
+        auto lhs = comparison->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
+        auto rhs = comparison->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
+        if (!lhs || !rhs || !lhs.getValue() || !rhs.getValue()) { return std::nullopt; }
+        // Reuse the source-prefix proof: strict primitive equality and exact
+        // String equality need neither conversion nor object hooks.
+        const auto primitive = host_detail::prefixCompare(
+            comparison.getKind(), host_detail::prefixValue::constant(lhs.getValue()),
+            host_detail::prefixValue::constant(rhs.getValue()), comparison.getContext());
+        if (auto result = llvm::dyn_cast_if_present<ctjs::BooleanAttr>(primitive.literal)) {
+            return result.getValue();
+        }
+        auto left =
+            lhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(lhs.getValue()) : ctjs::NumberAttr{};
+        auto right =
+            rhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
+        if (!left || !right) { return std::nullopt; }
+        // Original Numbers need no conversion or hooks. Binary64 comparisons
+        // preserve unordered NaNs and signed-zero equality.
+        const double a = left.getDouble(), b = right.getDouble();
+        switch (comparison.getKind()) {
+        case ctjs::CompareKind::Eq:
+        case ctjs::CompareKind::StrictEq: return a == b;
+        case ctjs::CompareKind::Lt: return a < b;
+        case ctjs::CompareKind::Le: return a <= b;
+        case ctjs::CompareKind::Gt: return a > b;
+        case ctjs::CompareKind::Ge: return a >= b;
+        default: return std::nullopt;
+        }
+    };
+    const auto exactNumberArithmetic = [](mlir::Operation * binary) -> ctjs::NumberAttr {
+        if (!llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(binary) ||
+            binary->getNumOperands() != 2) {
+            return {};
+        }
+        auto kind = binary->getAttrOfType<ctjs::BinaryKindAttr>("kind");
+        if (!kind) { return {}; }
+        auto lhs = binary->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
+        auto rhs = binary->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
+        auto left =
+            lhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(lhs.getValue()) : ctjs::NumberAttr{};
+        auto right =
+            rhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
+        if (!left || !right) { return {}; }
+        if (llvm::isa<ctjs::BinaryStaticOp>(binary) && kind.getValue() != ctjs::BinaryKind::Add) {
+            // Reuse the typed Number operators and their public Core conversions:
+            // ToInt32/ToUint32, masked shift counts and unsigned left shifts.
+            const ::ctnative::js_num a{left.getDouble()}, b{right.getDouble()};
+            ::ctnative::js_num result;
+            switch (kind.getValue()) {
+            case ctjs::BinaryKind::BitAnd: result = a & b; break;
+            case ctjs::BinaryKind::BitOr: result = a | b; break;
+            case ctjs::BinaryKind::BitXor: result = a ^ b; break;
+            case ctjs::BinaryKind::Shl: result = a << b; break;
+            case ctjs::BinaryKind::Shr: result = a >> b; break;
+            case ctjs::BinaryKind::UShr: result = a.unsigned_shift_right(b); break;
+            default: return {};
+            }
+            return ctjs::NumberAttr::get(binary->getContext(),
+                                         std::bit_cast<uint64_t>(result.value()));
+        }
+        if (kind.getValue() == ctjs::BinaryKind::Pow) {
+            const double base = left.getDouble(), exponent = right.getDouble();
+            // Match native Number exponentiation: libm differs at magnitude one
+            // with a NaN/infinite exponent. Keep NaN literals canonical.
+            const double nan = std::numeric_limits<double>::quiet_NaN();
+            const double result = exponent == 0 ? 1
+                                  : std::abs(base) == 1 && !std::isfinite(exponent)
+                                      ? nan
+                                      : std::pow(base, exponent);
+            return ctjs::NumberAttr::get(
+                binary->getContext(), std::bit_cast<uint64_t>(std::isnan(result) ? nan : result));
+        }
+        // Exact Number operands cannot invoke conversion hooks. LLVM supplies
+        // binary64 rounding independently of the host's floating-point state.
+        llvm::APFloat result(llvm::APFloat::IEEEdouble(), llvm::APInt(64, left.getBits()));
+        const llvm::APFloat operand(llvm::APFloat::IEEEdouble(), llvm::APInt(64, right.getBits()));
+        switch (kind.getValue()) {
+        case ctjs::BinaryKind::Add:
+            (void)result.add(operand, llvm::APFloat::rmNearestTiesToEven);
+            break;
+        case ctjs::BinaryKind::Sub:
+            (void)result.subtract(operand, llvm::APFloat::rmNearestTiesToEven);
+            break;
+        case ctjs::BinaryKind::Mul:
+            (void)result.multiply(operand, llvm::APFloat::rmNearestTiesToEven);
+            break;
+        case ctjs::BinaryKind::Div:
+            (void)result.divide(operand, llvm::APFloat::rmNearestTiesToEven);
+            break;
+        case ctjs::BinaryKind::Mod: (void)result.mod(operand); break;
+        default: return {};
+        }
+        return ctjs::NumberAttr::get(binary->getContext(), result.bitcastToAPInt().getZExtValue());
+    };
+    const auto exactUndefined = [&](ctjs::LoadGlobalOp load) {
+        // The initialized DOM provider supplies this binding. Check every
+        // source write before pruning helpers, including unreachable writes.
+        // Complete DOM admission still checks all other effects and declarations.
+        return !undefinedWritten &&
+               (contract.provider == HostContract::Provider::ctbrowserDOM ||
+                contract.provider == HostContract::Provider::ctbrowserDOMSession) &&
+               load->getNumOperands() == 0 && load->getNumResults() == 1 &&
+               llvm::isa<ctjs::ValueType>(load->getResult(0).getType()) && load.getNameAttr() &&
+               load.getName() == "undefined";
+    };
     const auto prepareTarget = [&](ctjs::CreateClosureOp closure) {
         ctjs::FuncOp found;
         for (auto function : candidate.getOps<ctjs::FuncOp>()) {
@@ -182,13 +334,32 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
         if (found && found.getBody().empty()) { return ctjs::FuncOp{}; }
-        if (found && found != entry && !found.getBody().hasOneBlock()) {
-            // Raw import retains dead return tails and straight-line CFG edges.
-            // Normalize this private candidate before proving every live effect
-            // and payload; branching helpers still need their own proof.
+        if (found && found != entry) {
+            // Normalize only exact continuations on this private candidate.
+            // Every surviving condition producer, effect and payload still
+            // needs the complete helper proof below.
+            // Merging CFG edges can expose a constant block argument too.
+            bool projectBranches = !found.getBody().hasOneBlock();
             uint64_t size = 0;
             const auto counted = found.walk([&](mlir::Operation * operation) {
                 if (!spend()) { return mlir::WalkResult::interrupt(); }
+                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                    projectBranches |= exactBoolean(branch.getCondition()).has_value();
+                }
+                if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
+                    projectBranches |=
+                        (unary.getKindAttr() && unary.getKind() == ctjs::UnaryKind::Not) ||
+                        static_cast<bool>(exactUnary(unary));
+                }
+                if (auto comparison = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
+                    projectBranches |= exactComparison(comparison).has_value();
+                }
+                if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(operation)) {
+                    projectBranches |= static_cast<bool>(exactNumberArithmetic(operation));
+                }
+                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
+                    projectBranches |= exactUndefined(load);
+                }
                 size += uint64_t(1) + operation->getNumOperands() + operation->getNumResults() +
                         operation->getNumSuccessors();
                 for (auto & region : operation->getRegions()) {
@@ -200,24 +371,136 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return size > work.remaining ? mlir::WalkResult::interrupt()
                                              : mlir::WalkResult::advance();
             });
+            if (counted.wasInterrupted()) {
+                work.remaining = 0;
+                return ctjs::FuncOp{};
+            }
+            if (!projectBranches) { return found; }
             // ponytail: upstream has no step callback; reserve a quadratic
             // input ceiling until larger helper CFGs need a tighter bound.
-            if (counted.wasInterrupted() || size > work.remaining / size) {
+            if (size > work.remaining / size) {
                 work.remaining = 0;
                 return ctjs::FuncOp{};
             }
             work.remaining -= static_cast<unsigned>(size * size);
             if (mlir::failed(mlir::verify(found))) { return ctjs::FuncOp{}; }
             mlir::PatternRewriter rewriter(candidate.getContext());
-            (void)mlir::eraseUnreachableBlocks(rewriter, found.getBody());
-            auto & root = found.getBody().front();
-            while (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(root.getTerminator())) {
-                if (!spend()) { return ctjs::FuncOp{}; }
-                if (branch.getDest() == &root ||
-                    branch.getDest()->getSinglePredecessor() != &root ||
-                    mlir::failed(mlir::cf::BranchOp::canonicalize(branch, rewriter))) {
-                    break;
+            const auto globals = found.walk([&](ctjs::LoadGlobalOp load) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                if (exactUndefined(load)) {
+                    rewriter.setInsertionPoint(load);
+                    rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(
+                        load, ctjs::UndefinedAttr::get(candidate.getContext()));
                 }
+                return mlir::WalkResult::advance();
+            });
+            if (globals.wasInterrupted()) { return ctjs::FuncOp{}; }
+            // Projection exposes literal operands through block arguments and
+            // selected yields. Each successful rewrite removes a primitive operation or a
+            // control-flow edge; the reserved input ceiling bounds rescans.
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                const auto calculated = found.walk([&](mlir::Operation * binary) {
+                    if (!llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(binary)) {
+                        return mlir::WalkResult::advance();
+                    }
+                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    auto result = exactNumberArithmetic(binary);
+                    if (!result) { return mlir::WalkResult::advance(); }
+                    rewriter.setInsertionPoint(binary);
+                    rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(binary, result);
+                    changed = true;
+                    return mlir::WalkResult::advance();
+                });
+                if (calculated.wasInterrupted()) { return ctjs::FuncOp{}; }
+                const auto folded = found.walk([&](ctjs::UnaryOp unary) {
+                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    auto result = exactUnary(unary);
+                    if (!result) { return mlir::WalkResult::advance(); }
+                    // Exact primitive operands prove both the result and the
+                    // absence of hooks. Keep the input and all its other uses.
+                    rewriter.setInsertionPoint(unary);
+                    rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(unary, result);
+                    changed = true;
+                    return mlir::WalkResult::advance();
+                });
+                if (folded.wasInterrupted()) { return ctjs::FuncOp{}; }
+                const auto compared = found.walk([&](ctjs::CompareOp comparison) {
+                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    const auto result = exactComparison(comparison);
+                    if (!result) { return mlir::WalkResult::advance(); }
+                    rewriter.setInsertionPoint(comparison);
+                    rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(
+                        comparison, ctjs::BooleanAttr::get(candidate.getContext(), *result));
+                    changed = true;
+                    return mlir::WalkResult::advance();
+                });
+                if (compared.wasInterrupted()) { return ctjs::FuncOp{}; }
+                (void)mlir::eraseUnreachableBlocks(rewriter, found.getBody());
+                auto & root = found.getBody().front();
+                while (true) {
+                    if (!spend()) { return ctjs::FuncOp{}; }
+                    if (auto conditional =
+                            llvm::dyn_cast<mlir::cf::CondBranchOp>(root.getTerminator())) {
+                        auto selected = exactBoolean(conditional.getCondition());
+                        auto * predicate = conditional.getCondition().getDefiningOp();
+                        if (!selected && conditional.getTrueDest() == conditional.getFalseDest() &&
+                            conditional.getTrueDestOperands() ==
+                                conditional.getFalseDestOperands()) {
+                            selected = true;
+                        }
+                        if (!selected) { break; }
+                        rewriter.setInsertionPoint(conditional);
+                        rewriter.replaceOpWithNewOp<mlir::cf::BranchOp>(
+                            conditional,
+                            *selected ? conditional.getTrueDest() : conditional.getFalseDest(),
+                            *selected ? conditional.getTrueDestOperands()
+                                      : conditional.getFalseDestOperands());
+                        // Truthiness is pure; its input evaluation stays in place.
+                        if (predicate && predicate->use_empty() &&
+                            llvm::isa<mlir::arith::ConstantOp, ctjs::TruthyOp>(predicate)) {
+                            rewriter.eraseOp(predicate);
+                        }
+                        changed = true;
+                        (void)mlir::eraseUnreachableBlocks(rewriter, found.getBody());
+                    }
+                    auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(root.getTerminator());
+                    if (!branch || branch.getDest() == &root ||
+                        branch.getDest()->getSinglePredecessor() != &root ||
+                        mlir::failed(mlir::cf::BranchOp::canonicalize(branch, rewriter))) {
+                        break;
+                    }
+                    changed = true;
+                }
+                const auto projected =
+                    found.walk<mlir::WalkOrder::PostOrder>([&](mlir::scf::IfOp branch) {
+                        if (!spend()) { return mlir::WalkResult::interrupt(); }
+                        auto selected = exactBoolean(branch.getCondition());
+                        if (!selected) { return mlir::WalkResult::advance(); }
+                        auto * predicate = branch.getCondition().getDefiningOp();
+                        auto & region = *selected ? branch.getThenRegion() : branch.getElseRegion();
+                        if (!region.empty()) {
+                            auto & body = region.front();
+                            auto yield = llvm::cast<mlir::scf::YieldOp>(body.getTerminator());
+                            // Verification establishes result count, types and
+                            // dominance; substitute only the selected payload.
+                            branch.replaceAllUsesWith(yield.getOperands());
+                            yield.erase();
+                            branch->getBlock()->getOperations().splice(branch->getIterator(),
+                                                                       body.getOperations());
+                        }
+                        branch.erase();
+                        changed = true;
+                        // Only the unused pure predicate disappears; its input
+                        // and every selected operation retain their source order.
+                        if (predicate && predicate->use_empty() &&
+                            llvm::isa<mlir::arith::ConstantOp, ctjs::TruthyOp>(predicate)) {
+                            rewriter.eraseOp(predicate);
+                        }
+                        return mlir::WalkResult::advance();
+                    });
+                if (projected.wasInterrupted()) { return ctjs::FuncOp{}; }
             }
         }
         return found;

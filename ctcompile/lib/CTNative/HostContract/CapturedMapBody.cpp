@@ -2,8 +2,8 @@
 #include "CapturedMapBody/Walk.hpp"
 
 #include "../Analysis/NativeMap/SnapshotCopies.h"
-#include "../Analysis/PrimitiveAlternatives.h"
 #include "../Analysis/PrimitiveMapKey.h"
+#include "ctcompile/CTNative/Analysis/PrimitiveAlternatives.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 

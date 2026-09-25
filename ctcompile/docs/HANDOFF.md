@@ -22,6 +22,962 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Number power helpers and opposite predicates, 2026-09-25 UTC
+
+Resumed clean **1479707b** from HANDOFF and part 00. Iteration 31 was fully
+committed; `codex-wip-20260907` is already an ancestor. Parallel agents supplied
+native controls and the escape change. The independent native review and the
+implementing escape agent's final review found no blockers; the parent reviewed
+both changes and owned all focused gates.
+
+**e04edf09** folds generic Number power from exact literal operands inside
+private iterator helpers. It follows the existing guarded libm pattern, preserves
+JavaScript's zero-exponent priority and magnitude-one/nonfinite-exponent rules,
+and emits canonical NaN literals. Static Pow and non-Number operands still refuse.
+All source effects, shared uses, bounded CFG/SCF normalization and complete DOM
+proofs remain required. Eighty-four new controls (**644 total**) cover 30 numeric
+rows, raw/structured transport, shared results, effects, malformed inputs and
+public zero/late-budget rollback; the two original Pow controls execute unchanged.
+General powers use the compiler host's libm; cross-platform bitwise parity and
+changed floating-point environments were not measured.
+
+**5e9469a2** correlates a truthiness test and one logical Not of its exact
+SSA input, reversing the corresponding branch arms. Both counted-store proof and
+current replay use the same polarity and snapshot. Twenty-two new retention rows
+(**311 total**) and six live mutation states (**58 total**) retain independent
+finite Number bounds, single visits, guard dependencies, every exit, aliases,
+all-write cycle checks, stale-solver/forged-marker and incomplete-budget refusals.
+This establishes frame confinement, not ownership or shorter native lifetimes.
+
+**a1dce74e** adds two complete source witnesses exercising magnitude-one
+infinite power, negative-zero negative power and a transported negative base in
+iterator identity/next/close helpers. Each raw import retains three Pow producers.
+The initial raw run hit the default **100,000-step** budget; both full programs
+remain intact and now assert that refusal before using the existing
+**1,000,000-step** option. Structured preparation retains the default budget.
+Node/VM traces agree; **20 generated C++ files and 40 GCC/Clang binaries**, both
+printers/providers/optimization modes, ten zero-budget and two default-budget
+refusals pass. The driver checks ordered DOM writes, two documents and 16
+lifetimes. Source and linked-symbol checks find no Script/AOT dependency.
+The 30 numeric test rows were also independently checked against Node.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 11.18 s**,
+`ctcompile_host_contract` **1/1, 2.72 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.99 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+Passing CTests were not replayed after the source-only budget correction.
+
+All 24 earlier complete helper sources, ten C++ raw literals and 71 Python
+multiline values remain unchanged. Repository formatting passes **1126 C++,
+159 Python, 114 web files**; diff checks pass. All seven final
+local/devbox source hashes match. Inspected output uses typed values and borrowed
+element handles over ordinary document ownership and the existing public DOM seam.
+Logs, selectors, checksums and agent reports are in `/tmp/ctcompile-iteration32/`.
+
+**Next:** Boolean/null/undefined and mixed primitive loose equality, then
+non-Number relational proofs in the iterator-helper comparison matcher; existing `DOMURI.cpp` refusal controls
+516–523 cover Number/Boolean and null/undefined loose equality. General expression
+correspondence beyond one Not, differing receivers and repeated allocation
+identities remain. Protected numeric `setAttribute`, mutable exceptional state,
+escaping owners, unguarded Bootstrap defaults, the native application driver and
+full native Bootstrap remain unfinished. No full-Bootstrap admission or raw
+escape-oracle precision gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs, raw
+escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and performance
+measurements were skipped. Linux inspection identified Claude loop PID 2333739;
+Windows identity inspection succeeded (356 processes, no matches). Concurrent
+rules applied; the build waited for Claude's browser gate. No browser/runtime/shared
+implementation edits, local builds, push or history rewrite.
+
+## Initialized undefined helpers and repeated truthiness, 2026-09-25 UTC
+
+Resumed clean **1a13f2f5** and its two complete global-`undefined` refusals.
+Iteration 30 was fully committed; the old WIP branch is already an ancestor.
+The escape agent completed its candidate and review. The parent completed native
+controls after a test-agent service limit. The independent native reviewer resumed
+and completed its review; both final reviews found no blockers.
+
+**c730fda7** proves the initialized DOM provider's `undefined` binding
+inside private iterator helpers, before bounded CFG/SCF projection. The existing
+charged module census checks every named source write before helper pruning;
+even an unreachable write disables this substitution. Other loads, implicit
+inputs, global-object mutations and source effects retain their complete proofs.
+Twenty-four new controls (**560 total**) cover raw/structured identity, next and
+close helpers, shared snapshots, strict equality/Not, source writes, malformed
+loads, provider/fingerprint changes and public zero/late-budget rollback.
+
+**bef3c656** shares a branch choice between repeated `ctjs.truthy` operations
+only when they consume the exact same SSA input. Both counted-store correspondence
+and current replay use that input's snapshot. Separate or mutated reads and other
+recomputed expressions retain independent choices. Sixteen new rows (**289 total**),
+two unchanged former refusal bodies and five live mutations (**52 states total**)
+retain finite Number bounds, single visits, guard dependencies, every exit, alias
+retention, all-write cycles, stale-solver/forged-marker and incomplete-budget checks.
+This establishes frame confinement, not native ownership or shorter lifetimes.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 10.57 s**,
+`ctcompile_host_contract` **1/1, 2.78 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 5.02 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.05 s**.
+The initial build caught a typed-setter error in the new malformed-load test;
+the raw MLIR result setter fixed it. The first arrays run caught three negative
+mutations that still used the original `%p`; they now use distinct `%q`, retaining
+the intended refusal and unchanged same-input successes. No production change
+or native CTest replay followed that correction. The measured retention counter
+is 289 rows; the pre-gate projection of 288 was incorrect.
+
+**4c3b73a4** promotes both original complete `undefined` source witnesses
+without changing their JavaScript. Raw and structured preparation use the default
+**100,000-step** budget. Node/VM traces agree; **20 generated C++ files and 40 GCC/Clang binaries**,
+both printers/providers/optimization modes and ten zero-budget refusals pass.
+The driver checks ordered DOM writes, two documents and 16 lifetimes. Generated
+source and linked-symbol checks find no Script/AOT dependency.
+All 24 helper source values, ten original C++ raw literals and 71 Python multiline
+values remain unchanged. All seven final local/devbox file hashes match. Inspected
+C++ uses typed values, document ownership and the existing public DOM seam.
+Repository formatting passes **1126 C++, 159 Python, 114 web files**; diff checks pass. Logs, selectors, checkpoints and hashes are
+in `/tmp/ctcompile-iteration31/`.
+
+**Next:** exact Number power in the iterator helper arithmetic matcher (the
+`Pow` refusal remains in `ExceptionRecovery/Completion/DOMURI.cpp`), then coercing
+primitive equality and non-Number relational helper proofs; general expression correspondence, differing receivers and repeated
+allocation identities. Protected numeric `setAttribute`, mutable exceptional
+state, escaping owners, unguarded Bootstrap defaults, the native application
+driver and full native Bootstrap remain unfinished. No full-Bootstrap admission
+or raw escape-oracle precision gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs, raw
+escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and performance
+measurements were skipped. Linux process inspection found Claude CLI PID 2467946
+and loop PID 2333739; Windows identity inspection succeeded (362 processes,
+no matches). Concurrent rules applied; gates waited for Claude's browser batches.
+No browser/runtime/shared implementation edits, local builds, push or history rewrite.
+
+## Primitive helper equality and nested conditional keys, 2026-09-25 UTC
+
+Resumed clean **de1bb41e** from HANDOFF and part 00. Iteration 29 was fully
+committed; the old WIP branch is already an ancestor. Parallel agents completed
+the native controls and escape change. The parent reviewed both changes and ran
+the gates; the separate native reviewer hit service limits before producing a
+report, so no independent final review is claimed.
+
+**ed843687** reuses the existing source-prefix comparison proof for strict
+equality of exact Number/Boolean/String/null/undefined literals, including mixed
+tags, and loose equality of two Strings. Existing Number comparisons remain.
+Input evaluation, shared uses, guarded malformed inputs, bounded CFG/SCF
+normalization and complete helper/DOM proofs still govern publication.
+102 new controls (**536 total**) cover UTF-8 and embedded-NUL Strings,
+transported compare/Not chains, effects and unsupported coercions, with public
+zero/late-budget rollback. Global reads and object conversion gain no authority.
+
+**191664e2** extends exact same-i1 condition replay to nested result branches
+inside the already-certified single-visit loop body. Both producers must be
+reached by the census, and subtraction still needs independent finite Number
+bounds and corresponding per-arm values. No-result branches retain structural
+replay. Nineteen new rows (**272 total**) and five live mutation states
+(**47 total**) cover nested/root correspondence, guard gaps/overlap, aliases,
+every exit, cycles and zero/repeated visits, retaining stale-solver,
+forged-marker and every-incomplete-budget rollback checks. This establishes
+frame confinement, not native ownership or shorter lifetimes.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 9.79 s**,
+`ctcompile_host_contract` **1/1, 2.72 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.90 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+Passing CTests were not replayed for the source-fixture correction.
+
+**cc342030** executes two complete literal-equality source witnesses. Raw and
+structured preparation use the default **100,000-step** budget. Their helpers
+retain strict equality, String equality and logical-not through raw import.
+The initial source used global `undefined`, which imports as `ctjs.load_global`
+and correctly fails the closed-identity proof. Both complete original programs
+are retained byte-for-byte as explicit refusals at **1,000,000 steps**; the
+successful witnesses use literal `false` in that mixed-tag comparison.
+All four programs agree with Node/VM. The successful sources pass **20 generated
+C++ files and 40 GCC/Clang binaries**, both printers/providers/optimization modes,
+ten zero-budget refusals, ordered DOM writes, two documents and 16 lifetimes.
+Source and linked-symbol checks find no Script/AOT dependency.
+
+The original ten C++ raw literals and 71 Python multiline values remain intact.
+Repository formatting passes **1126 C++, 159 Python, 114 web files**; diff checks
+pass. Six final file hashes are recorded with logs, selectors and agent traces
+in `/tmp/ctcompile-iteration30/`; generated artifacts are on the devbox in
+`/tmp/ctcompile-iteration30-branches/`.
+
+**Next:** source global-`undefined` identity, power, coercing primitive equality
+and non-Number relational helper proofs; recomputed-condition correlation,
+broader expression correspondence, differing receivers and repeated allocation
+identities. Protected numeric `setAttribute`, mutable exceptional state,
+escaping owners, unguarded Bootstrap defaults, the native application driver
+and full native Bootstrap remain unfinished. No full-Bootstrap admission or
+raw escape-oracle precision gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs, raw
+escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. Initial Linux executable inspection was
+incomplete; Windows identity inspection succeeded (356 processes, no matches).
+A subsequent `ps` check identified the actual Claude CLI (PID 2467946), so
+concurrent rules applied. No browser/runtime/shared implementation edits,
+local builds, push or history rewrite.
+
+## Static Number/bitwise helpers and sibling conditional keys, 2026-09-25 UTC
+
+Resumed clean **35d19c4d** from HANDOFF and part 00. Iteration 28 was
+fully committed; the old WIP branch is already an ancestor. Parallel agents
+saved native controls and diagnosed the escape replay boundary before service
+limits stopped them. The parent completed both changes, final review and gates;
+no independent final review is claimed.
+
+**95e99919** folds exact Number `BitNot`, static `Add` and all six static
+bitwise operators in private iterator helpers. Existing typed Number operators
+reuse public Core ToInt32/ToUint32; APFloat supplies static Add rounding.
+Generic bitwise and invalid static kinds remain refused. Guarded raw operands,
+exact attributes, input evaluation, shared uses, bounded CFG/SCF normalization,
+complete helper/DOM proofs and private-candidate rollback remain required.
+108 new controls (**434 total**) cover result bits, wrapping/truncation, masked
+shifts, NaN/infinity, transported/shared values, effects and malformed inputs,
+with zero/late-budget rollback.
+
+**095f0bbc** correlates corresponding finite Number results from sibling
+`scf.if` operations using the exact same i1 condition. The census alone was
+insufficient: independent replay previously combined incompatible arm choices.
+An explicit per-path Boolean fact now retains the selected edge for sibling
+result branches in an already-certified single-visit body. Producer replay
+clears the fact; transport copies the value snapshot. Nested/no-result branches
+retain structural replay. Independent Number bounds, guard dependencies, current
+contents, every exit and all-write cycle checks still govern confinement.
+17 new rows (**253 total**) and five live mutations (**42 states total**) cover
+condition identity, guard gaps, retained aliases, repeated/zero visits, cycles,
+stale solvers, forged markers and every incomplete-budget rollback. This proves
+frame confinement, not ownership or shorter lifetimes.
+
+Seven distinct explicit devbox targets built across native and escape batches:
+`ctcompile-test-exception-recovery`, `ctcompile-test-host-contract`, `ctjs-opt`,
+`ctjs-translate`, `ctcompile-test-native-reference`,
+`ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 8.83 s**,
+`ctcompile_host_contract` **1/1, 2.69 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.90 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+Passing native CTests were not replayed after the separate escape change.
+
+**4b924444** adds two complete derived source witnesses. Each raw import
+retains one BitNot and all six binary bitwise producers, including a transported
+operand. The initial raw run hit the default **100,000-step** budget; complete
+sources remain intact and now assert that refusal before using the existing
+**1,000,000-step** option. Structured preparation keeps the default budget.
+Node/VM traces agree; **20 generated C++ files and 40 GCC/Clang binaries**, both
+printers/providers/optimization modes, ten zero-budget and two raw default-budget
+refusals, ordered DOM writes, two documents and 16 lifetimes pass. Source and
+linked-symbol checks find no Script/AOT dependency. Inspected output uses typed
+values and the existing public DOM seam.
+
+All seven final source/test hashes match local and devbox files. The original
+ten C++ raw literals and 71 Python multiline literals remain intact. Repository
+formatting passes **1126 C++, 159 Python, 114 web files**; diff checks pass.
+Evidence, commands, preserved agent checkpoints and generated files are in
+`/tmp/ctcompile-iteration29/`.
+
+**Next:** power and non-Number helper comparisons; nested/recomputed-condition
+correlation, broader expression correspondence, differing receivers and repeated
+allocation identities. Protected numeric `setAttribute`, mutable exceptional
+state, escaping owners, unguarded Bootstrap defaults, the native application
+driver and full native Bootstrap remain unfinished. No full-Bootstrap admission
+or raw escape-oracle precision gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs, raw
+escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. Claude's Linux loop was running; Windows
+process identity inspection succeeded with no matches. Concurrent rules applied;
+no browser/runtime/shared implementation, local build, push or history rewrite.
+
+## Exact Number unary helpers and paired conditional keys, 2026-09-25 UTC
+
+Resumed clean **aebc81d1** and its explicit unary-helper/correlated-key boundary.
+Iteration 27 was fully committed; the old WIP branch is already an ancestor.
+Parallel agents supplied native controls and the escape change. After the native
+test and review agents hit service limits, the parent preserved their candidates,
+completed final review and ran the gates. The saved independent native review
+found no production or source blockers; no independent final test review is claimed.
+
+**a0273f52** folds exact Number unary `Plus` and `Neg` in private iterator
+helpers. The existing unary matcher now serves logical-not and numeric operators;
+Plus preserves the attribute and LLVM APFloat changes only Neg's sign, retaining
+signed zero, infinities, NaN payloads and subnormals. The matcher checks operand
+count and nullable kind/value before the census. Input evaluation and shared uses
+remain; the existing bounded CFG/SCF fixed point, complete helper/DOM proofs and
+private-candidate rollback still govern publication. Forty-six new controls
+(**326 total**) cover exact bits, transported unary/arithmetic/comparison/Not
+chains, shared uses, payload/effect/non-Number refusals, malformed operations and
+public zero/late-budget rollback.
+
+**8db0c697** proves subtraction of distinct result slots from the same `scf.if`
+yields zero when both slots select corresponding SSA values or exact constant
+attributes in each arm. Both inputs independently require bounded finite Number
+proofs. Equal ranges alone supply no correspondence. Guard reload exclusions,
+current replay, every exit, all-write cycles and single-visit requirements remain.
+Sixteen new rows (**236 total**) and five live mutations (**37 states total**)
+pin matching/swapped slots, equal constants, arithmetic composition, nonfinite and
+non-Number inputs, effects, retained aliases and guard overlap, including stale
+solvers, forged markers and incomplete-budget rollback. This proves frame
+confinement, not ownership or shorter lifetimes.
+
+The devbox built seven explicit targets: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 7.77 s**,
+`ctcompile_host_contract` **1/1, 2.76 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.86 s**, and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+No failed gates or unrelated test replays were needed in this slice.
+
+**29082b53** adds two complete derived source witnesses. Each raw import retains
+three Plus and two Neg producers, including a CFG-transported operand. Both pass
+raw and structured preparation at the default **100,000-step** budget. Node/VM
+traces agree; **20 generated C++ files and 40 GCC/Clang binaries**, both
+printers/providers/optimization modes, ten zero-budget refusals, ordered DOM
+writes, two documents and 16 lifetimes pass. Source and symbol checks find no
+Script/AOT dependency; inspected output uses typed values and public DOM APIs.
+
+All five final source/test hashes match local and devbox files. The original ten
+C++ raw literals and 71 Python multiline literals remain intact. Repository
+formatting passes **1126 C++, 159 Python, 114 web files**; diff checks pass.
+Exact logs, selectors, reviews and generated output are in
+`/tmp/ctcompile-iteration28/`.
+
+**Next:** static arithmetic, power/bitwise helper operations and non-Number
+comparisons remain outside this helper proof. Escape correlation across separate
+conditionals or more general expressions, differing receivers and repeated
+allocation identities remain unproved. Protected numeric `setAttribute`, mutable
+exceptional state, escaping owners, unguarded Bootstrap defaults, the native
+application driver and full native Bootstrap remain unfinished. No full-Bootstrap
+admission or raw escape-oracle precision gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs, raw
+escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. Claude's Linux loop was running; Windows
+process identity inspection succeeded with no matches. Concurrent rules applied;
+no browser/runtime/shared implementation, local build, push or history rewrite.
+
+## Exact Number arithmetic helpers and same-value store keys, 2026-09-25 UTC
+
+Resumed clean **daa04c51** and its explicit arithmetic/correlated-key boundary.
+The old WIP branch is already an ancestor. After a service interruption, the
+parent retained the native candidate and resumed the parallel agents from their
+checkpoints. Agents completed native controls and the escape production branch;
+the parent completed escape regressions and final review after service limits.
+The independent native review saved an interim report with no blocking findings;
+no completed independent final review is claimed.
+
+**f518ec8c** folds exact Number `Add`, `Sub`, `Mul`, `Div` and `Mod` in
+private iterator helpers through LLVM APFloat binary64 operations. Nearest-even
+rounding, signed zero, NaN, overflow and subnormals retain Number behavior; `mod`
+is truncating JavaScript remainder. Input evaluation and other uses remain.
+Existing budgeted CFG/SCF projection, complete helper and DOM/ownership proofs
+still govern publication. Forty-eight new controls (**280 total**) pin result
+bits, transported arithmetic/comparison/Not chains, shared uses, effects and
+payload refusals, malformed inputs and public zero/late-budget rollback.
+
+**c2612f6e** proves same-SSA subtraction yields zero only after the existing
+range proof establishes a bounded finite Number. It does not equate different
+SSA values or receiver identities. Recursive guard reload dependencies, current
+replay, every exit, all-write cycles and single-visit allocation requirements
+remain. Thirteen new rows (**220 total**), one former refusal and five live
+mutations (**32 states total**) cover signed values, arithmetic composition,
+non-Number/nonfinite inputs, distinct values, guard overlap and alias retention,
+including stale solvers, forged markers and incomplete-budget rollback.
+This proves frame confinement, not native ownership or shorter lifetimes.
+
+The devbox built five explicit native targets: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate` and
+`ctcompile-test-native-reference`; then the two escape targets
+`ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 8.77 s**,
+`ctcompile_host_contract` **1/1, 2.76 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.99 s**, and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+No failed gates or unrelated test replays were needed in this slice.
+
+**8011ea5a** adds two complete derived source witnesses. Each raw import retains
+all five arithmetic producers, including a CFG-transported division input.
+Both pass raw and structured preparation at the default **100,000-step** budget.
+Node/VM traces agree; **20 generated C++ files and 40 GCC/Clang binaries**, both
+printers/providers/optimization modes, ten zero-budget refusals, ordered DOM
+writes, two documents and 16 lifetimes pass. Source and symbol checks find no
+Script/AOT dependency; inspected output uses typed values and public DOM APIs.
+
+All five final source/test hashes match local and devbox files. The original ten
+C++ raw literals and 71 Python multiline literals remain intact. Repository
+formatting passes **1126 C++, 159 Python, 114 web files**; diff checks pass.
+Exact logs, selectors, reviews and generated output are in
+`/tmp/ctcompile-iteration27/`.
+
+**Next:** exact unary numeric producers, static arithmetic, power/bitwise helper
+operations and non-Number comparisons remain outside this helper proof. Escape
+correlation across distinct SSA values and differing receivers remain separate.
+Protected numeric `setAttribute`, repeated allocation identities/lifetimes,
+mutable exceptional state, escaping owners, unguarded Bootstrap defaults, the
+native application driver and full native Bootstrap remain unfinished. No
+full-Bootstrap admission or raw escape-oracle precision gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs, raw
+escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. Claude's Linux loop was running; Windows
+process identity inspection succeeded with no matches. Concurrent rules applied;
+no browser/runtime/shared implementation, local build, push or history rewrite.
+
+## Number-comparison helpers and conditional key arithmetic, 2026-09-25 UTC
+
+Resumed clean **2db4e815** and its computed-helper/conditional-key boundary in
+HANDOFF and part 00. The old WIP branch is already an ancestor. After a service
+interruption, the parent preserved the committed work and completed the remaining
+malformed-input controls, evidence and handoffs. Parallel agents prepared the
+native controls and escape change; independent reviews covered both proofs.
+
+**0c21a26d** folds all six comparisons when both inputs are exact Number
+literals, retaining input evaluation and every other use. Binary64 comparisons
+preserve NaN, signed zero, infinities and subnormal values. The existing fixed
+point exposes transported operands and projects selected helper branches;
+complete helper, DOM and ownership proofs still govern publication. Fifty new
+paired raw/SCF controls cover values, transport, shared results, effects/payload
+refusals and public zero/late-budget rollback. **f9509d1a** adds six
+malformed-input controls: missing operands/kind/constant values and wrong operand
+types. Its census uses guarded raw operands and nullable casts before helper
+verification; the native control total is **232**.
+
+**cb31bdae** encloses unequal conditional Number keys with existing bounded
+arithmetic ranges and their common stride. It never treats unequal yields as an
+exact scalar or receiver identity. Current-state replay, guard reload exclusions,
+every exit, all-write cycles and the single-visit allocation proof remain required.
+Twenty-four new rows (**207 total**) and five live mutations (**27 states total**)
+cover arithmetic composition, gaps/overlaps, aliases, stale solver/forged markers
+and incomplete-budget rollback. This proves frame confinement, not ownership or
+shorter lifetimes.
+
+The initial devbox build covered seven explicit targets:
+`ctcompile-test-exception-recovery`, `ctcompile-test-host-contract`, `ctjs-opt`,
+`ctjs-translate`, `ctcompile-test-native-reference`,
+`ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Final exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 6.86 s**,
+`ctcompile_host_contract` **1/1, 2.72 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.90 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+The two native tests were rerun after production corrections; the final raw
+operand-access correction needed only exception recovery. Escape and source
+execution checks were not replayed after unrelated malformed-input hardening.
+The first host run caught unnecessary quadratic reservation for dynamic-only
+comparisons; restricting the census trigger to foldable Number comparisons
+restored those admissions without changing tests or raising budgets.
+
+**a7ca607e** adds two complete derived source witnesses. Both pass raw and
+structured preparation at the default **100,000-step** budget. Node/VM traces
+agree; **20 generated C++ files and 40 GCC/Clang binaries**, both printers,
+providers and optimization modes, ten zero-budget refusals, ordered DOM writes,
+two documents and 16 lifetimes pass. Source execution used **0c21a26d** and was
+not replayed for the malformed-input-only guard. Generated source and linked
+symbols have no Script/AOT dependency; inspected output uses typed values and
+existing public DOM APIs. Each raw source retains three helper
+comparisons, including one operand transported through source CFG edges.
+
+Final code/test hashes match local and devbox files. The original ten C++ raw
+literals and 71 Python multiline literals remain intact. Formatting passes
+**1126 C++, 159 Python, 114 web files**; diff checks pass. Static review and exact
+logs/selectors/generated output are in `/tmp/ctcompile-iteration26/`.
+
+**Next:** exact arithmetic helper producers and non-Number comparisons still
+need value and inertness proofs. Escape arithmetic over correlated unequal
+inputs (the retained `selectedKey - selectedKey` refusal) and differing receiver
+identities remain separate. Protected numeric `setAttribute`, repeated allocation
+identities/lifetimes, mutable exceptional state, escaping owners, unguarded
+Bootstrap defaults, the native application driver and full native Bootstrap
+remain unfinished. These are traced boundaries; no full-Bootstrap admission or
+raw escape-oracle precision gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. Linux identified the live Claude loop;
+Windows process identity inspection succeeded with no matches. Concurrent rules
+applied; no browser/runtime/shared implementation, local build, push or history
+rewrite.
+
+## Transported logical-not helpers and per-arm store footprints, 2026-09-25 UTC
+
+Resumed clean **c857974d** and the explicit transported-predicate/unequal-key
+boundary in HANDOFF and part 00. The old WIP branch is already an ancestor.
+Parallel agents supplied native regression controls and the escape continuation;
+the parent reviewed final changes, formatted, gated and committed separately.
+The independent reviewer traced all seven helper callers and recommended the
+same fixed-point arrangement, but hit a service limit before final diff review.
+No completed independent review is claimed.
+
+**118784e2** repeats the existing exact logical-not folding, root CFG
+merging and selected SCF yield projection when one exposes another literal.
+Every successful step removes a Not or control-flow edge; the initial quadratic
+reservation and work budget remain. Operand evaluation, shared uses and selected
+effects/payloads survive, and all helper and complete DOM proofs still run.
+Twenty new controls (176 total) cover CFG chains, selected/nested SCF results,
+shared inputs, unknown/coercing sources, wrong payloads/effects and public
+zero/late-nonzero-budget rollback.
+
+**1b305020** proves each yielded store key's own footprint separately in
+already-proved single-visit bodies. Receiver identity still requires exact
+correspondence. Guard reload exclusions, current-state replay, every exit and
+the all-write acyclic graph remain mandatory. Four former key-only refusals
+now pass; 18 new rows (183 total) and four live yield mutations (22 live states
+total) preserve alias/return/cycle/publication, missing-solver, forged-marker,
+stale-state, repeated/zero-visit and incomplete-budget refusals. This proves
+frame confinement, not ownership or shortened lifetimes.
+
+The devbox built the seven affected targets:
+`ctcompile-test-exception-recovery`, `ctcompile-test-host-contract`, `ctjs-opt`,
+`ctjs-translate`, `ctcompile-test-native-reference`,
+`ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Final exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 6.49 s**,
+`ctcompile_host_contract` **1/1, 2.73 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.82 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+Passing escape checks were not replayed after fixture-only native corrections.
+The initial build caught a test-only Value/BlockArgument conditional mismatch.
+Two shared-input references then exposed the existing protected
+`setAttribute` proof's String/Boolean restriction; using Boolean false preserved
+the shared-input assertions. Number values there remain a separate boundary.
+The production changes did not change during these corrections.
+
+**1199f7d4** adds two complete derived source witnesses, each importing four
+logical-not operations whose operands come from conditional results. Node/VM
+traces agree; **20 generated C++ files and 40 GCC/Clang binaries** pass across
+both printers, structured providers and optimization modes, with ordered DOM
+writes, two documents and 16 lifetimes checked. The whole raw sources use the
+existing 1,000,000-step option and retain two explicit default-100,000-budget
+refusals; structured modes use the default. Ten zero-budget refusals pass.
+Generated source and linked symbols have no Script/AOT dependency; inspected
+output uses typed values and existing public DOM helpers.
+
+All five final code/test hashes match the devbox and local files. The original
+ten C++ raw literals and 71 Python multiline literals remain intact. Formatting
+passes **1126 C++, 159 Python, 114 web files**; diff checks pass. Logs, parent
+review, source selection and emitted files are in `/tmp/ctcompile-iteration25/`.
+No completed CTests were replayed for the source-only budget adjustment.
+
+**Next:** arithmetic/comparison helper producers still need exact value and
+inertness together; unknown differing branches remain unproved. The escape
+union currently applies directly to a store's result key: arithmetic consuming
+unequal If results and differing receiver identities still need separate
+proofs. These are code-traced boundaries, not new frontend measurements.
+Repeated allocation identities/lifetimes, mutable exceptional state, escaping
+owners, unguarded Bootstrap defaults, the native application driver and full
+native Bootstrap remain unfinished.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. No full-Bootstrap admission or raw-oracle
+precision gain is claimed. Linux identified the live Claude loop; the corrected
+Windows identity query succeeded with no matches. Concurrent rules applied;
+no browser/runtime/shared implementation changed.
+
+## Logical-not helpers and equal-yield store inputs, 2026-09-25 UTC
+
+Resumed clean **29031f16** and its recorded computed-helper/equal-yield boundary.
+The old WIP branch is already an ancestor. Parallel agents prepared native
+controls and escape changes; after two service limits, the parent completed
+review, live-mutation coverage, formatting, focused validation and commits.
+
+**aa63632f** folds logical-not of exact primitive constants to Boolean in
+verified private iterator helpers, reusing `PrimitiveAlternatives::literal`.
+Operand evaluation and other uses remain; source-order chains fold without a
+new evaluator or Script dependency. Forty new paired raw/structured controls
+(156 total) cover primitive tags, signed zero/NaN, chains, shared results,
+selected payloads/effects, unknown/coercing/BigInt inputs and public rollback at
+zero and a late nonzero budget. Arithmetic and comparison producers remain
+outside this proof.
+
+**84e1fff8** forwards counted-store proof inputs through the exact `scf.if`
+result slot when both yields have the same SSA value or exactly equal constant
+attributes. Both arms still undergo the single-visit census and current-state
+replay; equal ranges are insufficient. Twenty-three new rows (165 total), one
+former refusal and three live payload mutations preserve alias retention,
+publication, guard-reload gaps, every exit, all-write cycles, stale-solver,
+forged-marker and incomplete-budget refusals. This proves frame confinement,
+not region lifetime or native ownership.
+
+The devbox built `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 6.18 s**,
+`ctcompile_host_contract` **1/1, 2.75 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.73 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+The first build caught a test-only clone-overload error; using the existing
+Operation clone plus ModuleOp cast corrected it. Production and assertions
+were unchanged. Formatting passes **1126 C++, 159 Python, 114 web files**;
+final scoped formatting and diff checks pass. The original ten C++ raw literals
+and 71 Python multiline literals are preserved. Parent review and logs:
+`/tmp/ctcompile-iteration24/`. No independent review pass is claimed after the
+reviewer's service limit.
+
+**95466ade** adds two complete derived source witnesses, each importing four
+logical-not operations. Raw and structured preparation pass at the default
+100,000-step budget. Node/VM traces agree; **20 generated C++ files and 40
+GCC/Clang binaries** pass across both printers, structured providers and
+optimization modes, checking ordered DOM writes, two documents and 16 lifetimes.
+Ten zero-budget refusals pass. Generated source and linked symbols have no
+Script/AOT dependency; inspected output uses typed values and public DOM calls.
+All five final code/test hashes match the devbox and local files. Emitted C++
+and raw IR are saved under `/tmp/ctcompile-iteration24/generated/`.
+
+**Next:** computed arithmetic/comparison helper producers need exact values and
+inertness together. The initial logical-not pass also cannot fold a constant
+exposed only by later CFG block-argument merging; this is a code-traced boundary,
+not a new frontend measurement. Escape stores with unequal known in-bounds
+yields still need per-arm footprint proofs; separately computed equal-looking
+expressions do not establish value correspondence. Dynamic differing helper
+branches, repeated allocation identities/lifetimes, mutable exceptional state,
+escaping owners, unguarded Bootstrap defaults, the native application driver and
+full native Bootstrap remain unfinished.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. No full-Bootstrap admission or raw-oracle
+precision gain is claimed. Linux identified the live Claude loop; the corrected
+Windows identity query succeeded with no matches. Concurrent rules applied;
+no browser/runtime/shared implementation changed.
+
+## Primitive helper predicates and branch-local store inputs, 2026-09-25 UTC
+
+Resumed **33b3811d** and the interrupted iteration23 candidates. The initial
+checkout was clean; the old WIP branch is already an ancestor. Parallel agents
+prepared direct native tests and the escape change; after service interruptions,
+the parent completed review, fixture corrections, focused gates and commits.
+
+**507d0c97** reuses `PrimitiveAlternatives::literal` for exact helper
+predicate truthiness: Number (including signed zero and NaN), String, null and
+undefined join Boolean. Unknown, object, coercing and BigInt inputs still refuse.
+The existing budgeted projection retains evaluated inputs, selected payloads and
+ordered effects; complete helper and DOM proofs still govern admission. Forty
+new controls (116 total), plus former control 52, cover raw and structured forms,
+wrong payloads/effects and rollback at zero and a late nonzero budget.
+
+**6c8b52de** reuses the counted-loop invariant/index proofs for branch-local
+producers only in arms already proved to execute at most once. Seventeen new
+retention rows, one former refusal and five live key/receiver mutations preserve
+alias, guard-reload, every-exit, all-write-cycle and incomplete-budget refusals.
+This proves frame confinement, not region lifetime or native ownership.
+
+Focused devbox targets: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Final exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 5.98 s**,
+`ctcompile_host_contract` **1/1, 3.98 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.71 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+
+**7c9a7e4e** adds two derived primitive-helper source witnesses. Raw and
+structured preparation pass; Node/VM traces agree. **20 generated C++ files and
+40 GCC/Clang binaries** pass across both printers, structured providers and
+optimization modes, checking ordered DOM writes, two documents and 16 lifetimes.
+The complete raw sources use the existing 1,000,000-step option; both retain
+explicit refusals at the default 100,000 steps. Structured modes use the default.
+Ten zero-budget refusals also pass. Source/symbol checks find no Script/AOT
+dependency; inspected C++ uses typed values and public DOM calls. Seven final
+code/test/build hashes match the devbox. Original source fixtures remain
+unchanged. Formatting passes
+**1126 C++, 159 Python, 114 web files**; diff checks pass. Evidence and review:
+`/tmp/ctcompile-iteration23/`.
+
+Initial gates caught fixture SSA naming/dominance errors and a comparison that
+omitted retained literal evaluation. These were corrected without removing
+assertions. Host tests retain direct private-normalizer refusals and now check
+source/contract rollback at the documented `prepareDOMEntry` transaction boundary.
+The host test links the existing native lowering library for that check; its
+missing declaration and link dependency were corrected during the focused gate.
+Independent native production review found no defects; the parent completed the
+interrupted escape review and reviewed final test corrections. Passing unrelated
+focused gates were not replayed after fixture-only fixes.
+
+**Next:** computed helper predicates need exact producer-value and inertness
+proofs together; recognizing a condition alone leaves its producer in the helper.
+This is a code-traced boundary, not a new frontend measurement. Escape analysis
+still refuses an `scf.if` result as a store key, even with equal constant yields;
+a new negative row pins the required payload-correspondence proof. Dynamic
+differing branches, repeated allocation identities/lifetimes, mutable exception
+state, escaping owners, unguarded Bootstrap defaults, the native application
+driver and full native Bootstrap remain unfinished.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. No full-Bootstrap admission or raw-oracle
+precision gain is claimed. The Linux Claude loop was running; Windows identity
+inspection found no matches. Concurrent rules applied; no browser/runtime/shared
+implementation changed.
+
+## Iterator helper payloads and conditional stores, 2026-09-25 UTC
+
+Resumed **d63eac23** and its result-bearing helper boundary. The checkout was
+clean; the old `codex-wip-20260907` tip is already an ancestor. Two editing agents
+hit service limits after saving candidates; the parent finished their review,
+formatting, validation and commits.
+
+**d111a0a4** substitutes the selected `scf.yield` payload of an exact Boolean
+helper branch after verification, using the existing projection idiom. Selected
+producers and effects keep their order; receiver, capture, record and complete
+DOM proofs still run. Twenty new controls (76 total) cover tuple positions,
+selected record/capture producers, wrong payloads, unknown conditions, effects
+and private-candidate rollback, including late nonzero budget exhaustion.
+Former refusal control 51 now passes. Independent native review found no defects.
+
+**c9e17c54** admits guard-array stores inside already-proved single-visit
+conditional arms. The existing index/receiver footprint, exact path replay,
+every exit and all-write acyclicity checks remain mandatory. Sixteen new rows
+and one former refusal cover saved/returned aliases, overwritten graphs, cycles,
+unknown values/keys/receivers and zero/repeated visits. Existing stale-solver,
+forged-marker and every-budget checks also pass. This proves frame confinement,
+not region lifetime or native ownership.
+
+The devbox built `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 5.60 s**,
+`ctcompile_host_contract` **1/1, 2.74 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.74 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+
+Two derived source witnesses each contain three result-bearing helper branches:
+iterator identity, next record and thrown DOM-node payload. Raw and structured
+preparation pass; Node/VM observations agree. **20 generated C++ files and
+40 GCC/Clang binaries** pass across both printers, both structured providers and
+optimization modes, ordered DOM writes, two documents and 16 lifetimes. Ten
+zero-budget refusals pass. Generated source and linked symbols have no Script/AOT
+dependency; inspected output calls existing public DOM helpers with typed values.
+All five final code/test hashes match the devbox. The original 10 C++ raw
+literals and 71 Python multiline literals remain unchanged. Formatting passes
+**1126 C++, 159 Python, 114 web files**; diff checks pass. Logs, selectors,
+review and emitted files are in `/tmp/ctcompile-iteration22/`.
+
+**Next:** helper predicates derived from non-Boolean constants still refuse
+(control 52 uses Number zero); prove their exact primitive truthiness before
+widening `exactBoolean`. Dynamic branches with differing payloads/effects remain
+a separate proof boundary. Escape analysis still refuses branch-local computed
+store keys and receivers without an invariant snapshot; prove those inputs
+before widening the counted-store footprint. Repeated allocation identities and
+lifetimes, mutable exceptional state, escaping owners, unguarded Bootstrap
+defaults, the native application driver and full native Bootstrap remain.
+
+Full CTest/compiler lit, the whole browser fixture, broad corpora/matrices,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance runs were skipped. No full-Bootstrap admission or raw-oracle gain is
+claimed. Linux process inspection found the live Claude loop; Windows
+Get-CimInstance returned no matching identities. Concurrent-agent rules applied,
+and no browser/runtime/shared implementation changed.
+
+## Structured iterator helper branches, 2026-09-25 UTC
+
+Resumed **84fdf55f** and the interrupted iteration21 candidates.
+**bbbe6c30** projects exact Boolean, zero-result `scf.if` arms in private iterator
+helpers, including bodies that already have one block. The existing counted
+census and quadratic reservation cover verification and projection. CFG merges
+may expose the constant predicate first. Evaluated inputs and selected effects
+retain source order; getter, receiver, capture, result and DOM proofs still run.
+Nineteen new controls (56 total) cover nested/shared predicates, selected effects,
+unknown conditions, result-bearing refusals and late nonzero-budget rollback.
+Independent read-only review of all seven helper callers found no defects.
+
+The devbox built `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate` and
+`ctcompile-test-native-reference`. Final exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 5.46 s** and
+`ctcompile_host_contract` **1/1, 2.72 s**. The first host run exposed two budget
+diagnostic failures: a census cutoff had not cleared the remaining budget.
+Restoring that marker fixed both without weakening tests; the final checks ran
+after the correction. The passing escape checks below were not repeated.
+
+Both unchanged conditional-helper source witnesses now execute through raw and
+structured preparation. Node/VM observations agree; **20 generated C++ files and
+40 GCC/Clang binaries** pass across both printers, with both structured providers
+and optimization modes, real DOM identities, ordered writes, two documents and
+16 lifetimes. Ten zero-budget refusals pass. Native source/symbol checks pass;
+the output uses the existing public DOM helpers without Script/AOT dependencies.
+All five final code/test hashes match the devbox. The 10 original C++ raw literals
+and 71 Python multiline literals remain; only the obsolete refusal diagnostic
+was removed. Final formatting passes **1126 C++, 159 Python, 114 web files**;
+diff checks pass. Logs, selectors, review and generated C++ are in
+`/tmp/ctcompile-iteration21/`.
+
+**Next:** constant result-bearing helper `scf.if` arms still refuse (direct
+control 51 returns the receiver through a one-result branch). Prove selected
+`scf.yield` payload correspondence and substitution before widening projection.
+Dynamic differing branches, repeated allocation instances/lifetimes, nested
+counted stores, mutable exceptional state, escaping owners, unguarded Bootstrap
+defaults, the native application driver and full native Bootstrap remain.
+No full-Bootstrap admission or raw escape-oracle gain is claimed.
+
+Full CTest/compiler lit, the whole browser fixture, broad corpora/matrices,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance runs were skipped. No browser/runtime/shared implementation changed;
+Claude availability remained uncertain, so concurrent-agent rules were retained.
+
+## Conditional allocations in single-visit loops, 2026-09-25 UTC
+
+Resumed **84fdf55f** and the interrupted iteration21 candidates.
+**bb52d521** extends the existing counted-loop census to nested single-block
+`scf.if` arms only when the body is proved to execute once. Current inputs,
+selected allocation identities, every exit and the all-write acyclic graph
+remain mandatory. Eighteen new rows and three live trip-count mutations check
+saved/returned aliases, stale solver state and a forged completion marker.
+Headers, zero/multiple visits, nested stores and nested loops remain refused.
+This proves frame confinement, not shorter lifetimes or native ownership.
+
+The devbox built `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`; exact CTests passed:
+`ctcompile_escape_analysis_arrays` **1/1, 4.83 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+Formatting passed **1126 C++, 159 Python, 114 web files**; diff checks passed.
+Full CTest/compiler lit, broad corpora/matrices, raw escape oracle,
+WPT/test262, sanitizers and cross-platform/performance runs were skipped.
+
+The native continuation subsequently landed as **bbbe6c30**, described above.
+Result-bearing helper branches, repeated allocation instances/lifetimes and
+native ownership remain separate proof boundaries.
+
+## Exact conditional iterator helper edges, 2026-09-25 UTC
+
+Resumed the interrupted conditional-helper candidate after **d324b5c4**.
+**80f0f5f7** normalizes a raw helper branch only when its Boolean condition is
+exact, or both edges have the same destination and payload. Condition input
+producers remain; every surviving effect, receiver, capture and result still
+needs the existing DOM proof. Fourteen new controls (37 raw controls total)
+cover selected dead/live effects, transported identity, differing payloads,
+unknown conditions and private-candidate rollback. Independent read-only review
+of all seven helper-preparation callers found no defects.
+
+The devbox built `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate` and
+`ctcompile-test-native-reference`. Final exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 5.21 s** and
+`ctcompile_host_contract` **1/1, 2.67 s**. Formatting passed **1126 C++, 159
+Python, 114 web files**; diff checks passed. Full suites were skipped.
+
+**063e9149** adds the source-test follow-up. Both derived conditional helper
+witnesses pass:
+Node/VM observations agree, **four generated C++ files and eight GCC/Clang
+binaries** pass in both printer modes, with real DOM identity, write ordering,
+two documents and 16 lifetimes checked. Eight structured refusals cover both
+providers and optimization modes; two raw zero-budget refusals pass. Generated
+C++ and linked binaries contain no Script/AOT dependency. All six final source
+hashes match the devbox. All 10 existing C++ raw literals and 71 Python multiline
+literal occurrences remain unchanged.
+
+The earlier source run completed both unchanged original witnesses through raw
+and structured execution, then exposed the new structured witness's existing
+`scf.if` refusal. The final two-source selector tests that boundary explicitly:
+`DOM Symbol.iterator identity method has additional effects`. Passing C++ and
+escape checks were not repeated for the Python-only expectation correction.
+Logs, selector and generated C++ are in `/tmp/ctcompile-iteration20/`.
+
+**Next:** `prepareTarget` in `HostContract/DOM/Iteration/Custom.cpp` skips helpers
+that already have one block. Project exact Boolean, zero-result `scf.if` arms
+there under the existing private-candidate budget, using the projection idiom
+in `HostContract/DOM/Preparation.cpp`, then retain the getter/identity/capture
+proofs. Preserve condition input evaluation, selected effects and rollback on
+exhaustion; result-carrying arms need separate payload correspondence. Dynamic
+branches with differing payloads/effects, repeated allocation instances/lifetimes,
+mutable exceptional state, escaping owners, unguarded Bootstrap defaults, the
+native application driver and full native Bootstrap remain unfinished.
+
+Full CTest/compiler lit, the whole browser fixture, broad matrices/corpora,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance runs were skipped. No browser/runtime implementation changed.
+
+## Single-iteration allocation confinement, 2026-09-25 UTC
+
+Resumed **d324b5c4** and the conditional-helper/loop-instance boundary. The
+parallel escape change landed as **aab7de9e**: the existing counted-loop proof
+now permits object and array allocations only in a body proved to execute once.
+Initialized inputs, current contents, every return and the all-write acyclic
+graph remain required. Headers, zero/multiple iterations, negative induction,
+overflow and publication keep their refusals; retained aliases remain unconfined. This proves
+frame confinement; it grants no region destruction or native ownership.
+
+The devbox built `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_escape_analysis_completion` **1/1, 0.09 s** and
+`ctcompile_escape_analysis_arrays` **1/1, 4.97 s**, including 20 new controls and
+every incomplete budget. Formatting passed **1126 C++, 159 Python, 114 web files**;
+diff checks passed. Full CTest/compiler lit, broad matrices/corpora, raw escape
+oracle, WPT/test262, sanitizers and cross-platform/performance runs were skipped.
+
+The native continuation subsequently landed as **80f0f5f7**, described above.
+The first native build needed an explicit `mlir::Value` conversion in a test;
+eight positive controls then exposed a missing rewriter insertion point.
+Both were corrected before the final passing C++ gates. Escape checks need no
+replay. The shared devbox queue caused long waits; no browser files changed.
+
+Repeated allocation instances/lifetimes, dynamic helper branches with differing
+payloads/effects, mutable exceptional state, escaping owners, Bootstrap defaults,
+the application driver and full native Bootstrap remain unfinished.
+
+## Native helper deduplication, 2026-09-25 UTC
+
+Implemented the six requested Ponytail audit suggestions from **00263397**.
+**598645cb** shares closure-environment edges and the three identical publication
+symbol scans, preserving recognized reads, traversal order, unknown-use refusal
+and budget exhaustion. It also removes the private PrimitiveAlternatives
+forwarding header. **efff91f0** shares argument setup across 18 native drivers.
+**d19e6d38** shares twelve sanitizer runners and six Map allocation observers.
+The implementation/test changes remove **517 net lines and one header**.
+Native admission and browser/runtime semantics are unchanged.
+
+Focused validation passed:
+
+- Devbox targets `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`
+  and `ctcompile-test-host-contract`; `ctcompile_host_contract` **1/1, 2.78 s**.
+- Five exact lit cases **5/5, 157.45 s**: `Lowering/Maps/map-flow.mlir`,
+  `Lowering/Objects/object-values.mlir`, `Lowering/Objects/class-terminal-publication.test`,
+  `Browser/native-dom-query.test` and `Browser/native-dom-symbols.test`, all under
+  `CTNative/`. The other 359 discovered cases were excluded.
+- Four existing ownership sources: `ordinary`, `nullable_payload_saved`,
+  `leaf_object_lifetime`, `local_field_readback_lifetime_checked`; Node/VM,
+  GCC/Clang and ASan/UBSan pass in both printer modes.
+- Three publication-key sources (dynamic key, captured literal, escaped key):
+  16 native executions, six unprepared and eleven preparation refusals pass;
+  the dynamic-key first complete budget remains 812. The driver's fixed method
+  controls also pass (16 executions/20 refusals), as do r guards (8/4).
+- 564 CLI equivalence scenarios, 18 actual help imports, unchanged downstream
+  AST/7,390 existing strings; twelve sanitizer command/error-path comparisons;
+  identical Map and leaf observer C++. All 32 source/deletion hashes match the
+  devbox. Formatting passes **1126 C++, 159 Python, 114 web files**; diff checks pass.
+
+Full CTest/compiler lit, full ownership matrices, broad corpora, WPT/test262,
+Windows/macOS and performance measurements were skipped. Claude was running;
+all edits stayed in ctcompile and its external plan. An additional reviewer
+hit its rate limit; the parent completed review and validation.
+
+**Next:** the native boundary remains reachable conditional helper CFGs:
+prove branch, payload and effect correspondence before extending the existing
+one-block getter/identity/capture proofs. Repeated allocation instances and
+lifetimes, mutable exceptional state, escaping owners, Bootstrap defaults,
+the application driver and full native Bootstrap remain unfinished.
+
 ## Iterator helper continuations and acyclic conditional confinement, 2026-09-25 UTC
 
 Resumed **a97678f2** and its reachable-helper CFG boundary, then completed the

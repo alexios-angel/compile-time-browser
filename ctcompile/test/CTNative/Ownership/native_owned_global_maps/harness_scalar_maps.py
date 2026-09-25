@@ -10,21 +10,7 @@ def string_payload_lifetime(args, cpp, name, mode, compiler):
         "shortcircuit_string_saved",
     }
     initial_size = 2 if joined else 1
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
-    if count != 1:
-        raise RuntimeError("string lifetime harness needs exactly one entry")
-    changed = (
-        "#include <memory>\n#include <type_traits>\n#include <vector>\n"
-        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed
-    )
-    changed, count = re.subn(
-        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
-        lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-        "ctn_test_maps.emplace_back(made); return made;",
-        changed,
-    )
-    if count != 2:
-        raise RuntimeError("string Map lifetime observer lost its allocation helpers")
+    changed = instrument_maps(cpp)
     changed += r"""
 int main() {
     const std::string expected = EXPECTED_STRING;
@@ -98,31 +84,7 @@ int main() {
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
+    result = run_sanitized_lifetime(source, binary, compiler)
     if result.returncode or result.stdout != f"trace={initial_size}\n" * 2:
         raise RuntimeError(
             f"{name}/{mode}: saved string lifetime failure\n" f"{result.stdout}{result.stderr}"
@@ -130,21 +92,7 @@ int main() {
 
 
 def nullable_payload_lifetime(args, cpp, name, mode, compiler):
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
-    if count != 1:
-        raise RuntimeError("nullable lifetime harness needs exactly one entry")
-    changed = (
-        "#include <memory>\n#include <type_traits>\n#include <vector>\n"
-        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed
-    )
-    changed, count = re.subn(
-        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
-        lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-        "ctn_test_maps.emplace_back(made); return made;",
-        changed,
-    )
-    if count != 2:
-        raise RuntimeError("nullable lifetime observer lost its allocation helpers")
+    changed = instrument_maps(cpp)
     changed += r"""
 int main() {
     using result_type = ctnative::nullable_string;
@@ -206,31 +154,7 @@ int main() {
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
+    result = run_sanitized_lifetime(source, binary, compiler)
     if result.returncode or result.stdout != "trace=2\n" * 2:
         raise RuntimeError(
             f"{name}/{mode}: nullable result lifetime failure\n" f"{result.stdout}{result.stderr}"
@@ -238,21 +162,7 @@ int main() {
 
 
 def nullable_key_lifetime(args, cpp, name, mode, compiler):
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
-    if count != 1:
-        raise RuntimeError("nullable key lifetime harness needs exactly one entry")
-    changed = (
-        "#include <memory>\n#include <type_traits>\n#include <vector>\n"
-        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed
-    )
-    changed, count = re.subn(
-        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
-        lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-        "ctn_test_maps.emplace_back(made); return made;",
-        changed,
-    )
-    if count != 2:
-        raise RuntimeError("nullable key lifetime observer lost its allocation helpers")
+    changed = instrument_maps(cpp)
     changed += r"""
 int main() {
     using key_type = ctnative::nullable_string;
@@ -316,31 +226,7 @@ int main() {
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
+    result = run_sanitized_lifetime(source, binary, compiler)
     if result.returncode or result.stdout != "trace=2\n" * 2:
         raise RuntimeError(
             f"{name}/{mode}: nullable key lifetime failure\n" f"{result.stdout}{result.stderr}"
@@ -348,21 +234,7 @@ int main() {
 
 
 def nullable_stored_payload_lifetime(args, cpp, name, mode, compiler):
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
-    if count != 1:
-        raise RuntimeError("nullable stored-payload harness needs exactly one entry")
-    changed = (
-        "#include <memory>\n#include <type_traits>\n#include <vector>\n"
-        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed
-    )
-    changed, count = re.subn(
-        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
-        lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-        "ctn_test_maps.emplace_back(made); return made;",
-        changed,
-    )
-    if count != 2:
-        raise RuntimeError("nullable stored-payload observer lost its allocation helpers")
+    changed = instrument_maps(cpp)
     changed += r"""
 int main() {
     using result_type = ctnative::nullable_string;
@@ -495,31 +367,7 @@ int main() {
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
+    result = run_sanitized_lifetime(source, binary, compiler)
     expected_trace = 1 if name == "nullable_host_result_saved" else 0
     if result.returncode or result.stdout != f"trace={expected_trace}\n" * 2:
         raise RuntimeError(

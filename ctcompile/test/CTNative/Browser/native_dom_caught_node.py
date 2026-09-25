@@ -401,6 +401,146 @@ RAW_HELPER_SOURCES = {
     name + "-helper-edges": source.replace("() {", "() { do { break; } while (false);")
     for name, source in OUTER_SOURCES.items()
 }
+RAW_HELPER_SOURCES |= {
+    name + "-helper-branches": source.replace("() {", "() { if (false) { unknown(); }")
+    for name, source in OUTER_SOURCES.items()
+}
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-results": source.replace("return this;", "return true ? this : null;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return false ? null : {done: done, value: anchor};",
+    )
+    .replace("throw anchor;", "throw true ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-primitives": source.replace(
+        "() {", "() { if (0) { unknown(); } if (null) { unknown(); }"
+    )
+    .replace("return this;", "return 1 ? this : null;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return '' ? null : {done: done, value: anchor};",
+    )
+    .replace("throw anchor;", "throw 'close' ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-not": source.replace("return this;", "return !0 ? this : null;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return !'next' ? null : {done: done, value: anchor};",
+    )
+    .replace("throw anchor;", "throw !!'close' ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-transported-not": source.replace(
+        "return this;", "return !(true ? 0 : 1) ? this : null;"
+    )
+    .replace(
+        "return {done: done, value: anchor};",
+        "return !(false ? '' : 'next') ? null : {done: done, value: anchor};",
+    )
+    .replace("throw anchor;", "throw !!(true ? 'close' : '') ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-number-comparisons": source.replace("return this;", "return 1 < 2 ? this : null;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return 2 === 1 ? null : {done: done, value: anchor};",
+    )
+    .replace("throw anchor;", "throw (true ? 2 : 0) >= 1 ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-number-arithmetic": source.replace(
+        "return this;", "return (1 + 2) * 0 ? null : this;"
+    )
+    .replace(
+        "return {done: done, value: anchor};",
+        "return (5 % 2) - 1 ? null : {done: done, value: anchor};",
+    )
+    .replace("throw anchor;", "throw (true ? 8 : 0) / 2 ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-number-unary": source.replace("return this;", "return +0 ? null : this;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return -(+0) ? null : {done: done, value: anchor};",
+    )
+    .replace("throw anchor;", "throw -(true ? 2 : 0) < +0 ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-number-bitwise": source.replace("return this;", "return (~0 & 1) ^ 1 ? null : this;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return (1 << 33) | (8 >> 2) ? {done: done, value: anchor} : null;",
+    )
+    .replace("throw anchor;", "throw (true ? -1 : 0) >>> 31 ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-primitive-equality": source.replace(
+        "return this;", "return null === false ? null : this;"
+    )
+    .replace(
+        "return {done: done, value: anchor};",
+        "return 'next' == 'next' ? {done: done, value: anchor} : null;",
+    )
+    .replace("throw anchor;", "throw (true ? false : 0) !== 0 ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-number-power": source.replace("return this;", "return 1 ** (1 / 0) ? null : this;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return (-0) ** -3 < 0 ? {done: done, value: anchor} : null;",
+    )
+    .replace("throw anchor;", "throw (true ? -2 : 0) ** 3 === -8 ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
+# Retain the complete source-global witnesses; the initialized provider and
+# absence of source writes must prove the binding before helper projection.
+RAW_HELPER_SOURCES |= {
+    name.replace("-primitive-equality", "-global-undefined"): source.replace(
+        "null === false", "null === undefined"
+    )
+    for name, source in RAW_HELPER_SOURCES.items()
+    if name.endswith("-helper-primitive-equality")
+}
 
 
 def check_outer_catches(args):
@@ -487,7 +627,25 @@ var outcome0 = observe(false), outcome1 = observe(true);
             initial_intrinsics=INTRINSICS,
         )
         raw_label = f"{name}-raw-helpers"
-        native = dom.lower(args, raw, raw_manifest, raw_label)
+        raw_steps = (
+            1_000_000
+            if name.endswith(
+                (
+                    "-helper-primitives",
+                    "-helper-transported-not",
+                    "-helper-number-bitwise",
+                    "-helper-number-power",
+                )
+            )
+            else None
+        )
+        if raw_steps is not None:
+            refused = dom.lower(
+                args, raw, raw_manifest, raw_label + "-default-budget", success=False
+            )
+            if "DOM custom iterator budget exhausted" not in refused:
+                raise RuntimeError(f"{name}: larger raw helpers lost their budget refusal")
+        native = dom.lower(args, raw, raw_manifest, raw_label, max_steps=raw_steps)
         dom.standalone(args, native, raw_label, checks, compilers, includes, libraries)
         dom.lower(args, raw, raw_manifest, raw_label + "-zero-budget", success=False, max_steps=0)
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):

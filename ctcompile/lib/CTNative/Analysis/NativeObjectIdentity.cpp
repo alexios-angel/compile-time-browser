@@ -8,7 +8,6 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/StringMap.h"
 
 namespace ctcompile::ctnative {
 namespace {
@@ -175,7 +174,6 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
     // original object schema, as for Maps; each factory call still allocates
     // a fresh identity and environment. These tags were rederived by the
     // native closure lifter immediately before this analysis.
-    llvm::StringMap<ctjs::CreateClosureOp> environments;
     llvm::DenseSet<mlir::Operation *> reads;
     llvm::DenseMap<mlir::Operation *, mlir::Value> keyInitializations;
     if (globals && globals->proved()) {
@@ -188,18 +186,7 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
             keyInitializations[initialization] = initialization.getValue();
         }
     }
-    module.walk([&](ctjs::CreateClosureOp made) {
-        if (!environmentTarget(made).empty()) { environments[environmentTarget(made)] = made; }
-    });
-    module.walk([&](ctjs::LoadUpvalueOp read) {
-        if (!read->hasAttr(kNativeEnvironmentRead)) { return; }
-        auto made = environments.lookup(environmentTarget(read));
-        if (made && read.getIndex() >= 0 &&
-            static_cast<size_t>(read.getIndex()) < made.getUpvalues().size()) {
-            flow.join(read.getResult(), made.getUpvalues()[static_cast<size_t>(read.getIndex())]);
-            reads.insert(read);
-        }
-    });
+    flow.connectEnvironmentReads(module, &reads);
     module.walk([&](ctjs::CreateObjectOp made) { flow.add(made.getResult()); });
     object_detail::connectValues(flow, module);
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> families;

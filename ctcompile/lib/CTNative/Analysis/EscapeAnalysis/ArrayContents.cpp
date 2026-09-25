@@ -30,8 +30,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     // keeps separate exact states: unioning array aliases before a strong
     // overwrite would incorrectly erase an element of an unmodified array.
     // Every ordinary branch edge is visited, including a constant flag's untaken
-    // edge and a switch's default edge. Only a certified finite loop selects its
-    // guard edge. Any unsupported path refuses everything.
+    // edge and a switch's default edge. A certified finite loop selects its
+    // guard and reuses exact i1 choices within that path. Unsupported paths refuse.
     State state;
     for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, function); }
@@ -198,8 +198,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     return refuse(ArrayContentsFailure::UnknownValue, &op);
                 }
                 // ponytail: single-block structured arms only; nested CFG
-                // needs its own lifetime/transport proof. Both arms run in
-                // separate exact states, including an implicit empty else.
+                // needs its own lifetime/transport proof. The first choice runs
+                // both arms in separate states, including an implicit empty else.
                 for (mlir::Region & region : branch->getRegions()) {
                     if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     if (region.empty() && &region == &branch.getElseRegion() &&
@@ -212,8 +212,23 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
                     }
                 }
+                // The census admits every nested If only for one body visit.
+                // No-result branches retain full structural replay.
+                const bool correlated = state.loop && branch.getNumResults() != 0;
+                const auto [choiceKey, negated] = conditionChoiceKey(branch.getCondition());
+                const auto choice = held(choiceKey).conditionChoice;
+                if (correlated && choice) {
+                    auto & region =
+                        *choice != negated ? branch.getThenRegion() : branch.getElseRegion();
+                    if (!region.empty()) { state.current = &region.front().front(); }
+                    continue;
+                }
                 auto copy = snapshot();
                 if (!copy) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                if (correlated) {
+                    state.values[choiceKey].conditionChoice = !negated;
+                    copy->values[choiceKey].conditionChoice = negated;
+                }
                 if (!branch.getElseRegion().empty()) {
                     copy->current = &branch.getElseRegion().front().front();
                 }

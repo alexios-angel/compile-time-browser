@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../../lib/CTNative/HostContract/Preparation.h"
 #include "HostContractFixtures.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -4567,9 +4568,18 @@ module {
             check(static_cast<bool>(failure),
                   "nested recursion, escaped or mutable callables and unproved targets refuse");
             if (failure) { llvm::consumeError(std::move(failure)); }
-            check(hostContractFingerprint(*input) == request.moduleSha256 &&
+            check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "refused private nested helpers publish no evidence");
+            // Normalization may rewrite a private candidate before refusing.
+            // Source and contract rollback belong to the preparation boundary.
+            input = fixture->clone();
+            const auto fingerprint = request.moduleSha256;
+            auto refused = prepareDOMEntry(*input, request, completeBudget);
+            check(static_cast<bool>(refused) && request.moduleSha256 == fingerprint &&
+                      hostContractFingerprint(*input) == fingerprint &&
                       noEvidence(*input, DOMEntryAnalysis(*input, request)),
                   "refused nested helpers preserve source and publish no evidence");
+            if (refused) { llvm::consumeError(std::move(refused)); }
         }
     }
     for (const auto & source : {loopJoinedWriterSource, directLoopJoinedWriterSource}) {

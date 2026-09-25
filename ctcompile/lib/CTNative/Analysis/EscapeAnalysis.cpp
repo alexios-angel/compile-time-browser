@@ -314,13 +314,15 @@ bool structuredRetentionInputs(const mlir::DataFlowSolver & solver, ctjs::FuncOp
         const AliasLattice * lattice = solver.lookupState<AliasLattice>(value);
         return lattice != nullptr && !lattice->getValue().isUninitialized();
     };
-    const auto conditionalAncestors = [&](mlir::Operation * site) {
-        // The complete contents query below rejects repeated root CFG blocks;
-        // its counted-loop exception excludes allocations and regions. Only
-        // conditional ancestors can therefore keep one instance per call.
+    const auto supportedAncestors = [&](mlir::Operation * site) {
+        // The complete contents query below rejects repeated root CFG blocks
+        // and permits allocations in counted loops only in exactly-once bodies.
+        // These ancestors supply no instance proof without that complete query.
         for (mlir::Operation * parent = site->getParentOp(); parent != function.getOperation();
              parent = parent->getParentOp()) {
-            if (!spend() || !llvm::isa<mlir::scf::IfOp>(parent)) { return false; }
+            if (!spend() || !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(parent)) {
+                return false;
+            }
         }
         return true;
     };
@@ -336,7 +338,7 @@ bool structuredRetentionInputs(const mlir::DataFlowSolver & solver, ctjs::FuncOp
                          !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) ||
                         (isTrackedSite(operation) &&
                          operation->getParentRegion() != &function.getBody() &&
-                         !conditionalAncestors(operation)) ||
+                         !supportedAncestors(operation)) ||
                         !llvm::all_of(operation->getOperands(), initialized) ||
                         !llvm::all_of(operation->getResults(), initialized)) {
                         return mlir::WalkResult::interrupt();

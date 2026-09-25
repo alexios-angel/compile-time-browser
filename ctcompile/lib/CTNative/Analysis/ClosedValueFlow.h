@@ -3,11 +3,14 @@
 #include "OwnedGlobalRoots.h"
 #include "OwnedMethodTableSlots.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/EquivalenceClasses.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 
 namespace ctcompile::ctnative {
 
@@ -56,6 +59,24 @@ struct closedValueFlow {
                 join(initialization.getValue(), read.getResult());
             }
         }
+    }
+    // Opt-in edges from the native closure proof, not generic flow permission.
+    // Identity consumers also need the exact reads recognized by this census.
+    void connectEnvironmentReads(mlir::ModuleOp module,
+                                 llvm::DenseSet<mlir::Operation *> * reads = nullptr) {
+        llvm::StringMap<ctjs::CreateClosureOp> environments;
+        module.walk([&](ctjs::CreateClosureOp made) {
+            if (!environmentTarget(made).empty()) { environments[environmentTarget(made)] = made; }
+        });
+        module.walk([&](ctjs::LoadUpvalueOp read) {
+            if (!read->hasAttr(kNativeEnvironmentRead)) { return; }
+            auto made = environments.lookup(environmentTarget(read));
+            if (made && read.getIndex() >= 0 &&
+                static_cast<size_t>(read.getIndex()) < made.getUpvalues().size()) {
+                join(read.getResult(), made.getUpvalues()[static_cast<size_t>(read.getIndex())]);
+                if (reads) { reads->insert(read); }
+            }
+        });
     }
     void build(mlir::ModuleOp module) {
         module.walk([&](ctjs::FuncOp fn) {

@@ -113,6 +113,63 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     const auto * guardSite = base ? base.getDefiningOp() : nullptr;
     auto invariantFailure = unsupported;
     llvm::SmallDenseSet<std::size_t, 4> guardReloads;
+    // The census adds conditional arms only after proving one body visit.
+    // Their producers then reuse the same invariant and index proofs below.
+    llvm::SmallPtrSet<mlir::Block *, 4> bodyBlocks{body};
+    const auto yieldedInputs = [&](mlir::Value operand) -> llvm::SmallVector<mlir::Value, 2> {
+        auto branch = operand.getDefiningOp<mlir::scf::IfOp>();
+        if (!branch || !bodyBlocks.contains(branch->getBlock())) { return {}; }
+        const auto position = llvm::cast<mlir::OpResult>(operand).getResultNumber();
+        llvm::SmallVector<mlir::Value, 2> inputs;
+        for (mlir::Region & region : branch->getRegions()) {
+            if (!spend()) {
+                invariantFailure = ArrayContentsFailure::WorkLimit;
+                return {};
+            }
+            if (!llvm::hasSingleElement(region) || region.front().empty() ||
+                region.front().getNumArguments() != 0) {
+                return {};
+            }
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+            if (!yield || yield.getNumOperands() != branch.getNumResults()) { return {}; }
+            inputs.push_back(yield.getOperand(position));
+        }
+        return inputs;
+    };
+    const auto sameInput = [](mlir::Value left, mlir::Value right) {
+        if (left == right) { return true; }
+        auto first = left.getDefiningOp<ctjs::ConstantOp>();
+        auto second = right.getDefiningOp<ctjs::ConstantOp>();
+        return first && second && first.getValue() == second.getValue();
+    };
+    const auto equalYield = [&](mlir::Value operand) -> mlir::Value {
+        mlir::Value common;
+        for (mlir::Value value : yieldedInputs(operand)) {
+            if (common && !sameInput(common, value)) { return {}; }
+            common = value;
+        }
+        // This is only operand correspondence. The census and replay still
+        // validate every producer/effect in both arms; equal ranges prove nothing.
+        return common;
+    };
+    const auto correspondingInputs = [&](mlir::Value left, mlir::Value right) {
+        if (left == right) { return true; }
+        auto branch = left.getDefiningOp<mlir::scf::IfOp>();
+        auto other = right.getDefiningOp<mlir::scf::IfOp>();
+        if (!branch || !other) { return false; }
+        const auto [firstCondition, firstNegated] = conditionChoiceKey(branch.getCondition());
+        const auto [secondCondition, secondNegated] = conditionChoiceKey(other.getCondition());
+        // Equal ranges and distinct input snapshots prove no correspondence.
+        if (firstCondition != secondCondition) { return false; }
+        // yieldedInputs accepts only producers reached by the single-visit
+        // census, including nested arms. Replay retains the normalized choice.
+        const auto first = yieldedInputs(left);
+        const auto second = yieldedInputs(right);
+        const bool reversed = firstNegated != secondNegated;
+        return first.size() == 2 && second.size() == 2 &&
+               sameInput(first[0], second[reversed ? 1 : 0]) &&
+               sameInput(first[1], second[reversed ? 0 : 1]);
+    };
     const auto invariant = [&](auto && self, mlir::Value operand,
                                unsigned depth) -> std::optional<ContentsValue> {
         if (!spend()) {
@@ -128,12 +185,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                               : ContentsKind::Identity};
         }
         auto * definition = operand.getDefiningOp();
-        if (!definition || (definition->getBlock() != header && definition->getBlock() != body)) {
+        if (!definition ||
+            (definition->getBlock() != header && !bodyBlocks.contains(definition->getBlock()))) {
             return held(operand);
         }
         // Every visited value spends the shared proof budget. Keep a stack
         // ceiling; repeated reads need unchanged base and key identities.
         if (depth == 64) { return std::nullopt; }
+        if (mlir::Value value = equalYield(operand)) { return self(self, value, depth + 1); }
         ContentsValue result{operand, ContentsKind::NonBigInt};
         if (auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(definition)) {
             const auto base = self(self, load.getObject(), depth + 1);
@@ -340,6 +399,54 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                               *stride};
         }
         if (depth == 64) { return std::nullopt; }
+        if (mlir::Value value = equalYield(operand)) { return self(self, value, depth + 1, use); }
+        if (use != IndexUse::ArithmeticOperand) {
+            std::optional<IndexRange> joined;
+            std::size_t period = 0;
+            for (mlir::Value input : yieldedInputs(operand)) {
+                auto range = self(self, input, depth + 1, use);
+                if (!range) {
+                    if (invariantFailure == ArrayContentsFailure::WorkLimit) {
+                        return std::nullopt;
+                    }
+                    auto scalar = invariant(invariant, input, 0);
+                    if (!scalar || !scalar->origin()) { return std::nullopt; }
+                    if (!scalar->integerNumber && !scalar->negativeIntegerNumber) {
+                        scalar->integerNumber = boundedNumber(scalar->origin());
+                        if (!scalar->integerNumber) {
+                            scalar->negativeIntegerNumber = boundedNumber(scalar->origin(), true);
+                        }
+                    }
+                    if (!scalar->integerNumber && !scalar->negativeIntegerNumber) {
+                        return std::nullopt;
+                    }
+                    range = IndexRange{*scalar, *scalar, 1};
+                }
+                if (endpointNumber(range->first) != endpointNumber(range->last)) {
+                    period = std::gcd(period, range->stride);
+                }
+                if (joined) {
+                    const auto displacement =
+                        endpointNumber(range->first) - endpointNumber(joined->first);
+                    period = static_cast<std::size_t>(
+                        std::gcd(static_cast<std::int64_t>(period), displacement));
+                    if (displacement < 0) { joined->first = range->first; }
+                    if (endpointNumber(range->last) > endpointNumber(joined->last)) {
+                        joined->last = range->last;
+                    }
+                } else {
+                    joined = range;
+                }
+            }
+            if (joined) {
+                // A Number enclosure is never an exact ArithmeticOperand or
+                // receiver identity. Singleton arms add no artificial stride;
+                // preserve their gaps for the existing guard-reload proof.
+                joined->stride = std::max<std::size_t>(1, period);
+                joined->mixedShift = true;
+                return joined;
+            }
+        }
         auto * expression = operand.getDefiningOp();
         auto addition = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(expression);
         auto binary = llvm::dyn_cast_or_null<ctjs::BinaryOp>(expression);
@@ -351,7 +458,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         const bool remainder = binary && binary.getKind() == ctjs::BinaryKind::Mod;
         const bool power = binary && binary.getKind() == ctjs::BinaryKind::Pow;
         if (auto load = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(expression)) {
-            if (load->getBlock() != body) { return std::nullopt; }
+            if (!bodyBlocks.contains(load->getBlock())) { return std::nullopt; }
             const auto receiver = invariant(invariant, load.getObject(), 0);
             if (!receiver || !receiver->origin()) { return std::nullopt; }
             const auto table = state.arrays.find(receiver->origin().getDefiningOp());
@@ -405,7 +512,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         if (auto unary = llvm::dyn_cast_or_null<ctjs::UnaryOp>(expression);
             (use == IndexUse::ArithmeticOperand || use == IndexUse::PropertyKey) && unary &&
-            unary->getBlock() == body &&
+            bodyBlocks.contains(unary->getBlock()) &&
             (unary.getKind() == ctjs::UnaryKind::Plus || unary.getKind() == ctjs::UnaryKind::Neg)) {
             const auto input =
                 self(self, unary.getOperand(), depth + 1, IndexUse::ArithmeticOperand);
@@ -432,9 +539,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             return IndexRange{*scalar, *scalar, 1};
         }
         if (auto unary = llvm::dyn_cast_or_null<ctjs::UnaryOp>(expression)) {
-            if (unary->getBlock() != body || (unary.getKind() != ctjs::UnaryKind::Plus &&
-                                              unary.getKind() != ctjs::UnaryKind::Neg &&
-                                              unary.getKind() != ctjs::UnaryKind::BitNot)) {
+            if (!bodyBlocks.contains(unary->getBlock()) ||
+                (unary.getKind() != ctjs::UnaryKind::Plus &&
+                 unary.getKind() != ctjs::UnaryKind::Neg &&
+                 unary.getKind() != ctjs::UnaryKind::BitNot)) {
                 return std::nullopt;
             }
             auto range = self(self, unary.getOperand(), depth + 1,
@@ -495,10 +603,23 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         const bool shift =
             leftShift || (addition && (addition.getKind() == ctjs::BinaryKind::Shr ||
                                        addition.getKind() == ctjs::BinaryKind::UShr));
-        if (!expression || expression->getBlock() != body ||
+        if (!expression || !bodyBlocks.contains(expression->getBlock()) ||
             !(add || subtract || divide || remainder || multiply || power || shift || bitAnd ||
               bitOr || bitXor)) {
             return std::nullopt;
+        }
+        if (subtract && correspondingInputs(binary.getLhs(), binary.getRhs())) {
+            // Corresponding slots select equal values on the same input choice.
+            // Both original values must independently prove bounded Numbers.
+            // Neither ranges nor conversions prove correspondence; recursive
+            // Number proofs retain every guard read.
+            if (self(self, binary.getLhs(), depth + 1, IndexUse::Number) &&
+                (binary.getLhs() == binary.getRhs() ||
+                 self(self, binary.getRhs(), depth + 1, IndexUse::Number))) {
+                const ContentsValue zero{operand, ContentsKind::NonBigInt, 0};
+                return IndexRange{zero, zero, 1};
+            }
+            if (invariantFailure == ArrayContentsFailure::WorkLimit) { return std::nullopt; }
         }
         if ((subtract || add || multiply || divide || remainder || power) &&
             (use == IndexUse::BitwiseConversion || use == IndexUse::ArithmeticOperand ||
@@ -1110,47 +1231,90 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         indexBounds = {*start, last};
         return accepted;
     };
-    for (mlir::Block * block : {header, body}) {
+    llvm::SmallVector<mlir::Block *, 4> blocks{header, body};
+    for (std::size_t next = 0; next < blocks.size(); ++next) {
+        mlir::Block * block = blocks[next];
         for (mlir::Operation & operation : *block) {
             if (!spend()) { return ArrayContentsFailure::WorkLimit; }
             if (&operation == block->getTerminator()) { continue; }
-            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-                if (block != body) { return unsupported; }
-                refinableEnclosure = false;
-                if (auto range = indexRange(indexRange, store.getKey(), 0, IndexUse::PropertyKey);
-                    range || (refinableEnclosure && *start < size)) {
-                    if (*start < size) {
-                        const auto ownBounds = [&](const IndexRange & candidate) {
-                            return candidate.first.integerNumber && candidate.last.integerNumber &&
-                                   *candidate.first.integerNumber < size &&
-                                   *candidate.last.integerNumber < size;
-                        };
-                        if (!range || !ownBounds(*range)) {
-                            if ((range && !range->mixedShift) ||
-                                !refineIndexRange(store.getKey(), ownBounds)) {
-                                return invariantFailure;
-                            }
-                            // Every visit is now proved own. Keep a conservative
-                            // footprint; reload gaps still need their own reproof.
-                            range = IndexRange{{store.getKey(), ContentsKind::NonBigInt, 0},
-                                               {store.getKey(), ContentsKind::NonBigInt, size - 1},
-                                               1,
-                                               true};
-                        }
-                        guardStoreRanges.push_back(
-                            {*range->first.integerNumber, *range->last.integerNumber, range->stride,
-                             range->mixedShift ? store.getKey() : mlir::Value{}});
-                    }
-                } else {
-                    if (invariantFailure == ArrayContentsFailure::WorkLimit) {
-                        return invariantFailure;
-                    }
-                    const auto key = invariant(invariant, store.getKey(), 0);
-                    if (!key) { return invariantFailure; }
-                    const auto position = ownArrayIndex(*key);
-                    if (!position || *position >= size) { return unsupported; }
-                    guardStores.insert(*position);
+            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                // Each arm executes at most once in this one body visit. Reuse
+                // the full census for both arms; ordinary contents replay still
+                // proves their exact inputs, results and every structural path.
+                if (block == header || *start >= size || last != *start) { return unsupported; }
+                for (mlir::Region & region : branch->getRegions()) {
+                    if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                    if (region.empty()) { continue; }
+                    if (!llvm::hasSingleElement(region)) { return unsupported; }
+                    blocks.push_back(&region.front());
+                    bodyBlocks.insert(&region.front());
                 }
+                continue;
+            }
+            if (isTrackedSite(&operation)) {
+                // ponytail: one allocation instance per path. Repeated bodies
+                // need distinct instance identities; headers execute again at exit.
+                if (block == header || *start >= size || last != *start) { return unsupported; }
+                continue;
+            }
+            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
+                // Nested blocks entered this census only through a single-visit
+                // body arm. Check their writes against the same guard footprint;
+                // exact path replay still records each selected value and alias.
+                if (block == header) { return unsupported; }
+                const auto storeKey = [&](auto && self, mlir::Value key,
+                                          unsigned depth) -> ArrayContentsFailure {
+                    if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                    if (depth == 64) { return unsupported; }
+                    if (const auto inputs = yieldedInputs(key); !inputs.empty()) {
+                        // Keep each arm's footprint independently. This proves
+                        // possible positions, never value or receiver identity.
+                        for (mlir::Value input : inputs) {
+                            const auto failure = self(self, input, depth + 1);
+                            if (failure != ArrayContentsFailure::None) { return failure; }
+                        }
+                        return ArrayContentsFailure::None;
+                    }
+                    refinableEnclosure = false;
+                    if (auto range = indexRange(indexRange, key, 0, IndexUse::PropertyKey);
+                        range || (refinableEnclosure && *start < size)) {
+                        if (*start < size) {
+                            const auto ownBounds = [&](const IndexRange & candidate) {
+                                return candidate.first.integerNumber &&
+                                       candidate.last.integerNumber &&
+                                       *candidate.first.integerNumber < size &&
+                                       *candidate.last.integerNumber < size;
+                            };
+                            if (!range || !ownBounds(*range)) {
+                                if ((range && !range->mixedShift) ||
+                                    !refineIndexRange(key, ownBounds)) {
+                                    return invariantFailure;
+                                }
+                                // Every visit is now proved own. Keep a conservative
+                                // footprint; reload gaps still need their own reproof.
+                                range = IndexRange{{key, ContentsKind::NonBigInt, 0},
+                                                   {key, ContentsKind::NonBigInt, size - 1},
+                                                   1,
+                                                   true};
+                            }
+                            guardStoreRanges.push_back({*range->first.integerNumber,
+                                                        *range->last.integerNumber, range->stride,
+                                                        range->mixedShift ? key : mlir::Value{}});
+                        }
+                    } else {
+                        if (invariantFailure == ArrayContentsFailure::WorkLimit) {
+                            return invariantFailure;
+                        }
+                        const auto value = invariant(invariant, key, 0);
+                        if (!value) { return invariantFailure; }
+                        const auto position = ownArrayIndex(*value);
+                        if (!position || *position >= size) { return unsupported; }
+                        guardStores.insert(*position);
+                    }
+                    return ArrayContentsFailure::None;
+                };
+                const auto failure = storeKey(storeKey, store.getKey(), 0);
+                if (failure != ArrayContentsFailure::None) { return failure; }
                 // A saved or reloaded receiver must keep the same allocation
                 // across transport, without reading an overwritten element.
                 const auto receiver = invariant(invariant, store.getObject(), 0);
