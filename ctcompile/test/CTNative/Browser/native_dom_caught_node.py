@@ -456,6 +456,18 @@ RAW_HELPER_SOURCES |= {
 }
 
 
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-number-comparisons": source.replace("return this;", "return 1 < 2 ? this : null;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return 2 === 1 ? null : {done: done, value: anchor};",
+    )
+    .replace("throw anchor;", "throw (true ? 2 : 0) >= 1 ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
 def check_outer_catches(args):
     compilers = find_compilers()
     compilers[1] = args.clang
