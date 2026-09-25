@@ -288,6 +288,12 @@ void dom_bindings::install_animations(context & cx) {
         });
     timeline_ctor->define("prototype", value::object(timeline_proto), script::attr_none);
     timeline_proto->define("constructor", value::object(timeline_ctor), script::attr_builtin);
+    // Every interface prototype carries its name as `@@toStringTag` (Web IDL
+    // §3.7.3): `assert_class_string(getAnimations()[0], "CSSTransition")` is
+    // how css-properties-values-api asks what a transition is, and without it
+    // an Animation answered with the EventTarget's tag it inherits.
+    timeline_proto->define("@@toStringTag", cx.string("DocumentTimeline"),
+                           script::attr_configurable);
     cx.define_global("DocumentTimeline", value::object(timeline_ctor));
     auto * timeline = cx.allocate<script::object_object>();
     timeline->prototype = value::object(timeline_proto);
@@ -320,6 +326,22 @@ void dom_bindings::install_animations(context & cx) {
             const std::string given = arg_string(c, args, 0);
             if (given == "replace" || given == "add" || given == "accumulate") {
                 e->composite = given;
+                ++animation_generation_;
+            }
+            return value::undefined();
+        });
+    define_getter(
+        cx, *effect_proto, "iterationComposite",
+        [effect_of, illegal](context & c, std::span<value>) {
+            const keyframe_effect_record * e = effect_of(c);
+            return e == nullptr ? illegal(c) : c.string(e->iteration_composite);
+        },
+        [this, effect_of, illegal](context & c, std::span<value> args) {
+            keyframe_effect_record * e = effect_of(c);
+            if (e == nullptr) { return illegal(c); }
+            const std::string given = arg_string(c, args, 0);
+            if (given == "replace" || given == "accumulate") {
+                e->iteration_composite = given;
                 ++animation_generation_;
             }
             return value::undefined();
@@ -429,6 +451,7 @@ void dom_bindings::install_animations(context & cx) {
         });
     effect_ctor->define("prototype", keyframe_effect_prototype_, script::attr_none);
     effect_proto->define("constructor", value::object(effect_ctor), script::attr_builtin);
+    effect_proto->define("@@toStringTag", cx.string("KeyframeEffect"), script::attr_configurable);
     cx.define_global("KeyframeEffect", value::object(effect_ctor));
 
     // --- Animation ------------------------------------------------------------
@@ -675,6 +698,7 @@ void dom_bindings::install_animations(context & cx) {
         });
     ctor->define("prototype", animation_prototype_, script::attr_none);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
+    proto->define("@@toStringTag", cx.string("Animation"), script::attr_configurable);
     cx.define_global("Animation", value::object(ctor));
     animation_interface_ = ctor;
 
@@ -700,6 +724,7 @@ void dom_bindings::install_animations(context & cx) {
             });
         sub_ctor->define("prototype", value::object(sub), script::attr_none);
         sub->define("constructor", value::object(sub_ctor), script::attr_builtin);
+        sub->define("@@toStringTag", cx.string(name), script::attr_configurable);
         cx.define_global(name, value::object(sub_ctor));
         return value::object(sub);
     };
