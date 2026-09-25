@@ -677,7 +677,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                   countChecks(*recovered.original) == checks &&
                   mlir::succeeded(mlir::verify(*module)),
               "iterator recovery retains the complete original snapshot and verifies");
-        for (unsigned control = 0; control < (structured ? 28u : 7u); ++control) {
+        for (unsigned control = 0; control < (structured ? 35u : 7u); ++control) {
             mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
             auto entry = candidate->lookupSymbol<ctjs::FuncOp>(contract.entry);
             ctjs::InvokeOp invocation, opening;
@@ -862,7 +862,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                             truth->setOperand(0, entry.getBody().front().getArgument(3));
                         }
                     }
-                } else {
+                } else if (control == 26 || control == 27) {
                     mlir::Operation * wrapped = advancing;
                     if (control == 27) {
                         wrapped = advancing->getParentOfType<mlir::scf::IfOp>()
@@ -876,6 +876,66 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                     wrapped->moveBefore(&body, body.end());
                     at.setInsertionPointToEnd(&body);
                     mlir::scf::YieldOp::create(at, call.getLoc(), wrapped->getResults());
+                } else if (control >= 28) {
+                    mlir::scf::IfOp done;
+                    entry.walk([&](mlir::scf::IfOp branch) {
+                        auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                        auto read = truth ? truth.getValue().getDefiningOp<ctjs::GetPropertyOp>()
+                                          : ctjs::GetPropertyOp{};
+                        if (read && read.getObject() == recordAlias &&
+                            ctjs::constantKey(read.getKey()) == "done") {
+                            done = branch;
+                        }
+                    });
+                    if (!check(static_cast<bool>(done), "next has an exact done continuation")) {
+                        continue;
+                    }
+                    auto & arm =
+                        (control == 29 ? done.getThenRegion() : done.getElseRegion()).front();
+                    at.setInsertionPoint(arm.getTerminator());
+                    mlir::Value item = advancing.getResult(1);
+                    if (control == 30) { at.setInsertionPointAfter(advancing); }
+                    if (control == 31) {
+                        // Saved item slot 8 becomes unwind argument 9, then
+                        // result 11. Observing it must not bypass the item proof.
+                        auto & unwind = invocation.getUnwindBody().front();
+                        auto yield = llvm::cast<ctjs::InvokeYieldOp>(unwind.back());
+                        check(yield.getValues()[11] == unwind.getArgument(9),
+                              "saved item retains its exact unwind slot");
+                        item = invocation.getResult(11);
+                        at.setInsertionPointAfter(invocation);
+                    }
+                    if (control == 32 || control == 33) {
+                        // A lookalike guard is no authority, even nested inside
+                        // the exact success arm. Preserve the real done branch.
+                        at.setInsertionPoint(done);
+                        auto read = done.getCondition()
+                                        .getDefiningOp<ctjs::TruthyOp>()
+                                        .getValue()
+                                        .getDefiningOp<ctjs::GetPropertyOp>();
+                        auto other = ctjs::GetPropertyOp::create(
+                            at, call.getLoc(), read.getType(),
+                            control == 32 ? holder : read.getObject(),
+                            control == 32
+                                ? read.getKey()
+                                : ctjs::ConstantOp::create(at, call.getLoc(),
+                                                           ctjs::StringAttr::get(&context, "value"))
+                                      .getResult());
+                        auto truth =
+                            ctjs::TruthyOp::create(at, call.getLoc(), at.getI1Type(), other);
+                        auto fake = mlir::scf::IfOp::create(at, call.getLoc(), truth, true);
+                        at.setInsertionPoint(fake.getElseRegion().front().getTerminator());
+                    }
+                    if (control == 34) {
+                        // Another tuple position containing the normal item is
+                        // also tracked, even if the usual item slot stays dead.
+                        auto & normal = advancing.getNormalBody().front();
+                        auto yield = llvm::cast<ctjs::InvokeYieldOp>(normal.back());
+                        yield->setOperand(3, normal.getArgument(0));
+                        item = advancing.getResult(3);
+                        at.setInsertionPointAfter(advancing);
+                    }
+                    ctjs::StoreGlobalOp::create(at, call.getLoc(), "observed-item", item);
                 }
             }
             const auto rewrittenClose = [&](ctjs::CallOp found) {
@@ -962,7 +1022,11 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                 *candidate, proof, control == 6 ? 0 : 100000);
             const auto reason = failure ? llvm::toString(std::move(failure)) : std::string{};
             const auto expected =
-                control == 17 || control == 18 || control == 20 || (control >= 23 && control <= 25)
+                control == 29 || control == 30 || control == 31 || control == 32 || control == 34
+                    ? "DOM iterator item requires its not-done continuation"
+                : control == 33 ? "DOM iterator record has an unsupported observer"
+                : control == 17 || control == 18 || control == 20 ||
+                        (control >= 23 && control <= 25)
                     ? "DOM iterator completion must close every traversal exit"
                 : control == 26 || control == 27 ? "DOM custom next requires one direct loop test"
                 : control == 19 || control == 22

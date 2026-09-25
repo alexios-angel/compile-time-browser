@@ -1787,7 +1787,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return false;
     };
     auto observedNext = llvm::dyn_cast<ctjs::InvokeOp>(next->getParentOp());
-    const auto failedNext = [&](mlir::Operation * leaf) {
+    const auto inNextArm = [&](mlir::Operation * leaf, bool failed) {
         for (auto * parent = leaf->getParentOp(); parent && parent != traversal;
              parent = parent->getParentOp()) {
             if (!spend()) { return false; }
@@ -1808,7 +1808,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             };
             auto success = boolean(normal), failure = boolean(unwind);
             if (success && failure && success.getValue() != failure.getValue() &&
-                (failure.getValue() ? branch.getThenRegion() : branch.getElseRegion())
+                ((failed ? failure : success).getValue() ? branch.getThenRegion()
+                                                         : branch.getElseRegion())
                     .isAncestor(leaf->getParentRegion())) {
                 return true;
             }
@@ -1830,7 +1831,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (auto constant = value.getDefiningOp<mlir::arith::ConstantOp>()) {
                     auto tag = llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue());
                     if (!tag || !value.getType().isInteger(32)) { return false; }
-                    if (failedNext(leaf)) { return true; }
+                    if (inNextArm(leaf, true)) { return true; }
                     success = true;
                     return closesEveryPath(closesEveryPath, std::next(traversal->getIterator()),
                                            traversal->getBlock()->end(), 0, selector, tag);
@@ -1857,25 +1858,59 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
     }
     if (!covered) { return error("DOM iterator completion must close every traversal exit"); }
-    if (observedNext) { return error("DOM iterator observed completions require state transport"); }
-    for (mlir::Operation * user : next->getUsers()) {
+    // Completion tuples also spill unused items on exhausted and exceptional
+    // paths. Follow exact slots to their observers; transport alone is not an
+    // item read, and a dead spill does not need a not-done guard.
+    llvm::SmallVector<mlir::Value> pendingItems{next.getResult()};
+    llvm::DenseSet<mlir::Value> visitedItems;
+    while (!pendingItems.empty()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-        if (llvm::isa<ctjs::RootOp>(user)) { continue; }
-        bool guarded = false;
-        for (auto * parent = user->getParentOp(); parent; parent = parent->getParentOp()) {
+        auto value = pendingItems.pop_back_val();
+        if (!visitedItems.insert(value).second) { continue; }
+        for (mlir::OpOperand & use : value.getUses()) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(parent);
-            auto truth =
-                branch ? branch.getCondition().getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
-            auto read = truth ? truth.getValue().getDefiningOp<ctjs::GetPropertyOp>()
-                              : ctjs::GetPropertyOp{};
-            guarded |= read && read.getObject() == open.getResult() &&
-                       ctjs::constantKey(read.getKey()) == "done" &&
-                       read->getBlock() == next->getBlock() && next->isBeforeInBlock(read) &&
-                       branch.getElseRegion().isAncestor(user->getParentRegion());
+            auto * user = use.getOwner();
+            if (llvm::isa<ctjs::RootOp>(user) && use.getOperandNumber() == 1) { continue; }
+            if (auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(user)) {
+                auto invocation = llvm::cast<ctjs::InvokeOp>(exit->getParentOp());
+                if (observedNext && observedInvocations.contains(invocation)) {
+                    pendingItems.push_back(use.getOperandNumber() == 0
+                                               ? invocation.getNormalBody().front().getArgument(0)
+                                               : invocation.getUnwindBody().front().getArgument(
+                                                     use.getOperandNumber()));
+                    continue;
+                }
+            }
+            if (observedNext &&
+                ((llvm::isa<mlir::scf::YieldOp>(user) &&
+                  llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(user->getParentOp())) ||
+                 (llvm::isa<ctjs::InvokeYieldOp>(user) &&
+                  observedInvocations.contains(user->getParentOp())))) {
+                pendingItems.push_back(user->getParentOp()->getResult(use.getOperandNumber()));
+                continue;
+            }
+            bool guarded = false;
+            for (auto * parent = user->getParentOp(); parent; parent = parent->getParentOp()) {
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                auto branch = llvm::dyn_cast<mlir::scf::IfOp>(parent);
+                auto truth = branch ? branch.getCondition().getDefiningOp<ctjs::TruthyOp>()
+                                    : ctjs::TruthyOp{};
+                auto read = truth ? truth.getValue().getDefiningOp<ctjs::GetPropertyOp>()
+                                  : ctjs::GetPropertyOp{};
+                auto * anchor = observedNext ? observedNext.getOperation() : next.getOperation();
+                guarded |= read && read.getObject() == open.getResult() &&
+                           ctjs::constantKey(read.getKey()) == "done" &&
+                           (observedNext ? recordDominance.properlyDominates(anchor, read)
+                                         : read->getBlock() == next->getBlock() &&
+                                               next->isBeforeInBlock(read)) &&
+                           branch.getElseRegion().isAncestor(user->getParentRegion());
+            }
+            if (!guarded || (observedNext && !inNextArm(user, false))) {
+                return error("DOM iterator item requires its not-done continuation");
+            }
         }
-        if (!guarded) { return error("DOM iterator item requires its not-done continuation"); }
     }
+    if (observedNext) { return error("DOM iterator observed completions require state transport"); }
 
     if (!stateInitials.empty() || suppressedThrow) {
         for (mlir::Operation * user : object->getUsers()) {
