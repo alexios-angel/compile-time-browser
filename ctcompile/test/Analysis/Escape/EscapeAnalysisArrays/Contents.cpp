@@ -724,6 +724,39 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     unrelatedBoolean.replace(unrelatedBoolean.find("%p"), 2, "%q");
     auto numericCondition = booleanFlag;
     numericCondition.replace(numericCondition.find("to_boolean"), 10, "to_number");
+    const auto forwardedFlag =
+        [&](const std::string & thenValue = "%p", const std::string & elseValue = "%p",
+            const std::string & thenBody = "", const std::string & elseBody = "") {
+            auto input = selectedInput(thenValue, elseValue, thenBody, elseBody, "%forwarded");
+            input.replace(input.find("%flag"), 5, "%transportFlag");
+            return "    %transportFlag = ctjs.truthy %q\n" + input +
+                   "    %secondFlag = ctjs.truthy %forwarded\n";
+        };
+    const std::string forwardedKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", forwardedFlag()));
+    const std::string forwardedGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", forwardedFlag()));
+    const std::string forwardedTuple =
+        "    %transportFlag = ctjs.truthy %q\n"
+        "    %forwarded:2 = scf.if %transportFlag -> (!ctjs.value, !ctjs.value) {\n"
+        "      scf.yield %zero, %p : !ctjs.value, !ctjs.value\n"
+        "    } else {\n"
+        "      scf.yield %one, %p : !ctjs.value, !ctjs.value\n"
+        "    }\n"
+        "    %secondFlag = ctjs.truthy %forwarded#1\n";
+    auto forwardedNot = forwardedFlag("%negated", "%negated");
+    forwardedNot.insert(0, "    %boolean = ctjs.convert to_boolean %p\n"
+                           "    %negated = ctjs.unary not %boolean\n");
+    forwardedNot.replace(forwardedNot.find("    %secondFlag ="),
+                         std::string{"    %secondFlag = ctjs.truthy %forwarded\n"}.size(),
+                         selectedInput("%forwarded", "%forwarded", "", "", "%again") +
+                             "    %secondFlag = ctjs.truthy %again\n");
+    auto forwardedComparison = comparedInput();
+    forwardedComparison.replace(
+        forwardedComparison.find("    %secondFlag ="),
+        std::string{"    %secondFlag = ctjs.truthy %secondCompare\n"}.size(),
+        forwardedFlag("%secondCompare", "%secondCompare"));
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -2640,6 +2673,98 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(booleanKeys) + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "equal If yields retain the exact input truthiness choice",
+         .body = loopValues + allocationLoop(forwardedKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "equal If yields use the selected tuple slot despite a differing sibling slot",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%one", "%secondFlag", forwardedTuple))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested equal If yields compose with ToBoolean and Not polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", forwardedNot, true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "equal If yields preserve dominating strict comparison correspondence",
+         .body = loopValues + allocationLoop(crossBlockStore(forwardedComparison)) + done,
+         .confinedNested = "fresh"},
+        {.what = "equal If yields preserve the independent guard read gap",
+         .body = loopValues + allocationLoop(forwardedGap, "%two", "%one", "%zero, %zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "a changed then yield cannot borrow same-input truthiness correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", forwardedFlag("%q", "%p")))) +
+                 done,
+         .complete = false},
+        {.what = "a changed else yield cannot borrow same-input truthiness correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", forwardedFlag("%p", "%q")))) +
+                 done,
+         .complete = false},
+        {.what = "equal If yields of another input keep their own truthiness choice",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", forwardedFlag("%q", "%q")))) +
+                 done,
+         .complete = false},
+        {.what = "equal If yields cannot hide a then-arm producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     forwardedFlag("%p", "%p", "      %called = ctjs.call %p(%q)\n")))) +
+                 done,
+         .complete = false},
+        {.what = "equal If yields cannot hide an else-arm producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     forwardedFlag("%p", "%p", "", "      %called = ctjs.call %p(%q)\n")))) +
+                 done,
+         .complete = false},
+        {.what = "equal If yields still require independently finite selected Numbers",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%nan", "%secondFlag", forwardedFlag()))) +
+                 done,
+         .complete = false},
+        {.what = "equal If yields cannot overwrite the guard dependency",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore("    %read = ctjs.get_property %guard[%zero]\n" +
+                                   siblingInput("%read", "%one", "%secondFlag", forwardedFlag()))) +
+                 done,
+         .complete = false},
+        {.what = "every retaining exit preserves a child selected through equal If yields",
+         .body = loopValues + allocationLoop(forwardedKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "clearing an equal-yield holder releases its stored child",
+         .body = loopValues + allocationLoop(forwardedKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved equal-yield alias survives clearing its holder",
+         .body = loopValues + allocationLoop(forwardedKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "equal If yields retain no-result transient cycle checks",
+         .body = loopValues +
+                 allocationLoop(forwardedKeys + "    scf.if %secondFlag {\n"
+                                                "      ctjs.set_property %fresh[%zero], %guard\n"
+                                                "      ctjs.set_property %fresh[%zero], %zero\n"
+                                                "    }\n") +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "equal If yields cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(forwardedKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "equal If yields still require current initialized solver inputs",
+         .body = loopValues + allocationLoop(forwardedKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "calls in an arithmetic key arm still refuse the complete census",
          .body = loopValues +
                  allocationLoop(
@@ -3495,6 +3620,73 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = booleanMutation.what, .body = booleanMutation.body, .expected = ""},
              "the ToBoolean mutation fixture did not parse");
     }
+    retention_row forwardedMutation{
+        .what = "equal-yield correspondence reproves both arms, result slots, choices and guards",
+        .body = loopValues +
+                allocationLoop(nestedSiblingStore(
+                                   "      %read = ctjs.get_property %guard[%one]\n" +
+                                   siblingInput("%read", "%two", "%secondFlag", forwardedTuple)),
+                               "%two", "%one", "%zero, %zero, %zero") +
+                done,
+        .confinedNested = "fresh"};
+    auto forwardedModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + forwardedMutation.body + "}\n", &context);
+    if (forwardedModule) {
+        ctjs::FuncOp function = *forwardedModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto truthy = second.getCondition().getDefiningOp<ctjs::TruthyOp>();
+        auto forwarding = truthy.getValue().getDefiningOp<mlir::scf::IfOp>();
+        auto * thenForward = forwarding.getThenRegion().front().getTerminator();
+        auto * elseForward = forwarding.getElseRegion().front().getTerminator();
+        auto * secondYield = second.getThenRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = thenForward->getOperand(1);
+        const mlir::Value originalCondition = forwarding.getCondition();
+        const mlir::Value originalYield = secondYield->getOperand(0);
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value independent = function.getBody().front().getArgument(4);
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*forwardedModule))) {
+            fail(
+                row{.what = forwardedMutation.what, .body = forwardedMutation.body, .expected = ""},
+                "the equal-yield stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 9; ++state) {
+            thenForward->setOperand(1, state == 1 || state == 3 ? independent : originalInput);
+            elseForward->setOperand(1, state == 2 || state == 3 ? independent : originalInput);
+            truthy->setOperand(0, forwarding.getResult(state == 4 ? 0 : 1));
+            secondYield->setOperand(0, state == 5 ? originalPosition : originalYield);
+            load->setOperand(1, state == 6 ? zero : originalPosition);
+            forwarding->setOperand(0, state == 7 ? first.getCondition() : originalCondition);
+            forwardedMutation.complete = state == 0 || state >= 7;
+            forwardedMutation.confinedNested = forwardedMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*forwardedModule, forwardedMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                forwardedMutation.complete) {
+                fail(row{.what = forwardedMutation.what,
+                         .body = forwardedMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied equal-yield correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = forwardedMutation.what, .body = forwardedMutation.body, .expected = ""},
+             "the equal-yield mutation fixture did not parse");
+    }
     for (const std::string & comparisons : {comparedGap, crossBlockGap}) {
         retention_row comparisonMutation{
             .what =
@@ -3574,7 +3766,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  "the strict comparison mutation fixture did not parse");
         }
     }
-    std::printf("array retention: %zu rows, one hundred eleven live states, %zu budget cutoffs\n",
+    std::printf("array retention: %zu rows, one hundred twenty live states, %zu budget cutoffs\n",
                 rows.size(), budgets);
 }
 

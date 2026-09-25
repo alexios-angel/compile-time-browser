@@ -83,6 +83,31 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
             input = convert.getOperand();
             continue;
         }
+        if (auto branch = input.getDefiningOp<mlir::scf::IfOp>()) {
+            // Equal incoming SSA values retain one truthiness snapshot. This
+            // selects no arm: the census and replay still check every effect.
+            const auto position = llvm::cast<mlir::OpResult>(input).getResultNumber();
+            mlir::Value common;
+            for (mlir::Region & region : branch->getRegions()) {
+                if (!spend(1)) { return {}; }
+                if (!llvm::hasSingleElement(region) || region.front().empty() ||
+                    region.front().getNumArguments() != 0) {
+                    common = {};
+                    break;
+                }
+                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                if (!yield || yield.getNumOperands() != branch.getNumResults() ||
+                    (common && common != yield.getOperand(position))) {
+                    common = {};
+                    break;
+                }
+                common = yield.getOperand(position);
+            }
+            if (common) {
+                input = common;
+                continue;
+            }
+        }
         auto unary = input.getDefiningOp<ctjs::UnaryOp>();
         if (!unary || unary.getKind() != ctjs::UnaryKind::Not) { break; }
         input = unary.getOperand();
