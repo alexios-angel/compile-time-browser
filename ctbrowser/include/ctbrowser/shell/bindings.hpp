@@ -601,6 +601,7 @@ private:
     void install_frame_realm(context & cx, dom_bindings & owner, node_id element);
     // Answers the parser's "does a definition disable shadow here" - entry.cpp.
     void watch_shadow_disabled();
+    std::shared_ptr<int> lifetime_ = std::make_shared<int>(0); // expires with these bindings
     // The `on<event>` accessors of a window over this document's handlers -
     // events/handler_attributes.cpp.
     void install_window_handlers(context & cx, script::object_object & window);

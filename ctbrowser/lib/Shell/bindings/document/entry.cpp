@@ -74,11 +74,7 @@ void dom_bindings::register_roots(context & cx) {
     cx.set_external_roots([this](const context::root_visitor & mark) { mark_roots(mark); });
 }
 
-dom_bindings::~dom_bindings() {
-    // The document can outlive these bindings - a reload makes new ones over
-    // it - and the parser's shadow hook points here (watch_shadow_disabled).
-    if (doc_ != nullptr) { doc_->set_shadow_disabled_hook({}); }
-}
+dom_bindings::~dom_bindings() = default;
 
 void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     for (const listener & l : listeners_) {
@@ -168,7 +164,12 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
 // root on `host`?
 void dom_bindings::watch_shadow_disabled() {
     if (doc_ == nullptr) { return; }
-    doc_->set_shadow_disabled_hook([this](node_id host) {
+    // THE HOOK MAY OUTLIVE THESE BINDINGS - a reload makes new ones over the
+    // same document, and a navigation destroys the document first - so it
+    // holds a weak token rather than trusting `this`, and nothing here
+    // touches the document on the way out.
+    doc_->set_shadow_disabled_hook([this, alive = std::weak_ptr<int>{lifetime_}](node_id host) {
+        if (alive.expired()) { return false; }
         const auto txn = doc_->read();
         const std::size_t def = custom_definition_for(txn, host);
         const dom_bindings & registry = primary_ == nullptr ? *this : *primary_;
