@@ -228,10 +228,12 @@ value regexp_exec(context & cx, value rx, value subject) {
         cx.throw_error("TypeError", "RegExp exec method called on an incompatible receiver");
         return value::undefined();
     }
-    // The built-in matcher IS %RegExp.prototype.exec%; calling it through the
-    // prototype keeps one implementation.
-    const value builtin =
-        cx.lookup_property(value::object(cx.prototype(context::proto_kind::regexp)), "exec");
+    // The built-in matcher IS %RegExp.prototype.exec% - the INTRINSIC, kept
+    // under a private key, not whatever `exec` a page has since put on the
+    // prototype (step 4 runs exactly when that one is not callable).
+    object_object * proto = cx.prototype(context::proto_kind::regexp);
+    const value * intrinsic = proto == nullptr ? nullptr : proto->find("@#IntrinsicRegExpExec:");
+    const value builtin = intrinsic == nullptr ? value::undefined() : *intrinsic;
     if (!builtin.is_callable()) { return value::null(); }
     const value result = cx.call(builtin, std::span<const value>{&subject, 1}, rx);
     return watch.threw() ? value::undefined() : result;
