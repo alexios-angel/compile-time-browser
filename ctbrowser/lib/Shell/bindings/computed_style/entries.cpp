@@ -463,8 +463,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //     §position. `background-position` is not modelled as one - its
         //     grammar has a three-value form and a comma list - so those forms
         //     fall through to the background layer resolver below.
-        if ((known != nullptr && known->kind == style::css::value_kind::position) ||
-            property == "background-position") {
+        //     ...BUT NOT perspective-origin, whose RESOLVED value is the used
+        //     one in pixels against the box (CSS Transforms 2 §6.2, CSSOM's
+        //     resolved-value list) - the transform branch below answers it.
+        if (((known != nullptr && known->kind == style::css::value_kind::position) ||
+             property == "background-position") &&
+            property != "perspective-origin") {
             std::string resolved = style::css::computed_position(text, declared("writing-mode"),
                                                                  declared("direction"));
             if (!resolved.empty()) { return resolved; }
