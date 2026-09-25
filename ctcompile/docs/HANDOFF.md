@@ -22,6 +22,38 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured-cell continuation ordering, 2026-09-25 UTC
+
+Resumed clean **2979bd1f** and its captured-cell ordering boundary, then
+completed the interrupted validation and commit without replaying passed checks.
+**3f2024e7** permits immutable root-cell reads in Invoke normal/unwind
+continuations. Initialization must precede the entire enclosing operation;
+write, escape, capture-target and callable-scheduling proofs are unchanged.
+The existing recovered-capture pass already proves exact saved/caught aliases.
+Eleven new controls check snapshots, late/nested/repeated writes, publication,
+saved-cell transport, unsupported regions and budget rollback.
+
+Both original structured iterator sources now reach **`DOM helper object has
+nonlocal or unordered uses`**. Their original source literals remain unchanged;
+**no new native JavaScript or full Bootstrap admission** is claimed.
+Focused recovery **1/1, 5.33 s**, host contract **1/1, 2.72 s**, and the selected
+three-source differential check pass. All 24 generated C++ files retain the
+namespace invariant; three final source hashes match the devbox. Formatting
+passes **1127 C++, 159 Python, 114 web files**. Final independent static review
+is clean. Two parallel agents hit rate limits after read-only traces; escape
+analysis is unchanged and no precision gain was measured. Full suites were skipped.
+
+**Next:** inspect actual holder operands at `DOMSource::resolveMethods` before
+extending shared `Analysis/ClosedCallable.cpp` ordering. Distinguish reads/calls
+under Try/Invoke from saved holder transport. Reuse exact lifetime/projected-use
+proofs or prove transport dead; preserve all shared class-initialization callers,
+slot initialization, saved returns, caught identity and effects. Nested allocation
+origins still require a complete site/instance inventory. Mutable exceptional
+state, raw helper CFGs, escaping owners, unguarded Bootstrap defaults, the native
+application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-25-captured-cell-continuations.md).
+
 ## Protected iterator integration and captured-cell boundary, 2026-09-25 UTC
 
 Resumed clean **0f9ee8cd** and its recorded completion-integration boundary.
