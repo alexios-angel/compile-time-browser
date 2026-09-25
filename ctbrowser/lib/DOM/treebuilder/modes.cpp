@@ -221,8 +221,12 @@ bool tree_builder::declarative_shadow_root(const token & t) {
     const node_id element = create_element(t.name, t.attributes);
     open_.push_back(make_entry(element, t.name, node_ns::html, t.attributes));
     const token_attribute * slots = attribute("shadowrootslotassignment");
-    const auto root = doc_->attach_shadow(
-        host->id, document::shadow_tree{
+    const auto root =
+        doc_->shadow_disabled(host->id)
+            ? std::expected<node_id, dom_error>{std::unexpected{dom_error::invalid_shadow_host}}
+            : doc_->attach_shadow(
+                  host->id,
+                  document::shadow_tree{
                       .host = host->id,
                       .open = ascii_iequals(mode->value, "open"),
                       .delegates_focus = attribute("shadowrootdelegatesfocus") != nullptr,

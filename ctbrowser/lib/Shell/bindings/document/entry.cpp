@@ -74,7 +74,11 @@ void dom_bindings::register_roots(context & cx) {
     cx.set_external_roots([this](const context::root_visitor & mark) { mark_roots(mark); });
 }
 
-dom_bindings::~dom_bindings() = default;
+dom_bindings::~dom_bindings() {
+    // The document can outlive these bindings - a reload makes new ones over
+    // it - and the parser's shadow hook points here (watch_shadow_disabled).
+    if (doc_ != nullptr) { doc_->set_shadow_disabled_hook({}); }
+}
 
 void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     for (const listener & l : listeners_) {
@@ -159,8 +163,23 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     for (const auto & made : secondary_documents_) { made->mark_roots(mark); }
 }
 
+// The parser's question for DOM 4.8 step 3 (dom/document.hpp): does a custom
+// element definition - the page's registry holds them all - disable a shadow
+// root on `host`?
+void dom_bindings::watch_shadow_disabled() {
+    if (doc_ == nullptr) { return; }
+    doc_->set_shadow_disabled_hook([this](node_id host) {
+        const auto txn = doc_->read();
+        const std::size_t def = custom_definition_for(txn, host);
+        const dom_bindings & registry = primary_ == nullptr ? *this : *primary_;
+        return def < registry.custom_definitions_.size() &&
+               registry.custom_definitions_[def].disable_shadow;
+    });
+}
+
 void dom_bindings::install(context & cx) {
     cx_ = &cx;
+    watch_shadow_disabled();
     register_roots(cx);
     install_console(cx);
     location_ = make_location(cx);

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -367,6 +368,17 @@ public:
         return declarative_shadow_roots_;
     }
     void set_allow_declarative_shadow_roots(bool on) noexcept { declarative_shadow_roots_ = on; }
+    // WHAT THE DOM CANNOT KNOW BY ITSELF: whether a custom element definition
+    // disables shadow roots for `host` (DOM 4.8 "attach a shadow root" step
+    // 3). The shell that owns the registry answers; the parser asks before it
+    // attaches a declarative shadow root, and on a refusal inserts the
+    // template as an ordinary one.
+    void set_shadow_disabled_hook(std::function<bool(node_id)> hook) {
+        shadow_disabled_ = std::move(hook);
+    }
+    [[nodiscard]] bool shadow_disabled(node_id host) const {
+        return shadow_disabled_ && shadow_disabled_(host);
+    }
 
     // THE NAME OF THE DECLARED ENCODING - `document.characterSet`. The bytes
     // are decoded as UTF-8 whatever it says (dom/encoding.hpp explains why
@@ -386,6 +398,7 @@ private:
     bool xml_ = false;
     bool scripting_ = true;
     bool declarative_shadow_roots_ = false;
+    std::function<bool(node_id)> shadow_disabled_; // see set_shadow_disabled_hook
     std::string encoding_ = "UTF-8";
 
     [[nodiscard]] node * find(node_id id) const noexcept { return nodes_.get(id); }

@@ -599,6 +599,8 @@ private:
     // A frame document's own browsing context (frames.cpp): its window, its
     // realm, the scripts its parse left, and the two events a load ends in.
     void install_frame_realm(context & cx, dom_bindings & owner, node_id element);
+    // Answers the parser's "does a definition disable shadow here" - entry.cpp.
+    void watch_shadow_disabled();
     // The `on<event>` accessors of a window over this document's handlers -
     // events/handler_attributes.cpp.
     void install_window_handlers(context & cx, script::object_object & window);
