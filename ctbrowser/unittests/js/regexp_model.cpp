@@ -195,6 +195,9 @@ void test_escapes_and_repetition() {
     expect_result("return /\\cJ/.test('\\n') + ',' + /[\\cJ]/.test('\\n');", "true,true");
     expect_result("return /\\c1/.test('\\\\c1');", "true");
     expect_result("return /[\\b]/.test('\\b') + ',' + /[\\b]/.test('b');", "true,false");
+    // Annex B's legacy octal escape in a class: [\12-\14] is U+000A-U+000C.
+    expect_result("return /[\\12-\\14]/.test('\\x0b') + ',' + /[\\12-\\14]/.test('1');",
+                  "true,false");
     expect_result("return /(a?b?" /* not a trigraph */ "?)*/.exec('ab')[0];", "ab");
     expect_result("return String('abc'.match(/(?:(?=(abc)))?a/)[1]);", "undefined");
     expect_result("return 'abc'.match(/(?:(?=(abc))){1,1}a/)[1];", "abc");

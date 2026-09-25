@@ -636,6 +636,20 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 					cp = 0x08;
 					return;
 				}
+				// Annex B's LegacyOctalEscapeSequence (B.1.2): outside the
+				// u and v modes `[\12-\14]` is the range U+000A-U+000C - up
+				// to three octal digits, at most \377.
+				if (!p.unicode && !p.unicode_sets && e >= '0' && e <= '7') {
+					const auto octal = [&](std::size_t at) {
+						return at < src.size() && src[at] >= '0' && src[at] <= '7';
+					};
+					cp = static_cast<std::uint32_t>(e - '0');
+					if (octal(i)) {
+						cp = cp * 8 + static_cast<std::uint32_t>(src[i++] - '0');
+						if (e <= '3' && octal(i)) { cp = cp * 8 + static_cast<std::uint32_t>(src[i++] - '0'); }
+					}
+					return;
+				}
 				if (e == 'c') {
 					const char x = i < src.size() ? src[i] : '\0';
 					const bool letter = (x >= 'a' && x <= 'z') || (x >= 'A' && x <= 'Z');
