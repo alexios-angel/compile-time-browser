@@ -789,6 +789,41 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                       "      %thenBoolean = ctjs.convert to_boolean %secondCompare\n",
                       "      %elseNot = ctjs.unary not %secondCompare\n"
                       "      %elseEven = ctjs.unary not %elseNot\n"));
+    const auto comparisonYields = [&](const std::string & thenComparison = "strict_eq %p, %zero",
+                                      const std::string & elseComparison = "strict_eq %p, %zero",
+                                      const std::string & thenBody = "",
+                                      const std::string & elseBody = "") {
+        return forwardedFlag(
+            "%thenBoolean", "%elseEven",
+            "      %thenCompare = ctjs.compare " + thenComparison + "\n" + thenBody +
+                "      %thenBoolean = ctjs.convert to_boolean %thenCompare\n",
+            "      %elseCompare = ctjs.compare " + elseComparison + "\n" + elseBody +
+                "      %elseNot = ctjs.unary not %elseCompare\n"
+                "      %elseEven = ctjs.unary not %elseNot\n");
+    };
+    const auto representativeInput = [&](const std::string & forwarding,
+                                         const std::string & left = "%zero",
+                                         const std::string & right = "%one") {
+        auto input = comparedInput(left, right);
+        input.replace(input.find(secondComparison), secondComparison.size(), forwarding);
+        return input;
+    };
+    const std::string representativeComparisons = representativeInput(comparisonYields());
+    const std::string representativeKeys = selectedStore(representativeComparisons);
+    const std::string representativeGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           representativeInput(comparisonYields(), "%read", "%two"));
+    auto oppositeComparisonYield = comparisonYields();
+    oppositeComparisonYield.replace(oppositeComparisonYield.find("scf.yield %elseEven"),
+                                    std::string{"scf.yield %elseEven"}.size(),
+                                    "scf.yield %elseNot");
+    auto siblingOnlyComparisons = representativeComparisons;
+    siblingOnlyComparisons.replace(
+        siblingOnlyComparisons.find(firstComparison), firstComparison.size(),
+        selectedInput("%localThen", "%localElse",
+                      "      %localThen = ctjs.compare strict_eq %p, %zero\n",
+                      "      %localElse = ctjs.compare strict_eq %p, %zero\n", "%local") +
+            "    %firstFlag = ctjs.truthy %local\n");
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -2911,6 +2946,90 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(booleanYieldKeys) + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "distinct comparison yields share one dominating StrictEq representative",
+         .body = loopValues + allocationLoop(representativeKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "reversed comparison yield operands preserve the dominating representative",
+         .body = loopValues +
+                 allocationLoop(selectedStore(representativeInput(
+                     comparisonYields("strict_eq %zero, %p", "strict_eq %p, %zero")))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "comparison yields retain their representative across enclosing If prefixes",
+         .body = loopValues +
+                 allocationLoop(localArray +
+                                nestedArm(representativeComparisons +
+                                          "    ctjs.set_property %guard[%key], %fresh\n")) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "comparison yields preserve independently proved guard read gaps",
+         .body = loopValues +
+                 allocationLoop(representativeGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "sibling comparison producers cannot supply a dominating representative",
+         .body = loopValues + allocationLoop(selectedStore(siblingOnlyComparisons)) + done,
+         .complete = false},
+        {.what = "different then comparison operands cannot share the representative",
+         .body = loopValues +
+                 allocationLoop(selectedStore(representativeInput(
+                     comparisonYields("strict_eq %q, %zero", "strict_eq %p, %zero")))) +
+                 done,
+         .complete = false},
+        {.what = "different else comparison operands cannot share the representative",
+         .body = loopValues +
+                 allocationLoop(selectedStore(representativeInput(
+                     comparisonYields("strict_eq %p, %zero", "strict_eq %p, %one")))) +
+                 done,
+         .complete = false},
+        {.what = "comparison yields require matching Boolean polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(representativeInput(oppositeComparisonYield))) + done,
+         .complete = false},
+        {.what = "coercing comparison yields cannot borrow strict correspondence",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(representativeInput(comparisonYields("eq %p, %zero")))) +
+             done,
+         .complete = false},
+        {.what = "a common comparison representative cannot hide a then-arm effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(representativeInput(
+                     comparisonYields("strict_eq %p, %zero", "strict_eq %p, %zero",
+                                      "      %called = ctjs.call %p(%q)\n")))) +
+                 done,
+         .complete = false},
+        {.what = "a common comparison representative cannot hide an else-arm effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(representativeInput(
+                     comparisonYields("strict_eq %p, %zero", "strict_eq %p, %zero", "",
+                                      "      %called = ctjs.call %p(%q)\n")))) +
+                 done,
+         .complete = false},
+        {.what = "comparison yields still require independently finite Number arms",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(
+                     selectedStore(representativeInput(comparisonYields(), "%zero", "%nan"))) +
+                 done,
+         .complete = false},
+        {.what = "every retaining exit keeps children selected through comparison yields",
+         .body = loopValues + allocationLoop(representativeKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "clearing a comparison-yield holder releases its selected child",
+         .body = loopValues + allocationLoop(representativeKeys) + clearGuard +
+                 "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved comparison-yield child alias survives clearing its holder",
+         .body = loopValues + allocationLoop(representativeKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "comparison yields cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(representativeKeys, "%zero", "%one", "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "comparison yields require initialized solver inputs",
+         .body = loopValues + allocationLoop(representativeKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "calls in an arithmetic key arm still refuse the complete census",
          .body = loopValues +
                  allocationLoop(
@@ -3915,6 +4034,104 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  .expected = ""},
              "the Boolean-yield mutation fixture did not parse");
     }
+    retention_row representativeMutation{
+        .what = "comparison yields reprove both operands, dominating representative and guards",
+        .body = loopValues +
+                allocationLoop(representativeGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto representativeModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + representativeMutation.body + "}\n", &context);
+    if (representativeModule) {
+        ctjs::FuncOp function = *representativeModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto representative = first.getCondition()
+                                  .getDefiningOp<ctjs::TruthyOp>()
+                                  .getValue()
+                                  .getDefiningOp<ctjs::CompareOp>();
+        auto forwarding = second.getCondition()
+                              .getDefiningOp<ctjs::TruthyOp>()
+                              .getValue()
+                              .getDefiningOp<mlir::scf::IfOp>();
+        auto conversion = forwarding.getThenRegion()
+                              .front()
+                              .getTerminator()
+                              ->getOperand(0)
+                              .getDefiningOp<ctjs::ConvertOp>();
+        auto thenCompare = conversion.getOperand().getDefiningOp<ctjs::CompareOp>();
+        auto outer = forwarding.getElseRegion()
+                         .front()
+                         .getTerminator()
+                         ->getOperand(0)
+                         .getDefiningOp<ctjs::UnaryOp>();
+        auto inner = outer.getOperand().getDefiningOp<ctjs::UnaryOp>();
+        auto elseCompare = inner.getOperand().getDefiningOp<ctjs::CompareOp>();
+        auto * secondYield = second.getThenRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalLeft = representative.getLhs();
+        const mlir::Value originalRight = representative.getRhs();
+        const mlir::Value originalCondition = forwarding.getCondition();
+        const mlir::Value originalYield = secondYield->getOperand(0);
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value independent = function.getBody().front().getArgument(4);
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*representativeModule))) {
+            fail(row{.what = representativeMutation.what,
+                     .body = representativeMutation.body,
+                     .expected = ""},
+                 "the comparison-yield stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 14; ++state) {
+            const bool reversed = state == 11;
+            thenCompare->setOperand(0, state == 1 ? independent
+                                       : reversed ? originalRight
+                                                  : originalLeft);
+            thenCompare->setOperand(1, reversed ? originalLeft : originalRight);
+            elseCompare->setOperand(0, reversed ? originalRight : originalLeft);
+            elseCompare->setOperand(1, state == 2 ? originalPosition
+                                       : reversed ? originalLeft
+                                                  : originalRight);
+            thenCompare.setKindAttr(ctjs::CompareKindAttr::get(
+                &context, state == 3 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+            elseCompare.setKindAttr(ctjs::CompareKindAttr::get(
+                &context, state == 4 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+            representative.setKindAttr(ctjs::CompareKindAttr::get(
+                &context, state == 5 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+            representative->setOperand(0, state == 6 ? independent : originalLeft);
+            outer->setOperand(0, state == 7 ? elseCompare.getResult() : inner.getResult());
+            conversion.setKindAttr(ctjs::ConvertKindAttr::get(
+                &context, state == 8 ? ctjs::ConvertKind::ToNumber : ctjs::ConvertKind::ToBoolean));
+            secondYield->setOperand(0, state == 9 ? originalPosition : originalYield);
+            load->setOperand(1, state == 10 ? originalRight : originalPosition);
+            forwarding->setOperand(0, state == 12 ? first.getCondition() : originalCondition);
+            representativeMutation.complete = state == 0 || state >= 11;
+            representativeMutation.confinedNested = representativeMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*representativeModule, representativeMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                representativeMutation.complete) {
+                fail(row{.what = representativeMutation.what,
+                         .body = representativeMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied comparison-yield correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = representativeMutation.what,
+                 .body = representativeMutation.body,
+                 .expected = ""},
+             "the comparison-yield mutation fixture did not parse");
+    }
     for (const std::string & comparisons : {comparedGap, crossBlockGap}) {
         retention_row comparisonMutation{
             .what =
@@ -3995,7 +4212,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         }
     }
     std::printf(
-        "array retention: %zu rows, one hundred thirty-two live states, %zu budget cutoffs\n",
+        "array retention: %zu rows, one hundred forty-six live states, %zu budget cutoffs\n",
         rows.size(), budgets);
 }
 
