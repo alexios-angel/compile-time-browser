@@ -622,6 +622,11 @@ int main() {
     module_refused("var G; export default function* G() {}");
     module_accepted("export default class C {} export { C as D };");
     module_accepted("export default function F() {} export { F as G };");
+    // A string ModuleExportName must be well-formed Unicode (16.2.2.1).
+    module_refused("var x; export { x as '\\uD83D' };");
+    module_refused("import { '\\uDC00' as y } from './m.js';");
+    module_refused("export * as \"\\u{D83D}\" from './m.js';");
+    module_accepted("var x; export { x as '\\uD83D\\uDE00' };");
 
     REPORT("early_errors");
 }
