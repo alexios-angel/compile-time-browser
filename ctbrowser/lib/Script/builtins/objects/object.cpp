@@ -378,11 +378,11 @@ void install_object(context & cx) {
             tag = "Number";
         } else if (self.is_boolean()) {
             tag = "Boolean";
-        } else if (self.is_kind(heap_kind::symbol)) {
-            tag = "Symbol";
         } else if (value * slot = primitive_slot(self); slot != nullptr) {
             // A WRAPPER answers for what it wraps (20.1.3.6 steps 6-11); a
-            // Symbol or BigInt wrapper reaches its @@toStringTag below.
+            // Symbol or BigInt wrapper reaches its @@toStringTag below - as
+            // a Symbol itself does: it has no builtin tag (step 14 leaves it
+            // "Object"), only Symbol.prototype's, which a page may delete.
             tag = slot->is_number()    ? "Number"
                   : slot->is_string()  ? "String"
                   : slot->is_boolean() ? "Boolean"
@@ -932,12 +932,13 @@ void install_object(context & cx) {
         return out;
     });
     method(cx, object_ctor, "assign", 2, [](context & c, std::span<value> a) {
-        const value target = arg_at(a, 0);
-        // 20.1.2.1 step 1 is ToObject(target), so null and undefined throw. A
-        // primitive target is returned as itself here: there is no wrapper to
-        // hand back and the writes have nowhere to land.
-        if (!object_coercible(c, target, "Object.assign")) { return value::undefined(); }
-        if (!target.is_object_like()) { return detail::box_primitive(c, target); }
+        // 20.1.2.1 step 1 is ToObject(target), so null and undefined throw and
+        // a primitive is BOXED: `Object.assign(12, "ab")` is a Number wrapper
+        // with the two characters on it, and a String wrapper's read-only
+        // indices refuse a source's with the TypeError Set(..., true) owes.
+        if (!object_coercible(c, arg_at(a, 0), "Object.assign")) { return value::undefined(); }
+        const value target = detail::box_primitive(c, arg_at(a, 0));
+        const context::rooted keep_target{c, target};
         for (std::size_t i = 1; i < a.size(); ++i) {
             // Step 4.a: a null or undefined source is SKIPPED rather than an
             // error, which is what makes `Object.assign({}, maybe)` idiomatic.

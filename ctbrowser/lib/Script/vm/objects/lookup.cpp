@@ -411,8 +411,11 @@ value context::lookup_property(value target, const std::string & name) {
     if (target.is_string()) {
         auto * str = static_cast<string_object *>(target.as_heap());
         if (name == "length") { return value::number(static_cast<double>(str->text.size())); }
+        // The prototype's accessors too, called with the PRIMITIVE as the
+        // receiver (GetV, 7.3.3) - a strict getter sees `typeof this` as
+        // "string" - and its own chain behind it (lookup_along).
         if (object_object * table = prototype(proto_kind::string)) {
-            if (value * found = table->find(name)) { return *found; }
+            return lookup_along(table, target, name);
         }
         return from_object_prototype(target, name);
     }
@@ -422,13 +425,13 @@ value context::lookup_property(value target, const std::string & name) {
     // undefined and called it.
     if (target.is_kind(heap_kind::bigint)) {
         if (object_object * table = prototype(proto_kind::bigint)) {
-            if (value * found = table->find(name)) { return *found; }
+            return lookup_along(table, target, name);
         }
         return from_object_prototype(target, name);
     }
     if (target.is_number()) {
         if (object_object * table = prototype(proto_kind::number)) {
-            if (value * found = table->find(name)) { return *found; }
+            return lookup_along(table, target, name);
         }
         // ...THEN Object.prototype, because `Number.prototype`'s own prototype
         // IS Object.prototype and a primitive boxes on property access. Without
@@ -449,7 +452,7 @@ value context::lookup_property(value target, const std::string & name) {
     // that calls it explicitly - to build a cache key, say - found nothing.
     if (target.is_boolean()) {
         if (object_object * table = prototype(proto_kind::boolean)) {
-            if (value * found = table->find(name)) { return *found; }
+            return lookup_along(table, target, name);
         }
         return from_object_prototype(target, name);
     }

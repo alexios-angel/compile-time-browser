@@ -689,6 +689,14 @@ void install_collections(context & cx) {
                 return value::undefined();
             }
             const detail::unwind_watch watch{c};
+            // GetIterator (GroupBy step 4), as Object.groupBy asks it: an
+            // object whose @@iterator is not callable is a TypeError, not the
+            // array-like iterable_values would walk instead.
+            if (a[0].is_object_like() && !a[0].is_array() &&
+                !c.lookup_property(a[0], "@@iterator").is_callable()) {
+                if (!watch.threw()) { c.throw_error("TypeError", "Map.groupBy: not iterable"); }
+                return value::undefined();
+            }
             const value items = c.iterable_values(arg_at(a, 0));
             if (watch.threw()) { return value::undefined(); }
             if (!items.is_array()) {
