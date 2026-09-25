@@ -186,18 +186,21 @@ private:
                 ++k;
             } else if (prelude[k].kind == cv_kind::function &&
                        ascii_iequals(text(word), "layer(")) {
-                // `layer(<layer-name>)`: a name that does not parse makes the
-                // whole import invalid (CSS Cascade 5 §5.1).
+                // `layer(<layer-name>)`: a name that does not parse is no
+                // layer, and the call is where the media query list starts -
+                // a `<general-enclosed>` that never matches (CSS Cascade 5
+                // §5.1, layer-import-parsing).
                 std::string name;
-                if (!layer_name_of(sheet_.trimmed(sheet_.children_of(prelude[k])), name)) {
-                    return;
-                }
+                if (!layer_name_of(sheet_.trimmed(sheet_.children_of(prelude[k])), name)) { break; }
                 made.layered = true;
                 made.layer = std::move(name);
                 ++k;
             } else if (prelude[k].kind == cv_kind::function &&
                        ascii_iequals(text(word), "supports(")) {
                 made.supports = text_of_run(sheet_.children_of(prelude[k]));
+                // `supports()` with nothing in it is no condition, and like
+                // a bad layer() it starts a media query that never matches.
+                if (trim(made.supports, html_whitespace).empty()) { break; }
                 ++k;
             } else {
                 break;

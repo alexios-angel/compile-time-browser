@@ -507,12 +507,36 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             std::size_t after = 0;
             const std::string href = url_value(next_component(written, after));
             std::string extra;
+            // A `layer()` that names no <layer-name> - `layer()`, `layer(A
+            // B)` - or an empty `supports()` is no condition: it starts the
+            // media query list, as a `<general-enclosed>` that never matches
+            // (CSS Cascade 5 §5.1, layer-import-parsing).
+            const auto well_formed = [](std::string_view part) {
+                if (ascii_iequals(part, "layer")) { return true; }
+                const std::size_t open = part.find('(');
+                if (open == std::string_view::npos || part.back() != ')') { return false; }
+                const std::string_view inner =
+                    trim(part.substr(open + 1, part.size() - open - 2), html_whitespace);
+                if (inner.empty()) { return false; }
+                if (!ascii_iequals(part.substr(0, open), "layer")) { return true; }
+                for (const std::string_view piece : split_top_level(inner, ".")) {
+                    if (piece.empty() || (piece.front() >= '0' && piece.front() <= '9')) {
+                        return false;
+                    }
+                    for (const char c : piece) {
+                        if (!style::css::is_name(c)) { return false; }
+                    }
+                }
+                return inner.front() != '.' && inner.back() != '.' &&
+                       inner.find("..") == std::string_view::npos;
+            };
             for (std::size_t probe = after;;) {
                 const std::string_view part = next_component(written, probe);
                 if (part.empty()) { break; }
                 const bool layer =
                     ascii_iequals(part, "layer") || ascii_iequals(part.substr(0, 6), "layer(");
                 if (!layer && !ascii_iequals(part.substr(0, 9), "supports(")) { break; }
+                if (!well_formed(part)) { break; }
                 if (!extra.empty()) { extra += ' '; }
                 extra += collapse_whitespace(part, html_whitespace);
                 after = probe;

@@ -71,7 +71,7 @@ namespace {
                           "historical-forms styleset character-variant swash ornaments annotation "
                           "property starting-style font-palette-values function"},
           {"font-format(", "collection opentype truetype woff woff2"},
-          {"font-tech(", "features-opentype variations"}}) {
+          {"font-tech(", "features-opentype variations color-COLRv0 color-COLRv1"}}) {
         if (!ascii_istarts_with(body, function) || body.back() != ')') { continue; }
         const token_stream ts =
             tokenize(body.substr(function.size(), body.size() - function.size() - 1));
@@ -155,8 +155,11 @@ bool condition(std::string_view text, int depth) {
 
 } // namespace
 
+// `revert-rule` is Cascade 5's newest, and the cascade rolls it back like the
+// other two (engine/cascade.cpp), so every property takes it.
 bool is_wide_keyword(std::string_view word) noexcept {
-    return ascii_iequals_any(word, {"inherit", "initial", "unset", "revert", "revert-layer"});
+    return ascii_iequals_any(
+        word, {"inherit", "initial", "unset", "revert", "revert-layer", "revert-rule"});
 }
 
 value_check check_declaration(std::string_view property, std::string_view value,
