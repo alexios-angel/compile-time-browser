@@ -1,3 +1,4 @@
+#include "../../Prefix.h"
 #include "../Source/Proof.hpp"
 #include "ctcompile/CTNative/Runtime/Number.hpp"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -211,10 +212,19 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         result.changeSign();
         return ctjs::NumberAttr::get(unary.getContext(), result.bitcastToAPInt().getZExtValue());
     };
-    const auto exactNumberComparison = [](ctjs::CompareOp comparison) -> std::optional<bool> {
+    const auto exactComparison = [](ctjs::CompareOp comparison) -> std::optional<bool> {
         if (comparison->getNumOperands() != 2 || !comparison.getKindAttr()) { return std::nullopt; }
         auto lhs = comparison->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
         auto rhs = comparison->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
+        if (!lhs || !rhs || !lhs.getValue() || !rhs.getValue()) { return std::nullopt; }
+        // Reuse the source-prefix proof: strict primitive equality and exact
+        // String equality need neither conversion nor object hooks.
+        const auto primitive = host_detail::prefixCompare(
+            comparison.getKind(), host_detail::prefixValue::constant(lhs.getValue()),
+            host_detail::prefixValue::constant(rhs.getValue()), comparison.getContext());
+        if (auto result = llvm::dyn_cast_if_present<ctjs::BooleanAttr>(primitive.literal)) {
+            return result.getValue();
+        }
         auto left =
             lhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(lhs.getValue()) : ctjs::NumberAttr{};
         auto right =
@@ -314,7 +324,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         static_cast<bool>(exactUnary(unary));
                 }
                 if (auto comparison = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
-                    projectBranches |= exactNumberComparison(comparison).has_value();
+                    projectBranches |= exactComparison(comparison).has_value();
                 }
                 if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(operation)) {
                     projectBranches |= static_cast<bool>(exactNumberArithmetic(operation));
@@ -377,7 +387,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (folded.wasInterrupted()) { return ctjs::FuncOp{}; }
                 const auto compared = found.walk([&](ctjs::CompareOp comparison) {
                     if (!spend()) { return mlir::WalkResult::interrupt(); }
-                    const auto result = exactNumberComparison(comparison);
+                    const auto result = exactComparison(comparison);
                     if (!result) { return mlir::WalkResult::advance(); }
                     rewriter.setInsertionPoint(comparison);
                     rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(
