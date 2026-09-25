@@ -357,11 +357,15 @@ bool dom_bindings::is_connected(node_id target) const {
 // where a browser fires that one at the window with the document only as the
 // event's target.
 //
-// A SHADOW ROOT'S PARENT IS ITS HOST when the event is `composed` - DOM's "get
-// the parent" for a shadow root - and nothing at all when it is not. The walk
-// used to stop at the fragment either way, so a listener on the host never
-// heard an event from inside its own tree: Event-dispatch-listener-order.
-// window.js registers on both sides of the boundary and got the inside half.
+// A SHADOW ROOT'S PARENT IS ITS HOST - DOM's "get the parent" for a shadow
+// root - unless the event is not `composed` AND this is the root of the
+// target's own tree. The walk used to stop at the fragment either way, so a
+// listener on the host never heard an event from inside its own tree:
+// Event-dispatch-listener-order.window.js registers on both sides of the
+// boundary and got the inside half. And it is only the TARGET'S root that
+// stops a non-composed event: one at a light child slotted into a shadow tree
+// travels through the slot, out of that tree to its host and on up
+// (Extensions-to-Event-Interface.html).
 //
 // AND A DETACHED TREE ENDS AT ITS OWN ROOT. The document and the window were
 // appended for every node, so `div.dispatchEvent(...)` on an element nobody had
@@ -379,6 +383,7 @@ std::vector<dom_bindings::path_step> dom_bindings::propagation_path(path_step at
     bool connected = true;
     if (at.on == listen_on::node && at.node) {
         const auto txn = doc_->read();
+        const node_id own_root = root_of_tree(txn, at.node, false);
         for (node_id walk = at.node; walk;) {
             path.push_back(path_step{walk, listen_on::node});
             // THE FLAT TREE, not the light-DOM chain: a slotted node's next step
@@ -394,7 +399,7 @@ std::vector<dom_bindings::path_step> dom_bindings::propagation_path(path_step at
             up = txn.parent(walk);
             if (!up) {
                 const shadow_tree * tree = shadow_tree_of(walk);
-                if (tree != nullptr && composed) {
+                if (tree != nullptr && (composed || walk != own_root)) {
                     up = tree->host;
                 } else {
                     // The test element/internal.hpp's is_document_root makes:
