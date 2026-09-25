@@ -128,6 +128,16 @@ int main() {
     refused("if (false) let\n[a] = 0;");
     refused("L: let /* x */\n[a] = 0;");
     accepted("if (false) let\nx = 1;");
+    // A call as an assignment target is web-compat in sloppy code: the call
+    // runs, then the ReferenceError - the right side never does.
+    answers("var log = ''; function f() { log += 'f'; return {}; } function g() { log += 'g'; }"
+            " var r = []; try { f() = g(); } catch (e) { r.push(e.name); }"
+            " try { f() += g(); } catch (e) { r.push(e.name); }"
+            " try { f()++; } catch (e) { r.push(e.name); } return r.join() + ':' + log;",
+            "ReferenceError,ReferenceError,ReferenceError:fff");
+    refused("'use strict'; function f() {} f() = 1;");
+    refused("function f() {} f() &&= 1;");
+    refused("var a; a?.b() = 1;");
 
     // ================================================================
     // 1. DUPLICATE LEXICAL DECLARATIONS - 14.2.1, 15.2.1, 16.1.1
@@ -251,15 +261,11 @@ int main() {
     accepted("var a; ({ a } = { a: 1 });");
     accepted("var o = { p: 0 }; [o.p] = [1];");
     accepted("var i = 0; i++; ++i; i += 1;");
-    // A CALL is refused here, and the note on check_assignment in
-    // early_errors/expressions.cpp says why it is
-    // the second-best answer: a browser may make `f() = 1` a runtime
-    // ReferenceError instead, and this engine's compiler refuses a call target
-    // outright either way - so the only thing being chosen is which KIND of
-    // failure it is.
-    refused("function f() { return {}; } f() = 1;");
-    refused("f() += 1;");
-    refused("f()++;");
+    // A CALL is refused in strict code only: sloppy code gets the web-compat
+    // runtime ReferenceError (see the top of main and web_compat_call).
+    refused("'use strict'; function f() { return {}; } f() = 1;");
+    refused("'use strict'; f() += 1;");
+    refused("'use strict'; f()++;");
 
     // ================================================================
     // 6. `break`, `continue` AND LABELS - 13.8.1, 13.9.1, 14.13.1

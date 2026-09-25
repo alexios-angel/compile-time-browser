@@ -277,6 +277,7 @@ private:
 
     // --- defined in expressions.cpp -------------------------------------------------------
     [[nodiscard]] bool simple_target(std::int32_t idx) const;
+    [[nodiscard]] bool web_compat_call(std::int32_t idx) const;
     [[nodiscard]] static bool destructuring(nk kind);
     void check_assignment(std::int32_t idx);
     void check_update(std::int32_t idx);
