@@ -569,7 +569,11 @@ void install_string(context & cx) {
         return value::boolean(std::string_view{s}.substr(0, stop).ends_with(needle));
     });
     text("slice", 2, [](context & c, const std::string & s, std::span<value> a) -> value {
+        // Each ToIntegerOrInfinity is `?`: a throw from the first ends the
+        // method before the second argument is coerced (its valueOf unrun).
+        const detail::unwind_watch watch{c};
         const std::size_t from = clamp_index(integer_arg(c, a, 0), s.size());
+        if (watch.threw()) { return value::undefined(); }
         // has_index: `slice(1, undefined)` ends at the LENGTH, not at 0.
         const std::size_t to =
             has_index(a, 1) ? clamp_index(integer_arg(c, a, 1), s.size()) : s.size();
@@ -581,7 +585,9 @@ void install_string(context & cx) {
         // exist - and it SWAPS its arguments if they are backwards. has_index
         // so an explicit `undefined` end still means "to the end" rather than
         // zero.
+        const detail::unwind_watch watch{c};
         std::size_t from = static_cast<std::size_t>(std::max(0.0, integer_arg(c, a, 0)));
+        if (watch.threw()) { return value::undefined(); }
         std::size_t to = has_index(a, 1)
                              ? static_cast<std::size_t>(std::max(0.0, integer_arg(c, a, 1)))
                              : s.size();
@@ -602,7 +608,9 @@ void install_string(context & cx) {
         //
         // integer_arg rather than num_at, for the reason `at` above needed it:
         // a NaN start reached `static_cast<std::size_t>` and the engine hung.
+        const detail::unwind_watch watch{c};
         const double raw = integer_arg(c, a, 0);
+        if (watch.threw()) { return value::undefined(); } // the length is not coerced
         const auto size = static_cast<double>(s.size());
         const double start = raw < 0 ? std::max(size + raw, 0.0) : std::min(raw, size);
         const auto from = static_cast<std::size_t>(start);
