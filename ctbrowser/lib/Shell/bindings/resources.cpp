@@ -385,6 +385,25 @@ dom_bindings::loaded_resource dom_bindings::load_resource(const std::string & ur
             out.status = 404;
             out.failure = "no such resource: " + url;
         }
+    } else if (url.starts_with("file:") && assets_ != nullptr) {
+        // A file: URL IS A PATH, and it is what a relative reference becomes
+        // once it is resolved against a page loaded from disk - an XHR for
+        // `resources/x.html` from file:///a/b.html asks for
+        // file:///a/resources/x.html. It is read the way the relative branch
+        // reads, not sent to the network (which would refuse the scheme):
+        // the host (empty, or `localhost`) dropped, the query and fragment
+        // cut, and the path percent-decoded.
+        std::string_view path = std::string_view{url}.substr(5);
+        if (path.starts_with("//")) {
+            path.remove_prefix(2);
+            path = path.substr(std::min(path.find('/'), path.size()));
+        }
+        path = path.substr(0, std::min(path.find('?'), path.find('#')));
+        out.body = assets_->load(percent_decode(path));
+        if (out.body.empty()) {
+            out.status = 404;
+            out.failure = "no such resource: " + url;
+        }
     } else if (network_allowed_) {
         const http_response response = http_get(url);
         out.status = response.status;

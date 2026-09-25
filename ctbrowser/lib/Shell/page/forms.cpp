@@ -14,14 +14,45 @@ namespace {
     return input_types::type_state_of(txn.attribute_value(id, atoms.intern("type")));
 }
 
-// The value sanitization algorithm of the control's type over `text`.
+// The value sanitization algorithm of the control's type over `text` - and
+// for a textarea the API value's newline normalisation, since the value the
+// store keeps is the one every reader wants (4.10.11: CR LF and CR are LF).
 [[nodiscard]] std::string sanitized(const read_txn & txn, atom_table & atoms, node_id id,
                                     std::string_view type, std::string text) {
-    if (atoms.text(txn.tag(id).value_or(atom{})) != "input") { return text; }
-    return input_types::sanitize_value(type, std::move(text),
-                                       txn.attribute_value(id, atoms.intern("min")),
-                                       txn.attribute_value(id, atoms.intern("max")),
-                                       txn.attribute_value(id, atoms.intern("step")));
+    const std::string_view tag = atoms.text(txn.tag(id).value_or(atom{}));
+    if (tag == "textarea") { return input_types::normalize_newlines(text); }
+    if (tag != "input") { return text; }
+    return input_types::sanitize_value(
+        type, std::move(text), txn.attribute_value(id, atoms.intern("min")),
+        txn.attribute_value(id, atoms.intern("max")), txn.attribute_value(id, atoms.intern("step")),
+        txn.attribute_value(id, atoms.intern("value")),
+        txn.has_attribute(id, atoms.intern("multiple")));
+}
+
+// A textarea's value as its children make it: the CHILD TEXT CONTENT - the
+// data of its Text children, not of every descendant (a <span> inside one
+// contributes nothing) - newline-normalised.
+[[nodiscard]] std::string textarea_value(const read_txn & txn, node_id id) {
+    std::string raw;
+    for (const node_id child : txn.children(id)) {
+        const node_kind kind = txn.kind(child).value_or(node_kind::element);
+        if (kind == node_kind::text || kind == node_kind::cdata_section) { raw += txn.text(child); }
+    }
+    return input_types::normalize_newlines(raw);
+}
+
+// Does the selection API apply to a type state (4.10.5's table)? A textarea's
+// always does.
+[[nodiscard]] bool selection_applies(std::string_view type) {
+    return type == "text" || type == "search" || type == "url" || type == "tel" ||
+           type == "password" || type == "textarea";
+}
+
+// A value changed under the selection by something other than the `value`
+// setter or typing: the selection stays where it was, clamped to the end.
+void clamp_selection(control_state & held) {
+    held.caret = std::min(held.caret, held.value.size());
+    held.selection = std::min(held.selection, held.value.size());
 }
 
 } // namespace
@@ -50,10 +81,18 @@ control_state & form_store::state_of(const read_txn & txn, atom_table & atoms, n
                 held.value.clear();
                 held.value_edited = false;
             }
+            // Steps 9-10: a state the selection API did not apply to becoming
+            // one it does puts the cursor at the BEGINNING (an email's value
+            // turned text starts at 0); otherwise the selection is clamped.
+            const bool previously_selectable = selection_applies(held.type);
             held.type = type;
             held.value = sanitized(txn, atoms, id, type, std::move(held.value));
-            held.caret = std::min(held.caret, held.value.size());
-            held.selection = std::min(held.selection, held.value.size());
+            if (!previously_selectable && selection_applies(type)) {
+                held.caret = 0;
+                held.selection = 0;
+            } else {
+                clamp_selection(held);
+            }
         }
         // THE ATTRIBUTE IS STILL THE ANSWER UNTIL SOMETHING EDITS THE CONTROL.
         //
@@ -71,6 +110,11 @@ control_state & form_store::state_of(const read_txn & txn, atom_table & atoms, n
         // THE DEFAULT MODES ARE THE ATTRIBUTE, dirty or not (a submit button's
         // `.value = x` writes the attribute); "on" for a checkbox or radio
         // with none (the default/on mode's answer).
+        // CHECKEDNESS FOLLOWS THE `checked` ATTRIBUTE until something - a
+        // click, the `checked` setter, the group rule - makes it dirty
+        // (4.10.5.4: adding or removing the attribute sets a clean control's
+        // checkedness), so `defaultChecked = false` after a reset unchecks.
+        if (!held.checked_edited) { held.checked = txn.has_attribute(id, atoms.intern("checked")); }
         const std::string_view mode = input_types::value_mode_of(type);
         if (mode == "default" || mode == "default/on") {
             if (held.pending_attribute) {
@@ -83,15 +127,30 @@ control_state & form_store::state_of(const read_txn & txn, atom_table & atoms, n
                 }
             }
         } else if (!held.value_edited) {
+            // A CLEAN control follows its default: an input its `value`
+            // attribute, a textarea its child text content (4.10.11's
+            // children changed steps). Neither moves the selection - that is
+            // the `value` setter's and typing's - it only clamps.
             const std::string_view tag = atoms.text(txn.tag(id).value_or(atom{}));
-            if (tag != "textarea" && tag != "select" && mode != "filename") {
-                const std::string_view attribute = txn.attribute_value(id, atoms.intern("value"));
-                std::string fresh = sanitized(txn, atoms, id, type, std::string{attribute});
+            if (tag == "textarea" || (tag != "select" && mode != "filename")) {
+                std::string fresh =
+                    tag == "textarea"
+                        ? textarea_value(txn, id)
+                        : sanitized(txn, atoms, id, type,
+                                    std::string{txn.attribute_value(id, atoms.intern("value"))});
                 if (fresh != held.value) {
                     held.value = std::move(fresh);
-                    held.caret = held.value.size();
-                    held.selection = held.caret;
+                    clamp_selection(held);
                 }
+            }
+        } else if (type == "email") {
+            // A dirty email value is still re-sanitised when `multiple` comes
+            // or goes (4.10.5.1.5) - the sanitisation is idempotent, so a read
+            // that changed nothing changes nothing.
+            if (std::string fresh = sanitized(txn, atoms, id, type, held.value);
+                fresh != held.value) {
+                held.value = std::move(fresh);
+                clamp_selection(held);
             }
         }
         return held;
@@ -99,7 +158,7 @@ control_state & form_store::state_of(const read_txn & txn, atom_table & atoms, n
     control_state seeded;
     const std::string_view tag = atoms.text(txn.tag(id).value_or(atom{}));
     if (tag == "textarea") {
-        for (const node_id child : txn.children(id)) { seeded.value += txn.text(child); }
+        seeded.value = textarea_value(txn, id);
     } else if (tag == "select") {
         // A <select> has no `value` attribute: its value is the SELECTED
         // OPTION'S. Seeded from the attribute rather than from the option's
@@ -120,8 +179,10 @@ control_state & form_store::state_of(const read_txn & txn, atom_table & atoms, n
         seeded.value = sanitized(txn, atoms, id, seeded.type, std::move(seeded.value));
     }
     seeded.checked = txn.has_attribute(id, atoms.intern("checked"));
-    seeded.caret = seeded.value.size();
-    seeded.selection = seeded.caret;
+    // THE SELECTION STARTS AT 0, 0 (defaultSelection.html): only the `value`
+    // setter and typing move it to the end.
+    seeded.caret = 0;
+    seeded.selection = 0;
     return states_.emplace(id.key(), std::move(seeded)).first->second;
 }
 
@@ -247,6 +308,8 @@ bool form_store::delete_selection(control_state & control) {
 
 void form_store::toggle(const read_txn & txn, atom_table & atoms, node_id id, control_kind kind) {
     control_state & control = state_of(txn, atoms, id);
+    // A click DIRTIES the checkedness - the attribute stops being the answer.
+    control.checked_edited = true;
     if (kind == control_kind::checkbox) {
         control.checked = !control.checked;
         return;
@@ -254,15 +317,19 @@ void form_store::toggle(const read_txn & txn, atom_table & atoms, node_id id, co
     if (kind != control_kind::radio) { return; }
     const atom name_attr = atoms.intern("name");
     const std::string_view group = txn.attribute_value(id, name_attr);
+    // The group is in the radio's OWN TREE - a detached subtree or a shadow
+    // root is a tree of its own - not the document's.
     const auto walk = [&](auto && self, node_id at) -> void {
-        if (txn.attribute_value(at, name_attr) == group && at != id) {
-            const std::string_view type = txn.attribute_value(at, atoms.intern("type"));
-            if (type == "radio") { state_of(txn, atoms, at).checked = false; }
+        if (at != id && txn.attribute_value(at, name_attr) == group &&
+            type_of(txn, atoms, at) == "radio") {
+            control_state & other = state_of(txn, atoms, at);
+            other.checked = false;
+            other.checked_edited = true;
         }
         for (const node_id child : txn.children(at)) { self(self, child); }
     };
     // An unnamed radio is its own group, per spec - so do not clear anything.
-    if (!group.empty()) { walk(walk, txn.root()); }
+    if (!group.empty()) { walk(walk, txn.root_of_tree(id, false)); }
     control.checked = true;
 }
 

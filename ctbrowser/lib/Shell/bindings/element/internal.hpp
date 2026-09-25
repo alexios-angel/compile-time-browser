@@ -144,6 +144,22 @@ inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Mat
 
 // --- helpers shared by more than one file of bindings/element/ ---------------
 
+// ElementInternals' private-name keys (element_internals.cpp): the internals
+// object on an element's wrapper, and one validity flag on the internals. The
+// form machinery reads a form-associated custom element's validity through
+// them.
+inline constexpr std::string_view internals_key = "@#ctbrowser:internals";
+inline constexpr std::string_view internals_flag_prefix = "@#ctbrowser:internals-flag:";
+// On a ShadowRoot's wrapper: attached while its host was not (yet) custom, so
+// not "available to element internals" (shadow.cpp sets it).
+inline constexpr std::string_view shadow_hidden_from_internals_key =
+    "@#ctbrowser:shadow-hidden-from-internals";
+
+// Is this element - or an ancestor - `display: none`, i.e. not being
+// rendered? The innerText collector's answer (rendered_text.cpp).
+[[nodiscard]] bool element_unrendered(const read_txn & txn, atom_table & atoms,
+                                      const style::style_map * styles, node_id id);
+
 // The object behind an interface prototype, or null before the interfaces are
 // built - which is what every installer in this directory checks first.
 [[nodiscard]] inline script::object_object * prototype_object(const value & proto) {

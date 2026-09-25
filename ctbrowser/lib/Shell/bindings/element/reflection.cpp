@@ -790,20 +790,33 @@ void dom_bindings::install_double_reflection(context & cx) {
 void dom_bindings::install_form_owner(context & cx) {
     for (const char * which :
          {"HTMLButtonElement", "HTMLFieldSetElement", "HTMLInputElement", "HTMLObjectElement",
-          "HTMLOutputElement", "HTMLSelectElement", "HTMLTextAreaElement"}) {
+          "HTMLOutputElement", "HTMLSelectElement", "HTMLTextAreaElement", "HTMLLegendElement"}) {
         const value iface = interface_prototype(which);
         if (!iface.is_object()) { continue; }
         auto * proto = static_cast<script::object_object *>(iface.as_heap());
+        const bool legend = std::string_view{which} == "HTMLLegendElement";
         proto->define_accessor(
             "form",
             value::object(cx.allocate<script::native_object>(
                 "form",
-                [this](context & c, std::span<value>) {
-                    const node_id id = receiver(c);
+                [this, legend](context & c, std::span<value>) {
+                    node_id id = receiver(c);
                     if (!id) { return value::null(); }
                     node_id owner;
                     {
                         const auto txn = doc_->read();
+                        // HTML 4.10.16: a <legend> is not listed - its `form`
+                        // is its PARENT fieldset's, and null under anything
+                        // else.
+                        if (legend) {
+                            id = txn.parent(id);
+                            if (!id ||
+                                txn.kind(id).value_or(node_kind::text) != node_kind::element ||
+                                txn.element_ns(id) != node_ns::html ||
+                                txn.local_name(id) != "fieldset") {
+                                return value::null();
+                            }
+                        }
                         const atom form_attr = atoms_->intern("form");
                         const std::string_view named = txn.attribute_value(id, form_attr);
                         if (txn.has_attribute(id, form_attr)) {
@@ -861,10 +874,11 @@ void dom_bindings::install_option_reflection(context & cx) {
                     const node_id id = receiver(c);
                     if (!id) { return c.string(""); }
                     {
+                        // The content attribute IN NO NAMESPACE: one a page
+                        // set with setAttributeNS is not the option's.
                         const auto txn = doc_->read();
-                        const atom attribute = atoms_->intern(name);
-                        if (txn.has_attribute(id, attribute)) {
-                            return c.string(std::string{txn.attribute_value(id, attribute)});
+                        if (const attribute * held = txn.find_attribute_ns(id, "", name)) {
+                            return c.string(held->value);
                         }
                     }
                     // "Strip and collapse ASCII whitespace" over the text.
@@ -885,6 +899,45 @@ void dom_bindings::install_option_reflection(context & cx) {
                     }
                     return value::undefined();
                 })));
+    }
+
+    // --- `text` on <a>, <title> and <script> ---------------------------------
+    //
+    // Not reflections either, but the same shape of rule: an anchor's is its
+    // descendant text (textContent, 4.5.1), a title's and a script's the
+    // CHILD text content (4.2.2, 4.12.1.1) - Text children only - and every
+    // one is set by "string replace all", the textContent setter's removal
+    // and one new Text.
+    for (const auto & [which, descendants] :
+         {std::pair{"HTMLAnchorElement", true}, std::pair{"HTMLTitleElement", false},
+          std::pair{"HTMLScriptElement", false}}) {
+        const value on = interface_prototype(which);
+        if (!on.is_object()) { continue; }
+        const bool all = descendants;
+        static_cast<script::object_object *>(on.as_heap())
+            ->define_accessor(
+                "text",
+                value::object(cx.allocate<script::native_object>(
+                    "text",
+                    [this, all](context & c, std::span<value>) {
+                        const node_id id = receiver(c);
+                        if (!id) { return c.string(""); }
+                        if (all) { return c.string(text_content(id)); }
+                        std::string text;
+                        const auto txn = doc_->read();
+                        for (const node_id child : txn.children(id)) {
+                            const node_kind kind = txn.kind(child).value_or(node_kind::element);
+                            if (kind == node_kind::text || kind == node_kind::cdata_section) {
+                                text += txn.text(child);
+                            }
+                        }
+                        return c.string(text);
+                    })),
+                value::object(cx.allocate<script::native_object>(
+                    "text", [this](context & c, std::span<value> a) {
+                        if (const node_id id = receiver(c)) { set_text(id, arg_string(c, a, 0)); }
+                        return value::undefined();
+                    })));
     }
 }
 

@@ -89,7 +89,8 @@ struct custom_element_reaction {
         connected_move,
         attribute_changed,
         form_associated,
-        form_disabled
+        form_disabled,
+        form_reset
     };
     node_id target;
     std::size_t definition = 0;

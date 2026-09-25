@@ -54,7 +54,9 @@ struct control_state {
     std::size_t caret = 0;     // in CODE UNITS of `value`
     std::size_t selection = 0; // anchor; equal to caret means no selection
     bool checked = false;
-    bool value_edited = false; // once true, the `value` attribute stops being the answer
+    bool indeterminate = false;  // the IDL-only flag; cloned with checkedness (4.10.5.1.18)
+    bool checked_edited = false; // dirty checkedness: until set, `checked` follows the attribute
+    bool value_edited = false;   // once true, the `value` attribute stops being the answer
     // THE INPUT TYPE STATE `value` WAS LAST SANITISED FOR (HTML 4.10.5.1), so
     // state_of notices a type change on the next read and runs the "type
     // attribute changes" steps and the new state's sanitization. Empty until

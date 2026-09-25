@@ -31,7 +31,10 @@ double control_helpers::step_base_of(const read_txn & txn, dom_bindings * b, nod
             return *held;
         }
     }
-    return 0;
+    // The type's DEFAULT STEP BASE (4.10.5.4): only the week state has one,
+    // -259,200,000 - the Monday that starts 1970-W01, so a week value is a
+    // whole number of steps from it and `1970-W01` is not a mismatch.
+    return helpers.input_type(txn, b, id) == "week" ? -259'200'000.0 : 0;
 }
 
 std::optional<double> control_helpers::bound_of(const read_txn & txn, dom_bindings * b, node_id id,
@@ -41,8 +44,18 @@ std::optional<double> control_helpers::bound_of(const read_txn & txn, dom_bindin
 }
 
 bool control_helpers::is_step_aligned(double number, double base, double step) const {
-    const double quotient = (number - base) / step;
-    return std::fabs(quotient - std::round(quotient)) < 1e-9 * std::max(1.0, std::fabs(quotient));
+    // "An integral multiple of the allowed value step", decided the way the
+    // browsers decide it: past step * 2^53 the value's own precision is
+    // coarser than the step and no remainder means anything, so it is
+    // aligned; otherwise the remainder against the nearest multiple - in
+    // extended precision, where 17 against 3e-15 is not lost - counts only
+    // beyond step / 2^24, the tolerance a decimal step like 0.003 needs.
+    const long double value = std::fabs(static_cast<long double>(number) - base);
+    const long double unit = step;
+    if (value / 9007199254740992.0L > unit) { return true; }
+    const long double remainder = std::fabs(value - unit * std::round(value / unit));
+    const long double acceptable = unit / 16777216.0L;
+    return !(acceptable < remainder && remainder < unit - acceptable);
 }
 
 bool control_helpers::will_validate(const read_txn & txn, dom_bindings * b, node_id id) const {
@@ -56,12 +69,22 @@ bool control_helpers::will_validate(const read_txn & txn, dom_bindings * b, node
         if (helpers.has_attribute(txn, b, id, "readonly")) { return false; }
     }
     if (local == "textarea" && helpers.has_attribute(txn, b, id, "readonly")) { return false; }
+    // A <button> that is not a submit button (4.10.6: type=reset or
+    // type=button; a missing or invalid type is the submit state).
+    if (local == "button") {
+        const std::string type = ascii_lower_copy(helpers.attribute_of(txn, b, id, "type"));
+        if (type == "reset" || type == "button") { return false; }
+    }
     for (node_id up = txn.parent(id); up; up = txn.parent(up)) {
         if (helpers.is(txn, up, "datalist")) { return false; }
     }
     return true;
 }
 
+// HTML 4.10.5.3.6's "compiled pattern regular expression": the attribute
+// ALONE must compile with the v flag - no u fallback, and a pattern such as
+// `a)(b` that only parses once wrapped is as invalid as `[(]` - and then the
+// anchored `^(?:` pattern `)$`, with v again. Null means no constraint.
 value control_helpers::compile_pattern(context & c, const std::string & pattern) const {
     const auto helpers = *this;
     auto * on = helpers.proto("ValidityState");
@@ -71,8 +94,8 @@ value control_helpers::compile_pattern(context & c, const std::string & pattern)
     if (!compiler.is_callable()) {
         script::program compiled = script::compiler::compile(
             "return (function (p) {\n"
+            "    try { new RegExp(p, 'v'); } catch (e) { return null; }\n"
             "    try { return new RegExp('^(?:' + p + ')$', 'v'); } catch (e) {}\n"
-            "    try { return new RegExp('^(?:' + p + ')$', 'u'); } catch (e) {}\n"
             "    return null;\n"
             "});\n");
         if (!compiled.ok) { return value::null(); }
@@ -102,12 +125,19 @@ unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id 
     if (!txn.contains(id)) { return flags; }
     const value custom = helpers.slot_of(c, b, id, custom_slot);
     if (custom.is_string() && !c.to_string(custom).empty()) { flags |= custom_error; }
-    // BARRED FROM CONSTRAINT VALIDATION - disabled, readonly, hidden -
-    // leaves every flag but customError false: the browsers agree and
-    // form-validation-validity-*.html assert it for each state.
-    if (!helpers.will_validate(txn, b, id)) { return flags; }
+    // BARRED FROM CONSTRAINT VALIDATION - disabled, readonly - is not a
+    // reason to clear the flags: validity reports what the control suffers
+    // from, and only willValidate, validationMessage and checkValidity ask
+    // whether it is a candidate (validator.js clones every control disabled
+    // and readonly and expects the same flags). What mutability DOES change
+    // is "suffering from being missing" for a text-ish input and a textarea,
+    // whose constraint says "and the element is mutable" (4.10.5.3.4,
+    // 4.10.11) - a checkbox, a radio group, a file or a select has no such
+    // clause.
     const std::string_view local = txn.local_name(id);
     const bool required = helpers.has_attribute(txn, b, id, "required");
+    const bool is_mutable =
+        !helpers.is_disabled(txn, b, id) && !helpers.has_attribute(txn, b, id, "readonly");
     if (local == "select") {
         if (required) {
             std::vector<node_id> options;
@@ -120,28 +150,23 @@ unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id 
                 }
             }
             bool missing = first == options.size();
-            // The placeholder label option: a display-size-1 single
-            // select's first option child with an empty value.
+            // The placeholder label option (4.10.7): in a display-size-1
+            // single select, the FIRST OPTION IN THE LIST OF OPTIONS -
+            // an optgroup's included - when its value is empty and its
+            // parent is the select itself.
             if (!missing && helpers.display_size(txn, b, id) == 1 &&
-                !helpers.has_attribute(txn, b, id, "multiple")) {
-                node_id first_child;
-                for (const node_id child : txn.children(id)) {
-                    if (helpers.is(txn, child, "option")) {
-                        first_child = child;
-                        break;
-                    }
-                }
-                if (first_child && options[first] == first_child &&
-                    helpers.option_value(txn, b, first_child).empty()) {
-                    missing = true;
-                }
+                !helpers.has_attribute(txn, b, id, "multiple") && first == 0 &&
+                txn.parent(options[0]) == id && helpers.option_value(txn, b, options[0]).empty()) {
+                missing = true;
             }
             if (missing) { flags |= value_missing; }
         }
         return flags;
     }
     if (local == "textarea") {
-        if (required && helpers.value_of(txn, b, id).empty()) { flags |= value_missing; }
+        if (required && is_mutable && helpers.value_of(txn, b, id).empty()) {
+            flags |= value_missing;
+        }
         return flags;
     }
     if (local != "input") { return flags; }
@@ -160,19 +185,11 @@ unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id 
         // A radio with no name is in no group, and the requirement is
         // the group's (4.10.5.1.16) - so it is never missing.
         if (name.empty()) { return flags; }
-        {
-            const node_id owner = helpers.form_owner(txn, b, id);
-            helpers.walk_tree(txn, helpers.tree_top(txn, b, id), [&](node_id other) {
-                if (other == id || !helpers.is(txn, other, "input") ||
-                    helpers.input_type(txn, b, other) != "radio" ||
-                    helpers.attribute_of(txn, b, other, "name") != name ||
-                    helpers.form_owner(txn, b, other) != owner) {
-                    return;
-                }
-                if (helpers.has_attribute(txn, b, other, "required")) { any_required = true; }
-                if (b->forms_->state_of(txn, *b->atoms_, other).checked) { any_checked = true; }
-            });
-        }
+        helpers.walk_tree(txn, helpers.tree_top(txn, b, id), [&](node_id other) {
+            if (other == id || !helpers.in_radio_group(txn, b, id, other)) { return; }
+            if (helpers.has_attribute(txn, b, other, "required")) { any_required = true; }
+            if (b->forms_->state_of(txn, *b->atoms_, other).checked) { any_checked = true; }
+        });
         if (any_required && !any_checked) { flags |= value_missing; }
         return flags;
     }
@@ -184,7 +201,7 @@ unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id 
         if (required) { flags |= value_missing; }
         return flags;
     }
-    if (required && text.empty()) { flags |= value_missing; }
+    if (required && is_mutable && text.empty()) { flags |= value_missing; }
     if (type == "email" && !text.empty()) {
         bool ok = true;
         if (helpers.has_attribute(txn, b, id, "multiple")) {
@@ -229,11 +246,16 @@ unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id 
         const std::optional<double> number = helpers.to_number(txn, b, id, text);
         if (!text.empty() && !number) { flags |= bad_input; }
         if (number && type != "range") {
-            if (const auto min = helpers.bound_of(txn, b, id, "min"); min && *number < *min) {
-                flags |= range_underflow;
-            }
-            if (const auto max = helpers.bound_of(txn, b, id, "max"); max && *number > *max) {
-                flags |= range_overflow;
+            const auto min = helpers.bound_of(txn, b, id, "min");
+            const auto max = helpers.bound_of(txn, b, id, "max");
+            if (type == "time" && min && max && *max < *min) {
+                // A REVERSED RANGE (4.10.5.3.7: time has a periodic domain):
+                // only a value in the gap between max and min is out of range,
+                // and it underflows and overflows at once.
+                if (*number > *max && *number < *min) { flags |= range_underflow | range_overflow; }
+            } else {
+                if (min && *number < *min) { flags |= range_underflow; }
+                if (max && *number > *max) { flags |= range_overflow; }
             }
         }
         if (number) {
@@ -264,9 +286,28 @@ bool control_helpers::validate_form(context & c, dom_bindings * b, node_id form)
     bool ok = true;
     for (const node_id one : helpers.elements_of_form(b, form)) {
         bool submittable = false;
+        bool face_candidate = false;
         {
             const auto txn = b->doc_->read();
             submittable = txn.contains(one) && helpers.is_submittable(txn, one);
+            // A form-associated custom element is a submittable candidate
+            // too, barred by the same three things ElementInternals'
+            // willValidate is - and invalid by the flags setValidity left.
+            if (txn.contains(one) && helpers.is_face(b, one)) {
+                bool in_datalist = false;
+                for (node_id up = txn.parent(one); up; up = txn.parent(up)) {
+                    if (helpers.is(txn, up, "datalist")) { in_datalist = true; }
+                }
+                face_candidate = !helpers.is_disabled(txn, b, one) &&
+                                 !helpers.has_attribute(txn, b, one, "readonly") && !in_datalist;
+            }
+        }
+        if (face_candidate) {
+            if (helpers.face_invalid(b, one)) {
+                (void)helpers.fire(c, b, one, "invalid", false, true, helpers.plain);
+                ok = false;
+            }
+            continue;
         }
         if (submittable && !helpers.check_one(c, b, one)) { ok = false; }
     }

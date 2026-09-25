@@ -37,12 +37,33 @@ void dom_bindings::install_control_focus_canvas(context & cx) {
         const node_id id = receiver(c);
         if (!id) { return value::undefined(); }
         const auto txn = doc_->read();
-        forms_->state_of(txn, *atoms_, id).checked = context::truthy(arg(args, 0));
+        control_state & held = forms_->state_of(txn, *atoms_, id);
+        held.checked = context::truthy(arg(args, 0));
+        held.checked_edited = true;
         mutated();
         return value::undefined();
     });
     define_operation(cx, focusable, "focus", 0, [this](context & c, std::span<value>) {
-        if (const node_id id = receiver(c); id && on_focus_) { on_focus_(id); }
+        node_id id = receiver(c);
+        if (!id || !on_focus_) { return value::undefined(); }
+        // A <label> that is not itself a focusable area - no valid tabindex,
+        // or not being rendered - hands focus to its labeled control
+        // (4.10.4), which is the element the user meant.
+        {
+            const auto txn = doc_->read();
+            const control_helpers helpers{this};
+            if (helpers.is(txn, id, "label")) {
+                long long tabindex = 0;
+                const bool focusable_itself =
+                    parse_html_integer(helpers.attribute_of(txn, this, id, "tabindex"), tabindex) &&
+                    !element_unrendered(txn, *atoms_, styles_, id);
+                if (const node_id control = helpers.labeled_control(txn, this, id);
+                    control && !focusable_itself) {
+                    id = control;
+                }
+            }
+        }
+        on_focus_(id);
         return value::undefined();
     });
     define_operation(cx, focusable, "blur", 0, [this](context &, std::span<value>) {

@@ -47,21 +47,22 @@ std::vector<bool> control_helpers::selected_flags(context & c, const read_txn & 
         if (helpers.slot_of(c, b, option, selected_slot).is_boolean()) { any_slot = true; }
     }
     if (helpers.is_multiple(txn, b, select)) { return flags; }
-    // A select nothing has touched: the parser's insertions ran "ask for
-    // a reset" - the last of several selected wins, and a display-size-1
-    // select with none selects its first enabled option.
-    if (!any_slot) {
-        std::size_t count = 0;
-        std::size_t last = options.size();
-        for (std::size_t i = 0; i < options.size(); ++i) {
-            if (flags[i]) {
-                ++count;
-                last = i;
-            }
+    // "Ask for a reset": the last of several selected wins - a single select
+    // never has two, however it got them (a `multiple` removed afterwards
+    // included) - and a select nothing has touched, whose insertions the
+    // parser made, selects its first enabled option at display size 1.
+    std::size_t count = 0;
+    std::size_t last = options.size();
+    for (std::size_t i = 0; i < options.size(); ++i) {
+        if (flags[i]) {
+            ++count;
+            last = i;
         }
-        if (count > 1) {
-            for (std::size_t i = 0; i < options.size(); ++i) { flags[i] = i == last; }
-        } else if (count == 0 && helpers.display_size(txn, b, select) == 1) {
+    }
+    if (count > 1) {
+        for (std::size_t i = 0; i < options.size(); ++i) { flags[i] = i == last; }
+    } else if (!any_slot) {
+        if (count == 0 && helpers.display_size(txn, b, select) == 1) {
             for (std::size_t i = 0; i < options.size(); ++i) {
                 if (!helpers.is_disabled(txn, b, options[i])) {
                     flags[i] = true;

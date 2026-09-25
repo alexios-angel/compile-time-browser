@@ -125,7 +125,8 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
         });
     // `value`, `checked` and `files` ON THE PROTOTYPE, for the inputs the
     // wrapper installs no own accessor on - a hidden input has none, so its
-    // value read `undefined` - and `indeterminate`, a slot on the wrapper.
+    // value read `undefined` - and `indeterminate`, which lives in the form
+    // store beside checkedness so the cloning steps carry it.
     // Where the wrapper's own accessor exists it shadows these, as it must.
     helpers.accessor(
         cx, "HTMLInputElement", "value",
@@ -167,14 +168,56 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
             if (!id) { return value::undefined(); }
             {
                 const auto txn = b->doc_->read();
-                b->forms_->state_of(txn, *b->atoms_, id).checked = context::truthy(arg(a, 0));
+                const bool on = context::truthy(arg(a, 0));
+                control_state & held = b->forms_->state_of(txn, *b->atoms_, id);
+                held.checked = on;
+                held.checked_edited = true;
+                if (on) { helpers.uncheck_radio_group(txn, b, id); }
             }
             b->wrote_to_control_ = true;
             b->mutated();
             return value::undefined();
         });
-    helpers.accessor(cx, "HTMLInputElement", "files",
-                     [](context &, std::span<value>) { return value::null(); });
+    // `files`, 4.10.5.3: null unless the input is in the file state; there,
+    // one FileList ([SameObject] until a page assigns another). The setter
+    // takes only a FileList - an array is a TypeError - and ignores null and
+    // an input the attribute does not apply to.
+    helpers.accessor(
+        cx, "HTMLInputElement", "files",
+        [helpers](context & c, std::span<value>) {
+            const auto where = helpers.at(c);
+            dom_bindings * b = where.first;
+            const node_id id = where.second;
+            if (!id) { return value::null(); }
+            {
+                const auto txn = b->doc_->read();
+                if (helpers.input_type(txn, b, id) != "file") { return value::null(); }
+            }
+            const value held = helpers.slot_of(c, b, id, "__files");
+            if (is_file_list(held)) { return held; }
+            const value made = make_file_list(c, {});
+            helpers.set_slot(c, b, id, "__files", made);
+            return made;
+        },
+        [helpers](context & c, std::span<value> a) {
+            const auto where = helpers.at(c);
+            dom_bindings * b = where.first;
+            const node_id id = where.second;
+            const value given = arg(a, 0);
+            if (!id || given.is_null()) { return value::undefined(); }
+            if (!is_file_list(given)) {
+                c.throw_error("TypeError", "Failed to set the 'files' property on "
+                                           "'HTMLInputElement': The provided value is not of "
+                                           "type 'FileList'.");
+                return value::undefined();
+            }
+            {
+                const auto txn = b->doc_->read();
+                if (helpers.input_type(txn, b, id) != "file") { return value::undefined(); }
+            }
+            helpers.set_slot(c, b, id, "__files", given);
+            return value::undefined();
+        });
     helpers.accessor(
         cx, "HTMLInputElement", "indeterminate",
         [helpers](context & c, std::span<value>) {
@@ -182,15 +225,16 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
             dom_bindings * b = where.first;
             const node_id id = where.second;
             if (!id) { return value::boolean(false); }
-            return value::boolean(context::truthy(helpers.slot_of(c, b, id, "__indeterminate")));
+            const auto txn = b->doc_->read();
+            return value::boolean(b->forms_->state_of(txn, *b->atoms_, id).indeterminate);
         },
         [helpers](context & c, std::span<value> a) {
             const auto where = helpers.at(c);
             dom_bindings * b = where.first;
             const node_id id = where.second;
             if (id) {
-                helpers.set_slot(c, b, id, "__indeterminate",
-                                 value::boolean(context::truthy(arg(a, 0))));
+                const auto txn = b->doc_->read();
+                b->forms_->state_of(txn, *b->atoms_, id).indeterminate = context::truthy(arg(a, 0));
             }
             return value::undefined();
         });
@@ -217,7 +261,9 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
         const std::optional<double> min = helpers.bound_of(txn, b, id, "min");
         const std::optional<double> max = helpers.bound_of(txn, b, id, "max");
         if (min && max && *min > *max) { return; }
-        double number = helpers.to_number(txn, b, id, helpers.value_of(txn, b, id)).value_or(0);
+        const std::optional<double> held =
+            helpers.to_number(txn, b, id, helpers.value_of(txn, b, id));
+        double number = held.value_or(0);
         const double before = number;
         double n = a.empty() ? 1 : context::to_number(a[0]);
         if (std::isnan(n)) { n = 0; }
@@ -229,7 +275,10 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
         }
         if (min && number < *min) { number = base + std::ceil((*min - base) / *step) * *step; }
         if (max && number > *max) { number = base + std::floor((*max - base) / *step) * *step; }
-        if ((up && number < before) || (!up && number > before)) { return; }
+        // Moving AGAINST the direction asked is refused - but only from a value
+        // the control had: an empty one stepped down lands on its minimum
+        // (input-stepdown-02.html), the 0 it started from being no value.
+        if (held && ((up && number < before) || (!up && number > before))) { return; }
         if (min && number < *min) { return; }
         if (max && number > *max) { return; }
         store_value(txn, b, id, text_of_number(txn, b, id, number));
@@ -360,7 +409,8 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
         helpers.operation(
             cx, which, "setCustomValidity", 1, [this, helpers](context & c, std::span<value> a) {
                 if (const node_id id = receiver(c)) {
-                    helpers.set_slot(c, this, id, custom_slot, c.string(arg_string(c, a, 0)));
+                    helpers.set_slot(c, this, id, custom_slot,
+                                     c.string(normalize_newlines(arg_string(c, a, 0))));
                 }
                 return value::undefined();
             });
