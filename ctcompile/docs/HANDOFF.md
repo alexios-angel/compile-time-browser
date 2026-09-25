@@ -22,6 +22,40 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected iterator integration and captured-cell boundary, 2026-09-25 UTC
+
+Resumed clean **0f9ee8cd** and its recorded completion-integration boundary.
+**fca9a7e4** integrates the existing completion normalizer into custom iterator
+preparation. The original structured getter/method now pass that stage with
+zero poison, three Invokes retaining **15 saved slots each**, four selected
+completion values and one root Try. The final next/done census follows the
+exact normal block argument and requires a direct invocation in that Try's body.
+Both close guards, saved return **1** and caught-anchor CellGet identity remain.
+The complete Try lifetime proof covers saved holder aliases.
+
+The original staged IR is frozen as test data so its nine poison, observer and
+budget variants remain checked after integration replaces the intermediate body.
+All eight original embedded source literals and 39 Python JavaScript source
+strings are unchanged. Focused recovery **1/1, 5.57 s**, host contract
+**1/1, 2.78 s**, and the selected three-source differential check pass.
+All 24 generated C++ files retain the namespace invariant; four final source
+hashes match the devbox. Formatting passes **1127 C++, 159 Python, 114 web files**.
+Full suites were skipped. All three agents hit rate limits after bounded traces;
+the parent completed implementation, validation and review. No independent
+final signoff is claimed. Escape analysis was traced but unchanged: nested
+allocation origins still need a complete site inventory and instance proof.
+
+**Next:** complete preparation now refuses at **`DOM helper capture cell has
+nonlocal or unordered uses`**. Trace `DOMSource::resolveCell` across retained
+Invoke continuations and exact saved/caught aliases before broadening its
+ordering proof. Preserve immutable snapshots, initialization dominance, caught
+identity and every effect. **No new native JavaScript or full Bootstrap
+admission** is claimed. Mutable exceptional state, Invoke loop conditions,
+nested allocation origins, raw helper CFGs, escaping owners, unguarded Bootstrap
+defaults, the application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-25-protected-iterator-integration.md).
+
 ## Protected completion proof and conditional array receivers, 2026-09-25 UTC
 
 Resumed clean **26424e84** and its recorded inactive-completion boundary.
