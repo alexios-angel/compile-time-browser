@@ -963,7 +963,27 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::BinaryKind::Add, 0xfff0000000000001ULL, 0x3ff0000000000000ULL, 0xfff8000000000001ULL,
          false}, // signaling NaN becomes quiet, retaining its payload
     }};
-    for (unsigned control = 0; control != 280; ++control) {
+    struct NumericUnary {
+        ctjs::UnaryKind kind;
+        uint64_t operand;
+        uint64_t value;
+        bool truth;
+    };
+    const std::array<NumericUnary, 12> numericUnaries{{
+        {ctjs::UnaryKind::Plus, 0, 0, false},
+        {ctjs::UnaryKind::Plus, 0x8000000000000000ULL, 0x8000000000000000ULL, false},
+        {ctjs::UnaryKind::Plus, 0xfff8000000000042ULL, 0xfff8000000000042ULL, false},
+        {ctjs::UnaryKind::Plus, 0xfff0000000000001ULL, 0xfff0000000000001ULL, false},
+        {ctjs::UnaryKind::Plus, 0x7ff0000000000000ULL, 0x7ff0000000000000ULL, true},
+        {ctjs::UnaryKind::Plus, 1, 1, true},
+        {ctjs::UnaryKind::Neg, 0, 0x8000000000000000ULL, false},
+        {ctjs::UnaryKind::Neg, 0x8000000000000000ULL, 0, false},
+        {ctjs::UnaryKind::Neg, 0x7ff8000000000042ULL, 0xfff8000000000042ULL, false},
+        {ctjs::UnaryKind::Neg, 0xfff0000000000001ULL, 0x7ff0000000000001ULL, false},
+        {ctjs::UnaryKind::Neg, 0x7ff0000000000000ULL, 0xfff0000000000000ULL, true},
+        {ctjs::UnaryKind::Neg, 0x8000000000000001ULL, 1, true},
+    }};
+    for (unsigned control = 0; control != 326; ++control) {
         auto expected = baseline;
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
@@ -1032,36 +1052,112 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             const auto payload = terminal->getOperand(0);
             const auto other = first.getArgument(ctjs::arg_receiver);
             const bool primitive = control < 104;
-            const bool calculated = control >= 232;
-            const bool compared = control >= 176 && !calculated;
-            const bool computed = control >= 116 && !compared && !calculated;
-            const unsigned index = calculated ? (control - 232) / 2
-                                   : compared ? (control - 176) / 2
-                                   : computed ? (control - 116) / 2
-                                              : (control - 76) / 2;
+            const bool numericUnary = control >= 280;
+            const bool calculated = control >= 232 && !numericUnary;
+            const bool compared = control >= 176 && !calculated && !numericUnary;
+            const bool computed = control >= 116 && !compared && !calculated && !numericUnary;
+            const unsigned index = numericUnary ? (control - 280) / 2
+                                   : calculated ? (control - 232) / 2
+                                   : compared   ? (control - 176) / 2
+                                   : computed   ? (control - 116) / 2
+                                                : (control - 76) / 2;
             const bool transported = (computed && control >= 156) ||
                                      (compared && (index == 14 || index == 15)) ||
-                                     (calculated && (index == 12 || index == 13));
-            const unsigned transport = calculated    ? index == 13 ? 2 : 0
+                                     (calculated && (index == 12 || index == 13)) ||
+                                     (numericUnary && (index == 12 || index == 13));
+            const unsigned transport = numericUnary  ? index == 13 ? 2 : 0
+                                       : calculated  ? index == 13 ? 2 : 0
                                        : compared    ? index == 15 ? 2 : 0
                                        : transported ? index - 20
                                                      : 0;
-            const unsigned mutation = calculated  ? index == 15   ? 0
-                                                    : index == 16 ? 1
-                                                                  : 6
-                                      : compared  ? index == 17   ? 0
-                                                    : index == 18 ? 1
-                                                                  : 6
-                                      : computed  ? index == 12 || index == 27 ? 0
-                                                    : index == 13              ? 1
-                                                                               : 6
-                                      : primitive ? 6
-                                                  : (control - 104) / 2;
+            const unsigned mutation = numericUnary ? index == 15   ? 0
+                                                     : index == 16 ? 1
+                                                                   : 6
+                                      : calculated ? index == 15   ? 0
+                                                     : index == 16 ? 1
+                                                                   : 6
+                                      : compared   ? index == 17   ? 0
+                                                     : index == 18 ? 1
+                                                                   : 6
+                                      : computed   ? index == 12 || index == 27 ? 0
+                                                     : index == 13              ? 1
+                                                                                : 6
+                                      : primitive  ? 6
+                                                   : (control - 104) / 2;
             bool selected = primitive ? predicates[index].second : true;
             at.setInsertionPoint(moved);
             mlir::Value input;
             llvm::SmallVector<std::pair<mlir::Operation *, mlir::Attribute>> evaluatedResults;
-            if (calculated) {
+            if (numericUnary) {
+                const auto row = index < numericUnaries.size()
+                                     ? numericUnaries[index]
+                                     : NumericUnary{ctjs::UnaryKind::Plus, 0x3ff0000000000000ULL,
+                                                    0x3ff0000000000000ULL, true};
+                const mlir::Attribute value =
+                    index == 18   ? mlir::Attribute(ctjs::StringAttr::get(context, "1"))
+                    : index == 19 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
+                                  : ctjs::NumberAttr::get(context, row.operand);
+                mlir::Value operand = index == 17
+                                          ? mlir::Value(other)
+                                          : ctjs::ConstantOp::create(at, where, value).getResult();
+                if (index == 20) {
+                    operand = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Plus), other);
+                }
+                auto operation = ctjs::UnaryOp::create(
+                    at, where, payload.getType(),
+                    ctjs::UnaryKindAttr::get(context, index == 17 || index == 19 || index == 20
+                                                          ? ctjs::UnaryKind::Neg
+                                                          : row.kind),
+                    operand);
+                if (control == 322) { operation->eraseOperand(0); }
+                if (control == 323) { operation->removeAttr("kind"); }
+                if (control == 324) { operand.getDefiningOp()->removeAttr("value"); }
+                if (control == 325) {
+                    mlir::OpBuilder invalid(operation);
+                    auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
+                    operation->setOperand(0, flag);
+                }
+                selected = row.truth;
+                evaluatedResults.emplace_back(operation.getOperation(),
+                                              ctjs::NumberAttr::get(context, row.value));
+                input = operation;
+                if (index == 12 || index == 13) {
+                    auto negated = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Neg), input);
+                    evaluatedResults.emplace_back(
+                        negated.getOperation(),
+                        ctjs::NumberAttr::get(context, 0xbff0000000000000ULL));
+                    // The Plus result feeds both Neg and Add across transported edges.
+                    auto sum = ctjs::BinaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::BinaryKindAttr::get(context, ctjs::BinaryKind::Add), negated, input);
+                    evaluatedResults.emplace_back(sum.getOperation(),
+                                                  ctjs::NumberAttr::get(context, 0));
+                    input = sum;
+                }
+                if (index >= 12 && index <= 14) {
+                    auto comparison = ctjs::CompareOp::create(
+                        at, where, payload.getType(), ctjs::CompareKind::StrictEq, input, input);
+                    selected = true;
+                    evaluatedResults.emplace_back(comparison.getOperation(),
+                                                  ctjs::BooleanAttr::get(context, selected));
+                    input = comparison;
+                    if (index == 14) {
+                        llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(input);
+                    } else {
+                        auto negated = ctjs::UnaryOp::create(
+                            at, where, payload.getType(),
+                            ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), input);
+                        selected = false;
+                        evaluatedResults.emplace_back(negated.getOperation(),
+                                                      ctjs::BooleanAttr::get(context, selected));
+                        input = negated;
+                    }
+                }
+            } else if (calculated) {
                 const auto row = arithmetic[index < arithmetic.size() ? index : 0];
                 const mlir::Attribute lhsValue =
                     index == 18 ? mlir::Attribute(ctjs::StringAttr::get(context, "1"))
@@ -1220,7 +1316,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 input = ctjs::ConstantOp::create(at, where, value);
             }
             if (primitive || (computed && (index < 12 || (transported && transport < 5))) ||
-                (compared && index < 17) || (calculated && index < 15)) {
+                (compared && index < 17) || (calculated && index < 15) ||
+                (numericUnary && index < 15)) {
                 // The input still evaluates after projection. Compare against
                 // the same operands and known pure results without the edges.
                 mlir::IRMapping mapping;
@@ -1625,7 +1722,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 }
             }
         }
-        const bool malformed = (control >= 226 && control < 232) || control >= 274;
+        const bool malformed = (control >= 226 && control < 232) ||
+                               (control >= 274 && control < 280) || control >= 322;
         if (!check(mlir::succeeded(mlir::verify(*candidate)) != malformed,
                    "only intentionally malformed helper operations fail verification")) {
             continue;
@@ -1641,7 +1739,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             (control >= 54 && control <= 57) || control == 62 || control == 63 ||
             (control >= 65 && control <= 69) || (control >= 74 && control < 104) ||
             (control >= 116 && control < 140) || (control >= 156 && control < 166) ||
-            (control >= 176 && control < 210) || (control >= 232 && control < 262);
+            (control >= 176 && control < 210) || (control >= 232 && control < 262) ||
+            (control >= 280 && control < 310);
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
@@ -1651,7 +1750,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                   "reachable helper budget refusal preserves the entire module and contract");
             if (limitedError) { llvm::consumeError(std::move(limitedError)); }
             if (control == 46 || control == 67 || control == 79 || control == 137 ||
-                control == 165 || control == 209 || control == 259) {
+                control == 165 || control == 209 || control == 259 || control == 307) {
                 const auto attempt = [&](unsigned budget) {
                     mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
                     auto limitedProof = proof;

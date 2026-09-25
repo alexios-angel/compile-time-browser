@@ -187,6 +187,24 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         return std::nullopt;
     };
+    const auto exactUnary = [](ctjs::UnaryOp unary) -> mlir::Attribute {
+        if (unary->getNumOperands() != 1 || !unary.getKindAttr()) { return {}; }
+        auto input = unary->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
+        if (!input || !input.getValue()) { return {}; }
+        if (unary.getKind() == ctjs::UnaryKind::Not) {
+            const auto value = PrimitiveAlternatives::literal(input.getValue());
+            return value.known ? ctjs::BooleanAttr::get(unary.getContext(), !value.truthy)
+                               : mlir::Attribute{};
+        }
+        auto number = llvm::dyn_cast<ctjs::NumberAttr>(input.getValue());
+        if (!number) { return {}; }
+        if (unary.getKind() == ctjs::UnaryKind::Plus) { return number; }
+        if (unary.getKind() != ctjs::UnaryKind::Neg) { return {}; }
+        // Number negation changes only the sign, including zero and NaN.
+        llvm::APFloat result(llvm::APFloat::IEEEdouble(), llvm::APInt(64, number.getBits()));
+        result.changeSign();
+        return ctjs::NumberAttr::get(unary.getContext(), result.bitcastToAPInt().getZExtValue());
+    };
     const auto exactNumberComparison = [](ctjs::CompareOp comparison) -> std::optional<bool> {
         if (comparison->getNumOperands() != 2 || !comparison.getKindAttr()) { return std::nullopt; }
         auto lhs = comparison->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
@@ -263,7 +281,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     projectBranches |= exactBoolean(branch.getCondition()).has_value();
                 }
                 if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
-                    projectBranches |= unary.getKind() == ctjs::UnaryKind::Not;
+                    projectBranches |=
+                        (unary.getKindAttr() && unary.getKind() == ctjs::UnaryKind::Not) ||
+                        static_cast<bool>(exactUnary(unary));
                 }
                 if (auto comparison = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
                     projectBranches |= exactNumberComparison(comparison).has_value();
@@ -314,18 +334,12 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (calculated.wasInterrupted()) { return ctjs::FuncOp{}; }
                 const auto folded = found.walk([&](ctjs::UnaryOp unary) {
                     if (!spend()) { return mlir::WalkResult::interrupt(); }
-                    if (unary.getKind() != ctjs::UnaryKind::Not) {
-                        return mlir::WalkResult::advance();
-                    }
-                    auto input = unary.getOperand().getDefiningOp<ctjs::ConstantOp>();
-                    if (!input) { return mlir::WalkResult::advance(); }
-                    const auto value = PrimitiveAlternatives::literal(input.getValue());
-                    if (!value.known) { return mlir::WalkResult::advance(); }
-                    // Exact primitive truthiness proves both the result and the
+                    auto result = exactUnary(unary);
+                    if (!result) { return mlir::WalkResult::advance(); }
+                    // Exact primitive operands prove both the result and the
                     // absence of hooks. Keep the input and all its other uses.
                     rewriter.setInsertionPoint(unary);
-                    rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(
-                        unary, ctjs::BooleanAttr::get(candidate.getContext(), !value.truthy));
+                    rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(unary, result);
                     changed = true;
                     return mlir::WalkResult::advance();
                 });
