@@ -1025,7 +1025,29 @@ struct rx_state {
 	// The Modifiers Record (22.2.2.1.1): the flags' i, m and s as a
 	// `(?ims-ims:...)` group has set them for the piece being matched.
 	bool icase = false, multi = false, dotall = false;
+	// MATCHING BACKWARD, inside a lookbehind (22.2.2.4 with direction
+	// backward): each atom matches the text that ENDS at the position, a
+	// sequence runs right to left, and a group's capture is [end, start).
+	bool backward = false;
 };
+
+// The code point that ENDS at byte `end`, and its width - rx_utf8_decode run
+// backward. A byte that is not the end of a well-formed sequence is one code
+// point of width 1, as forward.
+inline std::uint32_t rx_utf8_decode_before(std::string_view s, std::size_t end, std::size_t & width) {
+	std::size_t start = end - 1;
+	while (start > 0 && end - start < 4 && (static_cast<unsigned char>(s[start]) & 0xC0u) == 0x80u) {
+		--start;
+	}
+	std::size_t at = start;
+	const auto cp = static_cast<std::uint32_t>(decode_utf8(s, at));
+	if (at != end) {
+		width = 1;
+		return static_cast<unsigned char>(s[end - 1]);
+	}
+	width = end - start;
+	return cp;
+}
 
 inline char rx_fold(char c, bool icase) {
 	return icase && c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c;
@@ -1073,6 +1095,26 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 	const std::string & s = *st.s;
 	switch (pc.kind) {
 	case rx_piece::lit:
+		if (st.backward) {
+			if (st.icase && (st.p->unicode || st.p->unicode_sets) && pos > 0) {
+				std::size_t pattern_width = 1;
+				const std::uint32_t want = pc.text.empty()
+				                               ? static_cast<unsigned char>(pc.c)
+				                               : rx_utf8_decode(pc.text, 0, pattern_width);
+				if (pc.text.empty() || pattern_width == pc.text.size()) {
+					std::size_t width = 1;
+					const std::uint32_t got = rx_utf8_decode_before(s, pos, width);
+					return rx_fold_simple(got) == rx_fold_simple(want) && k(pos - width);
+				}
+			}
+			if (!pc.text.empty()) {
+				const std::size_t n = pc.text.size();
+				if (pos < n || s.compare(pos - n, n, pc.text) != 0) { return false; }
+				return k(pos - n);
+			}
+			return pos > 0 && rx_fold(s[pos - 1], st.icase) == rx_fold(pc.c, st.icase) &&
+			       k(pos - 1);
+		}
 		if (st.icase && (st.p->unicode || st.p->unicode_sets) && pos < s.size()) {
 			// Canonicalize under `iu` is the simple case fold of BOTH code
 			// points (`/k/iu` takes the KELVIN SIGN), so a literal of any
@@ -1097,13 +1139,14 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		// ONE CODE POINT, however many bytes: `"é".match(/./)[0]` is "é". A
 		// line terminator is not "any" unless `s` says so - \n, \r, and the
 		// three-byte U+2028 and U+2029.
-		if (pos >= s.size()) { return false; }
+		if (st.backward ? pos == 0 : pos >= s.size()) { return false; }
 		std::size_t width = 1;
-		const std::uint32_t cp = rx_utf8_decode(s, pos, width);
+		const std::uint32_t cp =
+		    st.backward ? rx_utf8_decode_before(s, pos, width) : rx_utf8_decode(s, pos, width);
 		if (!st.dotall && (cp == '\n' || cp == '\r' || cp == 0x2028u || cp == 0x2029u)) {
 			return false;
 		}
-		return k(pos + width);
+		return k(st.backward ? pos - width : pos + width);
 	}
 	case rx_piece::backref: {
 		// A group that has not captured matches EMPTY (22.2.2.7.2 step 3),
@@ -1124,26 +1167,29 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		}
 		if (cap.first < 0) { return k(pos); }
 		const auto len = static_cast<std::size_t>(cap.second - cap.first);
-		if (pos + len > s.size()) { return false; }
+		// Backward, the repetition is the text that ENDS here.
+		if (st.backward ? pos < len : pos + len > s.size()) { return false; }
+		const std::size_t from = st.backward ? pos - len : pos;
 		for (std::size_t j = 0; j < len; ++j) {
-			if (rx_fold(s[pos + j], st.icase) !=
+			if (rx_fold(s[from + j], st.icase) !=
 			    rx_fold(s[static_cast<std::size_t>(cap.first) + j], st.icase)) {
 				return false;
 			}
 		}
-		return k(pos + len);
+		return k(st.backward ? from : pos + len);
 	}
 	case rx_piece::behind:
 	case rx_piece::nbehind: {
-		// ZERO WIDTH, LOOKING BACK: does the sub-pattern match some text that
-		// ENDS exactly here? Tried from the nearest start outward, so the
-		// shortest match wins the captures - the specification matches the
-		// sub-pattern right to left, which prefers the same thing.
+		// ZERO WIDTH, LOOKING BACK: the sub-pattern is matched RIGHT TO LEFT
+		// from here (22.2.2.4, direction backward), so a greedy quantifier in it
+		// takes as much as it can nearest this position and the captures are
+		// the ones that reading gives - `/(?<=(\d+)(\d+))$/` on "1053" is "1"
+		// and "053". Where it starts is its own business.
 		const auto saved = st.caps;
-		bool inner = false;
-		for (std::size_t start = pos + 1; start-- > 0 && !inner;) {
-			inner = rx_match_alt(*pc.sub, st, start, [&](std::size_t end) { return end == pos; });
-		}
+		const bool direction = st.backward;
+		st.backward = true;
+		const bool inner = rx_match_alt(*pc.sub, st, pos, [](std::size_t) { return true; });
+		st.backward = direction;
 		if (pc.kind == rx_piece::nbehind) {
 			st.caps = saved;
 			return !inner && k(pos);
@@ -1160,13 +1206,21 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		// The strings of a `v` class go first, longest first (22.2.2.9: a
 		// ClassSetExpression's strings are matched by descending length).
 		for (const std::string & str : pc.cc.strings) {
-			if (s.compare(pos, str.size(), str) == 0 && k(pos + str.size())) { return true; }
+			if (st.backward) {
+				if (pos >= str.size() && s.compare(pos - str.size(), str.size(), str) == 0 &&
+				    k(pos - str.size())) {
+					return true;
+				}
+			} else if (s.compare(pos, str.size(), str) == 0 && k(pos + str.size())) {
+				return true;
+			}
 		}
-		if (pos >= s.size()) { return false; }
+		if (st.backward ? pos == 0 : pos >= s.size()) { return false; }
 		std::size_t width = 1;
-		const std::uint32_t cp = rx_utf8_decode(s, pos, width);
+		const std::uint32_t cp =
+		    st.backward ? rx_utf8_decode_before(s, pos, width) : rx_utf8_decode(s, pos, width);
 		return rx_class_hit(pc.cc, cp, st.icase, st.p->unicode || st.p->unicode_sets) &&
-		       k(pos + width);
+		       k(st.backward ? pos - width : pos + width);
 	}
 	case rx_piece::bol:
 		return (pos == 0 || (st.multi && s[pos - 1] == '\n')) && k(pos);
@@ -1199,8 +1253,10 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		if (mods) { apply(true); }
 		const bool ok = rx_match_alt(*pc.sub, st, pos, [&](std::size_t end) {
 			if (cap >= 0) {
-				st.caps[static_cast<std::size_t>(cap)] = {static_cast<std::ptrdiff_t>(pos),
-				                                     static_cast<std::ptrdiff_t>(end)};
+				// Backward, the group's text runs from where it ENDED to here.
+				const auto lo = static_cast<std::ptrdiff_t>(std::min(pos, end));
+				const auto hi = static_cast<std::ptrdiff_t>(std::max(pos, end));
+				st.caps[static_cast<std::size_t>(cap)] = {lo, hi};
 			}
 			if (!mods) { return k(end); }
 			apply(false);
@@ -1223,7 +1279,12 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		// Captures made inside a lookahead are rolled back on a negative one,
 		// because it did not match anything that survives.
 		const auto saved = st.caps;
+		// FORWARD, even inside a lookbehind (22.2.2.4: a lookahead's direction
+		// is always forward).
+		const bool direction = st.backward;
+		st.backward = false;
 		const bool inner = rx_match_alt(*pc.sub, st, pos, [](std::size_t) { return true; });
+		st.backward = direction;
 		if (pc.kind == rx_piece::nahead) {
 			st.caps = saved;
 			return !inner && k(pos);
@@ -1321,7 +1382,10 @@ inline bool rx_match_piece(const rx_piece & pc, rx_state & st, std::size_t pos, 
 inline bool rx_match_seq(const rx_seq & sq, std::size_t idx, rx_state & st, std::size_t pos,
                          const rx_cont & k) {
 	if (idx == sq.size()) { return k(pos); }
-	return rx_match_piece(sq[idx], st, pos, [&](std::size_t np) {
+	// Backward, the last term first (22.2.2.3: Alternative Term, direction
+	// backward, evaluates the Term and then the Alternative).
+	const std::size_t at = st.backward ? sq.size() - 1 - idx : idx;
+	return rx_match_piece(sq[at], st, pos, [&](std::size_t np) {
 		return rx_match_seq(sq, idx + 1, st, np, k);
 	});
 }

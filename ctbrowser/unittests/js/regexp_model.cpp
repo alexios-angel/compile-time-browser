@@ -202,6 +202,12 @@ void test_escapes_and_repetition() {
     expect_result("return String('abc'.match(/(?:(?=(abc)))?a/)[1]);", "undefined");
     expect_result("return 'abc'.match(/(?:(?=(abc))){1,1}a/)[1];", "abc");
     expect_result("return new RegExp('b{' + Number.MAX_SAFE_INTEGER + '}').test('b');", "false");
+    // A lookbehind is matched RIGHT TO LEFT: greedy nearest the position,
+    // and the captures that reading gives.
+    expect_result("return /(?<=(\\d+)(\\d+))$/.exec('1053').slice(1).join();", "1,053");
+    expect_result("return /(?<=\\$\\d+\\.)\\d+/.exec('cost $10.53')[0];", "53");
+    expect_result("return /(?<!abc)\\w\\w\\w/.exec('abcdef')[0];", "abc");
+    expect_result("return /(?<=(b+))c/.exec('abbbbbbc')[1];", "bbbbbb");
     // An exec() result's index, input and groups are OWN data properties.
     expect_result(
         "const m = /(?<x>a)/.exec('a'); delete m.input;"
