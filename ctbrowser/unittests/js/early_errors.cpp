@@ -646,5 +646,15 @@ int main() {
     module_refused("export * as \"\\u{D83D}\" from './m.js';");
     module_accepted("var x; export { x as '\\uD83D\\uDE00' };");
 
+    // 14.12.1: one `default` per switch.
+    refused("switch (1) { case 0: default: break; default: }");
+    accepted("switch (1) { case 0: default: break; case 1: }");
+    // 14.14: no line break between `throw` and its expression - and a
+    // parenthesis that opens on the throw's line is not one.
+    refused("try { throw\n1; } catch (e) {}");
+    accepted("try { throw 1; } catch (e) {}");
+    accepted("try { throw (\n1); } catch (e) {}");
+    accepted("var thrower; try { thrower\n1; } catch (e) {}");
+
     REPORT("early_errors");
 }
