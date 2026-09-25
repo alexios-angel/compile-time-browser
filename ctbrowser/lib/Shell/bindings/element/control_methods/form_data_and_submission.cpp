@@ -120,7 +120,22 @@ void dom_bindings::install_control_form_data(context & cx) {
                                        : std::string{"on"}));
                 continue;
             }
-            if (type == "file") { continue; }
+            if (type == "file") {
+                // Each selected File under the name - and with none, one
+                // empty File of type application/octet-stream (5.10).
+                const std::vector<value> files = files_in(helpers.slot_of(c, b, one, "__files"));
+                for (const value & file : files) { add(name, file); }
+                if (files.empty()) {
+                    const value file_ctor = c.global("File");
+                    if (file_ctor.is_callable()) {
+                        const value options = c.make_object();
+                        c.store_property(options, "type", c.string("application/octet-stream"));
+                        const value args[3] = {c.make_array(), c.string(""), options};
+                        add(name, c.construct(file_ctor, args));
+                    }
+                }
+                continue;
+            }
             if (type == "hidden" && ascii_lower_copy(name) == "_charset_" &&
                 !helpers.has_attribute(txn, b, one, "value")) {
                 add(name, c.string("UTF-8"));
@@ -168,6 +183,7 @@ void dom_bindings::install_control_form_data(context & cx) {
             [form_data](script::object_object & event) { event.set("formData", form_data); });
     };
     if (!secondary_) {
+        helpers.install_data_transfer(cx);
         auto * form_data_proto = cx.allocate<script::object_object>();
         const value form_data_proto_value = value::object(form_data_proto);
         form_data_proto->define("@@toStringTag", cx.string("FormData"), script::attr_configurable);

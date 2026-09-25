@@ -178,8 +178,46 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
             b->mutated();
             return value::undefined();
         });
-    helpers.accessor(cx, "HTMLInputElement", "files",
-                     [](context &, std::span<value>) { return value::null(); });
+    // `files`, 4.10.5.3: null unless the input is in the file state; there,
+    // one FileList ([SameObject] until a page assigns another). The setter
+    // takes only a FileList - an array is a TypeError - and ignores null and
+    // an input the attribute does not apply to.
+    helpers.accessor(
+        cx, "HTMLInputElement", "files",
+        [helpers](context & c, std::span<value>) {
+            const auto where = helpers.at(c);
+            dom_bindings * b = where.first;
+            const node_id id = where.second;
+            if (!id) { return value::null(); }
+            {
+                const auto txn = b->doc_->read();
+                if (helpers.input_type(txn, b, id) != "file") { return value::null(); }
+            }
+            const value held = helpers.slot_of(c, b, id, "__files");
+            if (is_file_list(held)) { return held; }
+            const value made = make_file_list(c, {});
+            helpers.set_slot(c, b, id, "__files", made);
+            return made;
+        },
+        [helpers](context & c, std::span<value> a) {
+            const auto where = helpers.at(c);
+            dom_bindings * b = where.first;
+            const node_id id = where.second;
+            const value given = arg(a, 0);
+            if (!id || given.is_null()) { return value::undefined(); }
+            if (!is_file_list(given)) {
+                c.throw_error("TypeError", "Failed to set the 'files' property on "
+                                           "'HTMLInputElement': The provided value is not of "
+                                           "type 'FileList'.");
+                return value::undefined();
+            }
+            {
+                const auto txn = b->doc_->read();
+                if (helpers.input_type(txn, b, id) != "file") { return value::undefined(); }
+            }
+            helpers.set_slot(c, b, id, "__files", given);
+            return value::undefined();
+        });
     helpers.accessor(
         cx, "HTMLInputElement", "indeterminate",
         [helpers](context & c, std::span<value>) {

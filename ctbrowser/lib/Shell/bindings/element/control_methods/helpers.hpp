@@ -30,6 +30,12 @@ std::size_t units_before(std::string_view text, std::size_t bytes);
 std::size_t units_length_of(std::string_view text);
 std::size_t bytes_before(std::string_view text, std::size_t units);
 
+// FileList objects (data_transfer.cpp): a list over the Files given, whether a
+// value is one, and the Files it holds.
+[[nodiscard]] value make_file_list(context & c, const std::vector<value> & files);
+[[nodiscard]] bool is_file_list(value v);
+[[nodiscard]] std::vector<value> files_in(value list);
+
 // Shared callback state is only the original installation's bindings pointer.
 // Capturing this value never retains an installer stack frame or helper reference.
 struct control_helpers {
@@ -88,6 +94,7 @@ struct control_helpers {
     unsigned validity_flags(context & c, dom_bindings * b, node_id id) const;
     bool check_one(context & c, dom_bindings * b, node_id id) const;
     bool validate_form(context & c, dom_bindings * b, node_id form) const;
+    void install_data_transfer(context & cx) const;
 
     void walk_tree(const read_txn & txn, node_id from, auto && visit) const {
         const auto walk = [&](auto && self, node_id at2) -> void {

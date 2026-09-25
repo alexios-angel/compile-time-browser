@@ -455,8 +455,30 @@ void test_barred_validity_groups_and_selection() {
        "true,true,2,v,false,1,false");
 }
 
+void test_files_and_data_transfer() {
+    // the-input-element/files.html, form-data-set-empty-file.window.js,
+    // newline-normalization.html's DataTransfer set-up.
+    is("(function () { var i = document.createElement('input'); i.type = 'file';"
+       " var f = i.files; var o = [f instanceof FileList, f.length, i.files === f];"
+       " var dt = new DataTransfer();"
+       " dt.items.add(new File(['ab'], 'x.txt', {type: 'text/plain'}));"
+       " dt.items.add('hi', 'text/plain');"
+       " o.push(dt.items.length, dt.files.length, dt.types.join('+'), dt.getData('text'));"
+       " i.files = dt.files; o.push(i.files.length, i.files[0].name, i.files.item(0).size);"
+       " try { i.files = []; } catch (e) { o.push(e.name); }"
+       " var t = document.createElement('input'); o.push(t.files);"
+       " var form = document.createElement('form');"
+       " var e = form.appendChild(document.createElement('input')); e.type = 'file';"
+       " e.name = 'up'; var v = new FormData(form).get('up');"
+       " o.push(v instanceof File, v.name === '', v.type, v.size);"
+       " return o.join(); })()",
+       "true,0,true,2,1,text/plain+Files,hi,1,x.txt,2,TypeError,,true,true,"
+       "application/octet-stream,0");
+}
+
 int main() {
     test_barred_validity_groups_and_selection();
+    test_files_and_data_transfer();
     test_select_options_and_selectedness();
     test_form_elements_and_named_access();
     test_labels_and_control();
