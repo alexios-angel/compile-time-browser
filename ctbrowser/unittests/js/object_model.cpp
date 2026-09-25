@@ -180,6 +180,13 @@ int main() {
               "return Object.keys(o).join();})()",
               "b,c");
 
+    // A frozen function pins its synthesised length, name and prototype too.
+    js_expect("(function(){function f(a){} Object.freeze(f);"
+              "var d=Object.getOwnPropertyDescriptor(f,'prototype');"
+              "return Object.isFrozen(f)+','+d.writable+','+"
+              "Object.getOwnPropertyDescriptor(f,'name').configurable;})()",
+              "true,false,false");
+
     // 10.5 proxy invariants: a trap is held to what its target can be.
     js_expect("(function(){var t={};Object.defineProperty(t,'x',{value:1});"
               "var p=new Proxy(t,{getOwnPropertyDescriptor(){return undefined;}});"

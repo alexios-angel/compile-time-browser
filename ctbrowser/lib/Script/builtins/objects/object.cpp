@@ -178,8 +178,13 @@ inline void set_integrity(context & cx, value target, bool frozen) {
     // [[GetOwnProperty]] (frozen only) and DefinePropertyOrThrow - because
     // every one of those steps is a trap its handler can observe. Its
     // [[PreventExtensions]] already ran, trap and all, in
-    // prevent_extensions_or_throw.
-    if (target.is_kind(heap_kind::proxy)) {
+    // prevent_extensions_or_throw. SO IS A FUNCTION: its `length`, `name`
+    // and `prototype` are synthesised rather than held (descriptors.cpp),
+    // and only [[DefineOwnProperty]] pins one - an attribute sweep over the
+    // table never saw them, so a frozen function still reported them
+    // configurable and Object.isFrozen answered false.
+    if (target.is_kind(heap_kind::proxy) || target.is_kind(heap_kind::function) ||
+        target.is_kind(heap_kind::native)) {
         const std::size_t before = cx.unwinds();
         const auto thrown = [&] { return cx.throw_pending() || cx.unwinds() != before; };
         const std::vector<std::string> keys = own_property_names(cx, target, key_filter::all);
@@ -229,33 +234,6 @@ inline void set_integrity(context & cx, value target, bool frozen) {
         // An array's NAMED properties (`arr.foo`) live in their own table.
         if (arr->named) { set_integrity(cx, value::object(arr->named.get()), frozen); }
         return;
-    }
-    if (target.is_kind(heap_kind::native)) {
-        auto * fn = static_cast<native_object *>(target.as_heap());
-        if (fn->attrs.size() < fn->props.size()) {
-            fn->attrs.resize(fn->props.size(), attr_default);
-        }
-        for (std::uint8_t & a : fn->attrs) {
-            a = static_cast<std::uint8_t>(a & ~attr_configurable);
-            if (frozen) { a = static_cast<std::uint8_t>(a & ~attr_writable); }
-        }
-        for (accessor_entry & entry : fn->accessors.entries) {
-            entry.attrs = static_cast<std::uint8_t>(entry.attrs & ~attr_configurable);
-        }
-        return;
-    }
-    if (target.is_kind(heap_kind::function)) {
-        auto * closure = static_cast<closure_object *>(target.as_heap());
-        if (closure->attrs.size() < closure->props.size()) {
-            closure->attrs.resize(closure->props.size(), attr_default);
-        }
-        for (std::uint8_t & a : closure->attrs) {
-            a = static_cast<std::uint8_t>(a & ~attr_configurable);
-            if (frozen) { a = static_cast<std::uint8_t>(a & ~attr_writable); }
-        }
-        for (accessor_entry & entry : closure->accessors.entries) {
-            entry.attrs = static_cast<std::uint8_t>(entry.attrs & ~attr_configurable);
-        }
     }
 }
 
