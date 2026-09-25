@@ -68,7 +68,12 @@ value array_iterator_next(context & c, std::span<value>) {
         return value::undefined();
     }
     if (target->is_undefined()) { return c.iter_result(value::undefined(), true); }
+    // COPIED before anything can run script: a `length` getter may add
+    // properties to this very iterator, and the pointers into its table
+    // would not survive the rehash.
     const value array = *target;
+    const double at = index->is_number() ? index->as_number() : 0;
+    const double which = kind->is_number() ? kind->as_number() : 0;
     const context::rooted keep{c, array};
     const std::size_t before = c.unwinds();
     const auto finish = [&] {
@@ -88,16 +93,11 @@ value array_iterator_next(context & c, std::span<value>) {
         len = array_like_length(c, array);
         if (c.throw_pending() || c.unwinds() != before) { return finish(); }
     }
-    const double at = index->is_number() ? index->as_number() : 0;
     if (at >= len) {
         (void)finish();
         return c.iter_result(value::undefined(), true);
     }
-    // Re-found after every call that can run script: a getter may have added
-    // properties to nothing here, but the slots are the iterator's own and a
-    // pointer into its table does not survive a rehash.
     if (value * slot = it->find(next_index_key)) { *slot = value::number(at + 1); }
-    const double which = kind->is_number() ? kind->as_number() : 0;
     if (which == 0) { return c.iter_result(value::number(at), false); }
     const value item = c.lookup_index(array, value::number(at));
     if (c.throw_pending() || c.unwinds() != before) { return finish(); }
