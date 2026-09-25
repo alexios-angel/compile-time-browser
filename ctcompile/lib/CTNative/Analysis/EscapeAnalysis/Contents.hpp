@@ -79,10 +79,27 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
         // The shared budget bounds traversal; exhaustion supplies no partial key.
         if (!spend(1)) { return {}; }
         auto unary = input.getDefiningOp<ctjs::UnaryOp>();
-        if (!unary || unary.getKind() != ctjs::UnaryKind::Not) { return {input, negated}; }
+        if (!unary || unary.getKind() != ctjs::UnaryKind::Not) { break; }
         input = unary.getOperand();
         negated = !negated;
     }
+    auto compare = input.getDefiningOp<ctjs::CompareOp>();
+    if (compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+        // Strict equality is total and noncoercing, including opaque objects.
+        // The first same-block producer owns the choice snapshot; later
+        // comparisons must use the exact same ordered SSA operands.
+        // ponytail: linear block scan; cache keys only if profiling warrants it.
+        for (mlir::Operation & operation : *compare->getBlock()) {
+            if (!spend(1)) { return {}; }
+            if (&operation == compare.getOperation()) { break; }
+            auto previous = llvm::dyn_cast<ctjs::CompareOp>(operation);
+            if (previous && previous.getKind() == ctjs::CompareKind::StrictEq &&
+                previous.getLhs() == compare.getLhs() && previous.getRhs() == compare.getRhs()) {
+                return {previous.getResult(), negated};
+            }
+        }
+    }
+    return {input, negated};
 }
 
 using HeldProperties = llvm::MapVector<mlir::StringAttr, ContentsValue>;
