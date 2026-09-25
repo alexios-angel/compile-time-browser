@@ -249,10 +249,13 @@ void dom_bindings::signal_slot_changes(const std::vector<document::write_note> &
     // the root it named. A page with ten thousand hosts that appends one
     // element must not recompute ten thousand trees.
     std::vector<node_id> roots;
-    // DOM 4.2.3 "insert" step 7.4 and "remove" step 11: a slot WITH NOTHING
-    // ASSIGNED whose children change has changed what it shows - its
-    // fallback content - and that is a slot change too, though no assignment
-    // moved (moveBefore/slotchange-events.html).
+    // DOM 4.2.3 "insert" step 7.4 and "remove" step 11: a slot IN A SHADOW
+    // TREE WITH NOTHING ASSIGNED whose children change has changed what it
+    // shows - its fallback content - and that is a slot change too, though no
+    // assignment moved (moveBefore/slotchange-events.html). Not a slot being
+    // built outside one: a clone's children arrive before it is anywhere, and
+    // the notes are read after the fact - so a slot that was itself inserted
+    // by these writes, or inside something that was, got its children first.
     std::vector<node_id> fallback;
     const auto note_root = [&](node_id root) {
         if (root && shadow_tree_of(root) != nullptr &&
@@ -277,6 +280,7 @@ void dom_bindings::signal_slot_changes(const std::vector<document::write_note> &
             if (const node_id parent = txn.parent(note.node)) { note_root(shadow_root_of(parent)); }
             if (note.kind == edit::attribute) { continue; }
             if (is_slot(txn, note.node) &&
+                shadow_tree_of(root_of_tree(txn, note.node, false)) != nullptr &&
                 std::ranges::find(fallback, note.node) == fallback.end()) {
                 fallback.push_back(note.node);
             }
@@ -286,6 +290,16 @@ void dom_bindings::signal_slot_changes(const std::vector<document::write_note> &
             }
         }
         for (const node_id root : slot_roots_dirty_) { note_root(root); }
+        std::erase_if(fallback, [&](node_id slot) {
+            for (node_id at = slot; at; at = txn.parent(at)) {
+                for (const document::write_note & note : writes) {
+                    if (note.kind == document::write_note::edit::inserted && note.child == at) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        });
     }
     slot_roots_dirty_.clear();
     bool any = false;
