@@ -415,6 +415,19 @@ RAW_HELPER_SOURCES |= {
     .replace("throw anchor;", "throw true ? anchor : null;")
     for name, source in OUTER_SOURCES.items()
 }
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-primitives": source.replace(
+        "() {", "() { if (0) { unknown(); } if (null) { unknown(); }"
+    )
+    .replace("return this;", "return 1 ? this : null;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return '' ? null : {done: done, value: anchor};",
+    )
+    .replace("throw anchor;", "throw 'close' ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
 
 
 def check_outer_catches(args):
@@ -501,7 +514,14 @@ var outcome0 = observe(false), outcome1 = observe(true);
             initial_intrinsics=INTRINSICS,
         )
         raw_label = f"{name}-raw-helpers"
-        native = dom.lower(args, raw, raw_manifest, raw_label)
+        raw_steps = 1_000_000 if name.endswith("-helper-primitives") else None
+        if raw_steps is not None:
+            refused = dom.lower(
+                args, raw, raw_manifest, raw_label + "-default-budget", success=False
+            )
+            if "DOM custom iterator budget exhausted" not in refused:
+                raise RuntimeError(f"{name}: larger raw helpers lost their budget refusal")
+        native = dom.lower(args, raw, raw_manifest, raw_label, max_steps=raw_steps)
         dom.standalone(args, native, raw_label, checks, compilers, includes, libraries)
         dom.lower(args, raw, raw_manifest, raw_label + "-zero-budget", success=False, max_steps=0)
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
