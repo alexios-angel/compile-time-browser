@@ -572,6 +572,38 @@ void test_the_position_grammar() {
     ok("object-position", "calc(50% - 1px) center", "calc(50% - 1px) center");
 }
 
+// CSS Gap Decorations 1's lists, and the grammars that came with them.
+void test_gap_rule_lists_and_their_neighbours() {
+    ok("column-rule-width", "10px, repeat(4, THIN), repeat(auto, 0)",
+       "10px, repeat(4, thin), repeat(auto, 0px)");
+    ok("row-rule-style", "repeat(3, dashed, double)", "repeat(3, dashed, double)");
+    ok("row-rule-color", "red, repeat(auto, blue)", "red, repeat(auto, blue)");
+    bad("column-rule-width", "30%");
+    bad("column-rule-width", "repeat(0, 10px)");
+    bad("column-rule-width", "repeat(auto, 1px), repeat(auto, 2px)"); // one auto repeat
+    bad("column-rule-width", "thin medium");                          // a list needs commas
+    bad("column-rule-style", "repeat(2, 10px)");
+    // fit-content() on a sizing property, one component inside it.
+    ok("width", "fit-content(10%)", "fit-content(10%)");
+    bad("width", "fit-content(auto)");
+    bad("width", "fit-content(fit-content(10%))");
+    bad("width", "fit-content(-1px)");
+    // Keyword combinations.
+    ok("object-fit", "scale-down contain", "scale-down");
+    ok("object-fit", "scale-down cover", "cover scale-down");
+    bad("object-fit", "contain cover");
+    ok("text-decoration-skip-spaces", "end start", "start end");
+    bad("text-decoration-skip-spaces", "all start");
+    ok("text-decoration-inset", "0 0px", "0px");
+    ok("text-decoration-inset", "1px 2%", "1px 2%");
+    bad("text-decoration-inset", "auto 1px");
+    bad("outline-style", "hidden");
+    ok("outline-color", "auto", "auto");
+    bad("outline-color", "invert");
+    CHECK(supports_declaration("grid-template-columns", "repeat(2, minmax(10px, 1fr))"));
+    CHECK(supports_declaration("transform", "skewX(10deg)"));
+}
+
 } // namespace
 
 int main() {
@@ -601,5 +633,6 @@ int main() {
     test_colour_function_arity();
     test_interpolate_size_is_a_property();
     test_the_position_grammar();
+    test_gap_rule_lists_and_their_neighbours();
     REPORT("css_values");
 }
