@@ -97,5 +97,24 @@ int main() {
     js_expect("(function(){class C { set #f(v) {} read() { return this.#f; } }"
               "try { new C().read(); return 'read'; } catch (e) { return e.name; } })()",
               "TypeError");
+    // A FUNCTION'S OWN KEYS: integer keys ascending, then `length`, `name`,
+    // `prototype` where they were made - a redefinition does not move one -
+    // then strings, then symbols; the compiler's `__home` is not one of them.
+    js_expect("(function(){var f = () => {}; f.a = 1;"
+              "Object.defineProperty(f, 'length', {enumerable: true});"
+              "return Object.keys(f).join(); })()",
+              "length,a");
+    js_expect("(function(){var s = Symbol(); class A { static b() { return super.x; }"
+              " static 2() {} static 1() {} static length() {} static [s]() {} }"
+              "var k = []; for (var x in A) k.push(x);"
+              "return Object.getOwnPropertyNames(A).join() + '|' +"
+              " Object.getOwnPropertySymbols(A).length + '|' + k.join(); })()",
+              "1,2,length,name,prototype,b|1|");
+    js_expect("(function(){function f(a, b) {} Object.defineProperty(f, 'length', {value: 5});"
+              "delete f.length; return f.hasOwnProperty('length') + ',' + f.length; })()",
+              "false,0");
+    js_expect("(function(){var d = Object.getOwnPropertyDescriptor(Function, 'prototype');"
+              "return '' + d.writable + d.enumerable + d.configurable; })()",
+              "falsefalsefalse");
     REPORT("receivers_and_throws");
 }

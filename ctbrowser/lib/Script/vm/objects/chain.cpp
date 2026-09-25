@@ -76,7 +76,9 @@ value context::own_keys(value source) {
         auto * closure = static_cast<closure_object *>(source.as_heap());
         for (std::size_t i = 0; i < closure->props.size(); ++i) {
             const std::string & name = closure->props[i].first;
-            if ((closure->attrs_of(name) & attr_enumerable) != 0 && !name.starts_with("@@")) {
+            // `__home` is the compiler's [[HomeObject]] slot, not a static.
+            if ((closure->attrs_of(name) & attr_enumerable) != 0 && !name.starts_with("@@") &&
+                name != "__home") {
                 keys->items.push_back(string(name));
             }
         }

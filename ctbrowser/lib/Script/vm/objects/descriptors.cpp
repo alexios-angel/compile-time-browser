@@ -543,6 +543,10 @@ bool context::delete_own_property(value target, const std::string & name) {
             return true;
         }
         if ((closure->attrs_of(name) & attr_configurable) == 0) { return false; }
+        // A REDEFINED `length` or `name` lives in the table, and deleting it
+        // must not uncover the synthesised one underneath.
+        if (name == "name") { closure->name_erased = true; }
+        if (name == "length") { closure->length_erased = true; }
         return closure->erase(name);
     }
     if (target.is_array()) {

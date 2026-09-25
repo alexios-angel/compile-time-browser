@@ -171,9 +171,10 @@ namespace {
         }
         return out;
     }
-    // Nothing else but an object_object can hold a symbol key: the other
-    // tables are only ever written by the engine itself.
-    if (which == key_filter::symbols) { return out; }
+    // Nothing else but an object_object or a closure (a class's `static
+    // [sym]()`) holds a symbol key: the other tables are only ever written by
+    // the engine itself.
+    if (which == key_filter::symbols && !of.is_kind(heap_kind::function)) { return out; }
     if (of.is_string()) {
         const std::size_t n = static_cast<string_object *>(of.as_heap())->text.size();
         for (std::size_t i = 0; i < n; ++i) { out.push_back(std::to_string(i)); }
@@ -206,23 +207,52 @@ namespace {
         // the loop below then found the entry this loop had just caused and
         // reported `prototype` TWICE. The names taken here are remembered and
         // skipped there rather than the test being taken twice.
+        //
+        // A REDEFINED ONE KEEPS ITS PLACE: `Object.defineProperty(f, "length",
+        // ...)` after `f.a = 1` moves the slot into the table after `a`, but
+        // a redefinition is not a new property and OwnPropertyKeys still
+        // reads ["length", ..., "a"]. Only a DELETED one (the *_erased flags)
+        // that came back sits where it came back.
+        //
+        // And 10.1.11.1's order over the table: integer keys ASCENDING (a
+        // class's `static 2()` before its `static 1()` reads [1, 2]), then
+        // strings, then symbols. `__home` is the compiler's [[HomeObject]]
+        // slot (compile/classes.cpp), not a property of the page's.
         std::vector<std::string_view> taken;
-        for (const char * synthesised : {"length", "name", "prototype"}) {
-            if (closure->find(synthesised) == nullptr &&
-                closure->find_accessor(synthesised) == nullptr &&
-                cx.has_own_property(of, synthesised)) {
+        std::vector<std::string> indices;
+        std::vector<std::string> symbols;
+        for (const std::string_view synthesised : {"length", "name", "prototype"}) {
+            if (which == key_filter::symbols) { break; }
+            const bool erased = (synthesised == "length" && closure->length_erased) ||
+                                (synthesised == "name" && closure->name_erased);
+            if (!erased && cx.has_own_property(of, std::string{synthesised})) {
                 out.emplace_back(synthesised);
                 taken.emplace_back(synthesised);
             }
         }
+        const auto add = [&](const std::string & key) {
+            if (key == "__home" || !wanted_key(which, key)) { return; }
+            if (std::ranges::find(taken, key) != taken.end()) { return; }
+            std::uint32_t at = 0;
+            if (key.starts_with("@@")) {
+                symbols.push_back(key);
+            } else if (object_object::array_index_key(key, at)) {
+                indices.push_back(key);
+            } else {
+                out.push_back(key);
+            }
+        };
         for (const auto & [key, held] : closure->props) {
             (void)held;
-            if (std::ranges::find(taken, key) != taken.end()) { continue; }
-            out.push_back(key);
+            add(key);
         }
-        for (const accessor_entry & entry : closure->accessors.entries) {
-            out.push_back(entry.key);
-        }
+        for (const accessor_entry & entry : closure->accessors.entries) { add(entry.key); }
+        // Canonical index strings have no leading zeros: shorter is smaller.
+        std::ranges::sort(indices, [](const std::string & a, const std::string & b) {
+            return a.size() != b.size() ? a.size() < b.size() : a < b;
+        });
+        out.insert(out.begin(), indices.begin(), indices.end());
+        out.insert(out.end(), symbols.begin(), symbols.end());
         return out;
     }
     return out;

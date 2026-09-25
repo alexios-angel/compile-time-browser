@@ -481,8 +481,9 @@ void install_dynamic_function(context & cx) {
     // same table lookup already walks - so a page that adds to it is seen by
     // every function, which is what a page doing that expects.
     if (object_object * table = cx.prototype(context::proto_kind::function)) {
+        // { false, false, false } (20.2.2.2), as every constructor's is.
         static_cast<native_object *>(cx.global("Function").as_heap())
-            ->set("prototype", value::object(table));
+            ->define("prototype", value::object(table), attr_none);
         link_constructor(cx, table, "Function", 1, cx.global("Function"));
     }
     // %GeneratorFunction% (27.3), %AsyncGeneratorFunction% (27.4) and
