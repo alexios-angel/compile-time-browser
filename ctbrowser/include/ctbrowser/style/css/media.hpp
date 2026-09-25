@@ -75,10 +75,14 @@ using style_query = std::function<truth(std::string_view query)>;
 // `block-size` one on the block axis, `aspect-ratio` and `orientation` both;
 // `scroll-state()` wants a scroll-state container. `style()` wants nothing -
 // every element is a style container.
+// A feature no container has - `(foo: bar)`, `foo(bar)`, `style(unknown)` -
+// is `unknown`, and then no container is eligible and the query is false
+// however the rest of it would answer (container-selection-unknown-features).
 struct container_needs {
     bool inline_axis = false;
     bool block_axis = false;
     bool scroll_state = false;
+    bool unknown = false;
 };
 [[nodiscard]] container_needs container_requirements(std::string_view condition);
 

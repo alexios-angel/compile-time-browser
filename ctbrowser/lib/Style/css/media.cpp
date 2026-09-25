@@ -912,29 +912,77 @@ std::string serialize_container_conditions(std::span<const container_query> list
 
 container_needs container_requirements(std::string_view condition) {
     container_needs needs;
+    if (trim(condition, html_whitespace).empty()) { return needs; }
     const token_stream s = tokenize(condition);
-    // Depth inside a function, which is a `style()` or `scroll-state()` query
-    // whose property names are not size features.
-    int inside = 0;
-    for (const css_token & t : s.tokens) {
-        if (inside > 0) {
-            if (t.type == token_type::function || t.type == token_type::open_paren) { ++inside; }
-            if (t.type == token_type::close_paren) { --inside; }
-            continue;
+    // The first word of a group is the feature it asks about: `(width)`,
+    // `(min-width: 1px)`, `(100px < width)` - a value before the name is
+    // not a word.
+    const auto first_word = [&](std::size_t a, std::size_t b) -> std::string_view {
+        for (std::size_t i = a; i < b; ++i) {
+            if (s.tokens[i].type == token_type::ident) { return s.text_of(s.tokens[i]); }
         }
-        if (t.type == token_type::function) {
-            if (ascii_iequals(s.text_of(t), "scroll-state(")) { needs.scroll_state = true; }
-            inside = 1;
-            continue;
-        }
-        if (t.type != token_type::ident) { continue; }
-        std::string_view name = s.text_of(t);
+        return {};
+    };
+    // A size feature names one of the six container features; any other
+    // group is a feature no container has.
+    const auto size_feature = [&](std::size_t a, std::size_t b) {
+        std::string_view name = first_word(a, b);
         if (ascii_istarts_with(name, "min-") || ascii_istarts_with(name, "max-")) {
             name.remove_prefix(4);
         }
-        const bool both = ascii_iequals_any(name, {"aspect-ratio", "orientation"});
-        if (both || ascii_iequals_any(name, {"width", "inline-size"})) { needs.inline_axis = true; }
-        if (both || ascii_iequals_any(name, {"height", "block-size"})) { needs.block_axis = true; }
+        const feature_entry * e = entry_of(name, true);
+        if (e == nullptr) {
+            needs.unknown = true;
+            return truth::unknown;
+        }
+        using n = media_feature::name;
+        needs.inline_axis = needs.inline_axis || e->which != n::height;
+        needs.block_axis = needs.block_axis || e->which != n::width;
+        return truth::unknown;
+    };
+    // A style feature names a custom property, or compares two values.
+    const auto style_feature = [&](std::size_t a, std::size_t b) {
+        bool range = false;
+        int depth = 0;
+        for (std::size_t i = a; i < b; ++i) {
+            const token_type type = s.tokens[i].type;
+            if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+            if (type == token_type::close_paren) { --depth; }
+            range = range || (depth == 0 && type == token_type::delim &&
+                              (is_delim_text(s, i, '<') || is_delim_text(s, i, '>') ||
+                               is_delim_text(s, i, '=')));
+        }
+        std::size_t first = a;
+        while (first < b && s.tokens[first].type == token_type::whitespace) { ++first; }
+        const bool custom = first < b && s.tokens[first].type == token_type::ident &&
+                            s.text_of(s.tokens[first]).starts_with("--");
+        if (!range && !custom) { needs.unknown = true; }
+        return truth::unknown;
+    };
+    const auto unknown_function = [&](std::string_view, std::size_t, std::size_t) {
+        needs.unknown = true;
+        return truth::unknown;
+    };
+    const auto test = [&](std::string_view name, std::size_t a, std::size_t b) {
+        if (ascii_iequals(name, "scroll-state")) {
+            needs.scroll_state = true;
+        } else if (ascii_iequals(name, "style")) {
+            // One feature, or a condition of them.
+            std::size_t first = a;
+            while (first < b && s.tokens[first].type == token_type::whitespace) { ++first; }
+            if (first < b && s.tokens[first].type != token_type::open_paren &&
+                !is_ident_named(s, first, "not")) {
+                (void)style_feature(a, b);
+            } else if (!boolean_expression(s, a, b, unknown_function, style_feature)) {
+                needs.unknown = true;
+            }
+        } else {
+            needs.unknown = true; // a <general-enclosed> function
+        }
+        return truth::unknown;
+    };
+    if (!boolean_expression(s, 0, s.tokens.size() - 1, test, size_feature)) {
+        needs.unknown = true;
     }
     return needs;
 }

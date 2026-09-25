@@ -586,6 +586,8 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
     // ponytail: the requirements are re-read per element per rule; cache them
     // on the condition if a page with many containers shows it.
     const css::container_needs needs = css::container_requirements(e.condition);
+    // A feature no container has: no container can be asked.
+    if (needs.unknown) { return false; }
     bool held = false;
     // A PSEUDO-ELEMENT'S ORIGINATING ELEMENT is its container candidate too.
     for (std::size_t d = depth + (pseudo_wanted_ != atom{} ? 1 : 0); d-- > 0;) {

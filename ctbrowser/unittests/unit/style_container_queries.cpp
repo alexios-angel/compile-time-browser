@@ -69,7 +69,7 @@ void test_selection() {
     expect_value(f, span, "z-index", "1", "width from the inline-size container");
     expect_value(f, span, "order", "2", "height skips it for the size container");
     expect_value(f, span, "opacity", "0.5", "the size container's height, not the inline one's");
-    expect_value(f, span, "color", "green", "(hover) is no container feature");
+    CHECK(f.value_of(span, "color").empty()); // (hover): a feature no container has
     CHECK(!f.styles.container_sizes_changed());
     f.styles.set_container_size([](node_id) { return engine::container_size{1, 1}; });
     CHECK(f.styles.container_sizes_changed());
