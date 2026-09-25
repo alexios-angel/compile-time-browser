@@ -549,19 +549,8 @@ void dom_bindings::install_event_handler_attributes(context & cx) {
             hosts.push_back(static_cast<script::object_object *>(proto.as_heap()));
         }
     }
-    if (auto * window = window_object()) { hosts.push_back(window); }
     const auto install = [&](std::string_view attribute, std::span<script::object_object *> where) {
-        const std::string name{attribute};
-        const value getter = value::object(
-            cx.allocate<script::native_object>(name, [this, name](context & c, std::span<value>) {
-                return event_handler_get(c, c.current_this(), name);
-            }));
-        const value setter = value::object(
-            cx.allocate<script::native_object>(name, [this, name](context & c, std::span<value> a) {
-                event_handler_set(c, c.current_this(), name, a.empty() ? value::undefined() : a[0]);
-                return value::undefined();
-            }));
-        for (script::object_object * host : where) { host->define_accessor(name, getter, setter); }
+        install_handler_accessor(cx, attribute, where);
     };
     for (const std::string_view attribute : global_event_handlers) { install(attribute, hosts); }
     // The Document's own (HTML 3.1.3 and the pointer lock, fullscreen and
@@ -574,12 +563,37 @@ void dom_bindings::install_event_handler_attributes(context & cx) {
             install(attribute, std::span<script::object_object *>{&document_proto, 1});
         }
     }
-    // WindowEventHandlers is the window's alone here - see the note above on
-    // what forwarding would need.
-    if (auto * window = window_object()) {
-        for (const std::string_view attribute : window_event_handlers) {
-            install(attribute, std::span<script::object_object *>{&window, 1});
-        }
+    if (auto * window = window_object()) { install_window_handlers(cx, *window); }
+}
+
+// One `on<name>` accessor pair over this document's handler storage, on each
+// of `where`.
+void dom_bindings::install_handler_accessor(context & cx, std::string_view attribute,
+                                            std::span<script::object_object *> where) {
+    const std::string name{attribute};
+    const value getter = value::object(
+        cx.allocate<script::native_object>(name, [this, name](context & c, std::span<value>) {
+            return event_handler_get(c, c.current_this(), name);
+        }));
+    const value setter = value::object(
+        cx.allocate<script::native_object>(name, [this, name](context & c, std::span<value> a) {
+            event_handler_set(c, c.current_this(), name, a.empty() ? value::undefined() : a[0]);
+            return value::undefined();
+        }));
+    for (script::object_object * host : where) { host->define_accessor(name, getter, setter); }
+}
+
+// A WINDOW'S HANDLERS - GlobalEventHandlers and WindowEventHandlers, the latter
+// the window's alone here (see the note above on what forwarding would need) -
+// over THIS document's storage: the page's window in install, a frame's in
+// install_frame_realm, so `<body onload>` in a frame is the frame window's.
+void dom_bindings::install_window_handlers(context & cx, script::object_object & window) {
+    script::object_object * host = &window;
+    for (const std::string_view attribute : global_event_handlers) {
+        install_handler_accessor(cx, attribute, std::span<script::object_object *>{&host, 1});
+    }
+    for (const std::string_view attribute : window_event_handlers) {
+        install_handler_accessor(cx, attribute, std::span<script::object_object *>{&host, 1});
     }
 }
 

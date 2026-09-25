@@ -596,6 +596,11 @@ private:
     // A frame document's own browsing context (frames.cpp): its window, its
     // realm, the scripts its parse left, and the two events a load ends in.
     void install_frame_realm(context & cx, dom_bindings & owner, node_id element);
+    // The `on<event>` accessors of a window over this document's handlers -
+    // events/handler_attributes.cpp.
+    void install_window_handlers(context & cx, script::object_object & window);
+    void install_handler_accessor(context & cx, std::string_view attribute,
+                                  std::span<script::object_object *> where);
     void run_frame_scripts(context & cx);
     void finish_frame_load(context & cx);
     bool frame_load_finished_ = false;

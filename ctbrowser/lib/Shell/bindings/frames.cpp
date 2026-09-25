@@ -539,6 +539,7 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     // Listening at THIS window: a frame script's `addEventListener("load", f)`
     // hears the frame's load, not the page's.
     install_window_listeners(cx, *frame_window);
+    install_window_handlers(cx, *frame_window);
     const value frame_dispatch =
         native(cx, "dispatchEvent", [this](context & c, std::span<value> a) {
             const value event = arg(a, 0);
