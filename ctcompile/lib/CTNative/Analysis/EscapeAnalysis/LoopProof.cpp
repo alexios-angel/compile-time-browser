@@ -380,6 +380,53 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         if (depth == 64) { return std::nullopt; }
         if (mlir::Value value = equalYield(operand)) { return self(self, value, depth + 1, use); }
+        if (use != IndexUse::ArithmeticOperand) {
+            std::optional<IndexRange> joined;
+            std::size_t period = 0;
+            for (mlir::Value input : yieldedInputs(operand)) {
+                auto range = self(self, input, depth + 1, use);
+                if (!range) {
+                    if (invariantFailure == ArrayContentsFailure::WorkLimit) {
+                        return std::nullopt;
+                    }
+                    auto scalar = invariant(invariant, input, 0);
+                    if (!scalar || !scalar->origin()) { return std::nullopt; }
+                    if (!scalar->integerNumber && !scalar->negativeIntegerNumber) {
+                        scalar->integerNumber = boundedNumber(scalar->origin());
+                        if (!scalar->integerNumber) {
+                            scalar->negativeIntegerNumber = boundedNumber(scalar->origin(), true);
+                        }
+                    }
+                    if (!scalar->integerNumber && !scalar->negativeIntegerNumber) {
+                        return std::nullopt;
+                    }
+                    range = IndexRange{*scalar, *scalar, 1};
+                }
+                if (endpointNumber(range->first) != endpointNumber(range->last)) {
+                    period = std::gcd(period, range->stride);
+                }
+                if (joined) {
+                    const auto displacement =
+                        endpointNumber(range->first) - endpointNumber(joined->first);
+                    period = static_cast<std::size_t>(
+                        std::gcd(static_cast<std::int64_t>(period), displacement));
+                    if (displacement < 0) { joined->first = range->first; }
+                    if (endpointNumber(range->last) > endpointNumber(joined->last)) {
+                        joined->last = range->last;
+                    }
+                } else {
+                    joined = range;
+                }
+            }
+            if (joined) {
+                // A Number enclosure is never an exact ArithmeticOperand or
+                // receiver identity. Singleton arms add no artificial stride;
+                // preserve their gaps for the existing guard-reload proof.
+                joined->stride = std::max<std::size_t>(1, period);
+                joined->mixedShift = true;
+                return joined;
+            }
+        }
         auto * expression = operand.getDefiningOp();
         auto addition = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(expression);
         auto binary = llvm::dyn_cast_or_null<ctjs::BinaryOp>(expression);

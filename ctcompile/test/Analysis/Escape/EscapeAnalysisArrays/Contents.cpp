@@ -537,6 +537,16 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string clearBoth = clearGuard + "  ctjs.set_property %guard[%one], %zero\n";
     const std::string gapKeys = selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
                                               selectedInput("%read", "%two"));
+    const auto arithmeticInput = [&](const std::string & left, const std::string & right,
+                                     const std::string & expression = "add %selectedKey, %zero",
+                                     const std::string & thenBody = "",
+                                     const std::string & elseBody = "") {
+        return selectedInput(left, right, thenBody, elseBody, "%selectedKey") +
+               "    %key = ctjs.binary " + expression + "\n";
+    };
+    const std::string arithmeticKeys = selectedStore(arithmeticInput("%zero", "%one"));
+    const std::string arithmeticGap = selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
+                                                    arithmeticInput("%read", "%two"));
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -1369,6 +1379,149 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         {.what = "zero visits cannot lend an instance to unequal-key choices",
          .body = loopValues + allocationLoop(unequalKeys, "%two", "%one", "%zero, %zero") + done,
          .complete = false},
+        {.what = "addition consumes both unequal conditional Number keys",
+         .body = loopValues + allocationLoop(arithmeticKeys, "%one", "%one", "%zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "an unequal conditional right operand preserves addition order",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(arithmeticInput("%zero", "%one", "add %zero, %selectedKey")),
+                     "%one", "%one", "%zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "subtraction reverses the unequal conditional Number enclosure",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(arithmeticInput("%zero", "%two", "sub %two, %selectedKey")),
+                     "%two", "%one", "%zero, %zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "multiplication preserves the conditional write lattice gap",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(arithmeticInput("%zero", "%one", "mul %selectedKey, %two")),
+                     "%two", "%one", "%zero, %zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "division preserves the stride between unequal singleton arms",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(arithmeticInput("%zero", "%two", "div %selectedKey, %two")),
+                     "%one", "%one", "%zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "arithmetic encloses nested conditional producer results",
+         .body = loopValues +
+                 allocationLoop(selectedStore(selectedInput("%zero", "%one", "", "", "%inner") +
+                                              arithmeticInput("%inner", "%zero")),
+                                "%one", "%one", "%zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "composed arithmetic keeps unequal conditional Number bounds",
+         .body = loopValues +
+                 allocationLoop(selectedStore(arithmeticInput("%zero", "%two") +
+                                                  "    %final = ctjs.binary div %key, %two\n",
+                                              "%guard", "%final"),
+                                "%one", "%one", "%zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "arithmetic over unequal keys preserves an unwritten guard reload gap",
+         .body = loopValues + allocationLoop(arithmeticGap, "%two", "%one", "%zero, %zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "either arithmetic key can overlap the other arm's guard reload",
+         .body = loopValues +
+                 allocationLoop(selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
+                                              arithmeticInput("%read", "%one")),
+                                "%one", "%one", "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "else-arm reloads remain visible through conditional arithmetic",
+         .body = loopValues +
+                 allocationLoop(selectedStore(arithmeticInput(
+                                    "%one", "%read", "add %selectedKey, %zero", "",
+                                    "      %read = ctjs.get_property %guard[%one]\n")),
+                                "%one", "%one", "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "a returned arithmetic-key holder retains either possible child",
+         .body = loopValues + allocationLoop(arithmeticKeys, "%one", "%one", "%zero, %zero") +
+                 "  ctjs.return %guard\n"},
+        {.what = "clearing every arithmetic key releases the stored child",
+         .body = loopValues + allocationLoop(arithmeticKeys, "%one", "%one", "%zero, %zero") +
+                 clearBoth + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved arithmetic-key child survives clearing both positions",
+         .body = loopValues + allocationLoop(arithmeticKeys, "%one", "%one", "%zero, %zero") +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearBoth +
+                 "  ctjs.return %read\n"},
+        {.what = "one retaining exit preserves the arithmetic-key child",
+         .body = loopValues + allocationLoop(arithmeticKeys, "%one", "%one", "%zero, %zero") +
+                 "  cf.cond_br %flag, ^retain, ^discard\n"
+                 "^retain:\n  ctjs.return %guard\n^discard:\n" +
+                 done},
+        {.what = "clearing arithmetic keys cannot erase an earlier ownership cycle",
+         .body = loopValues +
+                 allocationLoop("    %fresh = ctjs.create_array [%guard]\n" +
+                                    arithmeticInput("%zero", "%one") +
+                                    "    ctjs.set_property %guard[%key], %fresh\n",
+                                "%one", "%one", "%zero, %zero") +
+                 clearBoth + done,
+         .complete = false},
+        {.what = "one arithmetic arm outside the current extent refuses the store",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(arithmeticInput("%zero", "%one", "add %selectedKey, %one")),
+                     "%one", "%one", "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "one fractional arithmetic arm cannot borrow the other's exact key",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(arithmeticInput("%zero", "%one", "div %selectedKey, %two")),
+                     "%one", "%one", "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "a String arm never borrows a Number enclosure for concatenating Add",
+         .body = loopValues +
+                 allocationLoop(selectedStore(arithmeticInput(
+                                    "%zero", "%text", "add %selectedKey, %zero", "",
+                                    "      %text = ctjs.constant #ctjs.string<\"1\">\n")),
+                                "%one", "%one", "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "an unknown conditional operand refuses the entire arithmetic key",
+         .body = loopValues +
+                 allocationLoop(selectedStore(arithmeticInput("%zero", "%p")), "%one", "%one",
+                                "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "correlated unequal arms cannot be treated as one exact arithmetic operand",
+         .body = loopValues +
+                 allocationLoop(selectedStore(arithmeticInput("%zero", "%one",
+                                                              "sub %selectedKey, %selectedKey")),
+                                "%one", "%one", "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "calls in an arithmetic key arm still refuse the complete census",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(arithmeticInput("%zero", "%one", "add %selectedKey, %zero",
+                                                   "      %called = ctjs.call %p(%q)\n")),
+                     "%one", "%one", "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "conditional arithmetic keys require initialized solver inputs",
+         .body = loopValues + allocationLoop(arithmeticKeys, "%one", "%one", "%zero, %zero") + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "conditional arithmetic cannot borrow a repeated allocation instance",
+         .body =
+             loopValues + allocationLoop(arithmeticKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "zero visits cannot supply a conditional arithmetic allocation instance",
+         .body = loopValues + allocationLoop(arithmeticKeys, "%two", "%one", "%zero, %zero") + done,
+         .complete = false},
         {.what = "an arm store cannot resize the array that proves its trip count",
          .body =
              loopValues +
@@ -1678,7 +1831,59 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = footprintMutation.what, .body = footprintMutation.body, .expected = ""},
              "the per-arm footprint mutation fixture did not parse");
     }
-    std::printf("array retention: %zu rows, twenty-two live states, %zu budget cutoffs\n",
+    retention_row arithmeticMutation{
+        .what = "conditional arithmetic ranges are reproved after live operand mutations",
+        .body = loopValues + allocationLoop(arithmeticGap, "%two", "%one", "%zero, %zero, %zero") +
+                done,
+        .confinedNested = "fresh"};
+    auto arithmeticModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + arithmeticMutation.body + "}\n", &context);
+    if (arithmeticModule) {
+        ctjs::FuncOp function = *arithmeticModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto branch = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto * yield = branch.getElseRegion().front().getTerminator();
+        const mlir::Value originalYield = yield->getOperand(0);
+        const mlir::Value originalOffset = key.getRhs();
+        auto load = branch.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value overlap = load->getOperand(1);
+        const mlir::Value opaque = function.getBody().front().getArgument(3);
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*arithmeticModule))) {
+            fail(row{.what = arithmeticMutation.what,
+                     .body = arithmeticMutation.body,
+                     .expected = ""},
+                 "the conditional arithmetic stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 5; ++state) {
+            yield->setOperand(0, state == 1 ? overlap : originalYield);
+            key->setOperand(1, state == 2 ? overlap : state == 3 ? opaque : originalOffset);
+            arithmeticMutation.complete = state == 0 || state == 4;
+            arithmeticMutation.confinedNested = arithmeticMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*arithmeticModule, arithmeticMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                arithmeticMutation.complete) {
+                fail(row{.what = arithmeticMutation.what,
+                         .body = arithmeticMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied a conditional arithmetic range");
+            }
+        }
+    } else {
+        fail(row{.what = arithmeticMutation.what, .body = arithmeticMutation.body, .expected = ""},
+             "the conditional arithmetic mutation fixture did not parse");
+    }
+    std::printf("array retention: %zu rows, twenty-seven live states, %zu budget cutoffs\n",
                 rows.size(), budgets);
 }
 
