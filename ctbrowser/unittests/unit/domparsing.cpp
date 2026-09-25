@@ -140,6 +140,22 @@ void test_an_external_id_needs_its_system_literal() {
              "1,0");
 }
 
+// createContextualFragment on a range in a DETACHED Text node: no parent
+// element, so the context is a new <body> - and the fragment's script runs
+// when the fragment is inserted, not before.
+void test_a_contextual_fragment_without_a_context_element() {
+    CHECK_EQ(
+        said("<html><body><script>"
+             "var r = document.createRange();"
+             "r.selectNodeContents(document.createTextNode('?'));"
+             "var f = r.createContextualFragment('<b>x</b><script>window.ran = 1</scr' + 'ipt>');"
+             "alert(f.firstChild.nodeName + ',' + (typeof window.ran));"
+             "document.body.appendChild(f);"
+             "alert(window.ran);"
+             "</script></body></html>"),
+        "B,undefined;1");
+}
+
 // THE HTML PARTIAL UPDATES: each position lands where its name says, the safe
 // spelling drops the script and an event handler the Unsafe one keeps (and
 // runs only with runScripts), a sanitizer's removeElements takes the element
@@ -177,6 +193,7 @@ int main() {
     test_positional_html_methods();
     test_serialize_prefixes_and_declarations();
     test_an_external_id_needs_its_system_literal();
+    test_a_contextual_fragment_without_a_context_element();
     test_serialize_to_string();
     test_serialize_namespaces();
     test_noscript_follows_the_documents_scripting_flag();

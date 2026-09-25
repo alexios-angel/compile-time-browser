@@ -859,7 +859,7 @@ void dom_bindings::install_range(context & cx) {
         // HTML `<html>`, `<head>` and `<body>` a page wraps its markup
         // in are unwrapped - their children stand in their place
         // (createContextualFragment-xhtml.xhtml, what every browser does).
-        if (node.owner->doc_->xml()) {
+        if (start.owner->doc_->xml()) {
             const value query = c.lookup_property(fragment, "querySelectorAll");
             const value selector = c.string("html, head, body");
             const value wrappers =
