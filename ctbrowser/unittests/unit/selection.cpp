@@ -110,6 +110,31 @@ void test_what_the_selection_refuses() {
              "InvalidStateError;IndexSizeError;0;IndexSizeError;0,none");
 }
 
+// A SELECTION ACROSS A SHADOW BOUNDARY: the anchor inside a closed tree and
+// the focus outside it. The direction comes from the shadow-including order,
+// the selection is not collapsed though its range is, and getComposedRanges()
+// rescopes the inner point to the host unless its tree is named - and refuses
+// a list that holds anything but ShadowRoots.
+void test_a_selection_across_a_shadow_boundary() {
+    CHECK_EQ(said("<html><body><div id=c>a<div id=h></div>b</div><script>"
+                  "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"
+                  "var c = document.getElementById('c'), h = document.getElementById('h');"
+                  "var sr = h.attachShadow({mode: 'closed'}); sr.innerHTML = 'hello, world';"
+                  "var s = getSelection();"
+                  "s.setBaseAndExtent(sr.firstChild, 7, c, 2);"
+                  "var r = s.getComposedRanges()[0];"
+                  "alert(s.direction + ',' + s.isCollapsed + ',' + (r.startContainer === c) + ','"
+                  " + r.startOffset + ',' + (r.endContainer === c) + ',' + r.endOffset);"
+                  "var inner = s.getComposedRanges({shadowRoots: [sr]})[0];"
+                  "alert((inner.startContainer === sr.firstChild) + ',' + inner.startOffset + ','"
+                  " + inner.endOffset);"
+                  "s.setBaseAndExtent(sr.firstChild, 7, c, 1);"
+                  "alert(s.direction);"
+                  "alert(threw(function(){ s.getComposedRanges({shadowRoots: [c]}); }));"
+                  "</script></body></html>"),
+             "forward,false,true,1,true,2;true,7,2;backward;TypeError");
+}
+
 } // namespace
 
 int main() {
@@ -117,5 +142,6 @@ int main() {
     test_add_range_keeps_the_callers_range();
     test_collapse_and_extend_carry_the_direction();
     test_what_the_selection_refuses();
+    test_a_selection_across_a_shadow_boundary();
     REPORT("selection");
 }

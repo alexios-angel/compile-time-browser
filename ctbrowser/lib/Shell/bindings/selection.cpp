@@ -29,6 +29,7 @@
 
 #include <ctbrowser/shell/bindings.hpp>
 
+#include <algorithm>
 #include <initializer_list>
 #include <span>
 #include <string>
@@ -45,6 +46,18 @@ constexpr std::string_view backwards_slot = "__backwards";
 // The document's "has scheduled selectionchange event" flag, kept on the one
 // Selection of the window.
 constexpr std::string_view scheduled_slot = "__selectionchangeScheduled";
+// THE ANCHOR AND THE FOCUS THEMSELVES, which are not always the range's ends:
+// a selection whose two points are in different trees of the document - one
+// inside a shadow root - has a live range collapsed at one of them (DOM's
+// "set the start or end" across roots), and getComposedRanges() and
+// `isCollapsed` answer from these.
+constexpr std::string_view anchor_node_slot = "__anchorNode";
+constexpr std::string_view anchor_offset_slot = "__anchorOffset";
+constexpr std::string_view focus_node_slot = "__focusNode";
+constexpr std::string_view focus_offset_slot = "__focusOffset";
+// ...and whether they are such a pair. Otherwise the range's own ends are the
+// answer, read live - a range the page added may since have been moved.
+constexpr std::string_view across_slot = "__across";
 
 [[nodiscard]] script::object_object * self_object(context & c) {
     const value self = c.current_this();
@@ -73,6 +86,16 @@ void store_range(context & c, value range, bool backwards) {
     if (script::object_object * self = self_object(c)) {
         self->set(std::string{range_slot}, range);
         self->set(std::string{backwards_slot}, value::boolean(backwards));
+        const bool has = range.is_object();
+        const auto end = [&](const char * name) {
+            return has ? c.lookup_property(range, name) : value::undefined();
+        };
+        self->set(std::string{anchor_node_slot},
+                  end(backwards ? "endContainer" : "startContainer"));
+        self->set(std::string{anchor_offset_slot}, end(backwards ? "endOffset" : "startOffset"));
+        self->set(std::string{focus_node_slot}, end(backwards ? "startContainer" : "endContainer"));
+        self->set(std::string{focus_offset_slot}, end(backwards ? "startOffset" : "endOffset"));
+        self->set(std::string{across_slot}, value::boolean(false));
     }
 }
 
@@ -119,9 +142,13 @@ void dom_bindings::install_selection(context & cx) {
                           return c.lookup_property(range, is_backwards(c) ? backwards : forwards);
                       });
     }
+    // "The anchor and the focus are the same" - never, for a selection across
+    // a shadow boundary, whose range is collapsed all the same.
     define_getter(cx, *proto, "isCollapsed", [](context & c, std::span<value>) {
         const value range = range_of(c);
-        if (!range.is_object()) { return value::boolean(true); }
+        script::object_object * self = self_object(c);
+        if (!range.is_object() || self == nullptr) { return value::boolean(true); }
+        if (context::truthy(held_slot(self, across_slot))) { return value::boolean(false); }
         return value::boolean(context::truthy(c.lookup_property(range, "collapsed")));
     });
     define_getter(cx, *proto, "rangeCount", [](context & c, std::span<value>) {
@@ -194,6 +221,94 @@ void dom_bindings::install_selection(context & cx) {
         if (c.throw_pending()) { return value::undefined(); }
         (void)call_on(c, made, "setEnd", {node, offset});
         return c.throw_pending() ? value::undefined() : made;
+    };
+
+    // --- points in different trees of the document ---------------------------
+    //
+    // THE SHADOW-INCLUDING ORDER OF TWO BOUNDARY POINTS: each is lifted out of
+    // the shadow trees the other is not inside - a point in a shadow tree
+    // stands at its host, BETWEEN (parent, index) and (parent, index + 1),
+    // which the half offset says - and the two are then compared in one tree
+    // as DOM 5.2 compares boundary points. -1, 0 or 1.
+    const auto node_of = [this](value v) {
+        return is_the_document(v) ? doc_->document_node() : handle_of(v);
+    };
+    const auto compare_composed = [this](node_id a, double a_offset, node_id b,
+                                         double b_offset) -> int {
+        const auto txn = doc_->read();
+        const auto roots = [&](node_id n) {
+            std::vector<node_id> out;
+            for (int guard = 0; n && guard < 64; ++guard) {
+                const node_id root = root_of_tree(txn, n, false);
+                out.push_back(root);
+                const shadow_tree * tree = shadow_tree_of(root);
+                if (tree == nullptr) { break; }
+                n = tree->host;
+            }
+            return out;
+        };
+        const std::vector<node_id> a_roots = roots(a);
+        const std::vector<node_id> b_roots = roots(b);
+        node_id common;
+        for (const node_id one : a_roots) {
+            if (std::ranges::find(b_roots, one) != b_roots.end()) {
+                common = one;
+                break;
+            }
+        }
+        const auto index_of = [&](node_id n) {
+            const std::span<const node_id> row = txn.children(dom_parent(txn, n));
+            const auto here = std::ranges::find(row, n);
+            return static_cast<double>(here - row.begin());
+        };
+        const auto lift = [&](node_id & n, double & offset) {
+            for (int guard = 0; n && guard < 64; ++guard) {
+                const node_id root = root_of_tree(txn, n, false);
+                const shadow_tree * tree = root == common ? nullptr : shadow_tree_of(root);
+                if (tree == nullptr) { return; }
+                offset = index_of(tree->host) + 0.5;
+                n = dom_parent(txn, tree->host);
+            }
+        };
+        lift(a, a_offset);
+        lift(b, b_offset);
+        if (a == b) { return a_offset < b_offset ? -1 : a_offset > b_offset ? 1 : 0; }
+        const auto chain = [&](node_id n) {
+            std::vector<node_id> up;
+            for (; n; n = dom_parent(txn, n)) { up.push_back(n); }
+            std::ranges::reverse(up);
+            return up;
+        };
+        const std::vector<node_id> a_up = chain(a);
+        const std::vector<node_id> b_up = chain(b);
+        std::size_t shared = 0;
+        while (shared < a_up.size() && shared < b_up.size() && a_up[shared] == b_up[shared]) {
+            ++shared;
+        }
+        // One contains the other: where the other's branch leaves it.
+        if (shared == a_up.size()) { return index_of(b_up[shared]) < a_offset ? 1 : -1; }
+        if (shared == b_up.size()) { return index_of(a_up[shared]) < b_offset ? -1 : 1; }
+        if (shared == 0) { return 0; }
+        return index_of(a_up[shared]) < index_of(b_up[shared]) ? -1 : 1;
+    };
+    const auto same_tree = [this](node_id a, node_id b) {
+        const auto txn = doc_->read();
+        return root_of_tree(txn, a, false) == root_of_tree(txn, b, false);
+    };
+    // A selection whose anchor and focus are in DIFFERENT trees: the live
+    // range collapses where DOM's "set the start" then "set the end" leave it
+    // - at the later point - and the two points are kept beside it.
+    const auto store_across = [store](context & c, value anchor_node, value anchor_offset,
+                                      value focus_node, value focus_offset, bool backwards,
+                                      value collapsed) {
+        store(c, collapsed, backwards);
+        if (script::object_object * self = self_object(c)) {
+            self->set(std::string{anchor_node_slot}, anchor_node);
+            self->set(std::string{anchor_offset_slot}, anchor_offset);
+            self->set(std::string{focus_node_slot}, focus_node);
+            self->set(std::string{focus_offset_slot}, focus_offset);
+            self->set(std::string{across_slot}, value::boolean(true));
+        }
     };
 
     // --- the methods ----------------------------------------------------------
@@ -307,17 +422,29 @@ void dom_bindings::install_selection(context & cx) {
         store(c, made, side < 0);
         return value::undefined();
     });
-    method("setBaseAndExtent", [this, rooted_here, store](context & c, std::span<value> a) {
+    method("setBaseAndExtent", [rooted_here, store, range_at, node_of, same_tree, compare_composed,
+                                store_across](context & c, std::span<value> a) {
         const value anchor_node = arg(a, 0);
         const value anchor_offset = value::number(arg_number(a, 1));
         const value focus_node = arg(a, 2);
         const value focus_offset = value::number(arg_number(a, 3));
+        // The offsets are checked against each node BEFORE the root is (steps
+        // 1-2) - an IndexSizeError from either comes first - by collapsing a
+        // fresh range at each point.
+        const value made = range_at(c, anchor_node, anchor_offset);
+        if (c.throw_pending()) { return value::undefined(); }
+        const value focus_at = range_at(c, focus_node, focus_offset);
+        if (c.throw_pending()) { return value::undefined(); }
         if (!rooted_here(anchor_node) || !rooted_here(focus_node)) { return value::undefined(); }
-        const value made = create_range(c);
-        (void)call_on(c, made, "setStart", {anchor_node, anchor_offset});
-        if (c.throw_pending()) { return value::undefined(); }
-        (void)call_on(c, made, "setEnd", {anchor_node, anchor_offset});
-        if (c.throw_pending()) { return value::undefined(); }
+        if (const node_id anchor_id = node_of(anchor_node), focus_id = node_of(focus_node);
+            anchor_id && focus_id && !same_tree(anchor_id, focus_id)) {
+            const bool backwards =
+                compare_composed(focus_id, context::to_number(focus_offset), anchor_id,
+                                 context::to_number(anchor_offset)) < 0;
+            store_across(c, anchor_node, anchor_offset, focus_node, focus_offset, backwards,
+                         backwards ? made : focus_at);
+            return value::undefined();
+        }
         const double side =
             context::to_number(call_on(c, made, "comparePoint", {focus_node, focus_offset}));
         if (c.throw_pending()) { return value::undefined(); }
@@ -391,15 +518,89 @@ void dom_bindings::install_selection(context & cx) {
     // points rescoped out of any shadow tree the caller did NOT pass. No
     // selection this engine makes is inside a shadow tree yet, so what comes
     // back is the range's own two points.
-    method("getComposedRanges", [](context & c, std::span<value>) {
+    // `getComposedRanges(options)` (Selection API): the selection as a
+    // StaticRange from its first point to its last, each RESCOPED out of every
+    // shadow tree the caller did not name - a point inside one stands at its
+    // host, before it for the start and after it for the end - so a page is
+    // told nothing about a tree it was not given. `shadowRoots` must hold
+    // ShadowRoots; the older variadic spelling is taken as the same list.
+    method("getComposedRanges", [this, node_of](context & c, std::span<value> args) {
         const value made = c.make_array();
-        const value range = range_of(c);
-        const value ctor = c.global("StaticRange");
-        if (!range.is_object() || !ctor.is_callable()) { return made; }
-        const value init = value::object(c.allocate<script::object_object>());
-        for (const char * name : {"startContainer", "startOffset", "endContainer", "endOffset"}) {
-            c.store_property(init, name, c.lookup_property(range, name));
+        std::vector<node_id> allowed;
+        const auto allow = [&](value one) {
+            const node_id id = handle_of(one);
+            if (!id || shadow_tree_of(id) == nullptr) {
+                c.throw_error("TypeError", "Failed to execute 'getComposedRanges' on "
+                                           "'Selection': a member of shadowRoots is not a "
+                                           "ShadowRoot.");
+                return false;
+            }
+            allowed.push_back(id);
+            return true;
+        };
+        const value first = arg(args, 0);
+        if (handle_of(first)) {
+            for (const value & one : args) {
+                if (!allow(one)) { return value::undefined(); }
+            }
+        } else if (const value list = dict_member(c, first, "shadowRoots"); list.is_array()) {
+            for (const value & one : static_cast<script::array_object *>(list.as_heap())->items) {
+                if (!allow(one)) { return value::undefined(); }
+            }
         }
+        const value range = range_of(c);
+        script::object_object * self = self_object(c);
+        const value ctor = c.global("StaticRange");
+        if (!range.is_object() || self == nullptr || !ctor.is_callable()) { return made; }
+        // The range's own ends, unless the selection is across trees - then
+        // the anchor and focus, first one first.
+        const bool across = context::truthy(held_slot(self, across_slot));
+        const bool backwards = is_backwards(c);
+        const auto point = [&](bool first, bool offset) {
+            if (!across) {
+                return c.lookup_property(range, first ? (offset ? "startOffset" : "startContainer")
+                                                      : (offset ? "endOffset" : "endContainer"));
+            }
+            const bool anchor = first != backwards;
+            return held_slot(self, anchor ? (offset ? anchor_offset_slot : anchor_node_slot)
+                                          : (offset ? focus_offset_slot : focus_node_slot));
+        };
+        value start_node = point(true, false);
+        double start_offset = context::to_number(point(true, true));
+        value end_node = point(false, false);
+        double end_offset = context::to_number(point(false, true));
+        const auto rescope = [&](value & node, double & offset, bool end) {
+            const auto txn = doc_->read();
+            node_id at = node_of(node);
+            for (int guard = 0; at && guard < 64; ++guard) {
+                const node_id root = root_of_tree(txn, at, false);
+                const shadow_tree * tree = shadow_tree_of(root);
+                if (tree == nullptr) { return; }
+                // Stop at a root that is a shadow-including inclusive ancestor
+                // of one the caller named.
+                for (const node_id named : allowed) {
+                    for (node_id b = named; b;) {
+                        if (b == root) { return; }
+                        const node_id up = txn.parent(b);
+                        const shadow_tree * above = up ? nullptr : shadow_tree_of(b);
+                        b = up ? up : above == nullptr ? node_id{} : above->host;
+                    }
+                }
+                const node_id parent = dom_parent(txn, tree->host);
+                const std::span<const node_id> row = txn.children(parent);
+                offset = static_cast<double>(std::ranges::find(row, tree->host) - row.begin()) +
+                         (end ? 1 : 0);
+                at = parent;
+                node = parent == doc_->document_node() ? document_ : wrap(c, parent);
+            }
+        };
+        rescope(start_node, start_offset, false);
+        rescope(end_node, end_offset, true);
+        const value init = value::object(c.allocate<script::object_object>());
+        c.store_property(init, "startContainer", start_node);
+        c.store_property(init, "startOffset", value::number(start_offset));
+        c.store_property(init, "endContainer", end_node);
+        c.store_property(init, "endOffset", value::number(end_offset));
         const value one = c.construct(ctor, std::span<const value>{&init, 1});
         if (one.is_object()) {
             static_cast<script::array_object *>(made.as_heap())->items.push_back(one);
