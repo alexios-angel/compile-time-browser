@@ -41,26 +41,45 @@ namespace regexp_detail {
 // EscapeRegExpPattern, 22.2.6.13.1: what `source` reads back so that
 // `new RegExp(re.source)` and `eval("/" + re.source + "/")` both mean the
 // same pattern again. The empty pattern is "(?:)", a bare `/` is escaped and
-// a line terminator is spelled as its escape.
+// a line terminator - LF, CR, U+2028 and U+2029, none of which a literal may
+// hold - is spelled as its escape. One ALREADY escaped (`RegExp("\\\n")`, a
+// backslash then an LF) keeps its backslash and takes only the letter, so the
+// source reads `\n` and not `\\n`, which would be a backslash and an n.
 [[nodiscard]] std::string escape_pattern(const std::string & source) {
     if (source.empty()) { return "(?:)"; }
+    // The escape for a line terminator at `i`, and its width - or nothing.
+    const auto terminator = [&](std::size_t i, std::size_t & width) -> const char * {
+        width = 1;
+        if (source[i] == '\n') { return "n"; }
+        if (source[i] == '\r') { return "r"; }
+        width = 3;
+        if (source.compare(i, 3, "\xE2\x80\xA8") == 0) { return "u2028"; }
+        if (source.compare(i, 3, "\xE2\x80\xA9") == 0) { return "u2029"; }
+        return nullptr;
+    };
     std::string out;
     bool in_class = false;
     for (std::size_t i = 0; i < source.size(); ++i) {
         const char c = source[i];
+        std::size_t width = 0;
         if (c == '\\' && i + 1 < source.size()) {
             out += c;
-            out += source[++i];
+            if (const char * letter = terminator(i + 1, width)) {
+                out += letter;
+                i += width;
+            } else {
+                out += source[++i];
+            }
             continue;
         }
         if (c == '[') { in_class = true; }
         if (c == ']') { in_class = false; }
         if (c == '/' && !in_class) {
             out += "\\/";
-        } else if (c == '\n') {
-            out += "\\n";
-        } else if (c == '\r') {
-            out += "\\r";
+        } else if (const char * letter = terminator(i, width)) {
+            out += '\\';
+            out += letter;
+            i += width - 1;
         } else {
             out += c;
         }
