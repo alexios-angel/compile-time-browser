@@ -888,12 +888,13 @@ void install_promise(context & cx) {
         // code point above 0x7F becomes its encoding rather than one char,
         // which is what makes the round trip through String.prototype work.
         stat("fromCharCode", 1, [](context & c, std::span<value> a) {
+            const std::string before = c.current_stack();
             std::string out;
             for (std::size_t i = 0; i < a.size(); ++i) {
                 // ToUint16 of ToNumber (22.1.2.1): an object's valueOf runs.
                 if (!numeric_arg(c, a[i])) { return value::undefined(); }
                 const double n = c.to_number_value(a[i]);
-                if (c.throw_pending()) { return value::undefined(); }
+                if (detail::threw_since(c, before)) { return value::undefined(); }
                 append_utf8(out, context::to_uint32(value::number(n)) & 0xFFFFu);
             }
             return c.string(out);

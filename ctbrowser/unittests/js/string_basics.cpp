@@ -9,7 +9,8 @@
 //
 // TWO THINGS THIS FILE DELIBERATELY DOES NOT ASSERT.
 //
-// 1. NON-ASCII LENGTHS AND INDICES. This engine stores a JS string as UTF-8
+// 1. NON-ASCII LENGTHS AND MOST INDICES. charCodeAt reads UTF-16 units, but
+//    this engine stores a JS string as UTF-8
 //    BYTES; ECMA-262 specifies a sequence of UTF-16 CODE UNITS. So `"é".length`
 //    is 2 here and 1 in V8, and a non-BMP emoji is 4 here and 2 there. That is a
 //    representation difference, not a bug list, and closing it means changing
@@ -394,6 +395,35 @@ int main() {
     js_expect("String.fromCharCode.length", "1");
     js_expect("String.raw.length", "1");
 
+    // ToUint16 wrapping is independent of the byte-based string indexing below.
+    js_expect("String.fromCharCode(-1, 65537, 4294967361) === '\\uffff\\u0001A'", "true");
+    js_expect("String.fromCharCode(NaN, Infinity, -Infinity) === '\\u0000\\u0000\\u0000'", "true");
+    // A direct numeric TypeError must stop before converting the next argument.
+    for (const char * bad :
+         {"1n", "Object(1n)", "Object(Symbol())", "{valueOf() { return Symbol(); }}",
+          "{[Symbol.toPrimitive]() { return {}; }}"}) {
+        js_expect("(function () { var count = 0; var later = {valueOf() { count++;"
+                  " throw 'late'; }}; try { String.fromCharCode(65, " +
+                      std::string{bad} +
+                      ", later); } catch (e) { return e instanceof TypeError && count === 0; }"
+                      " return false; })()",
+                  "true");
+    }
+    js_expect(R"((function () {
+        var error = {}, count = 0;
+        var bad = {valueOf() { throw error; }};
+        var later = {valueOf() { count++; return 66; }};
+        try { String.fromCharCode.call(null, 65, bad, later); }
+        catch (e) { return e === error && count === 0; }
+        return false;
+    })())",
+              "true");
+    js_expect(R"(String.fromCharCode({valueOf() {
+        try { throw 0; } catch (e) {}
+        return 65;
+    }}, 66))",
+              "AB");
+
     // String statics stop at the first failed conversion, preserving its exception.
     js_expect(throws("String.fromCodePoint(Symbol())"), "TypeError");
     js_expect(throws("String.fromCodePoint(Object(Symbol()))"), "TypeError");
@@ -561,17 +591,50 @@ int main() {
         CHECK(cx.collections() > 0);
     }
 
+    // charCodeAt observes UTF-16 code units over the existing WTF-8 storage.
+    js_expect("\"\\u00e9\".charCodeAt(0)", "233");
+    js_expect("\"\\ud83d\\ude00\".charCodeAt(0)", "55357");
+    js_expect(R"((function () {
+        var s = 'A\u00e9\u20ac\ud83d\ude00\ud800Z\udc00';
+        return [0, 1, 2, 3, 4, 5, 6, 7, 8].map(function (i) {
+            return s.charCodeAt(i);
+        }).join();
+    })())",
+              "65,233,8364,55357,56832,55296,90,56320,NaN");
+    js_expect(R"([NaN, undefined, -0.9, 1.9, -1, Infinity, -Infinity, 9007199254740991]
+        .map(function (i) { return '\u00e9A'.charCodeAt(i); }).join())",
+              "233,233,233,65,NaN,NaN,NaN,NaN");
+    js_expect("''.charCodeAt()", "NaN");
+    js_expect("String.fromCharCode(-1).charCodeAt(0)", "65535");
+    js_expect("String.fromCharCode(-32767).charCodeAt(0)", "32769");
+    js_expect(R"((function () {
+        var log = '';
+        var text = {toString() { log += 's'; return '\u00e9A'; }};
+        var index = {valueOf() { log += 'i'; return 1; }};
+        return String.prototype.charCodeAt.call(text, index) + ':' + log;
+    })())",
+              "65:si");
+    for (const char * index :
+         {"Symbol()", "1n", "Object(Symbol())", "{valueOf() { return Symbol(); }}"}) {
+        js_expect(throws("'x'.charCodeAt(" + std::string{index} + ")"), "TypeError");
+    }
+    js_expect(R"((function () {
+        var error = {};
+        try { '\u00e9'.charCodeAt({valueOf() { throw error; }}); }
+        catch (e) { return e === error; }
+        return false;
+    })())",
+              "true");
+
     // --- the UTF-16 gap: CURRENT BEHAVIOUR, KNOWN WRONG ---------------------
     //
     // Everything in this block disagrees with V8, and every line says what V8
     // answers. They are pinned because a silent gap is worse than a recorded
     // one: this is the acceptance list for a UTF-16 migration, and the day the
     // representation changes these lines fail and say exactly what to update.
-    js_expect("\"e\\u0301\".length", "3");         // V8: 2 - a combining mark is 2 UTF-8 bytes
-    js_expect("\"\\u00e9\".length", "2");          // V8: 1 - one code unit, two UTF-8 bytes
-    js_expect("\"\\u00e9\".charCodeAt(0)", "195"); // V8: 233
-    js_expect("\"\\ud83d\\ude00\".length", "4");   // V8: 2 - a surrogate pair
-    js_expect("\"\\ud83d\\ude00\".charCodeAt(0)", "240");    // V8: 55357
+    js_expect("\"e\\u0301\".length", "3");       // V8: 2 - a combining mark is 2 UTF-8 bytes
+    js_expect("\"\\u00e9\".length", "2");        // V8: 1 - one code unit, two UTF-8 bytes
+    js_expect("\"\\ud83d\\ude00\".length", "4"); // V8: 2 - a surrogate pair
     js_expect("\"\\ud83d\\ude00\".split(\"\").length", "4"); // V8: 2
     js_expect("[...\"\\ud83d\\ude00\"].length", "4");        // V8: 1 - iteration is by code POINT
     js_expect("\"\\u00e9\".slice(0, 1).length", "1");        // V8: 1, but a DIFFERENT character

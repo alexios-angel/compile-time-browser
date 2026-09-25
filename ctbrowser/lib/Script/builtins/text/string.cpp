@@ -383,9 +383,8 @@ void install_string(context & cx) {
         const double raw = integer_arg(c, a, 0);
         if (!(raw >= 0 && raw < static_cast<double>(str.size()))) { return value::undefined(); }
         const auto i = static_cast<std::size_t>(raw);
-        // BYTES, not code points - strings are bytes in this engine
-        // (docs/script.md), so this agrees with charCodeAt rather than
-        // pretending to a UTF-16 view that nothing else here has.
+        // Still a byte index; charCodeAt has a UTF-16 view, but this method
+        // remains part of the string representation gap (docs/script.md).
         return value::number(static_cast<double>(static_cast<unsigned char>(str[i])));
     });
     // `normalize` is the IDENTITY here, and says so: strings are bytes, so
@@ -465,10 +464,25 @@ void install_string(context & cx) {
          });
     text("charCodeAt", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
         // Out of range - including NEGATIVE - is NaN, not the first character.
+        const std::string before = c.current_stack();
         const double i = integer_arg(c, a, 0);
+        if (detail::threw_since(c, before)) { return value::undefined(); }
         if (!(i >= 0 && i < static_cast<double>(s.size()))) { return value::number(std::nan("")); }
-        return value::number(
-            static_cast<double>(static_cast<unsigned char>(s[static_cast<std::size_t>(i)])));
+        auto remaining = static_cast<std::size_t>(i);
+        // ponytail: O(index) over WTF-8; cache code-unit offsets if repeated scans become hot.
+        for (std::size_t at = 0; at < s.size();) {
+            char32_t cp = decode_utf8(s, at);
+            if (cp >= 0x10000) {
+                if (remaining == 0) {
+                    return value::number(static_cast<double>(0xD800 + ((cp - 0x10000) >> 10)));
+                }
+                --remaining;
+                cp = 0xDC00 + ((cp - 0x10000) & 0x3FF);
+            }
+            if (remaining == 0) { return value::number(static_cast<double>(cp)); }
+            --remaining;
+        }
+        return value::number(std::nan(""));
     });
     // ALL FIVE OF THESE TAKE A POSITION, and all five used to ignore it - so
     // `"abc".indexOf("a", 1)` answered 0 where the specification says -1, and
