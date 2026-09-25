@@ -702,15 +702,15 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         }
         // 4c. AN OVERFLOW AXIS BESIDE A SCROLLING ONE: CSS Overflow 3 §3.1 -
         //     when either axis is neither `visible` nor `clip`, `visible`
-        //     computes to `auto` and `clip` to `hidden`.
+        //     computes to `auto`. `clip` stays `clip`: it may sit beside a
+        //     scrolling axis since csswg-drafts#7714 (overflow-computed).
         if (property == "overflow-x" || property == "overflow-y") {
             const std::string own = collapse_keyword(text);
             std::string other =
                 collapse_keyword(declared(property == "overflow-x" ? "overflow-y" : "overflow-x"));
             if (other.empty()) { other = "visible"; }
-            if (other != "visible" && other != "clip") {
-                if (own.empty() || own == "visible") { return "auto"; }
-                if (own == "clip") { return "hidden"; }
+            if (other != "visible" && other != "clip" && (own.empty() || own == "visible")) {
+                return "auto";
             }
             return own;
         }

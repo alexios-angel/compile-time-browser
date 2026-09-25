@@ -109,6 +109,21 @@ void dom_bindings::install_css_interface(context & cx) {
                                     "the initialValue does not parse against the syntax");
                 return value::undefined();
             }
+            // ...AND IS COMPUTATIONALLY INDEPENDENT (CSS Properties and Values
+            // 1 §1.2): a unit measuring a font or a query container needs an
+            // element, and an initial value has none.
+            const style::css::token_stream tokens = style::css::tokenize(made.initial);
+            for (const style::css::css_token & t : tokens.tokens) {
+                if (t.type != style::css::token_type::dimension) { continue; }
+                const std::string unit = ascii_lower_copy(tokens.unit_of(t));
+                if (unit.starts_with("cq") ||
+                    ascii_iequals_any(unit, {"em", "ex", "cap", "ch", "ic", "lh", "rem", "rex",
+                                             "rcap", "rch", "ric", "rlh"})) {
+                    throw_dom_exception(c, "SyntaxError",
+                                        "the initialValue is not computationally independent");
+                    return value::undefined();
+                }
+            }
         }
         if (!selector_engine().register_property(property, std::move(made))) {
             throw_dom_exception(c, "InvalidStateError", property + " is already registered");

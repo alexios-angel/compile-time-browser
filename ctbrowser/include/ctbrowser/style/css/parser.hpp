@@ -56,4 +56,10 @@ struct nesting_context;
     const std::vector<namespace_declaration> * namespaces = nullptr,
     const nesting_context * nesting = nullptr);
 
+// `selector(<complex-selector>)` in @supports and CSS.supports() (CSS
+// Conditional 4 §6.2): exactly ONE complex selector that parses, read
+// unforgivingly - `:is(:foo)`, `:where()` and `:has(:is(:has(a)))` fail it
+// where a style rule would drop the bad argument (CSS-supports-L4).
+[[nodiscard]] bool supports_selector(std::string_view text);
+
 } // namespace ctbrowser::style::css

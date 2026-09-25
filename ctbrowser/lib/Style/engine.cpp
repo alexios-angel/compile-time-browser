@@ -90,6 +90,7 @@ style_map engine::resolve_all(const read_txn & txn) {
     // here, from the document node - which is what gives <html> a sibling count and
     // makes `:only-child` true of it.
     enter_level(txn, txn.root(), 0);
+    container_answers_.clear();
     scope_ = {}; // a stylesheet's `:scope` is `:root`
     resolve_subtree(txn, txn.root(), ancestors, out);
     return out;
@@ -122,8 +123,7 @@ void engine::resolve_subtree(const read_txn & txn, node_id node, ancestor_filter
 
     const computed_style_ptr resolved = resolve(txn, node, self, ancestors, depth, parent);
     out[key_of(node)] = resolved;
-    if (chain_styles_.size() <= depth) { chain_styles_.resize(depth + 1); }
-    chain_styles_[depth] = resolved;
+    note_chain(depth, node, resolved);
 
     // The tag, id and classes are read from the stored facts rather than from
     // `self`, because resolve() may have grown levels_ and reallocated it.
@@ -141,6 +141,37 @@ void engine::resolve_subtree(const read_txn & txn, node_id node, ancestor_filter
         resolve_subtree(txn, child, ancestors, out, depth + 1, resolved);
     }
     ancestors.pop(my_tag, my_id, my_classes);
+}
+
+void engine::note_chain(std::size_t depth, node_id node, const computed_style_ptr & resolved) {
+    if (chain_styles_.size() <= depth) { chain_styles_.resize(depth + 1); }
+    chain_styles_[depth] = resolved;
+    // ...and the size containers its children's `cq*` units measure: its own
+    // on the axes it contains, its parent's on the rest.
+    if (cq_chain_.size() <= depth) { cq_chain_.resize(depth + 1); }
+    std::pair<node_id, node_id> containers =
+        depth > 0 ? cq_chain_[depth - 1] : std::pair<node_id, node_id>{};
+    // Only an ELIGIBLE one: a container with no box to contain - a table,
+    // an inline, display: none or contents - is passed over for the next
+    // one out (container-units-ineligible-container). A vertical
+    // inline-size container contains its height.
+    if (resolved) {
+        const std::string_view mode = resolved->get(atoms_->intern_lower("writing-mode"));
+        const bool vertical = mode.starts_with("vertical") || mode.starts_with("sideways");
+        for (const std::string_view word :
+             split_top_level(resolved->get(atoms_->intern_lower("container-type")), " \t\n")) {
+            if (word != "size" && word != "inline-size") { continue; }
+            if (!container_size_of(node)) { break; }
+            if (word == "size") {
+                containers = {node, node};
+            } else if (vertical) {
+                containers.second = node;
+            } else {
+                containers.first = node;
+            }
+        }
+    }
+    cq_chain_[depth] = containers;
 }
 
 void engine::enter_level(const read_txn & txn, node_id parent, std::size_t depth) {

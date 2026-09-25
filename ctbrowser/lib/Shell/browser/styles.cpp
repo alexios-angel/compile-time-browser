@@ -58,6 +58,50 @@ std::string expand_imports(const asset_registry & assets, std::string css, std::
 
 void browser::load_author_styles() {
     if (author_sheet_loaded_) { return; }
+    // A QUERY CONTAINER'S SIZE is its content box as last laid out (CSS
+    // Conditional 5 §3.1) - asked by the cascade, answered from the fragments,
+    // and nothing before the first layout, when every size query is unknown.
+    styles_->set_container_size(
+        [this](node_id id) -> std::optional<ctbrowser::style::engine::container_size> {
+            const ctbrowser::layout::fragment * f = fragments_.find(id);
+            // Size containment does not apply to an inline box, a table or
+            // an internal table box, and `display: contents` has no box at
+            // all - so none of them has a size to answer with (CSS
+            // Containment 2 §3.2, ineligible-containment,
+            // size-container-no-principal-box).
+            if (f == nullptr || f->box == nullptr ||
+                f->box->kind == ctbrowser::layout::box_kind::inline_ ||
+                f->box->kind == ctbrowser::layout::box_kind::text ||
+                f->box->kind == ctbrowser::layout::box_kind::table) {
+                return std::nullopt;
+            }
+            if (f->box->style) {
+                const std::string_view display = f->box->style->get(atoms_.intern_lower("display"));
+                if (display == "contents" || display.starts_with("table")) { return std::nullopt; }
+            }
+            const ctbrowser::layout::resolved_edges e = ctbrowser::layout::edges_of(*f);
+            ctbrowser::style::engine::container_size size{
+                std::max(0.0f, f->bounds.width - e.horizontal_inner()),
+                std::max(0.0f, f->bounds.height - e.vertical_inner())};
+            // WHERE A SCROLL CONTAINER CAN STILL GO, for scroll-state(): its
+            // scrolling area against its padding box at its scroll offset.
+            // ponytail: the offset is taken as the origin - the bindings keep
+            // a scripted one privately - so only a box nothing has scrolled
+            // answers right; read dom_bindings::scroll_offset_of once it is
+            // public, and restyle on a scroll.
+            if (f->box->scroll_container) {
+                const ctbrowser::rect area = ctbrowser::layout::scrolling_area_of(*f);
+                const ctbrowser::rect port = ctbrowser::layout::padding_box_of(*f);
+                const ctbrowser::point at{};
+                namespace css = ctbrowser::style::css;
+                const float right = area.width - port.width - at.x;
+                const float down = area.height - port.height - at.y;
+                size.scrollable = static_cast<std::uint8_t>(
+                    (at.y > 0.5f ? css::scroll_top : 0) | (down > 0.5f ? css::scroll_bottom : 0) |
+                    (at.x > 0.5f ? css::scroll_left : 0) | (right > 0.5f ? css::scroll_right : 0));
+            }
+            return size;
+        });
     author_css_ = collect_author_styles();
     if (!author_css_.empty()) { styles_->add_sheet(author_css_, ctbrowser::style::author_origin); }
     author_sheet_loaded_ = true;
@@ -103,6 +147,27 @@ void browser::refresh_author_styles() {
     author_css_ = std::move(css);
     styles_->clear_origin(ctbrowser::style::author_origin);
     if (!author_css_.empty()) { styles_->add_sheet(author_css_, ctbrowser::style::author_origin); }
+}
+
+// THE STYLE -> LAYOUT -> STYLE LOOP a container query closes (CSS
+// Conditional 5 §3): the cascade asked each container's size of the layout
+// before it, so a layout that sized a container differently has the cascade
+// and the layout run again - and again, until the sizes hold still. Bounded,
+// because a query that flips the size it asks about never settles; size
+// containment is what the spec relies on to rule that out, and this layout
+// does not apply it yet. Called at the end of every layout, and a no-op for
+// a page no size query has asked about.
+void browser::settle_container_queries() {
+    // ponytail: one guard for every browser on the thread, since the loop
+    // re-enters run_layout; a member when two pages ever lay out nested.
+    static bool settling = false;
+    if (settling) { return; }
+    settling = true;
+    for (int pass = 0; pass < 3 && styles_->container_sizes_changed(); ++pass) {
+        resolve_styles();
+        run_layout();
+    }
+    settling = false;
 }
 
 void browser::note_resource_load(node_id id, bool ok) {

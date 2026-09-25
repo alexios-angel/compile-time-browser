@@ -233,6 +233,9 @@ struct block_flow {
         // A calc-size() over `auto` or a keyword runs over the height the
         // content came to - `cursor` is that border box - and is then clamped
         // like any other used height.
+        // A block-size-contained box's content is nothing (CSS Containment
+        // 2 §3.2): an auto height is its padding and border.
+        if (b.contain_block_size) { cursor = edges.vertical_inner(); }
         const float used =
             stated_height >= 0 ? stated_height
             : b.height.is_intrinsic()

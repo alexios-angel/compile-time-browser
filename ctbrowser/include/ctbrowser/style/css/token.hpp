@@ -128,4 +128,12 @@ struct token_stream {
 // so a parser can look ahead one without a bounds check on every read.
 [[nodiscard]] token_stream tokenize(std::string_view css);
 
+// The SOURCE TEXT of tokens [first, last) of one stream, widened over the
+// `url(` and `)` of a <url-token> at either end - whose own text is its body,
+// so a run ending in `url(a.png)` sliced by offsets alone loses its `)`.
+// Empty when the run is not one slice of the source: an escape rebuilt a
+// token of it in the pool's tail.
+[[nodiscard]] std::string_view source_run(const token_stream & s, std::size_t first,
+                                          std::size_t last);
+
 } // namespace ctbrowser::style::css

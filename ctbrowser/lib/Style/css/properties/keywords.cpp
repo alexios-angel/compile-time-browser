@@ -412,7 +412,9 @@ constexpr ident_grammar ident_grammars[] = {
         if (reserved_ident(word)) { return std::nullopt; }
         if (++count > 1 && !g.list) { return std::nullopt; }
         out += (out.empty() ? "" : (g.comma ? ", " : " "));
-        out += has_keyword(g.lowercase, word) ? ascii_lower_copy(word) : std::string{word};
+        // The ident as CSSOM serialises one (§2.1): `ident(3 "myident")` made
+        // the word `3myident`, which written bare would read back as a number.
+        out += has_keyword(g.lowercase, word) ? ascii_lower_copy(word) : serialize_identifier(word);
         want_ident = !g.comma;
     }
     if (out.empty() || (g.comma && want_ident)) { return std::nullopt; }
@@ -781,6 +783,63 @@ constexpr pair_grammar pair_grammars[] = {
     return out + ")";
 }
 
+// `normal | [ stylistic(<feature-value-name>) || historical-forms ||
+// styleset(<feature-value-name>#) || character-variant(<feature-value-name>#) ||
+// swash(<feature-value-name>) || ornaments(<feature-value-name>) ||
+// annotation(<feature-value-name>) ]`, CSS Fonts 4 §6.8: each at most once,
+// one name in all but the two lists, and written back in that order.
+[[nodiscard]] std::optional<std::string> font_variant_alternates(const token_stream & ts,
+                                                                 const scan & found) {
+    static constexpr std::array<std::string_view, 7> slots = {
+        "stylistic(", "historical-forms", "styleset(",  "character-variant(",
+        "swash(",     "ornaments(",       "annotation("};
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.size() == 1 && ts.tokens[at[0]].type == token_type::ident &&
+        ascii_iequals(ts.text_of(ts.tokens[at[0]]), "normal")) {
+        return "normal";
+    }
+    std::array<std::string, 7> given;
+    for (std::size_t k = 0; k < at.size(); ++k) {
+        const css_token & t = ts.tokens[at[k]];
+        const std::string word = ascii_lower_copy(ts.text_of(t));
+        const auto slot = std::ranges::find(slots, word);
+        if (slot == slots.end()) { return std::nullopt; }
+        std::string & out = given[static_cast<std::size_t>(slot - slots.begin())];
+        if (!out.empty()) { return std::nullopt; }
+        if (t.type == token_type::ident && word == "historical-forms") {
+            out = word;
+            continue;
+        }
+        if (t.type != token_type::function) { return std::nullopt; }
+        const bool list = word == "styleset(" || word == "character-variant(";
+        out = word;
+        bool want_name = true;
+        std::size_t names = 0;
+        for (++k; k < at.size() && ts.tokens[at[k]].type != token_type::close_paren; ++k) {
+            const css_token & a = ts.tokens[at[k]];
+            if (want_name) {
+                if (a.type != token_type::ident || reserved_ident(ts.text_of(a))) {
+                    return std::nullopt;
+                }
+                out += (names++ == 0 ? "" : ", ") + serialize_identifier(ts.text_of(a));
+                want_name = false;
+            } else if (!list || a.type != token_type::comma) {
+                return std::nullopt;
+            } else {
+                want_name = true;
+            }
+        }
+        if (k == at.size() || want_name) { return std::nullopt; }
+        out += ')';
+    }
+    std::string joined;
+    for (const std::string & one : given) {
+        if (!one.empty()) { joined += (joined.empty() ? "" : " ") + one; }
+    }
+    if (joined.empty()) { return std::nullopt; }
+    return joined;
+}
+
 } // namespace
 
 namespace detail {
@@ -798,6 +857,10 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
     if (!handled && ascii_iequals(property, "font-size-adjust")) {
         handled = true;
         answer = font_size_adjust(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "font-variant-alternates")) {
+        handled = true;
+        answer = font_variant_alternates(ts, found);
     }
     if (!handled && ascii_iequals(property, "will-change")) {
         handled = true;

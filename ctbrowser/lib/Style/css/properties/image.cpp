@@ -722,6 +722,13 @@ std::optional<std::string> one_image(const token_stream & ts, const std::vector<
             normalize_value_tokens(ts, *text, &invalid, item.front(), item.back() + 1);
         return invalid ? std::string{} : url;
     }
+    // `src(<string>)` COMPUTES TO THE URL IT NAMES (CSS Values 4 §4.5), which
+    // is written the one way a computed <url> is: `src(url("a.png"))`. The
+    // specified value keeps the author's bytes.
+    if (fn == "src" && ctx.lengths != nullptr && args.size() == 1 && args.front().size() == 1 &&
+        ts.tokens[args.front().front()].type == token_type::string) {
+        return "src(url(" + string_text(ts.value_of(ts.tokens[args.front().front()])) + "))";
+    }
     gradient_reader reader{ts, ctx};
     if (fn == "linear-gradient" || fn == "repeating-linear-gradient") {
         return reader.linear(args, fn).value_or(std::string{});

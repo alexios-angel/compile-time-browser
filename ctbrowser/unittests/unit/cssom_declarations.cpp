@@ -135,7 +135,8 @@ void test_reads_and_all() {
     CHECK_EQ(serialize_declaration_block(block), std::string{"all: revert;"});
     block.clear();
     parse_declaration_block(block, "font: 12px serif");
-    CHECK_EQ(block.size(), std::size_t{7});
+    // Seven it names and the six other font-variant-* longhands it resets.
+    CHECK_EQ(block.size(), std::size_t{13});
     CHECK_EQ(declaration_value(block, "font"), std::string{"12px serif"});
     CHECK_EQ(declaration_value(block, "font-weight"), std::string{"normal"});
     // font-shorthand-serialization: the slash is a component of its own.

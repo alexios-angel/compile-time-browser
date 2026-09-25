@@ -102,11 +102,15 @@ struct item {
 
 [[nodiscard]] std::string slice_of(const token_stream & s, const item & it);
 
+// `from_attribute`: the text is an attribute's, read through `attr(x
+// type(...))`, and may make no URL - `<image>` takes no `url()` then.
 [[nodiscard]] std::optional<std::string> match_item(const token_stream & s, const item & it,
-                                                    std::string_view type);
+                                                    std::string_view type,
+                                                    bool from_attribute = false);
 
 [[nodiscard]] std::optional<std::string> match_syntax(
-    std::string_view value, const std::vector<syntax_alternative> & syntax);
+    std::string_view value, const std::vector<syntax_alternative> & syntax,
+    bool from_attribute = false);
 
 [[nodiscard]] std::string quoted(std::string_view text);
 
@@ -293,6 +297,10 @@ private:
     // read after, and what the attribute holds is then judged by the type.
     [[nodiscard]] bool attribute(const token_stream & outer, const call & found, int depth,
                                  std::string & expansion);
+    // attr()'s security: is the token at `at` inside a url(), src(),
+    // image() or image-set() - and does a substituted value make one?
+    [[nodiscard]] static bool inside_url_function(const token_stream & s, std::size_t at);
+    [[nodiscard]] static bool makes_url(std::string_view value);
 
     // --- ident(), CSS Values 5 §ident ---------------------------------------
     //
@@ -447,6 +455,11 @@ private:
         if (first >= last) { return {}; }
         const css_token & a = s.tokens[first];
         const css_token & b = s.tokens[last - 1];
+        // A <url-token> at either end is widened over its `url(` and `)`:
+        // `if(...: url(x);)` otherwise substitutes to `url(x`.
+        if (a.type == token_type::url || b.type == token_type::url) {
+            return source_run(s, first, last);
+        }
         if (b.text + b.length < a.text) { return {}; }
         return std::string_view{s.pool}.substr(a.text, b.text + b.length - a.text);
     }

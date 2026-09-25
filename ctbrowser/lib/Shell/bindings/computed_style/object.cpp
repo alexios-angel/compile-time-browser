@@ -174,9 +174,18 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
         }
         const auto txn = doc_->read();
         const style::computed_style_ptr made =
-            selector_engine_->resolve_pseudo(txn, id, pseudo, own);
+            selector_engine_->resolve_pseudo(txn, id, pseudo, own, styles_);
         if (!made) { return none; }
-        return computed_style_entries(id, made);
+        std::vector<std::pair<std::string, std::string>> entries = computed_style_entries(id, made);
+        // `content: normal` on ::before and ::after COMPUTES TO `none` (CSS
+        // Generated Content 3 §1.1): they have no content of their own.
+        const std::string_view name = atoms_->text(pseudo);
+        if (ascii_iequals_any(name, {"before", "after", "::before", "::after"})) {
+            for (auto & [property, text] : entries) {
+                if (property == "content" && ascii_iequals(text, "normal")) { text = "none"; }
+            }
+        }
+        return entries;
     };
     const auto cached = std::make_shared<computed_cache>();
     cached->entries = entries_now();

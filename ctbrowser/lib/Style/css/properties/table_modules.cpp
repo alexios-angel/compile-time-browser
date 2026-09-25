@@ -178,8 +178,10 @@ constexpr property_syntax modules[] = {
     {"overflow-anchor", k::keyword_only, "auto none", "auto", false, false},
     {"overflow-clip-margin", k::freeform, "", "0px", false, true}, // declaration.cpp
     {"block-ellipsis", k::freeform, "", "no-ellipsis", true, false},
+    // Two shorthands of max-lines, block-ellipsis and continue (CSS Overflow 4
+    // §5.1): the legacy one sets the same three, so it reads back as the other.
     {"line-clamp", k::freeform, "", "none", false, false, true},
-    {"-webkit-line-clamp", k::integer, "none", "none", false, true},
+    {"-webkit-line-clamp", k::freeform, "", "none", false, false, true},
     {"continue", k::keyword_only, "normal discard collapse -webkit-legacy", "normal", false, false},
     {"scrollbar-gutter", k::freeform, "", "auto", false, false},
     {"scrollbar-width", k::keyword_only, "auto thin none", "auto", false, false},

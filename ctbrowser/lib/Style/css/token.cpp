@@ -562,4 +562,28 @@ token_stream tokenize(std::string_view css) {
     return lex.run();
 }
 
+std::string_view source_run(const token_stream & s, std::size_t first, std::size_t last) {
+    if (first >= last) { return {}; }
+    const css_token & a = s.tokens[first];
+    const css_token & b = s.tokens[last - 1];
+    if (a.text >= s.source_length || b.text >= s.source_length || b.text + b.length < a.text) {
+        return {};
+    }
+    std::size_t begin = a.text;
+    std::size_t end = b.text + b.length;
+    const std::string_view source = std::string_view{s.pool}.substr(0, s.source_length);
+    if (a.type == token_type::url) {
+        while (begin > 0 && is_whitespace(source[begin - 1])) { --begin; }
+        if (begin >= 4 && source[begin - 1] == '(' &&
+            ascii_iequals(source.substr(begin - 4, 3), "url")) {
+            begin -= 4;
+        }
+    }
+    if (b.type == token_type::url) {
+        while (end < source.size() && is_whitespace(source[end])) { ++end; }
+        if (end < source.size() && source[end] == ')') { ++end; }
+    }
+    return source.substr(begin, end - begin);
+}
+
 } // namespace ctbrowser::style::css

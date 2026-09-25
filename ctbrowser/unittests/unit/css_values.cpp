@@ -254,6 +254,15 @@ void test_css_supports() {
     CHECK(supports_condition("(selector(h2 > p))"));
     CHECK(!supports_condition("selector(h2 >)"));
     CHECK(supports_condition("not selector(h2 >)"));
+    // One complex selector, read unforgivingly (CSS-supports-L4).
+    for (const std::string_view bad :
+         {"selector(div, div)", "selector(:is(:foo, div))", "selector(:where())",
+          "selector(::-webkit-unknown-pseudo-element)", "selector(:has(:is(:has(.a))))",
+          "selector(:is(::before))", "selector(select::picker())"}) {
+        CHECK(!supports_condition(bad));
+    }
+    CHECK(supports_condition("selector(:is(.a, div))"));
+    CHECK(supports_condition("selector(::picker(select))"));
     // A bare declaration with no parentheses is not a <supports-condition>.
     CHECK(!supports_condition("width: 10px"));
     CHECK(!supports_condition(""));

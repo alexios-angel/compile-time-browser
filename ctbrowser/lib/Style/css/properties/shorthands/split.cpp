@@ -160,6 +160,102 @@ split split_font(std::span<const std::string_view> parts, std::vector<std::strin
     const value_check families = check_declaration("font-family", family, false);
     if (!families.valid) { return split::invalid; }
     out = {style, variant, weight, stretch, size.serialized, height, families.serialized};
+    out.resize(expansion_of("font")->longhands.size(), "normal"); // the variants it resets
+    return split::ok;
+}
+
+// `font-variant`: `normal` and `none` alone, or keywords and functions each
+// handed to the one longhand that takes it and each longhand's words checked
+// together by its own grammar - which refuses `sub super` and `jis78 jis83`
+// and puts the words in canonical order (CSS Fonts 4 §6.11). `none` is
+// `font-variant-ligatures: none` with the rest `normal`.
+split split_font_variant(const expansion & e, std::span<const std::string_view> parts,
+                         std::vector<std::string> & out) {
+    if (parts.empty()) { return split::invalid; }
+    out.assign(e.longhands.size(), "normal");
+    if (parts.size() == 1 && ascii_iequals_any(parts[0], {"normal", "none"})) {
+        out[0] = ascii_lower_copy(parts[0]);
+        return split::ok;
+    }
+    std::vector<std::string> words(e.longhands.size());
+    for (const std::string_view part : parts) {
+        if (ascii_iequals_any(part, {"normal", "none"}) || is_wide_keyword(part)) {
+            return split::invalid;
+        }
+        std::size_t slot = 0;
+        for (; slot < e.longhands.size(); ++slot) {
+            bool valid = false;
+            (void)canonical(e.longhands[slot], part, valid);
+            if (valid) { break; }
+        }
+        if (slot == e.longhands.size()) { return split::invalid; }
+        words[slot] += (words[slot].empty() ? "" : " ") + std::string{part};
+    }
+    for (std::size_t slot = 0; slot < words.size(); ++slot) {
+        if (words[slot].empty()) { continue; }
+        bool valid = false;
+        out[slot] = canonical(e.longhands[slot], words[slot], valid);
+        if (!valid) { return split::invalid; }
+    }
+    return split::ok;
+}
+
+// `line-clamp`: `none` - every longhand initial - or a maximum
+// (`<integer [1,∞]> || auto`, written together) and a block ellipsis in
+// either order, one at least, then `-webkit-legacy` for the legacy
+// continuation (CSS Overflow 4 §5.1). The maximum defaults to `auto`, the
+// ellipsis to `ellipsis`, and the continuation is `collapse`.
+// `-webkit-line-clamp` is `none` or an integer alone, which continues the
+// legacy way with the default ellipsis.
+split split_line_clamp(const expansion & e, std::span<const std::string_view> parts,
+                       std::vector<std::string> & out) {
+    if (parts.size() == 1 && ascii_iequals(parts[0], "none")) {
+        out = {"auto", "no-ellipsis", "normal"};
+        return split::ok;
+    }
+    const auto integer = [](std::string_view part, std::string & text) {
+        if (ascii_iequals_any(part, {"none", "auto"}) || is_wide_keyword(part)) { return false; }
+        bool valid = false;
+        text = canonical("max-lines", part, valid);
+        return valid;
+    };
+    std::string number;
+    if (e.syntax->name == "-webkit-line-clamp") {
+        if (parts.size() != 1 || !integer(parts[0], number)) { return split::invalid; }
+        out = {number, "ellipsis", "-webkit-legacy"};
+        return split::ok;
+    }
+    std::span<const std::string_view> rest = parts;
+    const bool legacy = !rest.empty() && ascii_iequals(rest.back(), "-webkit-legacy");
+    if (legacy) { rest = rest.first(rest.size() - 1); }
+    bool automatic = false;
+    std::string ellipsis;
+    int run = 0; // 0 before the maximum's words, 1 among them, 2 past them
+    for (const std::string_view part : rest) {
+        const bool is_auto = ascii_iequals(part, "auto");
+        std::string text;
+        if (is_auto || integer(part, text)) {
+            if (run == 2 || (is_auto ? automatic : !number.empty())) { return split::invalid; }
+            run = 1;
+            if (is_auto) {
+                automatic = true;
+            } else {
+                number = text;
+            }
+            continue;
+        }
+        if (run == 1) { run = 2; }
+        bool valid = false;
+        if (!ellipsis.empty() || is_wide_keyword(part)) { return split::invalid; }
+        ellipsis = canonical("block-ellipsis", part, valid);
+        if (!valid) { return split::invalid; }
+    }
+    if (number.empty() && !automatic && ellipsis.empty()) { return split::invalid; }
+    out = {number.empty() ? std::string{"auto"}
+           : automatic    ? number + " auto"
+                          : number,
+           ellipsis.empty() ? std::string{"ellipsis"} : ellipsis,
+           legacy ? "-webkit-legacy" : "collapse"};
     return split::ok;
 }
 
@@ -520,20 +616,44 @@ bool split_background(std::string_view value, std::vector<std::string> & out) {
     return true;
 }
 
+// A value's halves either side of its one top-level `/`, EMPTY ONES KEPT:
+// `/ 10px` is a first half missing, not a value without a slash, which is
+// what split_top_level - skipping empty fields - made of it. The value alone
+// when there is no slash; nothing when there are two.
+[[nodiscard]] std::vector<std::string_view> slash_halves(std::string_view value) {
+    const token_stream ts = tokenize(value);
+    std::size_t slash = std::string_view::npos;
+    int depth = 0;
+    for (const css_token & token : ts.tokens) {
+        if (token.type == token_type::function || token.type == token_type::open_paren) {
+            ++depth;
+        } else if (token.type == token_type::close_paren) {
+            --depth;
+        } else if (depth == 0 && token.type == token_type::delim && ts.text_of(token) == "/") {
+            if (slash != std::string_view::npos) { return {}; }
+            slash = token.text;
+        }
+    }
+    if (slash == std::string_view::npos) { return {value}; }
+    return {value.substr(0, slash), value.substr(slash + 1)};
+}
+
 // `container`: the name, then `/` and the type, each checked as its own
 // longhand (CSS Conditional 5 §4.3).
 split split_slash_pair(const expansion & e, std::string_view value,
                        std::vector<std::string> & out) {
-    const std::vector<std::string_view> halves = split_top_level(value, "/");
-    if (halves.empty() || halves.size() > 2) { return split::invalid; }
+    const std::vector<std::string_view> halves = slash_halves(value);
+    if (halves.empty()) { return split::invalid; }
     out.clear();
     for (std::size_t i = 0; i < 2; ++i) {
         if (i >= halves.size()) {
             out.emplace_back(initial_of(e.longhands[i]));
             continue;
         }
+        const std::string_view half = trim(halves[i], html_whitespace);
+        if (half.empty()) { return split::invalid; }
         bool valid = false;
-        std::string text = canonical(e.longhands[i], trim(halves[i], html_whitespace), valid);
+        std::string text = canonical(e.longhands[i], half, valid);
         if (!valid) { return split::invalid; }
         out.push_back(std::move(text));
     }
@@ -555,8 +675,8 @@ split split_same(const expansion & e, std::string_view value, std::vector<std::s
 // without the slash the junctions are the caps (CSS Gap Decorations 1).
 split split_rule_inset(const expansion & e, std::string_view value,
                        std::vector<std::string> & out) {
-    const std::vector<std::string_view> halves = split_top_level(value, "/");
-    if (halves.empty() || halves.size() > 2) { return split::invalid; }
+    const std::vector<std::string_view> halves = slash_halves(value);
+    if (halves.empty()) { return split::invalid; }
     out.clear();
     for (std::size_t half = 0; half < 2; ++half) {
         const std::string_view text =
@@ -666,6 +786,8 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::white_space: return split_white_space(parts, out);
     case shape::animation: return split_animation(value, out);
     case shape::font: return split_font(parts, out);
+    case shape::font_variant: return split_font_variant(e, parts, out);
+    case shape::line_clamp: return split_line_clamp(e, parts, out);
     case shape::all:
     case shape::whole: break;
     }

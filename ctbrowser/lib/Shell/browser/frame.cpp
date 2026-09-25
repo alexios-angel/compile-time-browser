@@ -358,6 +358,7 @@ void browser::run_layout() {
     }
     // The frames inside, at the sizes this layout just gave them.
     layout_frames();
+    settle_container_queries();
 }
 
 void browser::record() {

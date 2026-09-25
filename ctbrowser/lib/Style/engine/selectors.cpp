@@ -124,11 +124,24 @@ node_id engine::closest(const read_txn & txn, node_id subject,
 }
 
 computed_style_ptr engine::resolve_pseudo(const read_txn & txn, node_id node, atom pseudo,
-                                          const computed_style_ptr & element) {
+                                          const computed_style_ptr & element,
+                                          const style_map * styles) {
     scope_ = node_id{};
     ancestor_filter ancestors;
     const std::optional<std::size_t> at = cursor_to(txn, node, ancestors);
     if (!at) { return {}; }
+    // THE CHAIN'S STYLES, the element's own included, which the last
+    // traversal left for whichever branch it walked last.
+    for (std::size_t d = 0; d <= *at; ++d) {
+        const node_id on = levels_[d][path_[d]].node;
+        computed_style_ptr style = d == *at ? element : computed_style_ptr{};
+        if (styles != nullptr && d != *at) {
+            if (const auto found = styles->find(key_of(on)); found != styles->end()) {
+                style = found->second;
+            }
+        }
+        note_chain(d, on, style);
+    }
     pseudo_wanted_ = pseudo;
     const element_facts & self = levels_[*at][path_[*at]].facts;
     computed_style_ptr out = resolve(txn, node, self, ancestors, *at, element);
