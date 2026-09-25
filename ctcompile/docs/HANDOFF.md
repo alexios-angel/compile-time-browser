@@ -22,6 +22,82 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Transported logical-not helpers and per-arm store footprints, 2026-09-25 UTC
+
+Resumed clean **c857974d** and the explicit transported-predicate/unequal-key
+boundary in HANDOFF and part 00. The old WIP branch is already an ancestor.
+Parallel agents supplied native regression controls and the escape continuation;
+the parent reviewed final changes, formatted, gated and committed separately.
+The independent reviewer traced all seven helper callers and recommended the
+same fixed-point arrangement, but hit a service limit before final diff review.
+No completed independent review is claimed.
+
+**118784e2** repeats the existing exact logical-not folding, root CFG
+merging and selected SCF yield projection when one exposes another literal.
+Every successful step removes a Not or control-flow edge; the initial quadratic
+reservation and work budget remain. Operand evaluation, shared uses and selected
+effects/payloads survive, and all helper and complete DOM proofs still run.
+Twenty new controls (176 total) cover CFG chains, selected/nested SCF results,
+shared inputs, unknown/coercing sources, wrong payloads/effects and public
+zero/late-nonzero-budget rollback.
+
+**1b305020** proves each yielded store key's own footprint separately in
+already-proved single-visit bodies. Receiver identity still requires exact
+correspondence. Guard reload exclusions, current-state replay, every exit and
+the all-write acyclic graph remain mandatory. Four former key-only refusals
+now pass; 18 new rows (183 total) and four live yield mutations (22 live states
+total) preserve alias/return/cycle/publication, missing-solver, forged-marker,
+stale-state, repeated/zero-visit and incomplete-budget refusals. This proves
+frame confinement, not ownership or shortened lifetimes.
+
+The devbox built the seven affected targets:
+`ctcompile-test-exception-recovery`, `ctcompile-test-host-contract`, `ctjs-opt`,
+`ctjs-translate`, `ctcompile-test-native-reference`,
+`ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Final exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 6.49 s**,
+`ctcompile_host_contract` **1/1, 2.73 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.82 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+Passing escape checks were not replayed after fixture-only native corrections.
+The initial build caught a test-only Value/BlockArgument conditional mismatch.
+Two shared-input references then exposed the existing protected
+`setAttribute` proof's String/Boolean restriction; using Boolean false preserved
+the shared-input assertions. Number values there remain a separate boundary.
+The production changes did not change during these corrections.
+
+**1199f7d4** adds two complete derived source witnesses, each importing four
+logical-not operations whose operands come from conditional results. Node/VM
+traces agree; **20 generated C++ files and 40 GCC/Clang binaries** pass across
+both printers, structured providers and optimization modes, with ordered DOM
+writes, two documents and 16 lifetimes checked. The whole raw sources use the
+existing 1,000,000-step option and retain two explicit default-100,000-budget
+refusals; structured modes use the default. Ten zero-budget refusals pass.
+Generated source and linked symbols have no Script/AOT dependency; inspected
+output uses typed values and existing public DOM helpers.
+
+All five final code/test hashes match the devbox and local files. The original
+ten C++ raw literals and 71 Python multiline literals remain intact. Formatting
+passes **1126 C++, 159 Python, 114 web files**; diff checks pass. Logs, parent
+review, source selection and emitted files are in `/tmp/ctcompile-iteration25/`.
+No completed CTests were replayed for the source-only budget adjustment.
+
+**Next:** arithmetic/comparison helper producers still need exact value and
+inertness together; unknown differing branches remain unproved. The escape
+union currently applies directly to a store's result key: arithmetic consuming
+unequal If results and differing receiver identities still need separate
+proofs. These are code-traced boundaries, not new frontend measurements.
+Repeated allocation identities/lifetimes, mutable exceptional state, escaping
+owners, unguarded Bootstrap defaults, the native application driver and full
+native Bootstrap remain unfinished.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. No full-Bootstrap admission or raw-oracle
+precision gain is claimed. Linux identified the live Claude loop; the corrected
+Windows identity query succeeded with no matches. Concurrent rules applied;
+no browser/runtime/shared implementation changed.
+
 ## Logical-not helpers and equal-yield store inputs, 2026-09-25 UTC
 
 Resumed clean **29031f16** and its recorded computed-helper/equal-yield boundary.
