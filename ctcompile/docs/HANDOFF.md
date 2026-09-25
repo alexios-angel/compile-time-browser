@@ -22,6 +22,79 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Scalar loose equality and Not chains, 2026-09-25 UTC
+
+Resumed **29747410** from HANDOFF/part 00, then recovered this iteration's seven
+saved candidate files after a service-limit interruption. Native controls were
+finished by the first agent; the replacement escape agent completed the mutation
+checks. Reviewers supplied interim no-blocker findings before service limits;
+the parent completed final review and owns the focused gates.
+
+**0c2fbbbc** normalizes exact Boolean and undefined proof operands before
+reusing the existing strict literal comparator in private iterator helpers.
+Number/Boolean/null/undefined loose equality is supported; source tags stay intact. Absent tags
+remain distinct from numeric zero; NaNs and signed zero retain JavaScript
+comparison behavior. Strict primitive and same-String equality remain supported.
+Mixed Strings, BigInt, objects and non-Number relations still refuse. All helper
+input evaluation, shared uses, source effects, bounded CFG/SCF projection and
+complete DOM proofs remain required. There are 104 new controls (748 total),
+plus eight unchanged original loose-equality controls now admitted. The 28
+expected scalar comparison rows were independently checked with Node.
+
+**d1ec1f0e** follows logical-Not chains with parity over the exact original
+SSA input. Correspondence and replay use the same key and existing work budget;
+exhaustion returns no partial key. Twenty-four new retention rows (**335 total**) and seven live
+mutation states (**65 total**) exercise parity, 64/65 links, current input/operation/yield/guard
+changes, separate reads, finite Number bounds, aliases, every exit, cycles,
+stale solvers and forged markers. Existing incomplete-budget sweeps remain.
+This proves frame confinement, not ownership or shorter native lifetimes.
+
+**90f832c7** adds two complete identity/next/close helper sources using
+`null == undefined`, `false == 0` and a transported `true != 1`.
+Raw and structured preparation both use the default **100,000-step** budget;
+each raw import retains three loose-equality producers. Node/VM traces agree.
+**20 generated C++ files and 40 GCC/Clang binaries**, both printers/providers,
+both optimization modes and ten zero-budget refusals pass. The driver checks
+ordered DOM writes, two documents and 16 lifetimes. Generated source and linked
+symbols contain no Script/AOT dependency.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 11.77 s**,
+`ctcompile_host_contract` **1/1, 2.75 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.94 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+
+The initial build caught an incompatible runtime umbrella include: its Symbol
+header uses `throw`, while the compiler target disables exceptions. The final
+implementation uses the existing MLIR literal comparator and adds no runtime
+include. No CTests ran before that correction; passing checks were not replayed.
+
+All 26 earlier complete helper sources, ten C++ raw literals and 71 Python
+multiline values remain unchanged. Repository formatting passes
+**1126 C++, 159 Python and 114 web files**; diff checks pass. All seven final
+local/devbox source hashes match. Inspected C++ uses typed values, borrowed
+element handles, ordinary document ownership and the existing public DOM seam.
+Evidence is in `/tmp/ctcompile-iteration33/`.
+
+**Next:** mixed String/scalar equality and non-Number relational proofs in the
+iterator-helper comparison matcher; broader expression correspondence beyond
+Not chains, differing receivers and repeated allocation identities. Protected
+numeric `setAttribute`, mutable exceptional state, escaping owners, unguarded
+Bootstrap defaults, the native application driver and full native Bootstrap
+remain unfinished. No full-Bootstrap admission or raw escape-oracle precision
+gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. Initial Linux inspection identified
+actual Claude loop PID 2333739; Windows Get-CimInstance identity inspection
+succeeded (354 processes, no matches). Concurrent rules applied and the native
+gate waited for Claude's CSS WPT lock. No browser/runtime/shared implementation
+edits, local builds, push or history rewrite.
+
 ## Number power helpers and opposite predicates, 2026-09-25 UTC
 
 Resumed clean **1479707b** from HANDOFF and part 00. Iteration 31 was fully
