@@ -265,21 +265,11 @@ std::string dom_bindings::serialize_xml(node_id node, std::string_view inherited
                 } else {
                     // Not a declaration: the namespace needs a prefix in
                     // scope, generated and declared here when there is none.
-                    // The attribute's OWN prefix when nothing in scope has
-                    // it - `xl:type` stays `xl:` - else a generated one.
+                    // A GENERATED one, not the attribute's own prefix: DOM
+                    // Parsing 3.2.1.2 step 3.5.3.2, and w3c/DOM-Parsing#29's
+                    // "NOT preserved" row in XMLSerializer-serializeToString.
                     if (!candidate) {
-                        const std::string own{attr_prefix};
-                        const bool taken =
-                            own.empty() || own == "xmlns" ||
-                            std::ranges::any_of(local_map.entries, [&](const auto & e) {
-                                return std::ranges::find(e.second, own) != e.second.end();
-                            });
-                        if (taken) {
-                            candidate = local_map.generate(attr_ns);
-                        } else {
-                            candidate = own;
-                            local_map.add(own, attr_ns);
-                        }
+                        candidate = local_map.generate(attr_ns);
                         out += " xmlns:" + *candidate + "=\"" + escape_xml(attr_ns, true) + "\"";
                     }
                 }
