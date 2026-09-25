@@ -553,18 +553,27 @@ namespace {
 // `a < b`, `a <= b < c`, `a = b` - a style feature's range form, with every
 // operand present, the two comparisons of a double range pointing one way,
 // and no `!` anywhere.
-[[nodiscard]] bool well_formed_range(std::string_view text) {
+// Is the text a style feature's RANGE form - `a < b`, `a <= b < c` - and is
+// that range well formed: every operand present, the two comparisons of a
+// double range pointing one way, no `!` anywhere? nullopt for no range at
+// all (no top-level comparison).
+[[nodiscard]] std::optional<bool> range_shape(std::string_view text) {
     const css::token_stream s = css::tokenize(text);
     std::vector<char> ops;
-    bool operand = false;
+    bool operand = false, bang = false, missing = false;
     int depth = 0;
     for (std::size_t i = 0; i + 1 < s.tokens.size(); ++i) {
         const css::css_token & t = s.tokens[i];
         if (t.type == css::token_type::whitespace) { continue; }
         const std::string_view d = s.text_of(t);
-        if (t.type == css::token_type::delim && d == "!") { return false; }
+        if (t.type == css::token_type::delim && d == "!") {
+            bang = true;
+            continue;
+        }
+        // `--x: a < b` is a declaration, whatever its value holds.
+        if (depth == 0 && t.type == css::token_type::colon && ops.empty()) { return std::nullopt; }
         if (depth == 0 && t.type == css::token_type::delim && (d == "<" || d == ">" || d == "=")) {
-            if (!operand) { return false; }
+            missing = missing || !operand;
             ops.push_back(d.front());
             if (d != "=" && css::is_delim_text(s, i + 1, '=')) { ++i; }
             operand = false;
@@ -576,7 +585,8 @@ namespace {
         if (t.type == css::token_type::close_paren) { --depth; }
         operand = true;
     }
-    if (!operand || ops.empty() || ops.size() > 2) { return false; }
+    if (ops.empty()) { return std::nullopt; }
+    if (bang || missing || !operand || ops.size() > 2) { return false; }
     return ops.size() == 1 || (ops[0] == ops[1] && ops[0] != '=');
 }
 
@@ -762,11 +772,14 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
                 "if(style(" + asked + "): y; not style(" + asked + "): n; else: u)", lookup,
                 *atoms_, attributes, &conditions);
             const std::string_view word = trim(answer.value_or("u"), html_whitespace);
+            // A MALFORMED RANGE is unknown whatever the if() made of it.
+            const std::optional<bool> range = range_shape(text);
+            if (range == false) { return css::truth::unknown; }
             if (word == "y") { return css::truth::yes; }
             // A WELL-FORMED RANGE ANSWERS: two values that cannot be compared
             // are not in range (at-container-style-parsing); only one with a
             // `!` or its comparisons pointing both ways is unknown.
-            return word == "n" || well_formed_range(text) ? css::truth::no : css::truth::unknown;
+            return word == "n" || range == true ? css::truth::no : css::truth::unknown;
         };
         // A name alone asks only that there be such a container.
         held =

@@ -967,11 +967,23 @@ container_needs container_requirements(std::string_view condition) {
         if (!range && !custom) { needs.unknown = true; }
         return truth::unknown;
     };
-    const auto unknown_function = [&](std::string_view, std::size_t, std::size_t) {
-        needs.unknown = true;
+    // IS THE FUNCTION WHOSE `)` IS AT `b` A WHOLE GROUP - followed by `and`,
+    // `or`, the group's `)` or the end? The parser tries a group's inside as
+    // a condition before it takes it as a feature, and `calc(1em) < width`
+    // meets `calc(` on that first try: a function followed by anything else
+    // is a value, and says nothing about the features.
+    const auto whole_group = [&](std::size_t b) {
+        std::size_t k = b + 1;
+        while (k < s.tokens.size() && s.tokens[k].type == token_type::whitespace) { ++k; }
+        return k + 1 >= s.tokens.size() || s.tokens[k].type == token_type::close_paren ||
+               is_ident_named(s, k, "and") || is_ident_named(s, k, "or");
+    };
+    const auto unknown_function = [&](std::string_view, std::size_t, std::size_t b) {
+        if (whole_group(b)) { needs.unknown = true; }
         return truth::unknown;
     };
     const auto test = [&](std::string_view name, std::size_t a, std::size_t b) {
+        if (!whole_group(b)) { return truth::unknown; }
         if (ascii_iequals(name, "scroll-state")) {
             needs.scroll_state = true;
         } else if (ascii_iequals(name, "style")) {
