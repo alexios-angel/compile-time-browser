@@ -12,9 +12,7 @@
 // in each file; a file that passes fewer fails this test, and one that passes
 // more fails it too - so an improvement has to be recorded, and a regression
 // in one file cannot hide behind a gain in another. What does not pass:
-// the scripted_* files need a script runner this test does not have, and
-// webkit02's `<selectedcontent>` cases want the customizable-select
-// mirroring of an option's children, which the tree builder does not do.
+// the scripted_* files need a script runner this test does not have.
 //
 // SKIPS WITHOUT THE CORPUS: the fixtures live in ~/.cache/wpt (fetched by
 // tools/wpt/fetch-wpt.sh), and a checkout without them has nothing to measure
@@ -258,7 +256,7 @@ constexpr expectation expected[] = {
     {"tricky01", 9, 0},
     {"void-in-phrasing", 13, 0},
     {"webkit01", 52, 0},
-    {"webkit02", 44, 4},
+    {"webkit02", 48, 0},
 };
 
 } // namespace

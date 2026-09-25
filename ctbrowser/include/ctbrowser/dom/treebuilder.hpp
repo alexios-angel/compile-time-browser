@@ -374,6 +374,9 @@ private:
     // when the stack holds only the root, else the current node.
     [[nodiscard]] const entry * adjusted_current() const;
     void pop();
+    // "The option HTML element popped steps" (4.10.10): maybe clone the
+    // option into its select's <selectedcontent>.
+    void option_popped(node_id option);
     // Pop until an HTML element with this tag has been popped.
     void pop_until(std::string_view tag);
     void pop_until_any(std::initializer_list<std::string_view> tags);
