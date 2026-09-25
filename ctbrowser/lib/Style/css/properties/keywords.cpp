@@ -41,6 +41,7 @@ struct or_grammar {
     std::string_view collapse_to = {};      // ...and the short form
     std::string_view collapse2_from = {};
     std::string_view collapse2_to = {};
+    bool first_group_required = false; // `[ a | b ] && c?`: the first group must be there
 };
 
 constexpr or_grammar or_grammars[] = {
@@ -78,6 +79,16 @@ constexpr or_grammar or_grammars[] = {
      {"jis78 jis83 jis90 jis04 simplified traditional", "full-width proportional-width", "ruby"},
      true},
     {"text-underline-position", "auto", {"from-font under", "left right"}, true},
+    // `none | [ space | ideographic-space ] && auto-phrase?`, CSS Text 4 §8.2.
+    {"word-space-transform",
+     "none",
+     {"space ideographic-space", "auto-phrase"},
+     true,
+     {},
+     {},
+     {},
+     {},
+     true},
     // `none | all | [ start || end ]`, CSS Text Decoration 4 §2.6.
     {"text-decoration-skip-spaces", "none all", {"start", "end"}, true},
     // `fill | none | [ contain | cover ] || scale-down`, CSS Images 4 §5.5:
@@ -134,6 +145,7 @@ constexpr or_grammar or_grammars[] = {
     } else {
         for (const std::string & w : in_order) { out += (out.empty() ? "" : " ") + w; }
     }
+    if (g.first_group_required && chosen[0].empty()) { return std::nullopt; }
     if (out == g.collapse_from) { return std::string{g.collapse_to}; }
     if (out == g.collapse2_from) { return std::string{g.collapse2_to}; }
     return out;

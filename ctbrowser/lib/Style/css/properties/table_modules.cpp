@@ -286,6 +286,10 @@ constexpr property_syntax modules[] = {
     {"word-wrap", k::keyword_only, "normal break-word anywhere", "normal", true, false},
     {"line-break", k::keyword_only, "auto loose normal strict anywhere", "auto", true, false},
     {"hyphens", k::keyword_only, "none manual auto", "manual", true, false},
+    // CSS Text 4 §8.2 and §7.4: turning spaces into the script's word
+    // separator, and aligning a group of lines as one.
+    {"word-space-transform", k::freeform, "", "none", true, false}, // keywords.cpp
+    {"text-group-align", k::keyword_only, "none start end left right center", "none", false, false},
     {"hyphenate-character", k::freeform, "", "auto", true, false},
     {"hanging-punctuation", k::freeform, "", "none", true, false},
     {"text-autospace", k::freeform, "", "normal", true, false},

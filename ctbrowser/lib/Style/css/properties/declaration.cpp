@@ -425,7 +425,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // and written once when the two agree.
     if (ascii_iequals(property, "text-decoration-inset")) {
         std::vector<std::string_view> parts;
-        for (const std::string_view part : split_top_level(text, html_whitespace)) {
+        for (const std::string_view part : split_top_level(simplified, html_whitespace)) {
             if (!trim(part, html_whitespace).empty()) { parts.push_back(part); }
         }
         if (parts.size() == 1 && ascii_iequals(trim(parts[0], html_whitespace), "auto")) {
@@ -439,6 +439,27 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
         if (parts.size() == 1 || ends[0] == ends[1]) { return yes(std::move(ends[0])); }
         return yes(ends[0] + " " + ends[1]);
+    }
+
+    // `<length-percentage> && hanging? && each-line?`, CSS Text 3 §8.1, the
+    // keywords after the length in that order whatever the author's.
+    if (ascii_iequals(property, "text-indent")) {
+        static const property_syntax length{"", k::length_percentage, "", "", false, false};
+        std::string indent;
+        bool hanging = false, each_line = false;
+        for (const std::string_view raw : split_top_level(simplified, html_whitespace)) {
+            const std::string_view part = trim(raw, html_whitespace);
+            if (part.empty()) { continue; }
+            if (ascii_iequals(part, "hanging") && !hanging) {
+                hanging = true;
+            } else if (ascii_iequals(part, "each-line") && !each_line) {
+                each_line = true;
+            } else if (!indent.empty() || !typed_component(part, length, indent)) {
+                return {};
+            }
+        }
+        if (indent.empty()) { return {}; }
+        return yes(indent + (hanging ? " hanging" : "") + (each_line ? " each-line" : ""));
     }
 
     // `[ auto | <integer> ]{1,3}`, CSS Text 4 §6.3: the word, and the least
