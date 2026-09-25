@@ -128,6 +128,21 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
             }
         }
     }
+    // DOM 4.4 "clone a node" step 6: A CLONABLE SHADOW ROOT GOES WITH ITS
+    // HOST, and whole - a shallow copy of the host still gets every node of
+    // the shadow tree (shadow-root-clonable.html). The metadata is copied
+    // out first: attaching to a host in the same document may move it.
+    if (const node_id root = src.doc_->shadow_root_of(source)) {
+        const document::shadow_tree * held = src.doc_->shadow_tree_of(root);
+        if (held != nullptr && held->clonable) {
+            const document::shadow_tree how = *held;
+            if (const auto mine = doc_->attach_shadow(made, how)) {
+                for (const node_id child : from.children(root)) {
+                    (void)doc_->append_child(*mine, clone_node(from, child, true, owner));
+                }
+            }
+        }
+    }
     return made;
 }
 
