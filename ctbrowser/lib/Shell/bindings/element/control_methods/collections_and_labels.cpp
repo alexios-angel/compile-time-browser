@@ -257,19 +257,35 @@ void dom_bindings::install_control_collections_labels(context & cx) {
                          return value::number(
                              static_cast<double>(units_length_of(helpers.value_of(txn, b, id))));
                      });
+    // A textarea's `defaultValue`, HTML 4.10.11: its CHILD TEXT CONTENT (the
+    // Text children's data - a <span> inside contributes nothing, where
+    // textContent would count it), and "string replace all" to set.
     helpers.accessor(
         cx, "HTMLTextAreaElement", "defaultValue",
         [helpers](context & c, std::span<value>) {
             const auto where = helpers.at(c);
             dom_bindings * b = where.first;
             const node_id id = where.second;
-            return c.string(id ? b->text_content(id) : std::string{});
+            std::string text;
+            if (id) {
+                const auto txn = b->doc_->read();
+                for (const node_id child : txn.children(id)) {
+                    const node_kind kind = txn.kind(child).value_or(node_kind::element);
+                    if (kind == node_kind::text || kind == node_kind::cdata_section) {
+                        text += txn.text(child);
+                    }
+                }
+            }
+            return c.string(text);
         },
         [helpers](context & c, std::span<value> a) {
             const auto where = helpers.at(c);
             dom_bindings * b = where.first;
             const node_id id = where.second;
-            if (id) { b->set_text(id, arg_string(c, a, 0)); }
+            if (id) {
+                b->set_text(id, arg_string(c, a, 0));
+                helpers.children_replaced(b, id);
+            }
             return value::undefined();
         });
     helpers.accessor(cx, "HTMLInputElement", "list", [helpers](context & c, std::span<value>) {

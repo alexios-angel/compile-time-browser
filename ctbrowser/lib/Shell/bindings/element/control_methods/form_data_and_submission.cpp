@@ -126,7 +126,38 @@ void dom_bindings::install_control_form_data(context & cx) {
                 add(name, c.string("UTF-8"));
                 continue;
             }
-            add(name, c.string(helpers.value_of(txn, b, one)));
+            if (local == "textarea") {
+                // THE WRAPPING TRANSFORMATION (4.10.11): with wrap=hard, LF
+                // breaks so no line is longer than `cols` characters - at
+                // exactly `cols` code points, which re-wraps to itself.
+                std::string text = helpers.value_of(txn, b, one);
+                if (ascii_iequals(helpers.attribute_of(txn, b, one, "wrap"), "hard")) {
+                    long long cols = 0;
+                    if (!parse_html_integer(helpers.attribute_of(txn, b, one, "cols"), cols) ||
+                        cols <= 0) {
+                        cols = 20;
+                    }
+                    std::string wrapped;
+                    long long column = 0;
+                    for (std::size_t i = 0; i < text.size(); ++i) {
+                        const auto byte = static_cast<unsigned char>(text[i]);
+                        if (text[i] == '\n') {
+                            column = 0;
+                        } else if ((byte & 0xC0u) != 0x80u) {
+                            if (column == cols) {
+                                wrapped += '\n';
+                                column = 0;
+                            }
+                            ++column;
+                        }
+                        wrapped += text[i];
+                    }
+                    text = std::move(wrapped);
+                }
+                add(name, c.string(text));
+            } else {
+                add(name, c.string(helpers.value_of(txn, b, one)));
+            }
             if ((local == "textarea" || type == "text" || type == "search") &&
                 !helpers.attribute_of(txn, b, one, "dirname").empty()) {
                 add(helpers.attribute_of(txn, b, one, "dirname"), c.string("ltr"));

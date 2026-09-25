@@ -352,6 +352,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             // on textContent's null), not the four letters.
             const value given = arg(a, 0);
             set_text(id, given.is_nullish() ? std::string{} : c.to_string(given));
+            control_helpers{this}.children_replaced(this, id);
             return value::undefined();
         });
 

@@ -247,6 +247,22 @@ void control_helpers::uncheck_radio_group(const read_txn & txn, dom_bindings * b
     });
 }
 
+void control_helpers::children_replaced(dom_bindings * b, node_id id) const {
+    // "String replace all" on a textarea (textContent, defaultValue) removes
+    // every child BEFORE it inserts the new one, so a clean textarea's value
+    // passed through "" and its selection was clamped to 0 on the way - the
+    // store, which only sees the result, is told so here.
+    const auto helpers = *this;
+    const auto txn = b->doc_->read();
+    if (!txn.contains(id) || !helpers.is(txn, id, "textarea") || b->forms_->find(id) == nullptr) {
+        return;
+    }
+    control_state & held = b->forms_->state_of(txn, *b->atoms_, id);
+    if (held.value_edited) { return; }
+    held.caret = 0;
+    held.selection = 0;
+}
+
 void control_helpers::plain(script::object_object &) {}
 
 } // namespace ctbrowser::shell::detail

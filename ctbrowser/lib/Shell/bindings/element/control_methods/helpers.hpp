@@ -65,6 +65,7 @@ struct control_helpers {
     bool is_disabled(const read_txn & txn, dom_bindings * b, node_id id) const;
     bool in_radio_group(const read_txn & txn, dom_bindings * b, node_id a, node_id other) const;
     void uncheck_radio_group(const read_txn & txn, dom_bindings * b, node_id id) const;
+    void children_replaced(dom_bindings * b, node_id id) const;
     static void plain(script::object_object &);
     std::vector<node_id> options_of(const read_txn & txn, dom_bindings * b, node_id select) const;
     std::string option_value(const read_txn & txn, dom_bindings * b, node_id option) const;
