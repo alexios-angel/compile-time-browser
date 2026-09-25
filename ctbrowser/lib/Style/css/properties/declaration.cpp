@@ -462,6 +462,29 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(indent + (hanging ? " hanging" : "") + (each_line ? " each-line" : ""));
     }
 
+    // `[ clip | ellipsis | <string> | fade | <fade()> ]{1,2}`, CSS Overflow 4
+    // §6.1: one end, or the start and the end.
+    if (ascii_iequals(property, "text-overflow")) {
+        std::size_t count = 0;
+        int depth = 0;
+        for (const std::size_t i : found.significant) {
+            const css_token & t = ts.tokens[i];
+            const std::string_view word = ts.text_of(t);
+            if (depth == 0) {
+                const bool end = (t.type == token_type::ident &&
+                                  ascii_iequals_any(word, {"clip", "ellipsis", "fade"})) ||
+                                 t.type == token_type::string ||
+                                 (t.type == token_type::function && ascii_iequals(word, "fade("));
+                if (!end) { return {}; }
+                ++count;
+            }
+            if (t.type == token_type::function || t.type == token_type::open_paren) { ++depth; }
+            if (t.type == token_type::close_paren) { --depth; }
+        }
+        if (count == 0 || count > 2) { return {}; }
+        return yes(simplified);
+    }
+
     // `[ first | last ] || <'alignment-baseline'> || <'baseline-shift'>`, CSS
     // Inline 3 §4.4, written in that order with the defaults - `baseline`
     // and a zero shift - left out, and `baseline` when that is all of it.

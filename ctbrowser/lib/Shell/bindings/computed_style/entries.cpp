@@ -657,6 +657,20 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 return number_text(std::min(1.0f, std::max(0.0f, number)));
             }
         }
+        // 4c. AN OVERFLOW AXIS BESIDE A SCROLLING ONE: CSS Overflow 3 §3.1 -
+        //     when either axis is neither `visible` nor `clip`, `visible`
+        //     computes to `auto` and `clip` to `hidden`.
+        if (property == "overflow-x" || property == "overflow-y") {
+            const std::string own = collapse_keyword(text);
+            std::string other =
+                collapse_keyword(declared(property == "overflow-x" ? "overflow-y" : "overflow-x"));
+            if (other.empty()) { other = "visible"; }
+            if (other != "visible" && other != "clip") {
+                if (own.empty() || own == "visible") { return "auto"; }
+                if (own == "clip") { return "hidden"; }
+            }
+            return own;
+        }
         // 5. Everything else is a keyword or a list, and its computed value IS
         //    its specified text - lowercased, EXCEPT where the value names
         //    something: a <custom-ident> is case-sensitive (CSS Values 4
