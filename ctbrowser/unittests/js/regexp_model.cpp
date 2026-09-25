@@ -188,9 +188,36 @@ void test_substitution_limits() {
                   "17");
 }
 
+// Annex B's legacy RegExp features: the static accessors RegExpBuiltinExec
+// updates, refused for any receiver but %RegExp% and emptied by a subclass
+// instance's match; compile refuses a subclass instance.
+void test_legacy_statics() {
+    expect_result("/(b)(c)?/.exec('abd'); return [RegExp.lastMatch, RegExp['$1'], "
+                  "RegExp['$2'], RegExp.lastParen, RegExp.leftContext, RegExp.rightContext, "
+                  "RegExp.input, RegExp['$_'], RegExp['$9']].join('|');",
+                  "b|b|||a|d|abd|abd|");
+    expect_result("/x/.test('axb'); RegExp.input = 'q'; return RegExp.input + RegExp['$`'] + "
+                  "RegExp[\"$'\"];",
+                  "qab");
+    expect_result("const d = Object.getOwnPropertyDescriptor(RegExp, '$&');"
+                  "return typeof d.get + ',' + d.set + ',' + d.enumerable + ',' + d.configurable;",
+                  "function,undefined,false,true");
+    expect_result("class R extends RegExp {} try { R.lastMatch; return 'no'; } "
+                  "catch (e) { return e.name; }",
+                  "TypeError");
+    expect_result("class R extends RegExp {} new R('a').exec('a');"
+                  "try { RegExp.lastMatch; return 'no'; } catch (e) { return e.name; }",
+                  "TypeError");
+    expect_result("class R extends RegExp {} try { new R('a').compile('b'); return 'no'; } "
+                  "catch (e) { return e.name; }",
+                  "TypeError");
+    expect_result("return /a/.compile('b').source;", "b");
+}
+
 } // namespace
 
 int main() {
+    test_legacy_statics();
     test_accessors();
     test_constructor();
     test_exec();

@@ -233,7 +233,52 @@ value regexp_exec(context & cx, value rx, value subject) {
     if (stateful && !set_last_index(cx, rx, static_cast<double>(m.end))) {
         return value::undefined();
     }
-    return exec_result(cx, *program, subject, m);
+    const value result = exec_result(cx, *program, subject, m);
+    // The legacy statics (RegExp.$1, RegExp.lastMatch, ...): updated by a
+    // match of a RegExp with its legacy features, emptied by a subclass
+    // instance's, so a stale answer is never reported for either.
+    const context::rooted keep{cx, result};
+    const bool legacy = static_cast<object_object *>(rx.as_heap())->find(slot_legacy) != nullptr;
+    set_legacy_statics(cx, legacy ? result : value::undefined());
+    return result;
+}
+
+void set_legacy_statics(context & cx, value result) {
+    object_object * home = cx.prototype(context::proto_kind::regexp);
+    if (home == nullptr) { return; }
+    if (!result.is_array()) {
+        home->define(slot_legacy_record, value::undefined(), attr_none);
+        return;
+    }
+    // Every field is a value the result already holds - the strings are
+    // shared, not copied - and the two contexts are cut from the subject
+    // only when read, so a global replace over a long string does not copy
+    // it twice more per match.
+    const auto * match = static_cast<const array_object *>(result.as_heap());
+    const value empty = cx.string(std::string{});
+    const context::rooted keep_empty{cx, empty};
+    const value record = cx.make_array();
+    auto * fields = static_cast<array_object *>(record.as_heap());
+    fields->items.assign(legacy_fields, empty);
+    const std::size_t captures = match->items.size() - 1;
+    // A group that did not participate reads as the empty String.
+    const auto capture = [&](std::size_t i) {
+        const value v = match->items[i + 1];
+        return v.is_string() ? v : empty;
+    };
+    fields->items[legacy_input] = match->input;
+    fields->items[legacy_last_match] = match->items[0];
+    if (captures > 0) { fields->items[legacy_last_paren] = capture(captures - 1); }
+    fields->items[legacy_subject] = match->input;
+    fields->items[legacy_begin] = match->index;
+    fields->items[legacy_end] = value::number(
+        match->index.as_number() +
+        static_cast<double>(
+            static_cast<const string_object *>(match->items[0].as_heap())->text.size()));
+    for (std::size_t i = 0; i < 9 && i < captures; ++i) {
+        fields->items[legacy_paren1 + i] = capture(i);
+    }
+    home->define(slot_legacy_record, record, attr_none);
 }
 
 // SpeciesConstructor, 7.3.22: `O.constructor[@@species]`, or the default when

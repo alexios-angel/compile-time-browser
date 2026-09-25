@@ -197,6 +197,7 @@ void install_regexp(context & cx) {
             o->prototype = value::object(table);
         }
         o->define("lastIndex", value::number(0), attr_writable);
+        o->define(slot_legacy, value::boolean(true), attr_none); // new.target is %RegExp%
         return obj;
     };
 
@@ -258,10 +259,14 @@ void install_regexp(context & cx) {
             // with no prototype (a subclass instance arrives with its own):
             // RegExp.prototype unless something already chose otherwise.
             auto * o = static_cast<object_object *>(obj.as_heap());
+            // An instance that arrives with no prototype is %RegExp%'s own;
+            // one that brings its own came from a subclass or a foreign
+            // new.target, and has no legacy features (RegExpAlloc steps 2-3).
             if (!o->prototype.is_object()) {
                 if (object_object * table = c.prototype(context::proto_kind::regexp)) {
                     o->prototype = value::object(table);
                 }
+                o->define(slot_legacy, value::boolean(true), attr_none);
             }
             o->define("lastIndex", value::number(0), attr_writable);
         }
@@ -282,6 +287,87 @@ void install_regexp(context & cx) {
         detail::install_arity(cx, species, 0);
         regexp_ctor->define_accessor("@@species", value::object(species), value::undefined(),
                                      attr_configurable);
+    }
+    // THE LEGACY STATIC PROPERTIES (Annex B, the legacy RegExp features):
+    // RegExp.input/$_, lastMatch/$&, lastParen/$+, leftContext/$`,
+    // rightContext/$' and $1-$9, each an accessor { enumerable: false,
+    // configurable: true } over the record RegExpBuiltinExec keeps (see
+    // set_legacy_statics). GetLegacyRegExpStaticProperty refuses a receiver
+    // that is not %RegExp% itself - a subclass constructor included - and an
+    // emptied record; only `input` has a setter, storing ToString of its value.
+    regexp_proto->define(slot_intrinsic, value::object(regexp_ctor), attr_none);
+    {
+        const value empty = cx.string(std::string{});
+        const context::rooted keep{cx, empty};
+        const value record = cx.make_array();
+        auto * fields = static_cast<array_object *>(record.as_heap());
+        fields->items.assign(legacy_fields, empty);
+        fields->items[legacy_begin] = value::number(0);
+        fields->items[legacy_end] = value::number(0);
+        regexp_proto->define(slot_legacy_record, record, attr_none);
+    }
+    // The record, or null with the TypeError in flight.
+    const auto legacy_record = [](context & c, const std::string & name) -> array_object * {
+        object_object * home = c.prototype(context::proto_kind::regexp);
+        const value * intrinsic = home == nullptr ? nullptr : home->find(slot_intrinsic);
+        if (intrinsic == nullptr || !c.current_this().same_value(*intrinsic)) {
+            c.throw_error("TypeError", "RegExp." + name + " requires that 'this' be %RegExp%");
+            return nullptr;
+        }
+        const value * record = home->find(slot_legacy_record);
+        if (record == nullptr || !record->is_array()) {
+            c.throw_error("TypeError",
+                          "RegExp." + name + " is empty after a match by a RegExp subclass");
+            return nullptr;
+        }
+        return static_cast<array_object *>(record->as_heap());
+    };
+    // `field` is the record slot; -1 and -2 are leftContext and rightContext,
+    // cut from the matched subject on demand.
+    const auto legacy_accessor = [&](int field, std::initializer_list<const char *> names) {
+        for (const char * name : names) {
+            const std::string shown = name;
+            const value getter = detail::accessor_fn(
+                cx, "get " + shown, [legacy_record, field, shown](context & c, std::span<value>) {
+                    array_object * record = legacy_record(c, shown);
+                    if (record == nullptr) { return value::undefined(); }
+                    if (field >= 0) { return record->items[static_cast<std::size_t>(field)]; }
+                    const std::string & subject =
+                        static_cast<string_object *>(record->items[legacy_subject].as_heap())->text;
+                    const auto begin =
+                        static_cast<std::size_t>(record->items[legacy_begin].as_number());
+                    const auto end =
+                        static_cast<std::size_t>(record->items[legacy_end].as_number());
+                    return c.string(field == -1 ? subject.substr(0, begin) : subject.substr(end));
+                });
+            detail::install_arity(cx, static_cast<native_object *>(getter.as_heap()), 0);
+            value setter = value::undefined();
+            if (field == legacy_input) {
+                setter = detail::accessor_fn(
+                    cx, "set " + shown, [legacy_record, shown](context & c, std::span<value> a) {
+                        if (legacy_record(c, shown) == nullptr) { return value::undefined(); }
+                        const detail::unwind_watch watch{c};
+                        const std::string text = string_arg(c, arg_at(a, 0));
+                        if (watch.threw()) { return value::undefined(); }
+                        // Re-found: ToString may have run a match that replaced it.
+                        if (array_object * record = legacy_record(c, shown)) {
+                            record->items[legacy_input] = c.string(text);
+                        }
+                        return value::undefined();
+                    });
+                detail::install_arity(cx, static_cast<native_object *>(setter.as_heap()), 1);
+            }
+            regexp_ctor->define_accessor(shown, getter, setter, attr_configurable);
+        }
+    };
+    legacy_accessor(legacy_input, {"input", "$_"});
+    legacy_accessor(legacy_last_match, {"lastMatch", "$&"});
+    legacy_accessor(legacy_last_paren, {"lastParen", "$+"});
+    legacy_accessor(-1, {"leftContext", "$`"});
+    legacy_accessor(-2, {"rightContext", "$'"});
+    for (int i = 0; i < 9; ++i) {
+        const std::string paren = "$" + std::to_string(i + 1);
+        legacy_accessor(static_cast<int>(legacy_paren1) + i, {paren.c_str()});
     }
 
     // 22.2.5.1 RegExp.escape(S), ES2025: a string that matches S literally.
@@ -479,7 +565,15 @@ void install_regexp(context & cx) {
     // then flags must be absent.
     method(cx, regexp_proto, "compile", 2, [initialize](context & c, std::span<value> a) -> value {
         const value self = c.current_this();
-        if (this_regexp(c, "RegExp.prototype.compile") == nullptr) { return value::undefined(); }
+        object_object * o = this_regexp(c, "RegExp.prototype.compile");
+        if (o == nullptr) { return value::undefined(); }
+        // compile is itself a legacy feature: an instance without them (a
+        // subclass's) refuses it.
+        if (o->find(slot_legacy) == nullptr) {
+            c.throw_error("TypeError", "RegExp.prototype.compile: the legacy RegExp features are "
+                                       "disabled for this object");
+            return value::undefined();
+        }
         value p = arg_at(a, 0);
         value f = arg_at(a, 1);
         if (std::string source, flags; regexp_slots(p, source, flags)) {
