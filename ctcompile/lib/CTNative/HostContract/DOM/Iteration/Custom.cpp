@@ -2651,10 +2651,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (mlir::failed(mlir::verify(entry))) {
             return error("DOM iterator observed state rewrite is malformed");
         }
-        // ponytail: retained Try tuples still need an inactive-value proof.
-        // Keep complete preparation transactional until completion normalization
-        // and the final next/done census can prove these protected regions.
-        return error("DOM iterator observed state requires completion normalization");
     }
     // Only after selecting the custom arm can completion normalization discard
     // inactive eager-array state. A live record marker is poison and refuses.
@@ -2798,10 +2794,12 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         branch.replaceAllUsesWith(yield.getOperands());
         branch.erase();
     }
-    if (suppressedThrow) {
+    if (suppressedThrow && !retainedCompletions) {
         // Completion must remove the inactive eager-array transport too.
         // A surviving holder/method alias could otherwise call the rewritten
         // body without suppression after cell or method resolution.
+        // Observed invocations instead have the complete Try lifetime proof
+        // above, including their unobserved saved holder slots.
         auto holder = emittedNext.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getObject();
         for (mlir::Operation * user : holder.getUsers()) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
@@ -2848,18 +2846,46 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
     }
-    for (mlir::Operation * user : emittedNext->getUsers()) {
+    mlir::Value nextResult = emittedNext.getResult();
+    auto protectedNext = llvm::dyn_cast<ctjs::InvokeOp>(emittedNext->getParentOp());
+    if (retainedCompletions) {
+        // Re-find the copied operations: completion normalization replaces the
+        // body. Only this root Try's direct invocation may supply a normal
+        // record; a caught payload or saved slot is not the next result.
+        auto protectedBody = protectedNext
+                                 ? llvm::dyn_cast<ctjs::TryOp>(protectedNext->getParentOp())
+                                 : ctjs::TryOp{};
+        if (!spend() || !protectedBody || protectedBody->getBlock() != &entry.getBody().front() ||
+            protectedNext->getParentRegion() != &protectedBody.getBody() ||
+            emittedNext->getParentRegion() != &protectedNext.getBody() ||
+            !protectedNext.getBody().hasOneBlock() ||
+            !protectedNext.getNormalBody().hasOneBlock()) {
+            return error("DOM custom next requires one direct protected invocation");
+        }
+        auto & body = protectedNext.getBody().front();
+        auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(body.back());
+        auto & normal = protectedNext.getNormalBody().front();
+        if (body.getNumArguments() || &body.front() != emittedNext.getOperation() || !exit ||
+            emittedNext->getNextNode() != exit || !emittedNext->hasOneUse() ||
+            exit.getNormalResult() != emittedNext.getResult() || normal.getNumArguments() != 1) {
+            return error("DOM custom next lost its protected normal result");
+        }
+        nextResult = normal.getArgument(0);
+    }
+    for (mlir::Operation * user : nextResult.getUsers()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
-        if (get && ctjs::constantKey(get.getKey()) == "done") {
+        if (get && get.getObject() == nextResult && ctjs::constantKey(get.getKey()) == "done") {
             if (emittedDone) { return error("DOM custom iterator done field is ambiguous"); }
             emittedDone = get;
         }
     }
     auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(emittedNext->getParentOp());
-    if (!emittedDone || (loop ? emittedNext->getParentRegion() != &loop.getBefore() ||
-                                    loop->getBlock() != &entry.getBody().front()
-                              : emittedNext->getBlock() != &entry.getBody().front())) {
+    if (!emittedDone || (retainedCompletions ? emittedDone.getDefiningOp()->getBlock() !=
+                                                   &protectedNext.getNormalBody().front()
+                         : loop ? emittedNext->getParentRegion() != &loop.getBefore() ||
+                                      loop->getBlock() != &entry.getBody().front()
+                                : emittedNext->getBlock() != &entry.getBody().front())) {
         return error("DOM custom next requires one direct loop test");
     }
     const auto stops = [&](auto && self, mlir::Value value, unsigned depth) -> bool {
