@@ -623,9 +623,11 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                 continue;
             }
             const EscapeVerdicts original = computeVerdicts(solver, function, 0);
-            if (original.sites.size() != 1 || original.sites.find(nested) != original.sites.end()) {
-                fail(inventory,
-                     "the legacy root-only inventory unexpectedly includes nested sites");
+            const auto found = original.sites.find(nested);
+            if (original.sites.size() != 2 || found == original.sites.end() ||
+                found->second.reason != EscapeReason::UnknownOp || found->second.by ||
+                original.directStorage.complete) {
+                fail(inventory, "nested inventory must retain its unsupported-instance refusal");
             }
         }
     }

@@ -172,7 +172,7 @@ struct RoleOf {
 
 struct Verdict {
     EscapeReason reason = EscapeReason::Confined;
-    mlir::Operation * by = nullptr; // the sinking operation, when escaping
+    mlir::Operation * by = nullptr; // the sinking operation, when known
     unsigned position = 0;          // its operand index
 };
 
@@ -239,9 +239,11 @@ struct DirectLoadEvidence {
 };
 
 struct EscapeVerdicts {
-    /// Every tracked site in a LIVE top-level CFG block, in program order
-    /// (a MapVector so the claims file is deterministic). Sites in dead CFG
-    /// blocks are dropped and counted. Nested-region sites are out of scope.
+    /// Every tracked site under a LIVE top-level CFG block, in preorder
+    /// (a MapVector so the inventory is deterministic). All descendants of dead
+    /// top-level blocks are dropped and counted. Nested sites remain UnknownOp
+    /// with no operand witness, unless an earlier whole-function refusal applies;
+    /// neither nested liveness nor distinct dynamic instances are inferred.
     llvm::MapVector<mlir::Operation *, Verdict> sites;
     /// Every direct Stored write, independently of the first-reason verdicts.
     DirectStorageEvidence directStorage;
@@ -583,8 +585,9 @@ struct ArrayContentsEvidence {
 /// not const; nothing here changes a lattice.
 /// Models the function's top-level CFG. A live operation's nested regions
 /// sink their implicit captures as unknown_op; no region-control-flow proof
-/// is inferred. Allocations inside nested regions have no verdict and must
-/// never be treated as confined by a consumer. Frame-retaining operations
+/// is inferred. Allocations inside nested regions are inventoried with an
+/// UnknownOp verdict and no operand witness, after whole-function refusals.
+/// They must never be treated as confined by a consumer. Frame-retaining operations
 /// inside those regions still trigger the whole-function refusals.
 ///
 /// With initialized solver evidence, a complete current computeArrayContents

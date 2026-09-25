@@ -485,11 +485,10 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
         return executable != nullptr && executable->isLive();
     };
 
-    // PASS 1: the sites, the arguments builders, the suspension points -
-    // live blocks only. ctcompile/test/Analysis/Types/Claims.cpp's split applied
-    // to sites: a site in a
-    // block DeadCodeAnalysis proved dead never executes and is dropped; a
-    // site in a live block with no lattice is a gap and is counted.
+    // PASS 1: inventory every site under live top-level blocks. Nested regions
+    // have no instance/control-flow proof here, so even their dead arms remain
+    // inventoried. A dead top-level block drops all its descendant sites; a
+    // top-level site in a live block with no lattice is a counted gap.
     llvm::SmallVector<mlir::Operation *, 2> argumentsBuilders;
     mlir::Operation * suspension = nullptr;
     llvm::SmallVector<mlir::Block *, 8> live;
@@ -497,7 +496,9 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
         ++out.blocks;
         if (!blockIsLive(block)) {
             for (mlir::Operation & op : block) {
-                if (isTrackedSite(&op)) { ++out.deadSites; }
+                op.walk([&](mlir::Operation * nested) {
+                    if (isTrackedSite(nested)) { ++out.deadSites; }
+                });
             }
             continue;
         }
@@ -508,19 +509,21 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             // cannot model. Keep the records from this CFG, but never present
             // them as complete. The capture refusal below is still separate.
             if (op.getNumRegions() != 0) { out.directStorage.complete = false; }
-            if (isTrackedSite(&op)) {
-                Verdict verdict;
-                const AliasLattice * lattice = solver.lookupState<AliasLattice>(op.getResult(0));
-                if (lattice == nullptr || lattice->getValue().isUninitialized()) {
-                    verdict = Verdict{EscapeReason::Unvisited, &op, 0};
-                    ++out.unvisitedSites;
+            op.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * nested) {
+                if (isTrackedSite(nested)) {
+                    Verdict verdict;
+                    if (nested == &op) {
+                        const AliasLattice * lattice =
+                            solver.lookupState<AliasLattice>(nested->getResult(0));
+                        if (lattice == nullptr || lattice->getValue().isUninitialized()) {
+                            verdict = Verdict{EscapeReason::Unvisited, nested, 0};
+                            ++out.unvisitedSites;
+                        }
+                    }
+                    out.sites.insert({nested, verdict});
                 }
-                out.sites.insert({&op, verdict});
-            }
-            // These operations retain raw frame registers, including values
-            // with no explicit SSA use. Nesting cannot hide their refusal,
-            // even though region-local allocation verdicts are out of scope.
-            op.walk([&](mlir::Operation * nested) {
+                // These operations retain raw frame registers, including values
+                // with no explicit SSA use. Nesting cannot hide their refusal.
                 if (llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(nested)) {
                     argumentsBuilders.push_back(nested);
                     out.capturesAllArguments = true;
@@ -571,6 +574,9 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             }
             for (auto & siteEntry : out.sites) {
                 mlir::Operation * site = siteEntry.first;
+                while (site->getParentRegion() != &function.getBody()) {
+                    site = site->getParentOp();
+                }
                 if (site->getBlock() == &entry && !builder->isBeforeInBlock(site)) {
                     late = builder;
                     break;
@@ -579,6 +585,15 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             if (late != nullptr) { break; }
         }
         if (late != nullptr) { refuseWholeFunction(EscapeReason::ArgumentsLate, late); }
+    }
+
+    // ponytail: nested sites need an instance/control-flow proof before any
+    // confinement claim. Keep raw-frame refusals first; otherwise there is no
+    // sinking operand witness for this inventory-only UnknownOp verdict.
+    for (const auto & [site, verdict] : out.sites) {
+        if (site->getParentRegion() != &function.getBody()) {
+            mark(site, EscapeReason::UnknownOp, nullptr, 0);
+        }
     }
 
     // PASS 2: THE SINKS, over every operand of every operation in every live
