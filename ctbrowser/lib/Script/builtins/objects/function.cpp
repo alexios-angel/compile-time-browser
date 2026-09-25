@@ -357,12 +357,11 @@ void install_dynamic_function(context & cx) {
     cx.define_native("Function", [](context & c, std::span<value> a) {
         return dynamic_function(c, a, "function");
     });
-    // `eval(x)`, 19.2.1 - AS AN INDIRECT EVAL, always: the source runs at the
-    // global scope, through the same run_nested `new Function` uses, and its
-    // completion value (a trailing expression) comes back. A DIRECT eval that
-    // sees the caller's locals needs the compiler to keep a frame's scope
-    // alive by name, which this engine's register frames do not; test262's
-    // eval-code/direct tests measure that gap by name. A non-string comes
+    // `eval(x)`, 19.2.1 - THE INDIRECT EVAL: the source runs at the global
+    // scope, through the same run_nested `new Function` uses, and its
+    // completion value (a trailing expression) comes back. A direct `eval(x)`
+    // in a function does not come here: the compiler routes it through
+    // direct_eval_name with the caller's bindings (below). A non-string comes
     // back unchanged (step 1).
     detail::global_fn(cx, "eval", 1, [](context & c, std::span<value> a) {
         if (a.empty() || !a[0].is_string()) { return a.empty() ? value::undefined() : a[0]; }
@@ -442,6 +441,78 @@ void install_dynamic_function(context & cx) {
         }
         return value::boolean(ok);
     });
+    // See direct_eval_name and compiler_impl::compile_direct_eval: a direct
+    // eval's source, compiled with the caller's bindings as its upvalues.
+    {
+        const value intrinsic = cx.global("eval");
+        auto * native = cx.allocate<native_object>(
+            std::string{direct_eval_name}, [intrinsic](context & c, std::span<value> a) {
+                const value eval_fn = a.empty() ? value::undefined() : a[0];
+                const value source = a.size() > 1 ? a[1] : value::undefined();
+                // Only %eval% makes the call direct (13.3.6.1 step 6.a); any
+                // other function under the name is called as one.
+                if (eval_fn.bits() != intrinsic.bits()) { return c.call(eval_fn, {&source, 1}); }
+                if (!source.is_string()) { return source; }
+                const value callee = a.size() > 2 ? a[2] : value::undefined();
+                const value self = a.size() > 3 ? a[3] : value::undefined();
+                const std::string descriptor = a.size() > 4 ? c.to_string(a[4]) : std::string{};
+                const auto * caller = callee.is_kind(heap_kind::function)
+                                          ? static_cast<closure_object *>(callee.as_heap())
+                                          : nullptr;
+                std::vector<std::string> names;
+                std::vector<value> cells;
+                bool strict = false;
+                std::size_t next = 5;
+                std::size_t at = 0;
+                bool first = true;
+                while (at <= descriptor.size()) {
+                    const std::size_t end = std::min(descriptor.find('\n', at), descriptor.size());
+                    const std::string_view line{descriptor.data() + at, end - at};
+                    at = end + 1;
+                    if (first) {
+                        strict = line == "strict";
+                        first = false;
+                        continue;
+                    }
+                    if (line.size() < 3) { continue; }
+                    if (line[0] == 'U') {
+                        const std::size_t space = line.find(' ', 2);
+                        if (space == std::string_view::npos || caller == nullptr) { continue; }
+                        std::size_t index = 0;
+                        for (const char ch : line.substr(2, space - 2)) {
+                            index = index * 10 + static_cast<std::size_t>(ch - '0');
+                        }
+                        if (index >= caller->upvalues.size()) { continue; }
+                        names.emplace_back(line.substr(space + 1));
+                        cells.push_back(caller->upvalues[index]);
+                    } else {
+                        const value given = next < a.size() ? a[next] : value::undefined();
+                        ++next;
+                        names.emplace_back(line.substr(2));
+                        // "V": a local nothing boxed - the eval sees its value.
+                        cells.push_back(line[0] == 'L' && given.is_kind(heap_kind::cell)
+                                            ? given
+                                            : value::object(c.allocate<cell_object>(given)));
+                    }
+                }
+                program compiled =
+                    compiler::compile_for_direct_eval(c.to_string(source), names, strict);
+                if (!compiled.ok) {
+                    c.throw_error("SyntaxError", compiled.error);
+                    return value::undefined();
+                }
+                const program & kept = c.own_program(std::move(compiled));
+                for (const std::string & name : kept.hoisted_vars) { c.declare_global_var(name); }
+                auto * entry = c.allocate<closure_object>(&kept.functions[0]);
+                entry->owner = &kept;
+                entry->realm = caller != nullptr && caller->realm != nullptr ? caller->realm
+                                                                             : &c.current_realm();
+                entry->upvalues = std::move(cells);
+                return c.call(value::object(entry), {}, self);
+            });
+        native->retained.push_back(intrinsic);
+        cx.define_global(std::string{direct_eval_name}, value::object(native));
+    }
     // See param_eval_name. The intrinsic eval is remembered so a page that
     // rebinds the global `eval` gets its own function called instead.
     {

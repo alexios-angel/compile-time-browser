@@ -23,7 +23,8 @@ namespace {
 } // namespace
 
 namespace {
-program compile_source(std::string_view source, script_kind kind, bool completion_value);
+program compile_source(std::string_view source, script_kind kind, bool completion_value,
+                       std::span<const std::string> outer = {}, bool outer_strict = false);
 } // namespace
 
 program compiler::compile(std::string_view source, script_kind kind) {
@@ -34,8 +35,14 @@ program compiler::compile_for_eval(std::string_view source) {
     return compile_source(source, script_kind::classic, /*completion_value*/ true);
 }
 
+program compiler::compile_for_direct_eval(std::string_view source,
+                                          std::span<const std::string> outer, bool strict) {
+    return compile_source(source, script_kind::classic, /*completion_value*/ true, outer, strict);
+}
+
 namespace {
-program compile_source(std::string_view source, script_kind kind, bool completion_value) {
+program compile_source(std::string_view source, script_kind kind, bool completion_value,
+                       std::span<const std::string> outer, bool outer_strict) {
     const vp::ast tree = vp::parse(source);
     program out;
     out.kind = kind;
@@ -85,6 +92,8 @@ program compile_source(std::string_view source, script_kind kind, bool completio
     // compiler_impl::offset_of.
     c.source_view_ = source;
     c.completion_value_ = completion_value;
+    c.eval_outer_names_.assign(outer.begin(), outer.end());
+    c.eval_outer_strict_ = outer_strict;
     c.compile_program();
     return out;
 }

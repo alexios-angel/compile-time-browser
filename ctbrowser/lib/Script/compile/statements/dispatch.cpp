@@ -147,6 +147,16 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                            decl.text == "Infinity") {
                     // `var undefined = 5;` PutValue on a non-writable global:
                     // dropped (see emit_plain_write).
+                } else if (const int up = resolve_upvalue(0, decl.text);
+                           up >= 0 && n.text == "var") {
+                    // A DIRECT EVAL'S `var` of a name its caller already binds
+                    // is that binding (19.2.1.3: the variable environment is
+                    // the caller's): the initialiser writes the caller's cell,
+                    // and `var x;` alone leaves it as it is.
+                    if (decl.a >= 0) {
+                        proto().emit(
+                            instruction{op::set_upvalue, static_cast<std::uint16_t>(up), r});
+                    }
                 } else {
                     const std::uint16_t name = name_operand(std::string{decl.text});
                     proto().emit(instruction::with_bx(op::set_global, r, name));

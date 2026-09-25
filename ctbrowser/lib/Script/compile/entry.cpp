@@ -19,8 +19,15 @@ void compiler_impl::compile_program() {
 
     const vp::node & root = at(ast_.root);
     // A module is strict code; a script is when it says so (11.2.1, 16.2.1).
-    fn().is_strict = module_scope_ || has_use_strict_directive(ast_.root);
+    fn().is_strict = module_scope_ || has_use_strict_directive(ast_.root) || eval_outer_strict_;
     out_.functions[script].is_strict = fn().is_strict;
+    // A DIRECT EVAL'S PROGRAM is closed over its caller's bindings: they are
+    // the entry function's upvalues, in the order the caller hands the cells
+    // over (context: direct_eval_name), and resolve_upvalue(0, ...) finds them.
+    for (std::size_t i = 0; i < eval_outer_names_.size(); ++i) {
+        (void)add_upvalue(0, eval_outer_names_[i],
+                          upvalue_desc{false, static_cast<std::uint16_t>(i)});
+    }
     build_capture_index();
     fn().captures = range_of(ast_.root);
     collect_declared_names(ast_.root);
@@ -64,6 +71,11 @@ void compiler_impl::compile_program() {
         std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());
         out_.hoisted_vars.erase(std::unique(out_.hoisted_vars.begin(), out_.hoisted_vars.end()),
                                 out_.hoisted_vars.end());
+        // A direct eval's `var` of a caller's binding is that binding, not a
+        // global to create.
+        std::erase_if(out_.hoisted_vars, [&](const std::string & name) {
+            return std::ranges::find(eval_outer_names_, name) != eval_outer_names_.end();
+        });
     }
     if (module_scope_) {
         predeclare_locals(ast_.root);

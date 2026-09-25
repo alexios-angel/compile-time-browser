@@ -386,6 +386,10 @@ inline constexpr std::string_view super_get_name = "__ctbrowser_super_get";
 // unless the function is an arrow or names a parameter so - which is the
 // SyntaxError the eval throws.
 inline constexpr std::string_view param_eval_name = "__ctbrowser_param_eval";
+// A direct `eval(src)` in a function: `(eval, src, callee, this, descriptor,
+// cells...)` - see compiler_impl::compile_direct_eval. The source is compiled
+// with the caller's bindings as its entry function's upvalues.
+inline constexpr std::string_view direct_eval_name = "__ctbrowser_direct_eval";
 // `delete o.k` / `delete o[k]` (13.5.1.2): `(obj, key, strict, super)` is
 // ToObject(obj).[[Delete]](ToPropertyKey(key)) with its ANSWER - the opcodes
 // delete_prop/delete_index produce none - a TypeError for a null or undefined

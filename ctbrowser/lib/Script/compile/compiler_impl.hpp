@@ -1001,6 +1001,18 @@ public:
     std::vector<std::string> param_scope_names_;
     // `eval(src)` inside parameter expressions, routed through param_eval_name.
     [[nodiscard]] bool compile_param_eval(const vp::node & n, std::uint16_t dst);
+    // A DIRECT EVAL, `eval(src)` in a function: routed through
+    // direct_eval_name with the cells of every binding in scope (see
+    // compile_direct_eval). A call whose callee is the plain name `eval`.
+    [[nodiscard]] bool is_direct_eval_call(const vp::node & n) const;
+    [[nodiscard]] bool compile_direct_eval(const vp::node & n, std::uint16_t dst);
+    // The enclosing function ticks of every direct eval, sorted - see tour.
+    std::vector<std::int32_t> eval_ticks_;
+    // COMPILING A DIRECT EVAL'S SOURCE: the caller's bindings, in the order
+    // the entry function's upvalues hold them, and whether the caller was
+    // strict. Empty for every other program.
+    std::vector<std::string> eval_outer_names_;
+    bool eval_outer_strict_ = false;
     std::size_t handler_depth_ = 0;
 };
 
