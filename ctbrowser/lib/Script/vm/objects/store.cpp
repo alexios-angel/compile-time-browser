@@ -92,6 +92,36 @@ bool set_for_receiver(context & cx, value o, const std::string & name, value v, 
 
 } // namespace
 
+// COULD ANYTHING ON AN ORDINARY ARRAY'S CHAIN ANSWER AN INDEX? A write to an
+// index the array does not have - a hole, or past the end, which is every
+// push - is OrdinarySet's step 2, the prototype's [[Set]]: a setter
+// `Object.defineProperty(Array.prototype, "0", ...)` put there runs, a
+// read-only one refuses, a proxy there is asked. Nothing is there on every
+// page that does not do that, and object_object::indexed says so in a bool
+// per table, so the append stays what it was. External linkage: the array
+// built-ins' own fast paths ask it too (builtins/internal.hpp).
+bool array_chain_holds_indices(context & cx, const array_object & arr) {
+    value up = arr.prototype;
+    if (up.is_null()) {
+        object_object * table = cx.prototype(context::proto_kind::array);
+        if (table == nullptr) { return false; }
+        if (table->indexed) { return true; }
+        up = table->prototype;
+    }
+    for (int depth = 0; depth < 64; ++depth) {
+        if (up.is_null()) { // the implicit Object.prototype ends it
+            object_object * table = cx.prototype(context::proto_kind::object);
+            return table != nullptr && table->indexed;
+        }
+        if (up.is_undefined()) { return false; }      // an explicit null
+        if (!up.is_object()) { return up.is_heap(); } // a proxy, an array: it may
+        auto * table = static_cast<object_object *>(up.as_heap());
+        if (table->indexed) { return true; }
+        up = table->prototype;
+    }
+    return true;
+}
+
 // op::set_index's body, extracted verbatim so the interpreter and a compiled
 // body run one implementation rather than two - ct_aot_set_index is the other
 // caller.
@@ -143,7 +173,26 @@ void context::store_index(value target, value key, value v) {
         }
         if (i >= 0) {
             const auto index = static_cast<std::uint64_t>(i);
+            // AN INDEX THE ARRAY DOES NOT HAVE asks its chain first, when
+            // anything there could answer (array_chain_holds_indices): the
+            // receiver is this array, as OrdinarySet passes it on.
+            const auto inherited_write = [&] {
+                object_object * table = prototype(proto_kind::array);
+                const value proto = !arr->prototype.is_null() ? arr->prototype
+                                    : table != nullptr        ? value::object(table)
+                                                              : value::undefined();
+                if (!set_for_receiver(*this, proto, number_to_string(key.as_number()), v, target)) {
+                    store_rejected_ = true;
+                }
+            };
             if (index < arr->items.size()) {
+                if ((arr->in_hole_run(index) ||
+                     (!arr->element_attrs.empty() &&
+                      arr->is_hole(static_cast<std::uint32_t>(index)))) &&
+                    array_chain_holds_indices(*this, *arr)) [[unlikely]] {
+                    inherited_write();
+                    return;
+                }
                 // FROZEN MEANS FROZEN. Silently in sloppy mode - a TypeError
                 // under "use strict", which strict_store_check raises off
                 // store_rejected_.
@@ -191,6 +240,11 @@ void context::store_index(value target, value key, value v) {
                     }
                 }
                 arr->items[static_cast<std::size_t>(index)] = v;
+                return;
+            }
+            if (index <= array_object::max_index && array_chain_holds_indices(*this, *arr))
+                [[unlikely]] {
+                inherited_write();
                 return;
             }
             // A SEALED OR FROZEN ARRAY GAINS NO ELEMENTS, and neither does one

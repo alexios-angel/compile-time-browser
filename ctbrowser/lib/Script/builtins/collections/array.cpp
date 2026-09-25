@@ -476,7 +476,11 @@ void install_array(context & cx) {
     method(cx, array_proto, "push", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "push")) { return value::number(0); }
-        if (array_object * dense = detail::dense_array_this(self)) {
+        // ...unless the chain holds an index: each Set of a new index is then
+        // the prototype's to answer (a setter on Array.prototype[0]), which
+        // the generic walk asks and vector surgery would skip.
+        if (array_object * dense = detail::dense_array_this(self);
+            dense != nullptr && !array_chain_holds_indices(c, *dense)) {
             // FROZEN MEANS FROZEN, and it is a THROW here rather than a silent
             // drop: the Sets in 23.1.3.23 carry Throw=true, so this is a
             // TypeError in sloppy mode too - unlike a bare `a[0] = 1`, which
@@ -584,7 +588,8 @@ void install_array(context & cx) {
     method(cx, array_proto, "unshift", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "unshift")) { return value::number(0); }
-        if (array_object * dense = detail::dense_array_this(self)) {
+        if (array_object * dense = detail::dense_array_this(self);
+            dense != nullptr && !array_chain_holds_indices(c, *dense)) {
             if (!dense->extensible && (!a.empty() || !dense->elements_writable)) {
                 c.throw_error("TypeError", "Cannot add a property to a non-extensible array");
                 return value::number(static_cast<double>(dense->items.size()));

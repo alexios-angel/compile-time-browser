@@ -140,6 +140,12 @@ inline constexpr double max_array_length = 4294967295.0; // 2^32 - 1
     return truncated > max_safe_integer ? max_safe_integer : truncated;
 }
 
+// Could anything on an ordinary array's prototype chain answer an index - a
+// setter, a read-only property, a proxy? Defined in vm/objects/store.cpp,
+// beside the write that asks it; the fast paths that ADD elements (push,
+// unshift) ask it too before they skip the [[Set]] they stand in for.
+[[nodiscard]] bool array_chain_holds_indices(context & cx, const array_object & arr);
+
 namespace detail {
 
 // The receiver as its concrete type, or null when a method was called on
@@ -345,7 +351,8 @@ struct unwind_watch {
         const bool typed = arr->is_view() || arr->elements != element_kind::none;
         if (typed ||
             (arr->element_attrs.empty() && arr->length_writable && arr->extensible &&
-             arr->elements_writable && i >= 0 && i <= static_cast<double>(arr->items.size()))) {
+             arr->elements_writable && i >= 0 && i <= static_cast<double>(arr->items.size()) &&
+             !array_chain_holds_indices(cx, *arr))) {
             cx.store_index(self, value::number(i), v);
             return true;
         }

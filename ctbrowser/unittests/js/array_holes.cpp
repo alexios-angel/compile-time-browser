@@ -56,5 +56,14 @@ int main() {
               " var r = [, 1][0] + ',' + [][0]; delete Array.prototype[0]; return r; })()",
               "11,11");
     js_expect("1 / [true].indexOf(true, -0)", "Infinity");
+    // AND A WRITE to an index the array does not have asks the prototypes
+    // first (OrdinarySet step 2): a setter on Array.prototype[0] takes a push
+    // and a write into a hole alike.
+    js_expect("(function () { var got = []; Object.defineProperty(Array.prototype, '0',"
+              " {set: function (v) { got.push(v); }, configurable: true});"
+              " var a = []; a.push(5); var b = new Array(2); b[0] = 6; var c = [1]; c[0] = 7;"
+              " delete Array.prototype[0];"
+              " return got.join() + '|' + a.length + (0 in a) + (0 in b) + c[0]; })()",
+              "5,6|1falsefalse7");
     REPORT("array_holes");
 }
