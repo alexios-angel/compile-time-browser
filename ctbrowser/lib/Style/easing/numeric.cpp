@@ -339,7 +339,7 @@ namespace ctbrowser::style::easing_detail {
 }
 
 [[nodiscard]] std::string serialized_shape(std::string_view property, std::string text) {
-    if (image_sides(property)) {
+    if (image_sides(property) || property == "hyphenate-limit-chars") {
         const css::value_check checked = css::check_declaration(property, text, false);
         if (checked.valid) { return checked.serialized; }
     }

@@ -441,6 +441,26 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(ends[0] + " " + ends[1]);
     }
 
+    // `[ auto | <integer> ]{1,3}`, CSS Text 4 §6.3: the word, and the least
+    // before and after a hyphen. An omitted `before` is `auto` and an omitted
+    // `after` is the `before`, so those are what the shortest form leaves out.
+    if (ascii_iequals(property, "hyphenate-limit-chars")) {
+        static const property_syntax integer{"", k::integer, "auto", "", false, false};
+        std::vector<std::string> parts;
+        for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+            if (trim(raw, html_whitespace).empty()) { continue; }
+            std::string one;
+            if (parts.size() == 3 || !typed_component(raw, integer, one)) { return {}; }
+            parts.push_back(std::move(one));
+        }
+        if (parts.empty()) { return {}; }
+        if (parts.size() == 3 && parts[2] == parts[1]) { parts.pop_back(); }
+        if (parts.size() == 2 && parts[1] == "auto") { parts.pop_back(); }
+        std::string out = parts[0];
+        for (std::size_t i = 1; i < parts.size(); ++i) { out += " " + parts[i]; }
+        return yes(std::move(out));
+    }
+
     // `[ auto | <color> ]{1,2}`, CSS UI 4 §6.2.1: the caret's colour, and
     // the second its colour while it animates.
     if (ascii_iequals(property, "caret-color")) {

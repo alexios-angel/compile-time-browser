@@ -572,6 +572,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                     std::string one = automatic || ascii_iequals(part, "currentcolor")
                                           ? own_color
                                           : style::css::computed_color(part, ctx);
+                    if (one.empty()) {
+                        if (const std::optional<color> c = paint::parse_color(part)) {
+                            one = color_text(*c);
+                        } else if (const std::optional<color> s = system_color(part)) {
+                            one = color_text(*s);
+                        }
+                    }
                     parts.push_back(one.empty() ? std::string{part} : std::move(one));
                 }
                 if (parts.empty()) { return own_color; }

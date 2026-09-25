@@ -544,7 +544,9 @@ void test_column_rule_widths() {
              std::string{"rules=3px dotted rgb(0, 255, 0)|3px hidden rgb(0, 255, 0)|"
                          "3px solid rgb(0, 255, 0)|10px rgb(0, 255, 0)"});
     CHECK_EQ(logged(page, "specified="), std::string{"specified=10px|10px"});
-    CHECK_EQ(logged(page, "borders="), std::string{"borders=0px,0px|0px,0px|3px,3px"});
+    // A border's width is zero beside `none` and `hidden`; an outline's is
+    // not (CSS UI 4 §5.2, outline-width-computed).
+    CHECK_EQ(logged(page, "borders="), std::string{"borders=0px,3px|0px,3px|3px,3px"});
 }
 
 // getComputedStyle-detached-subtree, getComputedStyle-pseudo-with-argument: an
