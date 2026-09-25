@@ -322,96 +322,30 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
 // THE ITERABLE DECLARATION (WebIDL 3.7.10): `[Symbol.iterator]`, and for a
 // value iterable that is not a named collection - NodeList, DOMTokenList -
 // forEach/keys/values/entries too. Static because DOMTokenList.prototype is
-// built in element/views.cpp over the same shape: an object with `length`
-// and an indexed getter.
+// built in element/child_views.cpp over the same shape: an object with
+// `length` and an indexed getter.
+//
+// THE ARRAY'S OWN FUNCTIONS, the same objects: for an interface with an
+// indexed property getter, @@iterator is %Array.prototype.values% and the
+// four value-iterator members are Array.prototype's (WebIDL 3.7.10.1 and
+// 3.7.11) - Node-childNodes.html and DOMTokenList-iteration.html compare them
+// by identity. They are generic over array-likes and LIVE, reading `length`
+// and the index through the collection on every step
+// (builtins/collections/array_iteration.cpp), so `list.values()` sees what a
+// loop body appended.
 void dom_bindings::install_iterable_declaration(context & cx, script::object_object & proto,
                                                 bool named_only) {
     if (proto.find("@@iterator") != nullptr) { return; }
-    const auto native = [&cx](const char * name, unsigned length, script::native_fn fn) {
-        auto * made = cx.allocate<script::native_object>(name, std::move(fn));
-        made->define("length", value::number(length), script::attr_configurable);
-        return value::object(made);
-    };
-    // Each hands back WebIDL's default iterator
-    // object (3.7.10.2): `next` reads `length` and the index off the collection
-    // ON EVERY STEP, so a for-of over `childNodes` sees what its own body
-    // appended - NodeList-Iterable.html's live case - where an array snapshot
-    // ended at the length the loop started with. The collection and the index
-    // are OWN PROPERTIES of the iterator rather than C++ captures, because a
-    // value held only in a capture is invisible to the collector. Not an
-    // Array, which Node-childNodes.html asserts of `list.keys()`.
-    const auto live_iterator = [&native](const char * name, int kind) {
-        return native(name, 0, [kind](context & c, std::span<value>) {
-            auto * it = c.allocate<script::object_object>();
-            it->define("@@sym:ctbrowser:iterated", c.current_this(), script::attr_configurable);
-            it->define("@@sym:ctbrowser:index", value::number(0), script::attr_configurable);
-            it->define("next",
-                       value::object(c.allocate<script::native_object>(
-                           "next",
-                           [kind](context & inner, std::span<value>) {
-                               const value self = inner.current_this();
-                               auto * result = static_cast<script::object_object *>(
-                                   inner.iter_result(value::undefined(), true).as_heap());
-                               if (!self.is_object()) { return value::object(result); }
-                               auto * state = static_cast<script::object_object *>(self.as_heap());
-                               const value * held = state->find("@@sym:ctbrowser:iterated");
-                               const value * index = state->find("@@sym:ctbrowser:index");
-                               if (held == nullptr || index == nullptr) {
-                                   return value::object(result);
-                               }
-                               const value list = *held;
-                               const double at = context::to_number(*index);
-                               // `length` first and the slot written after: the read goes
-                               // through the collection's proxy, which may refresh.
-                               const double length =
-                                   inner.to_number_value(inner.lookup_property(list, "length"));
-                               if (!(at < length)) { return value::object(result); }
-                               state->set("@@sym:ctbrowser:index", value::number(at + 1));
-                               const std::string key = std::to_string(static_cast<std::size_t>(at));
-                               const value item = inner.lookup_property(list, key);
-                               value out = item;
-                               if (kind == 0) {
-                                   out = value::number(at);
-                               } else if (kind == 2) {
-                                   out = inner.make_array();
-                                   auto & pair =
-                                       static_cast<script::array_object *>(out.as_heap())->items;
-                                   pair.push_back(value::number(at));
-                                   pair.push_back(item);
-                               }
-                               result->set("value", out);
-                               result->set("done", value::boolean(false));
-                               return value::object(result);
-                           })),
-                       script::attr_builtin);
-            it->define("@@iterator",
-                       value::object(c.allocate<script::native_object>(
-                           "[Symbol.iterator]",
-                           [](context & inner, std::span<value>) { return inner.current_this(); })),
-                       script::attr_builtin);
-            it->define("@@toStringTag", c.string("Array Iterator"), script::attr_configurable);
-            return value::object(it);
-        });
-    };
-    // ONE function for `values` and `[Symbol.iterator]` (WebIDL 3.7.10.1:
-    // the @@iterator property's value is %ArrayProto_values% for an array-
-    // like, i.e. the same function object) - Node-childNodes.html compares
-    // the two by identity.
-    const value values = live_iterator("values", 1);
+    const value array = cx.global("Array");
+    if (!array.is_object_like()) { return; }
+    const value array_proto = cx.lookup_property(array, "prototype");
+    const value values = cx.lookup_property(array_proto, "values");
+    if (!values.is_callable()) { return; }
     proto.define("@@iterator", values, script::attr_builtin);
     if (named_only) { return; }
-    proto.define("keys", live_iterator("keys", 0), script::attr_default);
-    proto.define("values", values, script::attr_default);
-    proto.define("entries", live_iterator("entries", 2), script::attr_default);
-    // `forEach` IS %Array.prototype.forEach% - WebIDL says so of an iterable
-    // declaration, Node-childNodes.html asserts the identity, and the array's
-    // is generic over array-likes. keys/values/entries would be the same
-    // functions too, but this engine's answer only for a real Array (see
-    // builtins/collections/array_iteration.cpp), so those three stay above.
-    if (const value array = cx.global("Array"); array.is_object_like()) {
-        const value for_each =
-            cx.lookup_property(cx.lookup_property(array, "prototype"), "forEach");
-        if (for_each.is_callable()) { proto.define("forEach", for_each, script::attr_default); }
+    for (const char * name : {"keys", "values", "entries", "forEach"}) {
+        const value member = cx.lookup_property(array_proto, name);
+        if (member.is_callable()) { proto.define(name, member, script::attr_default); }
     }
 }
 
