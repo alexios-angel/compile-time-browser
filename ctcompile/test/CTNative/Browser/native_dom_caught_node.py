@@ -589,6 +589,23 @@ RAW_HELPER_SOURCES |= {
 }
 
 
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-primitive-unary": source.replace(
+        "return this;", "return +'000000000000000000000000000000000000000000' ? null : this;"
+    )
+    .replace(
+        "return {done: done, value: anchor};",
+        "return -'\\u00A0+Infinity\\uFEFF' < -true ? {done: done, value: anchor} : null;",
+    )
+    .replace(
+        "throw anchor;",
+        "throw ~(true ? '0b11111111111111111111111111111111' : '') === +null ? anchor : null;",
+    )
+    for name, source in OUTER_SOURCES.items()
+}
+
+
 # Retain the complete source-global witnesses; the initialized provider and
 # absence of source writes must prove the binding before helper projection.
 RAW_HELPER_SOURCES |= {
