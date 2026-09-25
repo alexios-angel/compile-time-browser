@@ -367,10 +367,14 @@ struct unwind_watch {
     wanted.has_value = wanted.has_writable = wanted.has_enumerable = wanted.has_configurable = true;
     wanted.held = v;
     wanted.writable = wanted.enumerable = wanted.configurable = true;
-    if (cx.define_own_property(target, number_to_string(k), wanted)) { return true; }
-    if (!cx.throw_pending()) {
-        cx.throw_error("TypeError", "Cannot define element " + number_to_string(k));
-    }
+    // A THROWING defineProperty TRAP ANSWERS TRUE (context::define_own_property
+    // says why), so true alone is not success: splice's species copy onto a
+    // proxy whose trap throws at "2" walked on through 2^53 indices.
+    const unwind_watch watch{cx};
+    const bool defined = cx.define_own_property(target, number_to_string(k), wanted);
+    if (watch.threw()) { return false; }
+    if (defined) { return true; }
+    cx.throw_error("TypeError", "Cannot define element " + number_to_string(k));
     return false;
 }
 // HasProperty over an index - what makes the iteration methods SKIP A HOLE.

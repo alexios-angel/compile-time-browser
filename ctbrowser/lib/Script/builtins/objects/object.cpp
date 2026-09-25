@@ -76,8 +76,12 @@ namespace {
         if (!valid_descriptor(cx, read)) { return false; }
         wanted.emplace_back(key, read);
     }
+    // A trap that throws answers true, and the walk stops there.
+    const std::size_t before = cx.unwinds();
     for (const auto & [key, descriptor] : wanted) {
-        if (!cx.define_own_property(target, key, descriptor)) {
+        const bool defined = cx.define_own_property(target, key, descriptor);
+        if (cx.throw_pending() || cx.unwinds() != before) { return false; }
+        if (!defined) {
             cx.throw_error("TypeError", "Cannot redefine property: " + key);
             return false;
         }
