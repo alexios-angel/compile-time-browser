@@ -26,10 +26,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return load ? load.getName() : llvm::StringRef{};
     };
     const auto undefined = dom_source_detail::DOMSource::undefined;
-    bool custom = false;
+    bool custom = false, undefinedWritten = false;
     const auto census = candidate.walk([&](mlir::Operation * operation) {
         for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
             if (!spend()) { return mlir::WalkResult::interrupt(); }
+        }
+        if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
+            undefinedWritten |= store.getNameAttr() && store.getName() == "undefined";
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
             call && helper(call) == "__ctbrowser_for_of_open" && call.getArgs().size() == 1) {
@@ -296,6 +299,17 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         return ctjs::NumberAttr::get(binary->getContext(), result.bitcastToAPInt().getZExtValue());
     };
+    const auto exactUndefined = [&](ctjs::LoadGlobalOp load) {
+        // The initialized DOM provider supplies this binding. Check every
+        // source write before pruning helpers, including unreachable writes.
+        // Complete DOM admission still checks all other effects and declarations.
+        return !undefinedWritten &&
+               (contract.provider == HostContract::Provider::ctbrowserDOM ||
+                contract.provider == HostContract::Provider::ctbrowserDOMSession) &&
+               load->getNumOperands() == 0 && load->getNumResults() == 1 &&
+               llvm::isa<ctjs::ValueType>(load->getResult(0).getType()) && load.getNameAttr() &&
+               load.getName() == "undefined";
+    };
     const auto prepareTarget = [&](ctjs::CreateClosureOp closure) {
         ctjs::FuncOp found;
         for (auto function : candidate.getOps<ctjs::FuncOp>()) {
@@ -329,6 +343,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(operation)) {
                     projectBranches |= static_cast<bool>(exactNumberArithmetic(operation));
                 }
+                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
+                    projectBranches |= exactUndefined(load);
+                }
                 size += uint64_t(1) + operation->getNumOperands() + operation->getNumResults() +
                         operation->getNumSuccessors();
                 for (auto & region : operation->getRegions()) {
@@ -354,6 +371,16 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             work.remaining -= static_cast<unsigned>(size * size);
             if (mlir::failed(mlir::verify(found))) { return ctjs::FuncOp{}; }
             mlir::PatternRewriter rewriter(candidate.getContext());
+            const auto globals = found.walk([&](ctjs::LoadGlobalOp load) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                if (exactUndefined(load)) {
+                    rewriter.setInsertionPoint(load);
+                    rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(
+                        load, ctjs::UndefinedAttr::get(candidate.getContext()));
+                }
+                return mlir::WalkResult::advance();
+            });
+            if (globals.wasInterrupted()) { return ctjs::FuncOp{}; }
             // Projection exposes literal operands through block arguments and
             // selected yields. Each successful rewrite removes a primitive operation or a
             // control-flow edge; the reserved input ceiling bounds rescans.

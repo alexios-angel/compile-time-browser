@@ -1072,7 +1072,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::CompareKind::Eq, 7, 8, false},         {ctjs::CompareKind::Eq, 9, 9, true},
         {ctjs::CompareKind::Eq, 9, 10, false},
     }};
-    for (unsigned control = 0; control != 536; ++control) {
+    for (unsigned control = 0; control != 560; ++control) {
         auto expected = baseline;
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
@@ -1085,7 +1085,97 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         }
         auto & body = identity.getBody().front();
         mlir::OpBuilder at(body.getTerminator());
-        if (control == 0 || control == 1) {
+        if (control >= 536) {
+            const unsigned row = control - 536;
+            auto helper = row < 6 ? row / 2 == 0   ? identity
+                                    : row / 2 == 1 ? next
+                                                   : close
+                                  : identity;
+            auto & first = helper.getBody().front();
+            auto * terminal = first.getTerminator();
+            const auto where = helper.getLoc();
+            const auto payload = terminal->getOperand(0);
+            at.setInsertionPoint(terminal);
+            auto load =
+                ctjs::LoadGlobalOp::create(at, where, row == 14 || row == 15 ? "NaN" : "undefined");
+            auto comparison = ctjs::CompareOp::create(at, where, payload.getType(),
+                                                      ctjs::CompareKind::StrictEq, load, load);
+            auto negated = ctjs::UnaryOp::create(
+                at, where, payload.getType(),
+                ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), comparison);
+            if (row < 6) {
+                // Independent literal reference preserves every evaluated value,
+                // including the global snapshot shared by both comparison inputs.
+                mlir::IRMapping mapping;
+                mlir::OwningOpRef<mlir::ModuleOp> evaluated(
+                    llvm::cast<mlir::ModuleOp>((*candidate)->clone(mapping)));
+                for (auto [value, attribute] :
+                     {std::pair{load.getResult(),
+                                mlir::Attribute(ctjs::UndefinedAttr::get(context))},
+                      std::pair{comparison.getResult(),
+                                mlir::Attribute(ctjs::BooleanAttr::get(context, true))},
+                      std::pair{negated.getResult(),
+                                mlir::Attribute(ctjs::BooleanAttr::get(context, false))}}) {
+                    auto copy = mapping.lookup(value).getDefiningOp();
+                    mlir::OpBuilder replace(copy);
+                    auto result = ctjs::ConstantOp::create(replace, where, attribute);
+                    copy->getResult(0).replaceAllUsesWith(result.getResult());
+                    copy->erase();
+                }
+                auto evaluatedProof = contract;
+                evaluatedProof.moduleSha256 =
+                    ctcompile::ctnative::hostContractFingerprint(*evaluated);
+                auto error =
+                    ctcompile::ctnative::prepareDOMEntry(*evaluated, evaluatedProof, 100000);
+                if (!check(!error, "literal undefined establishes the complete helper reference")) {
+                    llvm::consumeError(std::move(error));
+                    continue;
+                }
+                expected = printed(*evaluated);
+            }
+            if (row == 16) { load->removeAttr("name"); }
+            if (row == 17) { load->getResult(0).setType(at.getI1Type()); }
+            if (row == 22 || row == 23) {
+                comparison->setOperand(1, first.getArgument(ctjs::arg_callee));
+            }
+            if (row == 6 || row == 7) {
+                ctjs::StoreGlobalOp::create(at, where, "undefined", payload);
+            } else if (row == 10 || row == 11) {
+                auto wrapper = *candidate->getOps<ctjs::FuncOp>().begin();
+                mlir::OpBuilder store(wrapper.getBody().front().getTerminator());
+                ctjs::StoreGlobalOp::create(store, where, "undefined",
+                                            wrapper.getBody().front().getArgument(0));
+            } else if (row == 12 || row == 13) {
+                mlir::OpBuilder store(next.getBody().back().getTerminator());
+                ctjs::StoreGlobalOp::create(store, where, "undefined",
+                                            next.getBody().front().getArgument(0));
+            } else if (row == 20 || row == 21) {
+                auto global = ctjs::LoadGlobalOp::create(at, where, "globalThis");
+                auto key = ctjs::ConstantOp::create(at, where,
+                                                    ctjs::StringAttr::get(context, "undefined"));
+                ctjs::SetPropertyOp::create(at, where, global, key, payload);
+            }
+            auto flag = ctjs::TruthyOp::create(at, where, at.getI1Type(), negated);
+            if (row % 2 == 0) {
+                auto * continuation = first.splitBlock(terminal);
+                auto * dead = &helper.getBody().emplaceBlock();
+                at.setInsertionPointToEnd(&first);
+                mlir::cf::CondBranchOp::create(at, where, flag, dead, continuation);
+                at.setInsertionPointToEnd(dead);
+                if (row == 8) { ctjs::StoreGlobalOp::create(at, where, "undefined", payload); }
+                ctjs::ReturnOp::create(at, where, payload);
+            } else {
+                auto branch = mlir::scf::IfOp::create(at, where, payload.getType(), flag, true);
+                for (auto [index, region] : llvm::enumerate(branch->getRegions())) {
+                    at.setInsertionPointToEnd(&region.front());
+                    if (row == 9 && index == 0) {
+                        ctjs::StoreGlobalOp::create(at, where, "undefined", payload);
+                    }
+                    mlir::scf::YieldOp::create(at, where, mlir::ValueRange{payload});
+                }
+                terminal->setOperand(0, branch.getResult(0));
+            }
+        } else if (control == 0 || control == 1) {
             if (control == 0) { at.setInsertionPoint(identity.getBody().back().getTerminator()); }
             ctjs::StoreGlobalOp::create(at, identity.getLoc(), "identity-effect",
                                         body.getArgument(ctjs::arg_receiver));
@@ -1907,13 +1997,18 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         const bool malformed =
             (control >= 226 && control < 232) || (control >= 274 && control < 280) ||
             (control >= 322 && control < 326) || (control >= 368 && control < 372) ||
-            (control >= 426 && control < 434) || control >= 530;
+            (control >= 426 && control < 434) || (control >= 530 && control < 536) ||
+            control == 552 || control == 553;
         if (!check(mlir::succeeded(mlir::verify(*candidate)) != malformed,
                    "only intentionally malformed helper operations fail verification")) {
             continue;
         }
         auto proof = contract;
         proof.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*candidate);
+        if (control == 554) { proof.moduleSha256 = "stale"; }
+        if (control == 555) {
+            proof.provider = ctcompile::ctnative::HostContract::Provider::closedSource;
+        }
         const auto fingerprint = proof.moduleSha256;
         const auto before = printed(*candidate);
         const bool succeeds =
@@ -1925,7 +2020,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             (control >= 116 && control < 140) || (control >= 156 && control < 166) ||
             (control >= 176 && control < 210) || (control >= 232 && control < 262) ||
             (control >= 280 && control < 310) || (control >= 326 && control < 356) ||
-            (control >= 372 && control < 414) || (control >= 434 && control < 496);
+            (control >= 372 && control < 414) || (control >= 434 && control < 496) ||
+            (control >= 536 && control < 542);
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
@@ -1936,7 +2032,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             if (limitedError) { llvm::consumeError(std::move(limitedError)); }
             if (control == 46 || control == 67 || control == 79 || control == 137 ||
                 control == 165 || control == 209 || control == 259 || control == 307 ||
-                control == 353 || control == 411 || control == 493) {
+                control == 353 || control == 411 || control == 493 || control == 541) {
                 const auto attempt = [&](unsigned budget) {
                     mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
                     auto limitedProof = proof;
