@@ -352,12 +352,13 @@ bool coerce_for_kind(context & cx, element_kind kind, value v, value & out) {
             return true;
         }
         // ToPrimitive HERE, so a valueOf that throws stops the write with
-        // ITS throw: it is parked by the time to_primitive_hint returns, and
-        // to_bigint went on to refuse the undefined it was left with.
+        // ITS throw. Under a store the VM runs, that throw has LANDED by the
+        // time to_primitive_hint returns - which then answers true with an
+        // undefined - and to_bigint went on to throw a TypeError over it.
         value prim = v;
-        if (v.is_object_like() &&
-            (!cx.to_primitive_hint(v, "number", prim) || cx.throw_pending())) {
-            return false;
+        if (v.is_object_like()) {
+            const detail::unwind_watch watch{cx};
+            if (!cx.to_primitive_hint(v, "number", prim) || watch.threw()) { return false; }
         }
         bigint n;
         if (!to_bigint(cx, prim, n)) { return false; }
