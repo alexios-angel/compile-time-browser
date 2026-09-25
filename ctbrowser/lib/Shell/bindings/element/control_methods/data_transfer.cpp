@@ -340,6 +340,13 @@ void control_helpers::install_data_transfer(context & cx) const {
             made->set("effectAllowed", c.string("none"));
             return self;
         });
+    // THE TWO PROTOTYPES NOTHING ELSE REACHES: they are held by the lambdas
+    // above, and a C++ capture is not a root (native_object::retained). Until
+    // the first transfer made a list, the collector freed them - and reused
+    // the memory under their first properties, so `items.add` and
+    // `items.length` came back as garbage names.
+    ctor->retained.push_back(list_proto_value);
+    ctor->retained.push_back(item_proto_value);
     ctor->define("prototype", dt_proto_value, script::attr_none);
     ctor->define("length", value::number(0), script::attr_configurable);
     dt_proto->define("constructor", value::object(ctor), script::attr_builtin);
