@@ -494,6 +494,18 @@ RAW_HELPER_SOURCES |= {
 }
 
 
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-number-bitwise": source.replace("return this;", "return (~0 & 1) ^ 1 ? null : this;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return (1 << 33) | (8 >> 2) ? {done: done, value: anchor} : null;",
+    )
+    .replace("throw anchor;", "throw (true ? -1 : 0) >>> 31 ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
 def check_outer_catches(args):
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -579,7 +591,11 @@ var outcome0 = observe(false), outcome1 = observe(true);
         )
         raw_label = f"{name}-raw-helpers"
         raw_steps = (
-            1_000_000 if name.endswith(("-helper-primitives", "-helper-transported-not")) else None
+            1_000_000
+            if name.endswith(
+                ("-helper-primitives", "-helper-transported-not", "-helper-number-bitwise")
+            )
+            else None
         )
         if raw_steps is not None:
             refused = dom.lower(
