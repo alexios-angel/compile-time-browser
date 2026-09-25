@@ -42,6 +42,9 @@ inline constexpr std::string_view timestamp_property = "__timeStamp";
 inline constexpr std::string_view passive_property = "__passive";
 // The propagation path, as a list, for `composedPath()`.
 inline constexpr std::string_view path_property = "__path";
+// DOM 2.9's "legacy target override flag": an event dispatched at the WINDOW
+// whose `target` reads the Document - the window's `load` (HTML 13.2.7).
+inline constexpr std::string_view legacy_target_override_property = "__legacyTargetOverride";
 
 [[nodiscard]] inline bool flag_of(context & cx, value event, std::string_view name) {
     return context::truthy(cx.lookup_property(event, std::string{name}));

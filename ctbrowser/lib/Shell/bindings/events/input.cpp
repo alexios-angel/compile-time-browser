@@ -57,7 +57,48 @@ bool dom_bindings::dispatch(std::string_view type, node_id target) {
             note_callback_fault("frame load");
         }
     }
-    return dispatch_event(type, target, make_event(*cx_, type, target));
+    const value event = make_event(*cx_, type, target);
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    // "THE END" (HTML 13.2.7) FIRES THESE TWO WITH ITS OWN FLAGS, not an
+    // engine event's: DOMContentLoaded bubbles and cannot be cancelled, and
+    // the window's `load` does neither (the-end.html).
+    const bool window_load = !target && type == "load";
+    if (!target && type == "DOMContentLoaded") { object->set("cancelable", value::boolean(false)); }
+    bool result = false;
+    if (window_load) {
+        // AT THE WINDOW, with the legacy target override flag: the path is the
+        // window alone - an event that does not bubble never reaches it from
+        // the Document - and `target` reads the Document.
+        object->set("bubbles", value::boolean(false));
+        object->set("cancelable", value::boolean(false));
+        object->define(std::string{legacy_target_override_property}, value::boolean(true),
+                       script::attr_none);
+        const script::context::rooted keep{*cx_, event};
+        result = dispatch_to(event, path_step{node_id{}, listen_on::window});
+    } else {
+        result = dispatch_event(type, target, event);
+    }
+    // ...and then, the first time the document is shown, `pageshow`: "if the
+    // Document's page showing is false, set it to true" and fire a
+    // PageTransitionEvent with `persisted` false at the window. It bubbles
+    // and is cancelable as every browser fires it (whatwg/html#6794). A
+    // document.open() that reaches `load` again is already showing.
+    script::object_object * window = window_object();
+    if (window_load && window != nullptr &&
+        window->find("@@sym:ctbrowser:pageShowing") == nullptr) {
+        window->define("@@sym:ctbrowser:pageShowing", value::boolean(true), script::attr_none);
+        const value shown = make_event(*cx_, "pageshow", node_id{});
+        auto * held = static_cast<script::object_object *>(shown.as_heap());
+        const value ctor = cx_->global("PageTransitionEvent");
+        if (const value proto =
+                ctor.is_callable() ? cx_->lookup_property(ctor, "prototype") : value::undefined();
+            proto.is_object()) {
+            held->prototype = proto;
+        }
+        held->set("persisted", value::boolean(false));
+        (void)dispatch_event("pageshow", node_id{}, shown);
+    }
+    return result;
 }
 
 // AT THE WINDOW, which is where an uncaught exception is reported. `node_id{}`
