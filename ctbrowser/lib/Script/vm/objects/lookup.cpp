@@ -248,6 +248,24 @@ value context::lookup_property(value target, const std::string & name) {
                     " from an object whose class did not declare it");
             return value::undefined();
         }
+        // PrivateGet step 5.b: a private ACCESSOR with no getter - only a
+        // `set #x` - is the TypeError too, where an ordinary accessor with
+        // no getter reads undefined. Own (a field, a static), or on the
+        // prototype chain (an instance method or accessor).
+        property_descriptor found;
+        bool present = own_property(target, name, found);
+        for (value up = get_prototype(target); !present && up.is_object_like();
+             up = get_prototype(up)) {
+            present = own_property(up, name, found);
+        }
+        if (present && found.is_accessor() && !found.getter.is_callable()) {
+            const std::size_t colon = name.find(':');
+            throw_error(
+                "TypeError",
+                "'" + name.substr(1, colon == std::string::npos ? std::string::npos : colon - 1) +
+                    "' was defined without a getter");
+            return value::undefined();
+        }
     }
     // A PROPERTY OF null OR undefined IS A TypeError (7.3.2 GetV -> ToObject),
     // not undefined. Until 2026-09-12 it was undefined, and docs/script.md

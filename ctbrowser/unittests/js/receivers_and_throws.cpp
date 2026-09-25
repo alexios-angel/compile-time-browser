@@ -93,5 +93,9 @@ int main() {
               " get: function (t, k) { log.push('g' + k); return t[k]; }});"
               "var o = {...p}; return log.join() + '|' + Object.keys(o).join() + o.a + o.b; })()",
               "keys,db,gb,da,ga|b,a12");
+    // A private accessor with no getter is a TypeError to read (PrivateGet).
+    js_expect("(function(){class C { set #f(v) {} read() { return this.#f; } }"
+              "try { new C().read(); return 'read'; } catch (e) { return e.name; } })()",
+              "TypeError");
     REPORT("receivers_and_throws");
 }
