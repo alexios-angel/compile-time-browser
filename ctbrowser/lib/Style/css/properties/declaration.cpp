@@ -59,6 +59,29 @@ namespace {
             parse_selector_text(body.substr(9, body.size() - 10), atoms, invalid);
         return !invalid && !parsed.selectors.empty();
     }
+    // `at-rule(<at-keyword-token>)`, `font-format(<ident>)` and
+    // `font-tech(<ident>)` (CSS Conditional 5 §6, CSS Fonts 4 §11.1): one
+    // token naming an at-rule, font format or font technology this engine
+    // reads. `@charset` is not an at-rule, and a string or a list is no
+    // answer at all.
+    for (const auto & [function, words] :
+         {std::pair<std::string_view, std::string_view>{
+              "at-rule(", "media supports import namespace font-face keyframes layer container "
+                          "scope counter-style page font-feature-values stylistic "
+                          "historical-forms styleset character-variant swash ornaments annotation "
+                          "property starting-style font-palette-values function"},
+          {"font-format(", "collection opentype truetype woff woff2"},
+          {"font-tech(", "features-opentype variations"}}) {
+        if (!ascii_istarts_with(body, function) || body.back() != ')') { continue; }
+        const token_stream ts =
+            tokenize(body.substr(function.size(), body.size() - function.size() - 1));
+        const scan found = scan_tokens(ts);
+        if (found.significant.size() != 1) { return false; }
+        const css_token & t = ts.tokens[found.significant.front()];
+        const bool at_rule = function == "at-rule(";
+        if (t.type != (at_rule ? token_type::at_keyword : token_type::ident)) { return false; }
+        return has_keyword(words, at_rule ? ts.value_of(t) : ts.text_of(t));
+    }
     const std::size_t colon = body.find(':');
     if (colon == std::string_view::npos) { return false; }
     // `!important` is part of a <declaration> and does not change the answer, so
@@ -85,8 +108,12 @@ bool condition(std::string_view text, int depth) {
         const bool right = condition(body.substr(at + op.size()), depth + 1);
         return op == "and" ? (left && right) : (left || right);
     }
-    // `selector()` is a <supports-condition> of its own, parentheses or not.
-    if (ascii_istarts_with(body, "selector(")) { return leaf(body, depth); }
+    // `selector()` and its kin are <supports-condition>s of their own,
+    // parentheses or not.
+    if (ascii_istarts_with(body, "selector(") || ascii_istarts_with(body, "at-rule(") ||
+        ascii_istarts_with(body, "font-format(") || ascii_istarts_with(body, "font-tech(")) {
+        return leaf(body, depth);
+    }
     if (body.front() != '(' || body.back() != ')') { return false; }
     return leaf(body.substr(1, body.size() - 2), depth);
 }
@@ -745,8 +772,10 @@ bool supports_declaration(std::string_view property, std::string_view value) {
     // still stores such a value - CSSOM says a page may - but a declaration
     // calling `attr()` or `random-item()` here really would be dropped by the
     // time anything rendered, and saying otherwise makes a test run and fail
-    // where it should have skipped.
-    return checked.valid && !checked.uses_unknown_function;
+    // where it should have skipped. A value with a `var()` in it is the
+    // exception, whatever else it calls: it is valid at parse time by
+    // definition (CSS Variables 1 §3), which is all the question asks.
+    return checked.valid && (checked.substituted || !checked.uses_unknown_function);
 }
 
 bool supports_condition(std::string_view text) {
