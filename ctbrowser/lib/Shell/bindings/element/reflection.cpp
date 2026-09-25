@@ -790,20 +790,33 @@ void dom_bindings::install_double_reflection(context & cx) {
 void dom_bindings::install_form_owner(context & cx) {
     for (const char * which :
          {"HTMLButtonElement", "HTMLFieldSetElement", "HTMLInputElement", "HTMLObjectElement",
-          "HTMLOutputElement", "HTMLSelectElement", "HTMLTextAreaElement"}) {
+          "HTMLOutputElement", "HTMLSelectElement", "HTMLTextAreaElement", "HTMLLegendElement"}) {
         const value iface = interface_prototype(which);
         if (!iface.is_object()) { continue; }
         auto * proto = static_cast<script::object_object *>(iface.as_heap());
+        const bool legend = std::string_view{which} == "HTMLLegendElement";
         proto->define_accessor(
             "form",
             value::object(cx.allocate<script::native_object>(
                 "form",
-                [this](context & c, std::span<value>) {
-                    const node_id id = receiver(c);
+                [this, legend](context & c, std::span<value>) {
+                    node_id id = receiver(c);
                     if (!id) { return value::null(); }
                     node_id owner;
                     {
                         const auto txn = doc_->read();
+                        // HTML 4.10.16: a <legend> is not listed - its `form`
+                        // is its PARENT fieldset's, and null under anything
+                        // else.
+                        if (legend) {
+                            id = txn.parent(id);
+                            if (!id ||
+                                txn.kind(id).value_or(node_kind::text) != node_kind::element ||
+                                txn.element_ns(id) != node_ns::html ||
+                                txn.local_name(id) != "fieldset") {
+                                return value::null();
+                            }
+                        }
                         const atom form_attr = atoms_->intern("form");
                         const std::string_view named = txn.attribute_value(id, form_attr);
                         if (txn.has_attribute(id, form_attr)) {

@@ -525,6 +525,11 @@ constexpr reflected_attribute reflection_table[] = {
     ulong_attr("HTMLInputElement", "height"),
     text_attr("HTMLInputElement", "defaultValue", "value"),
     bool_attr("HTMLInputElement", "defaultChecked", "checked"),
+    // The color state's two (4.10.5.1.15) and the checkbox's switch control.
+    bool_attr("HTMLInputElement", "alpha"),
+    enum_attr("HTMLInputElement", "colorSpace", "limited-srgb display-p3", "limited-srgb",
+              "limited-srgb", "colorspace"),
+    bool_attr("HTMLInputElement", "switch"),
     bool_attr("HTMLInputElement", "disabled"),
     bool_attr("HTMLInputElement", "multiple"),
     bool_attr("HTMLInputElement", "readOnly", "readonly"),
