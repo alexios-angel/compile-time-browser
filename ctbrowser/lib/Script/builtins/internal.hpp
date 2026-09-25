@@ -369,7 +369,11 @@ struct unwind_watch {
 // rather than refused; the refusal is a TypeError. A dense array takes
 // put_element's fast path, which is the same operation there.
 [[nodiscard]] inline bool create_element(context & cx, value target, double k, value v) {
-    if (target.is_array() && dense_array_this(target) != nullptr) {
+    // The same operation as a [[Set]] on a dense array - unless its chain
+    // holds an index, which a Set would ask and a define must not
+    // (Array.prototype[0] read-only does not stop `[].concat(x)`).
+    if (array_object * dense = dense_array_this(target);
+        dense != nullptr && !array_chain_holds_indices(cx, *dense)) {
         return put_element(cx, target, k, v);
     }
     context::property_descriptor wanted;

@@ -239,7 +239,11 @@ namespace {
 [[nodiscard]] bool symbol_dispatch(context & cx, value target, const char * symbol,
                                    std::span<value> a, value & out) {
     out = value::undefined();
-    if (target.is_nullish()) { return false; }
+    // AN OBJECT ONLY: step 2 is "if regexp is an Object", so a primitive's
+    // prototype is never asked - a getter on Number.prototype[@@match] does
+    // not run for `"a1b".match(1)` (the cstm-*-on-*-primitive files), now
+    // that a primitive's [[Get]] does reach its prototype's accessors.
+    if (!target.is_object_like()) { return false; }
     const value method = cx.lookup_property(target, symbol);
     if (cx.throw_pending()) { return true; }
     if (method.is_nullish()) { return false; }
