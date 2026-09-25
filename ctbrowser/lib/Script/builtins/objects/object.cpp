@@ -387,15 +387,17 @@ void install_object(context & cx) {
                   : slot->is_string()  ? "String"
                   : slot->is_boolean() ? "Boolean"
                                        : "Object";
-            // [[ErrorData]] and [[RegExpMatcher]] are slots this engine does not
-            // have: an error and a regular expression are both ordinary objects
-            // here, distinguishable only by the prototype they were built on.
-            // That is exact for everything the constructors make, and it also
-            // answers "Error" for `Object.create(TypeError.prototype)`, which a
-            // real slot would not. The alternative is a marker property, which
-            // a page could see.
-        } else if (inherits_from(c, self, c.prototype(context::proto_kind::error))) {
+        } else if (self.is_object() &&
+                   static_cast<object_object *>(self.as_heap())->find("@#ErrorData") != nullptr) {
+            // [[ErrorData]] is the private slot every error constructor and
+            // the engine's own throws record (errors.cpp; Error.isError asks
+            // the same), so `EvalError.prototype` and
+            // `Object.create(TypeError.prototype)` - ordinary objects - are
+            // "[object Object]" as step 14 has them.
             tag = "Error";
+            // [[RegExpMatcher]] is a slot this engine does not have: a regular
+            // expression is an ordinary object here, distinguishable only by
+            // the prototype it was built on.
         } else if (inherits_from(c, self, c.prototype(context::proto_kind::regexp))) {
             tag = "RegExp";
         } else if (self.is_object() && static_cast<object_object *>(self.as_heap())->find("__ms")) {
