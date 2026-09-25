@@ -317,7 +317,15 @@ void dom_bindings::install_shadow_dom(context & cx) {
                     if (!slot) { return made; }
                     auto & items = static_cast<script::array_object *>(made.as_heap())->items;
                     const bool flatten = dict_flag(c, arg(args, 0), "flatten");
+                    // "Find flattened slottables", DOM 4.2.2.3: NOTHING for a
+                    // slot outside a shadow tree, whose children are not
+                    // fallback content of anything; the slot's own slottable
+                    // children when nothing is assigned to it.
+                    const auto in_shadow_tree = [this](const read_txn & txn, node_id at) {
+                        return shadow_tree_of(root_of_tree(txn, at, false)) != nullptr;
+                    };
                     const auto gather = [&](auto && self, node_id at) -> void {
+                        if (flatten && !in_shadow_tree(doc_->read(), at)) { return; }
                         std::vector<node_id> assigned = assigned_nodes_of(at);
                         if (flatten && assigned.empty()) {
                             const auto txn = doc_->read();
@@ -328,8 +336,9 @@ void dom_bindings::install_shadow_dom(context & cx) {
                             const auto txn = doc_->read();
                             // A SLOT AMONG THEM IS ITS OWN ASSIGNMENT, flattened
                             // in its place - that is what makes the flat tree
-                            // flat.
-                            if (flatten && is_slot(txn, one)) {
+                            // flat. Only one IN a shadow tree: a light-DOM
+                            // <slot> assigned here is an ordinary slottable.
+                            if (flatten && is_slot(txn, one) && in_shadow_tree(txn, one)) {
                                 self(self, one);
                                 continue;
                             }
@@ -349,7 +358,8 @@ void dom_bindings::install_shadow_dom(context & cx) {
         // whatever was assigned before. It means nothing to a tree that
         // assigns by name - assigned_nodes_of only reads the list for a manual
         // one - and the nodes are remembered as given, because whether one
-        // still qualifies is a question about where it is NOW.
+        // still qualifies is a question about where it is NOW. An ORDERED
+        // SET: a node given twice keeps its first place.
         set_method(
             cx, *on, "assign",
             [this](context & c, std::span<value> args) {
@@ -369,7 +379,9 @@ void dom_bindings::install_shadow_dom(context & cx) {
                                       "arguments must be Element or Text nodes.");
                         return value::undefined();
                     }
-                    assigned.push_back(id);
+                    if (std::ranges::find(assigned, id) == assigned.end()) {
+                        assigned.push_back(id);
+                    }
                 }
                 // A node may be assigned to ONE slot: taking it here takes it
                 // from wherever it was.
@@ -420,6 +432,44 @@ void dom_bindings::install_shadow_dom(context & cx) {
                           if (tree == nullptr || !tree->open) { return value::null(); }
                           const node_id answer = assigned_slot_of(id);
                           return answer ? wrap(c, answer) : value::null();
+                      });
+    }
+
+    // --- ShadowRoot.activeElement, DocumentOrShadowRoot (HTML 6.6.3) -----------
+    //
+    // The focused element RETARGETED AGAINST THIS ROOT - so a focus inside a
+    // tree nested in this one answers with that tree's host - and null unless
+    // the result is in this root's own tree: focus outside it, or on an
+    // element that has left the document, is not this tree's to report.
+    if (const value root_proto = interface_prototype("ShadowRoot"); root_proto.is_object()) {
+        define_getter(cx, *static_cast<script::object_object *>(root_proto.as_heap()),
+                      "activeElement", [this](context & c, std::span<value>) {
+                          const node_id root = handle_of(c.current_this());
+                          if (!root || shadow_tree_of(root) == nullptr || !focused_ ||
+                              !is_connected(focused_)) {
+                              return value::null();
+                          }
+                          const auto txn = doc_->read();
+                          // DOM 4.4 "retarget": out of every tree whose root is not a
+                          // shadow-including inclusive ancestor of this root.
+                          const auto holds = [&](node_id ancestor) {
+                              for (node_id b = root; b;) {
+                                  if (b == ancestor) { return true; }
+                                  const node_id up = txn.parent(b);
+                                  const shadow_tree * above = up ? nullptr : shadow_tree_of(b);
+                                  b = up ? up : above == nullptr ? node_id{} : above->host;
+                              }
+                              return false;
+                          };
+                          node_id candidate = focused_;
+                          for (int guard = 0; candidate && guard < 64; ++guard) {
+                              const node_id own = root_of_tree(txn, candidate, false);
+                              const shadow_tree * tree = shadow_tree_of(own);
+                              if (tree == nullptr || holds(own)) { break; }
+                              candidate = tree->host;
+                          }
+                          return root_of_tree(txn, candidate, false) == root ? wrap(c, candidate)
+                                                                             : value::null();
                       });
     }
 
