@@ -45,6 +45,11 @@ public:
     [[nodiscard]] static constexpr bool immutable_global(std::string_view name) noexcept {
         return name == "undefined" || name == "NaN" || name == "Infinity";
     }
+    // THE SAME THREE AS OWN PROPERTIES of a global object's proxy target. A
+    // proxy may report a property non-configurable only when its target has it
+    // so (10.5.5 step 22), so a trap that answered attr_none for a name the
+    // target lacked made getOwnPropertyDescriptor(globalThis, 'NaN') throw.
+    static void define_immutable_globals(object_object & global);
 
     bool erase_global(std::string_view name);
 

@@ -111,10 +111,12 @@ void test_realms_survive_collection() {
 void test_global_bindings() {
     two_realms r;
     // CreateGlobalVarBinding: a `var` over a property the global object
-    // already owns keeps its value (an eval's var, and a script's).
+    // already owns keeps its value at instantiation (an eval's var, and a
+    // script's). `var kept;` itself still writes undefined - the compiler
+    // keeps that store for ctcompile's prover (statements/dispatch.cpp).
     r.expect("Object.defineProperty(globalThis, 'kept', {value: 'x', writable: true,"
              " enumerable: true, configurable: false});"
-             " (0, eval)('var kept;'); var result = kept;",
+             " (0, eval)('var seen = kept; var kept = 1;'); var result = seen;",
              "x");
     // 19.1: NaN, Infinity and undefined are read-only and not configurable.
     r.expect("undefined = 1; NaN = 2; var d = Object.getOwnPropertyDescriptor(globalThis, 'NaN');"

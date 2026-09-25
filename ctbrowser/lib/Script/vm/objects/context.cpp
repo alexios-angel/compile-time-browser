@@ -8,6 +8,7 @@
 // with nothing to declare.
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -42,9 +43,16 @@ void context::set_realm_template(const string_flat_map<value> & globals) {
 // not introduce accessor calls into pure global_get. THE TRAPS HOLD THEIR
 // REALM, not the current one: `other.x` read from this realm's code asks the
 // other realm's table.
+void context::define_immutable_globals(object_object & global) {
+    global.define("NaN", value::number(std::numeric_limits<double>::quiet_NaN()), attr_none);
+    global.define("Infinity", value::number(std::numeric_limits<double>::infinity()), attr_none);
+    global.define("undefined", value::undefined(), attr_none);
+}
+
 value context::make_global_object(realm_record & r) {
     realm_record * const realm = &r;
     const value target = make_object();
+    define_immutable_globals(*static_cast<object_object *>(target.as_heap()));
     auto * handler = static_cast<object_object *>(make_object().as_heap());
     const auto trap = [&](const char * name, native_fn fn) {
         handler->set(name, value::object(allocate<native_object>(name, std::move(fn))));
@@ -63,10 +71,11 @@ value context::make_global_object(realm_record & r) {
     trap("set", [realm](context & cx, std::span<value> args) {
         auto * object = static_cast<object_object *>(args[0].as_heap());
         const std::string name = cx.to_string(args[1]);
+        if (immutable_global(name)) {
+            return value::boolean(false); // 19.1: read-only - a TypeError in strict code
+        }
         if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
             cx.store_property(args[0], name, args[2]);
-        } else if (immutable_global(name)) {
-            return value::boolean(false); // 19.1: read-only - a TypeError in strict code
         } else {
             realm->globals[name] = args[2];
         }
@@ -90,8 +99,8 @@ value context::make_global_object(realm_record & r) {
         if (cx.own_property(args[0], name, found)) { return cx.from_property_descriptor(found); }
         const auto it = realm->globals.find(name);
         if (it == realm->globals.end()) { return value::undefined(); }
-        return cx.from_property_descriptor(property_descriptor::data(
-            it->second, immutable_global(name) ? attr_none : attr_writable | attr_configurable));
+        return cx.from_property_descriptor(
+            property_descriptor::data(it->second, attr_writable | attr_configurable));
     });
     // `delete globalThis.x` reaches the binding table the way `set` does;
     // an own property of the target deletes as one.
@@ -100,9 +109,6 @@ value context::make_global_object(realm_record & r) {
         property_descriptor found;
         if (cx.own_property(args[0], name, found)) {
             return value::boolean(cx.delete_own_property(args[0], name));
-        }
-        if (immutable_global(name) && realm->globals.contains(name)) {
-            return value::boolean(false); // not configurable
         }
         (void)realm->globals.erase(name);
         return value::boolean(true);
