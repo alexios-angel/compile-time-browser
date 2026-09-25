@@ -23,7 +23,9 @@ inline constexpr std::array<std::string_view, 39> length_units{
 
 // The tail of the same list. Split only because the array above is at its
 // declared size; `is_length_unit` consults both, so the seam is invisible.
-inline constexpr std::array<std::string_view, 4> more_length_units{"pc", "px", "dvi", "dvb"};
+// The container query units are CSS Conditional 5 §4's.
+inline constexpr std::array<std::string_view, 10> more_length_units{
+    "pc", "px", "dvi", "dvb", "cqw", "cqh", "cqi", "cqb", "cqmin", "cqmax"};
 
 inline constexpr std::array<std::string_view, 4> angle_units{"deg", "grad", "rad", "turn"};
 
