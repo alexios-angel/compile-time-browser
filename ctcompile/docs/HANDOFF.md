@@ -22,6 +22,81 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Number-comparison helpers and conditional key arithmetic, 2026-09-25 UTC
+
+Resumed clean **2db4e815** and its computed-helper/conditional-key boundary in
+HANDOFF and part 00. The old WIP branch is already an ancestor. After a service
+interruption, the parent preserved the committed work and completed the remaining
+malformed-input controls, evidence and handoffs. Parallel agents prepared the
+native controls and escape change; independent reviews covered both proofs.
+
+**0c21a26d** folds all six comparisons when both inputs are exact Number
+literals, retaining input evaluation and every other use. Binary64 comparisons
+preserve NaN, signed zero, infinities and subnormal values. The existing fixed
+point exposes transported operands and projects selected helper branches;
+complete helper, DOM and ownership proofs still govern publication. Fifty new
+paired raw/SCF controls cover values, transport, shared results, effects/payload
+refusals and public zero/late-budget rollback. **f9509d1a** adds six
+malformed-input controls: missing operands/kind/constant values and wrong operand
+types. Its census uses guarded raw operands and nullable casts before helper
+verification; the native control total is **232**.
+
+**cb31bdae** encloses unequal conditional Number keys with existing bounded
+arithmetic ranges and their common stride. It never treats unequal yields as an
+exact scalar or receiver identity. Current-state replay, guard reload exclusions,
+every exit, all-write cycles and the single-visit allocation proof remain required.
+Twenty-four new rows (**207 total**) and five live mutations (**27 states total**)
+cover arithmetic composition, gaps/overlaps, aliases, stale solver/forged markers
+and incomplete-budget rollback. This proves frame confinement, not ownership or
+shorter lifetimes.
+
+The initial devbox build covered seven explicit targets:
+`ctcompile-test-exception-recovery`, `ctcompile-test-host-contract`, `ctjs-opt`,
+`ctjs-translate`, `ctcompile-test-native-reference`,
+`ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Final exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 6.86 s**,
+`ctcompile_host_contract` **1/1, 2.72 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.90 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+The two native tests were rerun after production corrections; the final raw
+operand-access correction needed only exception recovery. Escape and source
+execution checks were not replayed after unrelated malformed-input hardening.
+The first host run caught unnecessary quadratic reservation for dynamic-only
+comparisons; restricting the census trigger to foldable Number comparisons
+restored those admissions without changing tests or raising budgets.
+
+**a7ca607e** adds two complete derived source witnesses. Both pass raw and
+structured preparation at the default **100,000-step** budget. Node/VM traces
+agree; **20 generated C++ files and 40 GCC/Clang binaries**, both printers,
+providers and optimization modes, ten zero-budget refusals, ordered DOM writes,
+two documents and 16 lifetimes pass. Source execution used **0c21a26d** and was
+not replayed for the malformed-input-only guard. Generated source and linked
+symbols have no Script/AOT dependency; inspected output uses typed values and
+existing public DOM APIs. Each raw source retains three helper
+comparisons, including one operand transported through source CFG edges.
+
+Final code/test hashes match local and devbox files. The original ten C++ raw
+literals and 71 Python multiline literals remain intact. Formatting passes
+**1126 C++, 159 Python, 114 web files**; diff checks pass. Static review and exact
+logs/selectors/generated output are in `/tmp/ctcompile-iteration26/`.
+
+**Next:** exact arithmetic helper producers and non-Number comparisons still
+need value and inertness proofs. Escape arithmetic over correlated unequal
+inputs (the retained `selectedKey - selectedKey` refusal) and differing receiver
+identities remain separate. Protected numeric `setAttribute`, repeated allocation
+identities/lifetimes, mutable exceptional state, escaping owners, unguarded
+Bootstrap defaults, the native application driver and full native Bootstrap
+remain unfinished. These are traced boundaries; no full-Bootstrap admission or
+raw escape-oracle precision gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. Linux identified the live Claude loop;
+Windows process identity inspection succeeded with no matches. Concurrent rules
+applied; no browser/runtime/shared implementation, local build, push or history
+rewrite.
+
 ## Transported logical-not helpers and per-arm store footprints, 2026-09-25 UTC
 
 Resumed clean **c857974d** and the explicit transported-predicate/unequal-key
