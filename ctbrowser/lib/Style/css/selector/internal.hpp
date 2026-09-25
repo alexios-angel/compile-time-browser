@@ -321,6 +321,7 @@ private:
                 while (end < inner.size() && !is_comma(inner[end])) { ++end; }
                 selector_parser one{*sheet_, *atoms_};
                 one.nesting_ = nesting_;
+                one.in_argument_ = true;
                 const std::uint32_t n = one.run(inner.subspan(at, end - at));
                 if (!one.invalid() && n == 1) {
                     ref.args.push_back(std::move(sheet_->selectors[before]));
@@ -341,6 +342,7 @@ private:
             selector_parser nested{*sheet_, *atoms_};
             nested.relative_ = is_has;
             nested.nesting_ = nesting_;
+            nested.in_argument_ = true;
             const std::uint32_t count = nested.run(inner);
             invalid = invalid || nested.invalid();
             // `:is(&.a)` contains the nesting selector, and `:not(:scope)` names
@@ -443,8 +445,18 @@ private:
         bool want_new_compound = true;
         bool pending_pseudo = false; // a `:` was seen and a function follows it
         combinator pending = combinator::none;
+        // AFTER A PSEUDO-ELEMENT (Selectors 4 §3.6.3) nothing may follow in the
+        // compound but a user-action pseudo-class - `::before:hover` - or, for
+        // CSS View Transitions' pseudo-elements, `:only-child`; and no
+        // combinator may follow it at all. `::before.a`, `::before div` and
+        // `::view-transition:hover` are syntax errors.
+        bool after_pe = false;
+        bool view_transition_pe = false;
 
         const auto start_compound = [&] {
+            if (!compounds.empty() && after_pe) { dead = invalid_ = true; }
+            after_pe = false;
+            view_transition_pe = false;
             if (!compounds.empty()) { links.push_back(pending); }
             compounds.push_back(building{});
             pending = combinator::descendant;
@@ -535,6 +547,10 @@ private:
                     continue;
                 }
                 if (want_new_compound || compounds.empty()) { start_compound(); }
+                if (after_pe) {
+                    dead = invalid_ = true;
+                    continue;
+                }
                 attribute_match match;
                 if (!parse_attribute(*sheet_, sheet_->children_of(v), *atoms_, match)) {
                     dead = invalid_ = true;
@@ -556,6 +572,11 @@ private:
                 pending_pseudo = false;
                 std::string_view name = text(v);
                 if (!name.empty() && name.back() == '(') { name.remove_suffix(1); }
+                if (after_pe &&
+                    (view_transition_pe || !ascii_iequals_any(name, {"not", "is", "where"}))) {
+                    dead = invalid_ = true;
+                    continue;
+                }
                 if (!parse_functional(name, v, compounds.back(), invalid_)) { dead = lossy = true; }
                 continue;
             }
@@ -569,6 +590,10 @@ private:
                 continue;
             case token_type::ident: {
                 if (want_new_compound || compounds.empty()) { start_compound(); }
+                if (after_pe) {
+                    dead = invalid_ = true;
+                    continue;
+                }
                 building & b = compounds.back();
                 if (bar_follows(i)) {
                     const std::string_view prefix = text(v);
@@ -597,6 +622,10 @@ private:
             }
             case token_type::hash: {
                 if (want_new_compound || compounds.empty()) { start_compound(); }
+                if (after_pe) {
+                    dead = invalid_ = true;
+                    continue;
+                }
                 building & b = compounds.back();
                 // A hash whose body could not be an identifier - `#0d6efd`, `#999` -
                 // is not a valid id selector, because an identifier may not begin
@@ -621,6 +650,10 @@ private:
                         continue;
                     }
                     if (want_new_compound || compounds.empty()) { start_compound(); }
+                    if (after_pe) {
+                        dead = invalid_ = true;
+                        continue;
+                    }
                     building & b = compounds.back();
                     b.part.classes.push_back(atoms_->intern(text(run[i + 1])));
                     ++b.classes;
@@ -631,11 +664,19 @@ private:
                     // The nesting selector, CSS Nesting 1 §2: a compound of its
                     // own or part of one - `&.a` and `.a&` are both legal.
                     if (want_new_compound || compounds.empty()) { start_compound(); }
+                    if (after_pe) {
+                        dead = invalid_ = true;
+                        continue;
+                    }
                     make_nesting(compounds.back(), dead);
                     continue;
                 }
                 if (d == "*") {
                     if (want_new_compound || compounds.empty()) { start_compound(); }
+                    if (after_pe) {
+                        dead = invalid_ = true;
+                        continue;
+                    }
                     if (bar_follows(i)) {
                         ++i; // the `|`
                         if (!read_namespaced(compounds.back(), ns_prefix::any, {}, i)) {
@@ -668,6 +709,10 @@ private:
                 // from their prefix and never reach here.
                 if (d == "|") {
                     if (want_new_compound || compounds.empty()) { start_compound(); }
+                    if (after_pe) {
+                        dead = invalid_ = true;
+                        continue;
+                    }
                     if (!read_namespaced(compounds.back(), ns_prefix::none, {}, i)) {
                         dead = invalid_ = true;
                     }
@@ -716,8 +761,14 @@ private:
                             b.part.pseudo_element =
                                 atoms_->intern_lower(ascii_lower_copy(name) + "(" + argument + ")");
                             ++b.tags;
+                            after_pe = true;
+                            view_transition_pe = ascii_istarts_with(name, "view-transition");
+                            if (in_argument_) { dead = invalid_ = true; }
                             continue;
                         }
+                        after_pe = true;
+                        view_transition_pe = ascii_istarts_with(name, "view-transition");
+                        if (in_argument_) { invalid_ = true; }
                         dead = lossy = true;
                         continue;
                     }
@@ -745,6 +796,9 @@ private:
                     }
                     b.part.pseudo_element = atoms_->intern_lower(name);
                     ++b.tags; // a pseudo-element is type-level for specificity
+                    after_pe = true;
+                    view_transition_pe = ascii_istarts_with(name, "view-transition");
+                    if (in_argument_) { dead = invalid_ = true; }
                     // A PSEUDO-ELEMENT HAS A CASCADE - engine::resolve_pseudo runs
                     // it for getComputedStyle(el, "::before") - and the matcher
                     // keeps the compound from every element (`pseudo_wanted_`). A
@@ -752,13 +806,23 @@ private:
                     if (name.starts_with('-')) { dead = true; }
                     continue;
                 }
+                if (after_pe &&
+                    !(view_transition_pe
+                          ? ascii_iequals(name, "only-child")
+                          : ascii_iequals_any(name, {"hover", "active", "focus", "focus-visible",
+                                                     "focus-within"}))) {
+                    dead = invalid_ = true;
+                    continue;
+                }
                 if (const std::uint32_t bit = state_bit_of(name); bit != 0) {
                     b.part.states |= bit;
+                    if (after_pe) { b.part.states_after_pe |= bit; }
                     ++b.classes; // a pseudo-class is class-level for specificity
                     continue;
                 }
                 if (const std::uint32_t bit = structural_bit_of(name); bit != 0) {
                     b.part.structural |= bit;
+                    if (after_pe) { b.part.structural_after_pe |= bit; }
                     ++b.classes;
                     if (bit == structural_scope) { saw_scope_ = true; }
                     // The CSSOM serialiser has no name for `structural_defined`, so
@@ -849,6 +913,9 @@ private:
     atom_table * atoms_;
     bool invalid_ = false;
     bool relative_ = false; // parsing the argument of `:has()`
+    // Parsing the argument of `:not()`, `:is()`, `:where()` or `:has()`, where
+    // a pseudo-element cannot be (Selectors 4 §3.6.3): it is a syntax error.
+    bool in_argument_ = false;
     const nesting_context * nesting_ = nullptr;
     // Per alternative: whether it wrote `&`, and whether it names the scoping
     // root (`:scope`, or `&` where that is what `&` means).

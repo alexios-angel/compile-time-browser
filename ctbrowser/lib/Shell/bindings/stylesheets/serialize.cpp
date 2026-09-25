@@ -267,10 +267,10 @@ void append_compound(std::string & out, const style::compound & part, const atom
         out += name;
     };
     for (const named_bit & each : state_bits) {
-        if ((part.states & each.bit) != 0) { emit(each.name); }
+        if ((part.states & ~part.states_after_pe & each.bit) != 0) { emit(each.name); }
     }
     for (const named_bit & each : structural_bits) {
-        if ((part.structural & each.bit) == 0) { continue; }
+        if ((part.structural & ~part.structural_after_pe & each.bit) == 0) { continue; }
         if (each.bit == style::structural_scope && part.nesting) { continue; } // the `&`
         emit(each.name);
     }
@@ -349,6 +349,13 @@ void append_compound(std::string & out, const style::compound & part, const atom
             out += ')';
         } else {
             out += ident(text);
+        }
+        // ...and what was written after it, after it again.
+        for (const named_bit & each : state_bits) {
+            if ((part.states_after_pe & each.bit) != 0) { out += ":" + std::string{each.name}; }
+        }
+        for (const named_bit & each : structural_bits) {
+            if ((part.structural_after_pe & each.bit) != 0) { out += ":" + std::string{each.name}; }
         }
     }
 }
