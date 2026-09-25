@@ -161,13 +161,13 @@ void dom_bindings::install_selection(context & cx) {
                           return c.lookup_property(range, is_backwards(c) ? backwards : forwards);
                       });
     }
-    // "The anchor and the focus are the same" - never, for a selection across
-    // a shadow boundary, whose range is collapsed all the same.
+    // "The anchor and the focus are the same", of the selection's RANGE - so a
+    // selection across a shadow boundary, whose range is collapsed at one of
+    // its points, is collapsed; only its composed range is not
+    // (Selection-isCollapsed.html, tentative).
     define_getter(cx, *proto, "isCollapsed", [](context & c, std::span<value>) {
         const value range = range_of(c);
-        script::object_object * self = self_object(c);
-        if (!range.is_object() || self == nullptr) { return value::boolean(true); }
-        if (context::truthy(held_slot(self, across_slot))) { return value::boolean(false); }
+        if (!range.is_object()) { return value::boolean(true); }
         return value::boolean(context::truthy(c.lookup_property(range, "collapsed")));
     });
     define_getter(cx, *proto, "rangeCount", [](context & c, std::span<value>) {

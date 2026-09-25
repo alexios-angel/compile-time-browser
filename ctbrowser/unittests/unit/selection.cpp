@@ -119,7 +119,7 @@ void test_what_the_selection_refuses() {
 
 // A SELECTION ACROSS A SHADOW BOUNDARY: the anchor inside a closed tree and
 // the focus outside it. The direction comes from the shadow-including order,
-// the selection is not collapsed though its range is, and getComposedRanges()
+// the selection is collapsed where its range is, and getComposedRanges()
 // rescopes the inner point to the host unless its tree is named - and refuses
 // a list that holds anything but ShadowRoots.
 void test_a_selection_across_a_shadow_boundary() {
@@ -139,7 +139,7 @@ void test_a_selection_across_a_shadow_boundary() {
                   "alert(s.direction);"
                   "alert(threw(function(){ s.getComposedRanges({shadowRoots: [c]}); }));"
                   "</script></body></html>"),
-             "forward,false,true,1,true,2;true,7,2;backward;TypeError");
+             "forward,true,true,1,true,2;true,7,2;backward;TypeError");
 }
 
 } // namespace
