@@ -304,7 +304,9 @@ void dom_bindings::install_selection(context & cx) {
     // node.childNodes.length` for every node it has, text nodes included.
     method("selectAllChildren", [this, rooted_here](context & c, std::span<value> a) {
         const value node = arg(a, 0);
-        if (!node.is_object()) {
+        // `is_object_like`: a Document is a PROXY, and `is_object()` is false
+        // for one - selectAllChildren(document) is a call on a Node.
+        if (!node.is_object_like()) {
             c.throw_error("TypeError", "Failed to execute 'selectAllChildren' on 'Selection': "
                                        "parameter 1 is not of type 'Node'.");
             return value::undefined();

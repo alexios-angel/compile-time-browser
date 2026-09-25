@@ -490,8 +490,13 @@ std::string dom_bindings::serialize_html(node_id target, bool outer, bool serial
         out += "<template shadowrootmode=\"";
         out += how->open ? "open" : "closed";
         out += "\"";
+        // The specification's order, which is not the attributes' own: mode,
+        // delegatesfocus, serializable, slotassignment (only when manual - named
+        // is the default), clonable. gethtml-ordering.html writes the template
+        // attributes in every other order and expects this one back.
         if (how->delegates_focus) { out += " shadowrootdelegatesfocus=\"\""; }
         if (how->serializable) { out += " shadowrootserializable=\"\""; }
+        if (how->manual_slots) { out += " shadowrootslotassignment=\"manual\""; }
         if (how->clonable) { out += " shadowrootclonable=\"\""; }
         out += ">";
         for (const node_id child : txn.children(root)) { wr(child); }
