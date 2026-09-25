@@ -983,7 +983,62 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::UnaryKind::Neg, 0x7ff0000000000000ULL, 0xfff0000000000000ULL, true},
         {ctjs::UnaryKind::Neg, 0x8000000000000001ULL, 1, true},
     }};
-    for (unsigned control = 0; control != 326; ++control) {
+    const std::array<NumericUnary, 12> bitwiseUnaries{{
+        {ctjs::UnaryKind::BitNot, 0, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, 0x8000000000000000ULL, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, 0xfff0000000000001ULL, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, 0x7ff0000000000000ULL, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, 0xfff0000000000000ULL, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, 1, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(-1.0), 0, false},
+        {ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(4294967296.0),
+         std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(4294967295.0), 0, false},
+        {ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(2147483648.0),
+         std::bit_cast<uint64_t>(2147483647.0), true},
+        {ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(3.9), std::bit_cast<uint64_t>(-4.0),
+         true},
+        {ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(-3.9), std::bit_cast<uint64_t>(2.0),
+         true},
+    }};
+    const std::array<Arithmetic, 18> staticArithmetic{{
+        {ctjs::BinaryKind::Add, 0x3ff0000000000000ULL, 0x3ca0000000000000ULL, 0x3ff0000000000000ULL,
+         true}, // static Add retains binary64 ties-to-even
+        {ctjs::BinaryKind::BitAnd, std::bit_cast<uint64_t>(4294967295.0),
+         std::bit_cast<uint64_t>(2147483648.0), std::bit_cast<uint64_t>(-2147483648.0), true},
+        {ctjs::BinaryKind::BitAnd, std::bit_cast<uint64_t>(-1.9),
+         std::bit_cast<uint64_t>(4294967298.9), std::bit_cast<uint64_t>(2.0), true},
+        {ctjs::BinaryKind::BitOr, 0x8000000000000000ULL, 0x7ff8000000000001ULL, 0, false},
+        {ctjs::BinaryKind::BitOr, std::bit_cast<uint64_t>(4294967296.0),
+         std::bit_cast<uint64_t>(1.0), std::bit_cast<uint64_t>(1.0), true},
+        {ctjs::BinaryKind::BitXor, std::bit_cast<uint64_t>(4294967295.0),
+         std::bit_cast<uint64_t>(-1.0), 0, false},
+        {ctjs::BinaryKind::BitXor, 0x7ff0000000000000ULL, std::bit_cast<uint64_t>(3.9),
+         std::bit_cast<uint64_t>(3.0), true},
+        {ctjs::BinaryKind::Shl, std::bit_cast<uint64_t>(2147483647.0), std::bit_cast<uint64_t>(1.0),
+         std::bit_cast<uint64_t>(-2.0), true},
+        {ctjs::BinaryKind::Shl, std::bit_cast<uint64_t>(1.0), std::bit_cast<uint64_t>(-1.0),
+         std::bit_cast<uint64_t>(-2147483648.0), true},
+        {ctjs::BinaryKind::Shr, std::bit_cast<uint64_t>(-2147483648.0),
+         std::bit_cast<uint64_t>(33.0), std::bit_cast<uint64_t>(-1073741824.0), true},
+        {ctjs::BinaryKind::Shr, std::bit_cast<uint64_t>(-3.9), std::bit_cast<uint64_t>(1.9),
+         std::bit_cast<uint64_t>(-2.0), true},
+        {ctjs::BinaryKind::UShr, std::bit_cast<uint64_t>(-1.0), 0,
+         std::bit_cast<uint64_t>(4294967295.0), true},
+        {ctjs::BinaryKind::UShr, std::bit_cast<uint64_t>(-1.0), std::bit_cast<uint64_t>(-1.0),
+         std::bit_cast<uint64_t>(1.0), true},
+        {ctjs::BinaryKind::Shl, std::bit_cast<uint64_t>(1.0), std::bit_cast<uint64_t>(32.0),
+         std::bit_cast<uint64_t>(1.0), true},
+        {ctjs::BinaryKind::Shr, std::bit_cast<uint64_t>(-1.0), 0x7ff8000000000001ULL,
+         std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::BinaryKind::UShr, std::bit_cast<uint64_t>(-1.0), 0x7ff0000000000000ULL,
+         std::bit_cast<uint64_t>(4294967295.0), true},
+        {ctjs::BinaryKind::Shl, std::bit_cast<uint64_t>(1.0), std::bit_cast<uint64_t>(4294967327.0),
+         std::bit_cast<uint64_t>(-2147483648.0), true},
+        {ctjs::BinaryKind::UShr, std::bit_cast<uint64_t>(4294967296.0),
+         std::bit_cast<uint64_t>(1.0), 0, false},
+    }};
+    for (unsigned control = 0; control != 434; ++control) {
         auto expected = baseline;
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
@@ -1052,15 +1107,21 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             const auto payload = terminal->getOperand(0);
             const auto other = first.getArgument(ctjs::arg_receiver);
             const bool primitive = control < 104;
-            const bool numericUnary = control >= 280;
+            const bool bitwiseUnary = control >= 326 && control < 372;
+            const bool numericUnary = control >= 280 && control < 372;
+            const bool staticCalculated = control >= 372;
+            const unsigned staticIndex = staticCalculated ? (control - 372) / 2 : 0;
             const bool calculated = control >= 232 && !numericUnary;
             const bool compared = control >= 176 && !calculated && !numericUnary;
             const bool computed = control >= 116 && !compared && !calculated && !numericUnary;
-            const unsigned index = numericUnary ? (control - 280) / 2
-                                   : calculated ? (control - 232) / 2
-                                   : compared   ? (control - 176) / 2
-                                   : computed   ? (control - 116) / 2
-                                                : (control - 76) / 2;
+            const unsigned index = staticCalculated
+                                       ? staticIndex < staticArithmetic.size() ? 0 : staticIndex - 6
+                                   : bitwiseUnary ? (control - 326) / 2
+                                   : numericUnary ? (control - 280) / 2
+                                   : calculated   ? (control - 232) / 2
+                                   : compared     ? (control - 176) / 2
+                                   : computed     ? (control - 116) / 2
+                                                  : (control - 76) / 2;
             const bool transported = (computed && control >= 156) ||
                                      (compared && (index == 14 || index == 15)) ||
                                      (calculated && (index == 12 || index == 13)) ||
@@ -1089,10 +1150,14 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             mlir::Value input;
             llvm::SmallVector<std::pair<mlir::Operation *, mlir::Attribute>> evaluatedResults;
             if (numericUnary) {
-                const auto row = index < numericUnaries.size()
-                                     ? numericUnaries[index]
-                                     : NumericUnary{ctjs::UnaryKind::Plus, 0x3ff0000000000000ULL,
-                                                    0x3ff0000000000000ULL, true};
+                const auto & rows = bitwiseUnary ? bitwiseUnaries : numericUnaries;
+                const auto row =
+                    index < rows.size() ? rows[index]
+                    : bitwiseUnary
+                        ? NumericUnary{ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(-2.0),
+                                       std::bit_cast<uint64_t>(1.0), true}
+                        : NumericUnary{ctjs::UnaryKind::Plus, 0x3ff0000000000000ULL,
+                                       0x3ff0000000000000ULL, true};
                 const mlir::Attribute value =
                     index == 18   ? mlir::Attribute(ctjs::StringAttr::get(context, "1"))
                     : index == 19 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
@@ -1107,14 +1172,16 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 }
                 auto operation = ctjs::UnaryOp::create(
                     at, where, payload.getType(),
-                    ctjs::UnaryKindAttr::get(context, index == 17 || index == 19 || index == 20
-                                                          ? ctjs::UnaryKind::Neg
-                                                          : row.kind),
+                    ctjs::UnaryKindAttr::get(
+                        context, !bitwiseUnary && (index == 17 || index == 19 || index == 20)
+                                     ? ctjs::UnaryKind::Neg
+                                     : row.kind),
                     operand);
-                if (control == 322) { operation->eraseOperand(0); }
-                if (control == 323) { operation->removeAttr("kind"); }
-                if (control == 324) { operand.getDefiningOp()->removeAttr("value"); }
-                if (control == 325) {
+                const unsigned unaryControl = bitwiseUnary ? control - 46 : control;
+                if (unaryControl == 322) { operation->eraseOperand(0); }
+                if (unaryControl == 323) { operation->removeAttr("kind"); }
+                if (unaryControl == 324) { operand.getDefiningOp()->removeAttr("value"); }
+                if (unaryControl == 325) {
                     mlir::OpBuilder invalid(operation);
                     auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
                     operation->setOperand(0, flag);
@@ -1130,7 +1197,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                     evaluatedResults.emplace_back(
                         negated.getOperation(),
                         ctjs::NumberAttr::get(context, 0xbff0000000000000ULL));
-                    // The Plus result feeds both Neg and Add across transported edges.
+                    // The result feeds both Neg and Add across transported edges.
                     auto sum = ctjs::BinaryOp::create(
                         at, where, payload.getType(),
                         ctjs::BinaryKindAttr::get(context, ctjs::BinaryKind::Add), negated, input);
@@ -1158,7 +1225,10 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                     }
                 }
             } else if (calculated) {
-                const auto row = arithmetic[index < arithmetic.size() ? index : 0];
+                const auto row =
+                    staticCalculated
+                        ? staticArithmetic[staticIndex < staticArithmetic.size() ? staticIndex : 1]
+                        : arithmetic[index < arithmetic.size() ? index : 0];
                 const mlir::Attribute lhsValue =
                     index == 18 ? mlir::Attribute(ctjs::StringAttr::get(context, "1"))
                                 : ctjs::NumberAttr::get(context, row.lhs);
@@ -1169,24 +1239,30 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                     index == 19 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
                                 : ctjs::NumberAttr::get(context, row.rhs);
                 auto rhs = ctjs::ConstantOp::create(at, where, rhsValue);
-                auto operation = ctjs::BinaryOp::create(
-                    at, where, payload.getType(),
-                    ctjs::BinaryKindAttr::get(context,
-                                              index == 20 ? ctjs::BinaryKind::Pow : row.kind),
-                    lhs, rhs);
-                if (control == 274) { operation->eraseOperand(1); }
-                if (control == 275) { operation->removeAttr("kind"); }
-                if (control == 276) { lhs.getDefiningOp()->removeAttr("value"); }
-                if (control == 277) { rhs->removeAttr("value"); }
-                if (control >= 278) {
+                const auto kind = ctjs::BinaryKindAttr::get(
+                    context, control == 432 ? ctjs::BinaryKind::Sub
+                             : control == 433 || (index == 20 && !staticCalculated)
+                                 ? ctjs::BinaryKind::Pow
+                                 : row.kind);
+                auto * operation =
+                    staticCalculated && index != 20
+                        ? ctjs::BinaryStaticOp::create(at, where, payload.getType(), kind, lhs, rhs)
+                              .getOperation()
+                        : ctjs::BinaryOp::create(at, where, payload.getType(), kind, lhs, rhs)
+                              .getOperation();
+                const unsigned binaryControl = staticCalculated ? control - 152 : control;
+                if (binaryControl == 274) { operation->eraseOperand(1); }
+                if (binaryControl == 275) { operation->removeAttr("kind"); }
+                if (binaryControl == 276) { lhs.getDefiningOp()->removeAttr("value"); }
+                if (binaryControl == 277) { rhs->removeAttr("value"); }
+                if (binaryControl == 278 || binaryControl == 279) {
                     mlir::OpBuilder invalid(operation);
                     auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
-                    operation->setOperand(control - 278, flag);
+                    operation->setOperand(binaryControl - 278, flag);
                 }
                 selected = row.truth;
-                evaluatedResults.emplace_back(operation.getOperation(),
-                                              ctjs::NumberAttr::get(context, row.value));
-                input = operation;
+                evaluatedResults.emplace_back(operation, ctjs::NumberAttr::get(context, row.value));
+                input = operation->getResult(0);
                 if (index >= 12 && index <= 14) {
                     auto comparison = ctjs::CompareOp::create(
                         at, where, payload.getType(), ctjs::CompareKind::StrictEq, input, input);
@@ -1723,7 +1799,9 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             }
         }
         const bool malformed = (control >= 226 && control < 232) ||
-                               (control >= 274 && control < 280) || control >= 322;
+                               (control >= 274 && control < 280) ||
+                               (control >= 322 && control < 326) ||
+                               (control >= 368 && control < 372) || control >= 426;
         if (!check(mlir::succeeded(mlir::verify(*candidate)) != malformed,
                    "only intentionally malformed helper operations fail verification")) {
             continue;
@@ -1740,7 +1818,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             (control >= 65 && control <= 69) || (control >= 74 && control < 104) ||
             (control >= 116 && control < 140) || (control >= 156 && control < 166) ||
             (control >= 176 && control < 210) || (control >= 232 && control < 262) ||
-            (control >= 280 && control < 310);
+            (control >= 280 && control < 310) || (control >= 326 && control < 356) ||
+            (control >= 372 && control < 414);
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
@@ -1750,7 +1829,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                   "reachable helper budget refusal preserves the entire module and contract");
             if (limitedError) { llvm::consumeError(std::move(limitedError)); }
             if (control == 46 || control == 67 || control == 79 || control == 137 ||
-                control == 165 || control == 209 || control == 259 || control == 307) {
+                control == 165 || control == 209 || control == 259 || control == 307 ||
+                control == 353 || control == 411) {
                 const auto attempt = [&](unsigned budget) {
                     mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
                     auto limitedProof = proof;

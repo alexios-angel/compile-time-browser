@@ -1,4 +1,5 @@
 #include "../Source/Proof.hpp"
+#include "ctcompile/CTNative/Runtime/Number.hpp"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Transforms/RegionUtils.h"
@@ -199,6 +200,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto number = llvm::dyn_cast<ctjs::NumberAttr>(input.getValue());
         if (!number) { return {}; }
         if (unary.getKind() == ctjs::UnaryKind::Plus) { return number; }
+        if (unary.getKind() == ctjs::UnaryKind::BitNot) {
+            return ctjs::NumberAttr::get(
+                unary.getContext(),
+                std::bit_cast<uint64_t>((~::ctnative::js_num{number.getDouble()}).value()));
+        }
         if (unary.getKind() != ctjs::UnaryKind::Neg) { return {}; }
         // Number negation changes only the sign, including zero and NaN.
         llvm::APFloat result(llvm::APFloat::IEEEdouble(), llvm::APInt(64, number.getBits()));
@@ -227,8 +233,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         default: return std::nullopt;
         }
     };
-    const auto exactNumberArithmetic = [](ctjs::BinaryOp binary) -> ctjs::NumberAttr {
-        if (binary->getNumOperands() != 2 || !binary.getKindAttr()) { return {}; }
+    const auto exactNumberArithmetic = [](mlir::Operation * binary) -> ctjs::NumberAttr {
+        if (!llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(binary) ||
+            binary->getNumOperands() != 2) {
+            return {};
+        }
+        auto kind = binary->getAttrOfType<ctjs::BinaryKindAttr>("kind");
+        if (!kind) { return {}; }
         auto lhs = binary->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
         auto rhs = binary->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
         auto left =
@@ -236,11 +247,28 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto right =
             rhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
         if (!left || !right) { return {}; }
+        if (llvm::isa<ctjs::BinaryStaticOp>(binary) && kind.getValue() != ctjs::BinaryKind::Add) {
+            // Reuse the typed Number operators and their public Core conversions:
+            // ToInt32/ToUint32, masked shift counts and unsigned left shifts.
+            const ::ctnative::js_num a{left.getDouble()}, b{right.getDouble()};
+            ::ctnative::js_num result;
+            switch (kind.getValue()) {
+            case ctjs::BinaryKind::BitAnd: result = a & b; break;
+            case ctjs::BinaryKind::BitOr: result = a | b; break;
+            case ctjs::BinaryKind::BitXor: result = a ^ b; break;
+            case ctjs::BinaryKind::Shl: result = a << b; break;
+            case ctjs::BinaryKind::Shr: result = a >> b; break;
+            case ctjs::BinaryKind::UShr: result = a.unsigned_shift_right(b); break;
+            default: return {};
+            }
+            return ctjs::NumberAttr::get(binary->getContext(),
+                                         std::bit_cast<uint64_t>(result.value()));
+        }
         // Exact Number operands cannot invoke conversion hooks. LLVM supplies
         // binary64 rounding independently of the host's floating-point state.
         llvm::APFloat result(llvm::APFloat::IEEEdouble(), llvm::APInt(64, left.getBits()));
         const llvm::APFloat operand(llvm::APFloat::IEEEdouble(), llvm::APInt(64, right.getBits()));
-        switch (binary.getKind()) {
+        switch (kind.getValue()) {
         case ctjs::BinaryKind::Add:
             (void)result.add(operand, llvm::APFloat::rmNearestTiesToEven);
             break;
@@ -256,7 +284,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         case ctjs::BinaryKind::Mod: (void)result.mod(operand); break;
         default: return {};
         }
-        return ctjs::NumberAttr::get(binary.getContext(), result.bitcastToAPInt().getZExtValue());
+        return ctjs::NumberAttr::get(binary->getContext(), result.bitcastToAPInt().getZExtValue());
     };
     const auto prepareTarget = [&](ctjs::CreateClosureOp closure) {
         ctjs::FuncOp found;
@@ -288,8 +316,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (auto comparison = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
                     projectBranches |= exactNumberComparison(comparison).has_value();
                 }
-                if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation)) {
-                    projectBranches |= static_cast<bool>(exactNumberArithmetic(binary));
+                if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(operation)) {
+                    projectBranches |= static_cast<bool>(exactNumberArithmetic(operation));
                 }
                 size += uint64_t(1) + operation->getNumOperands() + operation->getNumResults() +
                         operation->getNumSuccessors();
@@ -322,7 +350,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             bool changed = true;
             while (changed) {
                 changed = false;
-                const auto calculated = found.walk([&](ctjs::BinaryOp binary) {
+                const auto calculated = found.walk([&](mlir::Operation * binary) {
+                    if (!llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(binary)) {
+                        return mlir::WalkResult::advance();
+                    }
                     if (!spend()) { return mlir::WalkResult::interrupt(); }
                     auto result = exactNumberArithmetic(binary);
                     if (!result) { return mlir::WalkResult::advance(); }
