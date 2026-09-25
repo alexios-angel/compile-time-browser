@@ -697,13 +697,18 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             from += count - 1;
             to += count - 1;
         }
+        const detail::unwind_watch watch{c};
         for (; count > 0; count -= 1.0, from += direction, to += direction) {
-            if (detail::has_element(c, self, from)) {
-                if (!detail::put_element(c, self, to, detail::element_at(c, self, from))) {
-                    return self;
-                }
-            } else {
-                c.delete_index(self, value::number(to));
+            const bool present = detail::has_element(c, self, from);
+            if (watch.threw()) { return self; }
+            if (present) {
+                const value moved = detail::element_at(c, self, from);
+                if (watch.threw()) { return self; }
+                if (!detail::put_element(c, self, to, moved)) { return self; }
+            } else if (!detail::delete_element(c, self, to)) {
+                // DeletePropertyOrThrow (step 17.e.i): a non-configurable
+                // target index is the TypeError, not a silent keep.
+                return self;
             }
         }
         return self;
