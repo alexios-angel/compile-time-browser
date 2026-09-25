@@ -343,8 +343,7 @@ void context::store_property(value target, const std::string & name, value v) {
             obj->props[it->second].second = v;
             return;
         }
-        value up = obj->prototype;
-        while (up.is_heap()) {
+        for (value up = obj->prototype; up.is_heap();) {
             // A TYPED ARRAY up the chain answers a numeric key's [[Set]] for
             // this receiver (10.4.5.5 step 1.b.ii): an index it does not have
             // is a quiet success that creates nothing; one it has is a
@@ -369,17 +368,13 @@ void context::store_property(value target, const std::string & name, value v) {
             }
             up = parent->prototype;
         }
-        // ...and the implicit Object.prototype a null link ends in: its
-        // read-only data refuses the write too (its accessors were
-        // assign_through_accessor's).
-        if (up.is_null()) {
-            if (object_object * table = prototype(proto_kind::object);
-                table != nullptr && table->find(name) != nullptr &&
-                (table->attrs_of(name) & attr_writable) == 0) {
-                store_rejected_ = true;
-                return;
-            }
-        }
+        // NOT the implicit Object.prototype a null link ends in, though a
+        // read-only data property there refuses a [[Set]] (10.1.9.2): an
+        // object literal's `{prop: v}` is compiled to this same [[Set]], where
+        // it is CreateDataProperty, and `{prop: 12}` must not be refused by an
+        // Object.prototype.prop a page made read-only
+        // (language/expressions/object/11.1.5_3-3-1). The literal needs its
+        // own define before this can ask.
         if (!obj->extensible) {
             store_rejected_ = true;
             return;

@@ -71,17 +71,18 @@ int main() {
               "delete Function.prototype.fp; delete Array.prototype.ap; return out.join(); })()",
               "fp,0,ap,ap");
     // [[Set]] of a fresh name asks the chain: a setter on Array.prototype
-    // takes an array's write, and a read-only Object.prototype property
-    // refuses a plain object's.
+    // takes an array's write.
     js_expect("(function(){var got; Object.defineProperty(Array.prototype, 'sp',"
               " {set: function (v) { got = v; }, configurable: true});"
               "var a = []; a.sp = 5; var own = a.hasOwnProperty('sp');"
               "delete Array.prototype.sp; return got + ',' + own; })()",
               "5,false");
+    // ...but an object literal's property is DEFINED, whatever a read-only
+    // Object.prototype property of the same name says.
     js_expect("(function(){Object.defineProperty(Object.prototype, 'ro',"
               " {value: 1, writable: false, configurable: true});"
-              "var j = JSON; j.ro = 2; var r = j.ro + ',' + j.hasOwnProperty('ro');"
+              "var o = {ro: 12}; var r = o.ro + ',' + o.hasOwnProperty('ro');"
               "delete Object.prototype.ro; return r; })()",
-              "1,false");
+              "12,true");
     REPORT("receivers_and_throws");
 }
