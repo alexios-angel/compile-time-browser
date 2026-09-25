@@ -236,81 +236,95 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             work.remaining -= static_cast<unsigned>(size * size);
             if (mlir::failed(mlir::verify(found))) { return ctjs::FuncOp{}; }
             mlir::PatternRewriter rewriter(candidate.getContext());
-            const auto folded = found.walk([&](ctjs::UnaryOp unary) {
-                if (!spend()) { return mlir::WalkResult::interrupt(); }
-                if (unary.getKind() != ctjs::UnaryKind::Not) { return mlir::WalkResult::advance(); }
-                auto input = unary.getOperand().getDefiningOp<ctjs::ConstantOp>();
-                if (!input) { return mlir::WalkResult::advance(); }
-                const auto value = PrimitiveAlternatives::literal(input.getValue());
-                if (!value.known) { return mlir::WalkResult::advance(); }
-                // Exact primitive truthiness proves both the result and the
-                // absence of hooks. Keep the input and all its other uses.
-                rewriter.setInsertionPoint(unary);
-                rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(
-                    unary, ctjs::BooleanAttr::get(candidate.getContext(), !value.truthy));
-                return mlir::WalkResult::advance();
-            });
-            if (folded.wasInterrupted()) { return ctjs::FuncOp{}; }
-            (void)mlir::eraseUnreachableBlocks(rewriter, found.getBody());
-            auto & root = found.getBody().front();
-            while (true) {
-                if (!spend()) { return ctjs::FuncOp{}; }
-                if (auto conditional =
-                        llvm::dyn_cast<mlir::cf::CondBranchOp>(root.getTerminator())) {
-                    auto selected = exactBoolean(conditional.getCondition());
-                    auto * predicate = conditional.getCondition().getDefiningOp();
-                    if (!selected && conditional.getTrueDest() == conditional.getFalseDest() &&
-                        conditional.getTrueDestOperands() == conditional.getFalseDestOperands()) {
-                        selected = true;
-                    }
-                    if (!selected) { break; }
-                    rewriter.setInsertionPoint(conditional);
-                    rewriter.replaceOpWithNewOp<mlir::cf::BranchOp>(
-                        conditional,
-                        *selected ? conditional.getTrueDest() : conditional.getFalseDest(),
-                        *selected ? conditional.getTrueDestOperands()
-                                  : conditional.getFalseDestOperands());
-                    // Truthiness is pure; its input evaluation stays in place.
-                    if (predicate && predicate->use_empty() &&
-                        llvm::isa<mlir::arith::ConstantOp, ctjs::TruthyOp>(predicate)) {
-                        rewriter.eraseOp(predicate);
-                    }
-                    (void)mlir::eraseUnreachableBlocks(rewriter, found.getBody());
-                }
-                auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(root.getTerminator());
-                if (!branch || branch.getDest() == &root ||
-                    branch.getDest()->getSinglePredecessor() != &root ||
-                    mlir::failed(mlir::cf::BranchOp::canonicalize(branch, rewriter))) {
-                    break;
-                }
-            }
-            const auto projected =
-                found.walk<mlir::WalkOrder::PostOrder>([&](mlir::scf::IfOp branch) {
+            // Projection exposes literal operands through block arguments and
+            // selected yields. Each successful rewrite removes a Not or a
+            // control-flow edge; the reserved input ceiling bounds rescans.
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                const auto folded = found.walk([&](ctjs::UnaryOp unary) {
                     if (!spend()) { return mlir::WalkResult::interrupt(); }
-                    auto selected = exactBoolean(branch.getCondition());
-                    if (!selected) { return mlir::WalkResult::advance(); }
-                    auto * predicate = branch.getCondition().getDefiningOp();
-                    auto & region = *selected ? branch.getThenRegion() : branch.getElseRegion();
-                    if (!region.empty()) {
-                        auto & body = region.front();
-                        auto yield = llvm::cast<mlir::scf::YieldOp>(body.getTerminator());
-                        // Verification establishes result count, types and
-                        // dominance; substitute only the selected payload.
-                        branch.replaceAllUsesWith(yield.getOperands());
-                        yield.erase();
-                        branch->getBlock()->getOperations().splice(branch->getIterator(),
-                                                                   body.getOperations());
+                    if (unary.getKind() != ctjs::UnaryKind::Not) {
+                        return mlir::WalkResult::advance();
                     }
-                    branch.erase();
-                    // Only the unused pure predicate disappears; its input
-                    // and every selected operation retain their source order.
-                    if (predicate && predicate->use_empty() &&
-                        llvm::isa<mlir::arith::ConstantOp, ctjs::TruthyOp>(predicate)) {
-                        rewriter.eraseOp(predicate);
-                    }
+                    auto input = unary.getOperand().getDefiningOp<ctjs::ConstantOp>();
+                    if (!input) { return mlir::WalkResult::advance(); }
+                    const auto value = PrimitiveAlternatives::literal(input.getValue());
+                    if (!value.known) { return mlir::WalkResult::advance(); }
+                    // Exact primitive truthiness proves both the result and the
+                    // absence of hooks. Keep the input and all its other uses.
+                    rewriter.setInsertionPoint(unary);
+                    rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(
+                        unary, ctjs::BooleanAttr::get(candidate.getContext(), !value.truthy));
+                    changed = true;
                     return mlir::WalkResult::advance();
                 });
-            if (projected.wasInterrupted()) { return ctjs::FuncOp{}; }
+                if (folded.wasInterrupted()) { return ctjs::FuncOp{}; }
+                (void)mlir::eraseUnreachableBlocks(rewriter, found.getBody());
+                auto & root = found.getBody().front();
+                while (true) {
+                    if (!spend()) { return ctjs::FuncOp{}; }
+                    if (auto conditional =
+                            llvm::dyn_cast<mlir::cf::CondBranchOp>(root.getTerminator())) {
+                        auto selected = exactBoolean(conditional.getCondition());
+                        auto * predicate = conditional.getCondition().getDefiningOp();
+                        if (!selected && conditional.getTrueDest() == conditional.getFalseDest() &&
+                            conditional.getTrueDestOperands() ==
+                                conditional.getFalseDestOperands()) {
+                            selected = true;
+                        }
+                        if (!selected) { break; }
+                        rewriter.setInsertionPoint(conditional);
+                        rewriter.replaceOpWithNewOp<mlir::cf::BranchOp>(
+                            conditional,
+                            *selected ? conditional.getTrueDest() : conditional.getFalseDest(),
+                            *selected ? conditional.getTrueDestOperands()
+                                      : conditional.getFalseDestOperands());
+                        // Truthiness is pure; its input evaluation stays in place.
+                        if (predicate && predicate->use_empty() &&
+                            llvm::isa<mlir::arith::ConstantOp, ctjs::TruthyOp>(predicate)) {
+                            rewriter.eraseOp(predicate);
+                        }
+                        changed = true;
+                        (void)mlir::eraseUnreachableBlocks(rewriter, found.getBody());
+                    }
+                    auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(root.getTerminator());
+                    if (!branch || branch.getDest() == &root ||
+                        branch.getDest()->getSinglePredecessor() != &root ||
+                        mlir::failed(mlir::cf::BranchOp::canonicalize(branch, rewriter))) {
+                        break;
+                    }
+                    changed = true;
+                }
+                const auto projected =
+                    found.walk<mlir::WalkOrder::PostOrder>([&](mlir::scf::IfOp branch) {
+                        if (!spend()) { return mlir::WalkResult::interrupt(); }
+                        auto selected = exactBoolean(branch.getCondition());
+                        if (!selected) { return mlir::WalkResult::advance(); }
+                        auto * predicate = branch.getCondition().getDefiningOp();
+                        auto & region = *selected ? branch.getThenRegion() : branch.getElseRegion();
+                        if (!region.empty()) {
+                            auto & body = region.front();
+                            auto yield = llvm::cast<mlir::scf::YieldOp>(body.getTerminator());
+                            // Verification establishes result count, types and
+                            // dominance; substitute only the selected payload.
+                            branch.replaceAllUsesWith(yield.getOperands());
+                            yield.erase();
+                            branch->getBlock()->getOperations().splice(branch->getIterator(),
+                                                                       body.getOperations());
+                        }
+                        branch.erase();
+                        changed = true;
+                        // Only the unused pure predicate disappears; its input
+                        // and every selected operation retain their source order.
+                        if (predicate && predicate->use_empty() &&
+                            llvm::isa<mlir::arith::ConstantOp, ctjs::TruthyOp>(predicate)) {
+                            rewriter.eraseOp(predicate);
+                        }
+                        return mlir::WalkResult::advance();
+                    });
+                if (projected.wasInterrupted()) { return ctjs::FuncOp{}; }
+            }
         }
         return found;
     };

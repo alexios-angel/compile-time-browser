@@ -910,7 +910,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::BooleanAttr::get(context, false), false},
         {ctjs::BooleanAttr::get(context, true), true},
     }};
-    for (unsigned control = 0; control != 156; ++control) {
+    for (unsigned control = 0; control != 176; ++control) {
         auto expected = baseline;
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
@@ -981,9 +981,11 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             const bool primitive = control < 104;
             const bool computed = control >= 116;
             const unsigned index = computed ? (control - 116) / 2 : (control - 76) / 2;
-            const unsigned mutation = computed    ? index == 12   ? 0
-                                                    : index == 13 ? 1
-                                                                  : 6
+            const bool transported = control >= 156;
+            const unsigned transport = transported ? index - 20 : 0;
+            const unsigned mutation = computed    ? index == 12 || index == 27 ? 0
+                                                    : index == 13              ? 1
+                                                                               : 6
                                       : primitive ? 6
                                                   : (control - 104) / 2;
             bool selected = primitive ? predicates[index].second : true;
@@ -992,20 +994,24 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             llvm::SmallVector<std::pair<ctjs::UnaryOp, bool>> evaluatedNots;
             if (computed) {
                 const bool literal = index < negatedPredicates.size();
-                bool truth = literal ? negatedPredicates[index].second : index != 9;
-                if (index == 14) {
+                bool truth = transported ? transport == 3
+                             : literal   ? negatedPredicates[index].second
+                                         : index != 9;
+                if (index == 14 || index == 25) {
                     input = other;
                 } else if (index == 15) {
                     input = ctjs::CreateObjectOp::create(at, where, payload.getType());
                 } else if (index == 16) {
                     input = ctjs::LoadGlobalOp::create(at, where, "condition-effect");
-                } else if (index == 18) {
+                } else if (index == 18 || index == 29) {
                     input = ctjs::UnaryOp::create(
                         at, where, payload.getType(),
                         ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Plus), other);
                 } else {
                     const mlir::Attribute value =
-                        literal       ? negatedPredicates[index].first
+                        transported && transport == 4
+                            ? mlir::Attribute(ctjs::BooleanAttr::get(context, false))
+                        : literal     ? negatedPredicates[index].first
                         : index == 17 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
                                       : predicates[truth ? 6 : 0].first;
                     input = ctjs::ConstantOp::create(at, where, value);
@@ -1013,7 +1019,10 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 if (index == 19) {
                     ctjs::StoreGlobalOp::create(at, where, "predicate-prefix-effect", other);
                 }
-                const unsigned depth = index == 9 ? 2 : index == 10 ? 3 : 1;
+                if (transported && transport == 4) {
+                    llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(input);
+                }
+                const unsigned depth = index == 9 ? 2 : index == 10 || index == 21 ? 3 : 1;
                 for (unsigned i = 0; i != depth; ++i) {
                     auto operation = ctjs::UnaryOp::create(
                         at, where, payload.getType(),
@@ -1041,7 +1050,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                                     : predicates[6].first;
                 input = ctjs::ConstantOp::create(at, where, value);
             }
-            if (primitive || (computed && index < 12)) {
+            if (primitive || (computed && (index < 12 || (transported && transport < 5)))) {
                 // The input still evaluates after projection. Compare against
                 // the same operands and known pure results without the edges.
                 mlir::IRMapping mapping;
@@ -1061,18 +1070,81 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 auto error =
                     ctcompile::ctnative::prepareDOMEntry(*evaluated, evaluatedProof, 100000);
                 if (!check(!error, "proved helper input establishes its branchless reference")) {
-                    llvm::consumeError(std::move(error));
+                    llvm::errs() << "raw iterator helper control " << control << ": "
+                                 << llvm::toString(std::move(error)) << '\n';
                     continue;
                 }
                 expected = printed(*evaluated);
             }
+            if (transported) {
+                // The branchless reference above retains every evaluated input.
+                // These edges must expose the operand before its Not can fold.
+                for (auto [operation, value] : evaluatedNots) {
+                    (void)value;
+                    const auto operand = operation.getOperand();
+                    at.setInsertionPoint(operation);
+                    if (transport == 2 || transport == 3 || transport == 6 || transport == 8) {
+                        const bool selectedInput = transport != 3;
+                        const mlir::Value condition =
+                            transport == 6
+                                ? mlir::Value(
+                                      ctjs::TruthyOp::create(at, where, at.getI1Type(), other))
+                                : mlir::Value(mlir::arith::ConstantIntOp::create(at, where,
+                                                                                 selectedInput, 1));
+                        auto branch =
+                            mlir::scf::IfOp::create(at, where, operand.getType(), condition, true);
+                        for (auto [armIndex, region] : llvm::enumerate(branch->getRegions())) {
+                            at.setInsertionPointToEnd(&region.front());
+                            mlir::Value yielded = operand;
+                            if ((armIndex == 0) == selectedInput) {
+                                if (transport == 3) {
+                                    auto flag = mlir::arith::ConstantIntOp::create(at, where, 1, 1);
+                                    auto nested = mlir::scf::IfOp::create(
+                                        at, where, operand.getType(), flag, true);
+                                    at.setInsertionPointToEnd(&nested.getThenRegion().front());
+                                    mlir::scf::YieldOp::create(at, where,
+                                                               mlir::ValueRange{operand});
+                                    at.setInsertionPointToEnd(&nested.getElseRegion().front());
+                                    ctjs::StoreGlobalOp::create(at, where, "nested-input-effect",
+                                                                other);
+                                    mlir::scf::YieldOp::create(at, where, mlir::ValueRange{other});
+                                    at.setInsertionPointAfter(nested);
+                                    yielded = nested.getResult(0);
+                                }
+                                if (transport == 8) {
+                                    ctjs::StoreGlobalOp::create(at, where, "selected-input-effect",
+                                                                other);
+                                }
+                            } else {
+                                ctjs::StoreGlobalOp::create(at, where, "discarded-input-effect",
+                                                            other);
+                                yielded = transport == 6 ? mlir::Value(ctjs::ConstantOp::create(
+                                                               at, where, predicates[6].first))
+                                                         : mlir::Value(other);
+                            }
+                            mlir::scf::YieldOp::create(at, where, mlir::ValueRange{yielded});
+                        }
+                        operation->setOperand(0, branch.getResult(0));
+                    } else {
+                        auto * source = operation->getBlock();
+                        auto * continuation = source->splitBlock(operation);
+                        operation->setOperand(0,
+                                              continuation->addArgument(operand.getType(), where));
+                        at.setInsertionPointToEnd(source);
+                        mlir::cf::BranchOp::create(at, where, continuation,
+                                                   mlir::ValueRange{operand});
+                    }
+                }
+                at.setInsertionPoint(moved);
+            }
             auto flag = ctjs::TruthyOp::create(at, where, at.getI1Type(), input);
             const mlir::Value livePayload = mutation == 0 ? mlir::Value(other) : payload;
+            auto & selectedBody = *moved->getBlock();
             if (control % 2 == 0) {
-                auto * continuation = first.splitBlock(terminal);
+                auto * continuation = selectedBody.splitBlock(terminal);
                 terminal->setOperand(0, continuation->addArgument(payload.getType(), where));
                 auto * dead = &close.getBody().emplaceBlock();
-                at.setInsertionPointToEnd(&first);
+                at.setInsertionPointToEnd(&selectedBody);
                 mlir::cf::CondBranchOp::create(
                     at, where, flag, selected ? continuation : dead,
                     selected ? mlir::ValueRange{livePayload} : mlir::ValueRange{},
@@ -1091,7 +1163,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                     auto & arm = region.front();
                     const bool live = (armIndex == 0) == selected;
                     if (live) {
-                        arm.getOperations().splice(arm.end(), first.getOperations(),
+                        arm.getOperations().splice(arm.end(), selectedBody.getOperations(),
                                                    moved->getIterator(), terminal->getIterator());
                     }
                     at.setInsertionPointToEnd(&arm);
@@ -1391,13 +1463,13 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         proof.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*candidate);
         const auto fingerprint = proof.moduleSha256;
         const auto before = printed(*candidate);
-        const bool succeeds = control == 0 || (control >= 2 && control <= 4) ||
-                              (control >= 10 && control <= 12) || control == 18 || control == 19 ||
-                              (control >= 23 && control <= 29) ||
-                              (control >= 36 && control <= 46) || control == 51 || control == 52 ||
-                              (control >= 54 && control <= 57) || control == 62 || control == 63 ||
-                              (control >= 65 && control <= 69) ||
-                              (control >= 74 && control < 104) || (control >= 116 && control < 140);
+        const bool succeeds =
+            control == 0 || (control >= 2 && control <= 4) || (control >= 10 && control <= 12) ||
+            control == 18 || control == 19 || (control >= 23 && control <= 29) ||
+            (control >= 36 && control <= 46) || control == 51 || control == 52 ||
+            (control >= 54 && control <= 57) || control == 62 || control == 63 ||
+            (control >= 65 && control <= 69) || (control >= 74 && control < 104) ||
+            (control >= 116 && control < 140) || (control >= 156 && control < 166);
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
@@ -1406,7 +1478,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                       limitedProof.moduleSha256 == fingerprint,
                   "reachable helper budget refusal preserves the entire module and contract");
             if (limitedError) { llvm::consumeError(std::move(limitedError)); }
-            if (control == 46 || control == 67 || control == 79 || control == 137) {
+            if (control == 46 || control == 67 || control == 79 || control == 137 ||
+                control == 165) {
                 const auto attempt = [&](unsigned budget) {
                     mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
                     auto limitedProof = proof;
