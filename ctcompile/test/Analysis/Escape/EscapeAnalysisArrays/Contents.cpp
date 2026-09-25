@@ -496,6 +496,17 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         "      %other = ctjs.create_array [%zero] {storage_test_id = \"other\"}\n"
         "      scf.yield %other : !ctjs.value\n    }\n";
     const std::string conditionalObject = "    scf.if %flag {\n" + localObject + "    }\n";
+    const std::string conditionalStores =
+        "    %fresh = scf.if %flag -> (!ctjs.value) {\n" + localObject +
+        "      %selected = ctjs.create_array [%child] {storage_test_id = \"selected\"}\n"
+        "      ctjs.set_property %guard[%i], %selected\n"
+        "      %thenSaved = ctjs.get_property %guard[%i]\n"
+        "      scf.yield %thenSaved : !ctjs.value\n"
+        "    } else {\n"
+        "      %other = ctjs.create_array [%zero] {storage_test_id = \"other\"}\n"
+        "      ctjs.set_property %guard[%zero], %other\n"
+        "      %elseSaved = ctjs.get_property %guard[%zero]\n"
+        "      scf.yield %elseSaved : !ctjs.value\n    }\n";
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -926,13 +937,97 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues +
                  allocationLoop(localArray, "%zero", "%one", "%zero", conditionalObject) + done,
          .complete = false},
-        {.what = "a nested conditional write cannot borrow top-level counted-store authority",
+        {.what = "a single-visit arm reuses the proved guard-array store footprint",
          .body = loopValues +
                  allocationLoop("    scf.if %flag {\n"
                                 "      ctjs.set_property %guard[%zero], %zero\n    }\n" +
                                 localArray) +
                  done,
+         .confinedReceivers = "guard",
+         .confinedNested = "fresh"},
+        {.what = "both counted arms retain separate stored allocation graphs",
+         .body = loopValues + allocationLoop(conditionalStores) + done,
+         .confinedNested = "child,selected,other"},
+        {.what = "returning the counted holder retains either arm's selected graph",
+         .body = loopValues + allocationLoop(conditionalStores) + "  ctjs.return %guard\n"},
+        {.what = "clearing a counted holder releases both arm-local store graphs",
+         .body =
+             loopValues + allocationLoop(conditionalStores) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "child,selected,other"},
+        {.what = "both arm-local saved reads survive clearing the counted holder",
+         .body = loopValues + allocationLoop(conditionalStores) + clearGuard +
+                 "  ctjs.return %loop#1\n"},
+        {.what = "one later retaining exit preserves both counted arm aliases",
+         .body = loopValues + allocationLoop(conditionalStores) + clearGuard +
+                 "  cf.cond_br %flag, ^plain, ^retain\n"
+                 "^plain:\n  ctjs.return %zero\n"
+                 "^retain:\n  ctjs.return %loop#1\n"},
+        {.what = "nested single-visit writes preserve a stored object through both arm depths",
+         .body = loopValues +
+                 allocationLoop(loopGraph + "    scf.if %flag {\n    scf.if %flag {\n" +
+                                storeFresh + "    }\n    }\n") +
+                 clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "child,fresh"},
+        {.what = "a cleared cycle from one counted store arm still refuses refinement",
+         .body = loopValues +
+                 allocationLoop("    %fresh = ctjs.create_array [%guard]\n"
+                                "    scf.if %flag {\n" +
+                                storeFresh + "    }\n") +
+                 clearGuard + done,
          .complete = false},
+        {.what = "an unknown value in the else store refuses both counted arms",
+         .body = loopValues +
+                 allocationLoop(localArray + "    scf.if %flag {\n" + storeFresh +
+                                "    } else {\n"
+                                "      ctjs.set_property %guard[%zero], %p\n    }\n") +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "an unknown nested store key cannot borrow the single-visit proof",
+         .body =
+             loopValues +
+             allocationLoop(localArray + "    scf.if %flag {\n"
+                                         "      ctjs.set_property %guard[%p], %fresh\n    }\n") +
+             done,
+         .complete = false},
+        {.what = "an unknown nested receiver cannot borrow the guard-array footprint",
+         .body = loopValues +
+                 allocationLoop(localArray + "    scf.if %flag {\n"
+                                             "      ctjs.set_property %p[%zero], %fresh\n    }\n") +
+                 done,
+         .complete = false},
+        {.what = "a nested store to another array still needs its own mutation proof",
+         .body =
+             loopValues +
+             allocationLoop(localArray + "    scf.if %flag {\n"
+                                         "      ctjs.set_property %fresh[%zero], %zero\n    }\n") +
+             done,
+         .complete = false},
+        {.what = "a nested key producer does not inherit a top-level invariant snapshot",
+         .body =
+             loopValues +
+             allocationLoop(localArray + "    scf.if %flag {\n"
+                                         "      %key = ctjs.binary add %zero, %zero\n"
+                                         "      ctjs.set_property %guard[%key], %fresh\n    }\n") +
+             done,
+         .complete = false},
+        {.what = "an arm store cannot resize the array that proves its trip count",
+         .body =
+             loopValues +
+             allocationLoop(localArray + "    scf.if %flag {\n"
+                                         "      ctjs.set_property %guard[%name], %zero\n    }\n") +
+             done,
+         .complete = false},
+        {.what = "zero body visits cannot prove nested store allocation instances",
+         .body = loopValues + allocationLoop(conditionalStores, "%one") + done,
+         .complete = false},
+        {.what = "repeated bodies still refuse their nested guard-array stores",
+         .body =
+             loopValues + allocationLoop(conditionalStores, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "a nested counted store still requires initialized solver inputs",
+         .body = loopValues + allocationLoop(conditionalStores) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "a nested loop cannot borrow the outer counted single-visit proof",
          .body = loopValues +
                  allocationLoop("    scf.if %flag {\n"

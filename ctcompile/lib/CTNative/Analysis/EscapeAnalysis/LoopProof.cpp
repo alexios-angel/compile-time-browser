@@ -1136,7 +1136,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 continue;
             }
             if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-                if (block != body) { return unsupported; }
+                // Nested blocks entered this census only through a single-visit
+                // body arm. Check their writes against the same guard footprint;
+                // exact path replay still records each selected value and alias.
+                if (block == header) { return unsupported; }
                 refinableEnclosure = false;
                 if (auto range = indexRange(indexRange, store.getKey(), 0, IndexUse::PropertyKey);
                     range || (refinableEnclosure && *start < size)) {
