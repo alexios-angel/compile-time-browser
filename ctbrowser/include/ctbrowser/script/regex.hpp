@@ -629,6 +629,25 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 				const char e = src[i + 1];
 				i += 2;
 				if (rx_code_point_escape(src, i, e, cp)) { return; }
+				// ClassEscape: `\b` is U+0008 inside a class (22.2.2.9.3), and
+				// `\cX` the control character - with Annex B's ClassControlLetter
+				// (digits and `_` too) and its lone `\c`, a backslash.
+				if (e == 'b') {
+					cp = 0x08;
+					return;
+				}
+				if (e == 'c') {
+					const char x = i < src.size() ? src[i] : '\0';
+					const bool letter = (x >= 'a' && x <= 'z') || (x >= 'A' && x <= 'Z');
+					const bool annex = !p.unicode && !p.unicode_sets && ((x >= '0' && x <= '9') || x == '_');
+					if (letter || annex) {
+						cp = static_cast<std::uint32_t>(static_cast<unsigned char>(src[i++])) % 32;
+					} else {
+						cp = '\\';
+						--i;
+					}
+					return;
+				}
 				cp = static_cast<unsigned char>(rx_escape_char(e));
 				return;
 			}
@@ -791,6 +810,18 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			return pc;
 		}
 		pc.kind = rx_piece::lit;
+		if (e == 'c') {
+			// `\cX` is the control character X % 32 (22.2.2.9.2 CharacterEscape).
+			// With no letter after it, Annex B (B.1.2) reads the backslash as
+			// itself and the `c` as the next atom.
+			if (i < src.size() && ((src[i] >= 'a' && src[i] <= 'z') || (src[i] >= 'A' && src[i] <= 'Z'))) {
+				pc.c = static_cast<char>(src[i++] % 32);
+			} else {
+				pc.c = '\\';
+				--i;
+			}
+			return pc;
+		}
 		pc.c = rx_escape_char(e);
 		return pc;
 	}
@@ -822,8 +853,15 @@ inline constexpr void rx_parse_quant(std::string_view src, std::size_t & i, rx_p
 		std::size_t j = i + 1;
 		std::int32_t lo = 0;
 		bool has = false;
+		// SATURATED, not wrapped: `b{9007199254740991}` is a bound no
+		// subject reaches, and a signed overflow here was undefined
+		// behaviour that came out as a small or negative count.
+		const auto accumulate = [](std::int32_t n, char d) {
+			constexpr std::int32_t top = 0x7FFFFFFF;
+			return n > (top - (d - '0')) / 10 ? top : n * 10 + (d - '0');
+		};
 		while (j < src.size() && src[j] >= '0' && src[j] <= '9') {
-			lo = lo * 10 + (src[j++] - '0');
+			lo = accumulate(lo, src[j++]);
 			has = true;
 		}
 		if (!has) { return; } // literal '{'
@@ -834,7 +872,7 @@ inline constexpr void rx_parse_quant(std::string_view src, std::size_t & i, rx_p
 			else {
 				hi = 0;
 				while (j < src.size() && src[j] >= '0' && src[j] <= '9') {
-					hi = hi * 10 + (src[j++] - '0');
+					hi = accumulate(hi, src[j++]);
 				}
 			}
 		}
@@ -1243,8 +1281,17 @@ inline bool rx_match_piece(const rx_piece & pc, rx_state & st, std::size_t pos, 
 					st.caps[static_cast<std::size_t>(c)] = {-1, -1};
 				}
 			}
+			// 22.2.2.3.1 step 2.b: once the minimum is met, an iteration
+			// that matched the EMPTY string is a failure - the atom
+			// backtracks to something longer, or the loop stops before it -
+			// so `/(a?b??)*/` takes "ab" rather than stopping at "a", and
+			// `/(?:(?=(x)))?/` leaves group 1 undefined. Below the minimum it
+			// counts - and the ones still owed would be the same empty match
+			// at the same place, so they are counted at once rather than
+			// recursed through (`(?:){2147483647}` is a legal pattern).
 			const bool ok = rx_match_once(pc, st, at, [&](std::size_t np) {
-				return np == at ? (n + 1 >= pc.min && k(np)) : rec(np, n + 1);
+				if (np != at) { return rec(np, n + 1); }
+				return n < pc.min && rec(np, pc.min);
 			});
 			if (!ok && !saved.empty()) {
 				std::copy(saved.begin(), saved.end(), st.caps.begin() + pc.caps_lo);

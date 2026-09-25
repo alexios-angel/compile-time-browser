@@ -188,6 +188,19 @@ void test_substitution_limits() {
                   "17");
 }
 
+// The pieces of the grammar the matcher read as something else: `\cX`, a
+// class's `[\b]`, a quantifier bound past int32, and the RepeatMatcher rule
+// that an iteration matching nothing fails once the minimum is met.
+void test_escapes_and_repetition() {
+    expect_result("return /\\cJ/.test('\\n') + ',' + /[\\cJ]/.test('\\n');", "true,true");
+    expect_result("return /\\c1/.test('\\\\c1');", "true");
+    expect_result("return /[\\b]/.test('\\b') + ',' + /[\\b]/.test('b');", "true,false");
+    expect_result("return /(a?b?" /* not a trigraph */ "?)*/.exec('ab')[0];", "ab");
+    expect_result("return String('abc'.match(/(?:(?=(abc)))?a/)[1]);", "undefined");
+    expect_result("return 'abc'.match(/(?:(?=(abc))){1,1}a/)[1];", "abc");
+    expect_result("return new RegExp('b{' + Number.MAX_SAFE_INTEGER + '}').test('b');", "false");
+}
+
 // Annex B's legacy RegExp features: the static accessors RegExpBuiltinExec
 // updates, refused for any receiver but %RegExp% and emptied by a subclass
 // instance's match; compile refuses a subclass instance.
@@ -223,5 +236,6 @@ int main() {
     test_exec();
     test_symbol_methods();
     test_substitution_limits();
+    test_escapes_and_repetition();
     REPORT("regexp_model");
 }
