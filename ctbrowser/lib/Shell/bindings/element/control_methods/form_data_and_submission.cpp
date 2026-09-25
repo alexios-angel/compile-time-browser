@@ -430,8 +430,24 @@ void dom_bindings::install_control_form_data(context & cx) {
         if (!data.is_object()) { return; }
         if (!entry_list(c, b, form, submitter, data) || c.throw_pending()) { return; }
         // ...AND THE NAVIGATION, when the form aims a GET at a frame this
-        // document names (frames.cpp): the entries as strings - a File by
-        // its name, as the urlencoded serialiser says.
+        // document names (frames.cpp): the entry list "converted to a list
+        // of name-value pairs" (4.10.21.6) - a File by its name, and in the
+        // name and the value every CR not followed by LF and every LF not
+        // preceded by CR made a CR LF, which the urlencoded serialiser then
+        // writes as %0D%0A.
+        const auto crlf = [](std::string text) {
+            std::string out;
+            out.reserve(text.size());
+            for (std::size_t i = 0; i < text.size(); ++i) {
+                if (text[i] == '\r' || text[i] == '\n') {
+                    out += "\r\n";
+                    if (text[i] == '\r' && i + 1 < text.size() && text[i + 1] == '\n') { ++i; }
+                } else {
+                    out += text[i];
+                }
+            }
+            return out;
+        };
         std::vector<std::pair<std::string, std::string>> pairs;
         const value * held =
             static_cast<script::object_object *>(data.as_heap())->find(entries_slot);
@@ -440,7 +456,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                 const value v = entry_value(pair);
                 std::string text =
                     v.is_object_like() ? c.to_string(c.lookup_property(v, "name")) : c.to_string(v);
-                pairs.emplace_back(entry_name(c, pair), std::move(text));
+                pairs.emplace_back(crlf(entry_name(c, pair)), crlf(std::move(text)));
             }
         }
         (void)b->navigate_form_target(form, pairs);
