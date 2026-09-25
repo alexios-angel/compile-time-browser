@@ -173,9 +173,17 @@ void dom_bindings::install_control_form_data(context & cx) {
             } else {
                 add(name, c.string(helpers.value_of(txn, b, one)));
             }
-            if ((local == "textarea" || type == "text" || type == "search") &&
-                !helpers.attribute_of(txn, b, one, "dirname").empty()) {
-                add(helpers.attribute_of(txn, b, one, "dirname"), c.string("ltr"));
+            // THE DIRNAME ENTRY (4.10.18.2): where dirname applies - a textarea
+            // and the hidden, text, search, tel, url, email, password and
+            // submit states - the element's directionality under its name.
+            const bool dirname_applies = local == "textarea" || type == "hidden" ||
+                                         type == "text" || type == "search" || type == "tel" ||
+                                         type == "url" || type == "email" || type == "password" ||
+                                         type == "submit";
+            if (dirname_applies && !helpers.attribute_of(txn, b, one, "dirname").empty()) {
+                const bool rtl = b->selector_engine_ != nullptr &&
+                                 b->selector_engine_->direction_is_rtl(txn, one);
+                add(helpers.attribute_of(txn, b, one, "dirname"), c.string(rtl ? "rtl" : "ltr"));
             }
         }
         (void)helpers.fire(
