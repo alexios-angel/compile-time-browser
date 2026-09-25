@@ -292,6 +292,11 @@ void install_array(context & cx) {
     cx.define_global("Array", value::object(array_ctor));
 
     object_object * array_proto = new_table(cx);
+    // 23.1.3: Array.prototype is an Array, so it has a `length` - 0, and
+    // { writable, not enumerable, not configurable } as every Array's is. Only
+    // the property: the table is not an array_object, so an element written to
+    // it does not move `length`.
+    array_proto->define("length", value::number(0), attr_writable);
     // The prototype methods p5.js uses that were not here. `at` and `fill` are
     // the ones it leans on hardest - 43 and 31 uses - because a typed-array
     // shim reaches for both.

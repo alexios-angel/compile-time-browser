@@ -18,6 +18,12 @@ void install_function(context & cx) {
     using detail::method;
     using detail::new_table;
     object_object * function_proto = new_table(cx);
+    // 20.2.3: Function.prototype is itself a built-in function of `length` 0
+    // and `name` "", both { false, false, true } and `length` first (10.2.9's
+    // order) - so a function whose own `length` or `name` was deleted reads
+    // these rather than undefined.
+    function_proto->define("length", value::number(0), attr_configurable);
+    function_proto->define("name", cx.string(""), attr_configurable);
 
     // IsCallable(this) IS STEP 1 of all three (20.2.3.1/20.2.3.3/20.2.3.2), and
     // all three answered `undefined` instead - so `({}).call()` reached through
