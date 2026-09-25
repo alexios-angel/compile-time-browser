@@ -231,7 +231,15 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (auto result = llvm::dyn_cast_if_present<ctjs::BooleanAttr>(primitive.literal)) {
             return result.getValue();
         }
-        const auto number = [](mlir::Attribute value) -> std::optional<double> {
+        const auto chargeText = [&](std::string_view text) {
+            if (text.size() > work.remaining) {
+                work.remaining = 0;
+                return false;
+            }
+            work.remaining -= static_cast<unsigned>(text.size());
+            return true;
+        };
+        const auto number = [&](mlir::Attribute value) -> std::optional<double> {
             if (auto numeric = llvm::dyn_cast<ctjs::NumberAttr>(value)) {
                 return numeric.getDouble();
             }
@@ -243,6 +251,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return std::numeric_limits<double>::quiet_NaN();
             }
             if (auto text = llvm::dyn_cast<ctjs::StringAttr>(value)) {
+                if (!chargeText(text.getValue())) { return std::nullopt; }
                 return literalStringNumber(text.getValue());
             }
             return std::nullopt;
@@ -268,11 +277,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             // total decoder also accepts malformed bytes; require a lossless,
             // canonical WTF-8 roundtrip before interpreting them as JS Strings.
             for (auto text : {a, b}) {
-                if (text.size() > work.remaining) {
-                    work.remaining = 0;
-                    return std::nullopt;
-                }
-                work.remaining -= static_cast<unsigned>(text.size());
+                if (!chargeText(text)) { return std::nullopt; }
             }
             const auto left = ctbrowser::wtf8_to_utf16(a), right = ctbrowser::wtf8_to_utf16(b);
             if (ctbrowser::utf16_to_wtf8(left) != a || ctbrowser::utf16_to_wtf8(right) != b) {

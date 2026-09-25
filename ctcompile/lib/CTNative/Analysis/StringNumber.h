@@ -5,6 +5,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <optional>
@@ -12,9 +13,11 @@
 namespace ctcompile::ctnative {
 
 inline std::optional<double> literalStringNumber(llvm::StringRef text) {
-    // ponytail: at most 32 source bytes; wider Strings need charged parsing.
-    // Validate the whole grammar before Core handles overflow/underflow.
-    if (text.size() > 32) { return std::nullopt; }
+    // Callers must bound or charge source bytes before this linear scan. Core
+    // counts mantissa digits in int when resolving overflow/underflow.
+    if (text.size() > static_cast<unsigned>(std::numeric_limits<int>::max())) {
+        return std::nullopt;
+    }
     llvm::StringRef digits = ctbrowser::trim_js_space({text.data(), text.size()});
     // Only these exact tokens may supply a nonfinite conversion proof. Other
     // spellings that Core converts to NaN still require validated grammar below.
@@ -45,9 +48,10 @@ inline std::optional<double> literalStringNumber(llvm::StringRef text) {
             if (!rest.consume_front("+")) { rest.consume_front("-"); }
             unsigned exponent = 0;
             // Core adds an int exponent to the mantissa order on range failure.
-            // The source-byte bound limits that order's magnitude to 32.
+            // Retain the old 32-byte margin and widen it with the input.
             if (rest.empty() || !llvm::all_of(rest, decimal) || rest.getAsInteger(10, exponent) ||
-                exponent > static_cast<unsigned>(std::numeric_limits<int>::max() - 32)) {
+                exponent > static_cast<unsigned>(std::numeric_limits<int>::max()) -
+                               std::max<std::size_t>(32, text.size())) {
                 return std::nullopt;
             }
             rest = {};

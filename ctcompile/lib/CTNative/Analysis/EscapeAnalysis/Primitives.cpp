@@ -152,7 +152,9 @@ std::optional<double> boundedStringNumber(const ContentsValue & input) {
     auto literal = input.origin().getDefiningOp<ctjs::ConstantOp>();
     auto string =
         literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
-    if (!string) { return std::nullopt; }
+    // ponytail: uncharged provenance queries keep the 32-byte bound; wider
+    // Strings need the caller's shared work budget threaded through this path.
+    if (!string || string.getValue().size() > 32) { return std::nullopt; }
     return literalStringNumber(string.getValue());
 }
 
