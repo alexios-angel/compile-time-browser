@@ -1114,6 +1114,12 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         for (mlir::Operation & operation : *block) {
             if (!spend()) { return ArrayContentsFailure::WorkLimit; }
             if (&operation == block->getTerminator()) { continue; }
+            if (isTrackedSite(&operation)) {
+                // ponytail: one allocation instance per path. Repeated bodies
+                // need distinct instance identities; headers execute again at exit.
+                if (block != body || *start >= size || last != *start) { return unsupported; }
+                continue;
+            }
             if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
                 if (block != body) { return unsupported; }
                 refinableEnclosure = false;

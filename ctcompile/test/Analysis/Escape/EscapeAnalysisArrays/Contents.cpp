@@ -457,6 +457,37 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string countedEnd = "  %step = ctjs.binary add %i, %one\n"
                                    "  cf.br ^header(%step : !ctjs.value)\n^exit:\n" +
                                    done;
+    const std::string loopValues = localStart +
+                                   "  %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
+                                   "  %two = ctjs.constant #ctjs.number<4611686018427387904>\n"
+                                   "  %max = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                                   "  %negative = ctjs.unary neg %one\n"
+                                   "  %name = ctjs.constant #ctjs.string<\"length\">\n";
+    const auto allocationLoop = [](const std::string & body, const std::string & start = "%zero",
+                                   const std::string & stride = "%one",
+                                   const std::string & elements = "%zero",
+                                   const std::string & header = "") {
+        return "  %guard = ctjs.create_array [" + elements +
+               "] {storage_test_id = \"guard\"}\n"
+               "  %loop:2 = scf.while (%index = " +
+               start +
+               ", %saved = %zero) : (!ctjs.value, !ctjs.value) -> (!ctjs.value, !ctjs.value) {\n" +
+               header +
+               "    %length = ctjs.get_property %guard[%name]\n"
+               "    %test = ctjs.compare lt %index, %length\n"
+               "    %continue = ctjs.truthy %test\n"
+               "    scf.condition(%continue) %index, %saved : !ctjs.value, !ctjs.value\n"
+               "  } do {\n"
+               "  ^body(%i: !ctjs.value, %previous: !ctjs.value):\n" +
+               body + "    %step = ctjs.binary add %i, " + stride +
+               "\n    scf.yield %step, %fresh : !ctjs.value, !ctjs.value\n  }\n";
+    };
+    const std::string loopGraph =
+        localObject + "    %fresh = ctjs.create_array [%child] {storage_test_id = \"fresh\"}\n";
+    const std::string storeFresh = "    ctjs.set_property %guard[%zero], %fresh\n";
+    const std::string clearGuard = "  ctjs.set_property %guard[%zero], %zero\n";
+    const std::string selectedStart = "  %start = scf.if %flag -> (!ctjs.value) {\n"
+                                      "    scf.yield %one : !ctjs.value\n  } else {\n";
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -740,6 +771,80 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         {.what = "the counted CFG exception still rejects conditional allocations in its body",
          .body =
              localStart + countedStart + "  scf.if %flag {\n" + localArray + "  }\n" + countedEnd,
+         .complete = false},
+        {.what = "one counted structured iteration creates one frame-confined array",
+         .body = loopValues + allocationLoop(localArray) + done,
+         .confinedReceivers = "guard",
+         .confinedNested = "fresh"},
+        {.what = "one counted iteration confines an object and its local array graph",
+         .body = loopValues + allocationLoop(loopGraph) + done,
+         .confinedNested = "child,fresh"},
+        {.what = "a yielded counted allocation keeps both returned graph identities",
+         .body = loopValues + allocationLoop(loopGraph) + "  ctjs.return %loop#1\n"},
+        {.what = "a returned holder retains the exactly-once allocation graph",
+         .body = loopValues + allocationLoop(loopGraph + storeFresh) + "  ctjs.return %guard\n"},
+        {.what = "overwriting a holder confines its exactly-once allocation graph",
+         .body = loopValues + allocationLoop(loopGraph + storeFresh) + clearGuard +
+                 "  ctjs.return %guard\n",
+         .confinedNested = "child,fresh"},
+        {.what = "a saved counted alias retains the graph after its holder is overwritten",
+         .body = loopValues + allocationLoop(loopGraph + storeFresh) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "late publication cannot borrow exactly-once allocation authority",
+         .body = loopValues + allocationLoop(loopGraph) +
+                 "  ctjs.store_global \"held\", %loop#1\n" + done,
+         .complete = false},
+        {.what = "a transient counted cycle remains refused after the holder is cleared",
+         .body = loopValues +
+                 allocationLoop("    %fresh = ctjs.create_array [%guard]\n" + storeFresh) +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "a zero-trip body has no proved allocation instance",
+         .body = loopValues + allocationLoop(localArray, "%one") + done,
+         .complete = false},
+        {.what = "two iterations cannot conflate their allocation instances",
+         .body = loopValues + allocationLoop(localArray, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "a positive start with one remaining iteration supplies one instance",
+         .body = loopValues + allocationLoop(localArray, "%one", "%one", "%zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "an overshooting stride still proves exactly one body execution",
+         .body = loopValues + allocationLoop(localArray, "%zero", "%two", "%zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "one-body cardinality cannot bypass the final-index overflow check",
+         .body = loopValues + allocationLoop(localArray, "%one", "%max", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "negative induction cannot authorize a single allocation instance",
+         .body = loopValues + allocationLoop(localArray, "%zero", "%negative") + done,
+         .complete = false},
+        {.what = "the header allocates twice even when its body executes once",
+         .body =
+             loopValues + allocationLoop(localArray, "%zero", "%one", "%zero", localObject) + done,
+         .complete = false},
+        {.what = "exactly-once allocations still require every current solver lattice",
+         .body = loopValues + allocationLoop(localArray) + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "each structural path must independently prove the body runs once",
+         .body = loopValues + selectedStart + "    scf.yield %one : !ctjs.value\n  }\n" +
+                 allocationLoop(localArray, "%start", "%one", "%zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "one multi-trip alternative refuses every allocation refinement",
+         .body = loopValues + selectedStart + "    scf.yield %zero : !ctjs.value\n  }\n" +
+                 allocationLoop(localArray, "%start", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "a root CFG counted body also creates only one discharged child",
+         .body = localStart + "  %two = ctjs.constant #ctjs.number<4611686018427387904>\n" +
+                 countedStart + localObject +
+                 "  %fresh = ctjs.create_array [%child]\n"
+                 "  %step = ctjs.binary add %i, %two\n"
+                 "  cf.br ^header(%step : !ctjs.value)\n^exit:\n" +
+                 done,
+         .discharged = "child"},
+        {.what = "the root CFG body cannot reuse one site for multiple child instances",
+         .body = localStart + countedStart + localObject +
+                 "  %fresh = ctjs.create_array [%child]\n" + countedEnd,
          .complete = false},
         {.what = "conditional origins cannot bypass raw-frame suspension refusal",
          .body = localStart + "  scf.if %flag {\n" + localArray +
