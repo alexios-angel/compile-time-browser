@@ -701,6 +701,14 @@ void document::set_template_content(node_id element, node_id fragment) {
     template_contents_.emplace_back(element, fragment);
 }
 
+node_id document::template_of(node_id fragment) const {
+    if (!fragment) { return {}; }
+    for (const auto & [element, held] : template_contents_) {
+        if (held == fragment) { return element; }
+    }
+    return {};
+}
+
 atom document::element_namespace(node_id element) const {
     const auto it = element_namespaces_.find(shadow_key(element));
     return it == element_namespaces_.end() ? atom{} : it->second;

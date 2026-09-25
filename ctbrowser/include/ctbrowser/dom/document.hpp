@@ -234,6 +234,10 @@ public:
     // are a handful of templates in a page. Empty when the element has none.
     [[nodiscard]] node_id template_content(node_id element) const;
     void set_template_content(node_id element, node_id fragment);
+    // ...and the other way: the <template> whose contents `fragment` is -
+    // the fragment's HOST, which is what an insertion into it takes as its
+    // context element. Empty for any other fragment.
+    [[nodiscard]] node_id template_of(node_id fragment) const;
 
     // THE NAMESPACE URI OF AN ELEMENT `node_ns` DOES NOT NAME - an `other`
     // element's. `node` has no room for a URI (node_ns says why), and a page

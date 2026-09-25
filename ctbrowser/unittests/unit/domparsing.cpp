@@ -102,9 +102,41 @@ void test_noscript_follows_the_documents_scripting_flag() {
              "2,t1,p;1,3");
 }
 
+// THE HTML PARTIAL UPDATES: each position lands where its name says, the safe
+// spelling drops the script and an event handler the Unsafe one keeps (and
+// runs only with runScripts), a sanitizer's removeElements takes the element
+// and its text, a template's markup goes into its contents, and a node whose
+// parent gives no context element - a plain fragment, a Document - refuses.
+void test_positional_html_methods() {
+    CHECK_EQ(
+        said("<html><body><div id=t><i id=r>r</i></div><script>"
+             "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"
+             "var t = document.getElementById('t'), r = document.getElementById('r');"
+             "window.ran = 0;"
+             "r.beforeHTML('<b>1</b>'); r.afterHTML('<b>2</b>');"
+             "t.prependHTML('<b>0</b>'); t.appendHTMLUnsafe('<b>3</b>');"
+             "alert(t.textContent);"
+             "t.appendHTML('<s onclick=x>4</s><script>ran++</scr' + 'ipt>', {runScripts: true});"
+             "t.appendHTMLUnsafe('<u onclick=x>5</u><script>ran++</scr' + 'ipt>');"
+             "t.appendHTMLUnsafe('<script>ran++</scr' + 'ipt>', {runScripts: true});"
+             "alert(t.querySelectorAll('script').length + ',' + t.querySelector('s')"
+             ".hasAttribute('onclick') + ',' + t.querySelector('u').hasAttribute('onclick')"
+             " + ',' + ran);"
+             "r.replaceWithHTML('<em>x</em><p>gone</p>', {sanitizer: {removeElements: ['p']}});"
+             "alert(t.textContent.replace(/[^0-9x]/g, ''));"
+             "var tp = document.createElement('template'); tp.appendHTML('<b>c</b>');"
+             "alert(tp.childNodes.length + ',' + tp.content.textContent);"
+             "var f = document.createDocumentFragment(); var k = f.appendChild("
+             "document.createElement('i'));"
+             "alert(threw(function(){ k.afterHTML('<b></b>'); }));"
+             "</script></body></html>"),
+        "01r23;2,false,true,1;01x2345;0,c;HierarchyRequestError");
+}
+
 } // namespace
 
 int main() {
+    test_positional_html_methods();
     test_serialize_to_string();
     test_serialize_namespaces();
     test_noscript_follows_the_documents_scripting_flag();

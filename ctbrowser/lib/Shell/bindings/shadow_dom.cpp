@@ -23,6 +23,8 @@
 // slot's assigned nodes are an answer to a question, not a rearrangement of
 // the boxes. See the report.
 
+#include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/dom/xml.hpp>
 #include <ctbrowser/shell/bindings.hpp>
 
 #include <algorithm>
@@ -63,6 +65,138 @@ namespace {
     };
     walk(walk, root);
     return found;
+}
+
+// THE SANITIZER, AS FAR AS THE HTML PARTIAL-UPDATE METHODS REACH IT (Sanitizer
+// API "sanitize", run over the parsed fragment before it is inserted): the
+// "remove unsafe" pass the SAFE spellings always make - script-running
+// elements, event handler attributes and `javascript:` navigations - and a
+// configuration's removeElements, replaceWithChildrenElements and
+// removeAttributes lists, which both spellings honour.
+// ponytail: the built-in safe DEFAULT configuration - an allow-list of every
+// element and attribute a sanitised fragment may keep - is not modelled, so
+// a safe call keeps an unknown element the default would drop; model it when
+// setHTML() itself is built on this.
+struct sanitize_names {
+    // (namespace URI, local name); "" is the null namespace.
+    std::vector<std::pair<std::string, std::string>> remove_elements;
+    std::vector<std::pair<std::string, std::string>> unwrap_elements;
+    std::vector<std::pair<std::string, std::string>> remove_attributes;
+};
+
+[[nodiscard]] std::string element_namespace_uri(const read_txn & txn, const atom_table & atoms,
+                                                node_id id) {
+    switch (txn.element_ns(id)) {
+    case node_ns::html: return std::string{xhtml_namespace};
+    case node_ns::svg: return std::string{svg_namespace};
+    case node_ns::other: break;
+    }
+    return std::string{atoms.text(txn.element_namespace(id))};
+}
+
+// "Remove unsafe": the elements that run script or embed a browsing context,
+// in the HTML and SVG namespaces, whatever a configuration says.
+[[nodiscard]] bool unsafe_element(std::string_view ns, std::string_view local) {
+    if (ns == xhtml_namespace) {
+        return local == "script" || local == "frame" || local == "iframe" || local == "object" ||
+               local == "embed";
+    }
+    return ns == svg_namespace && (local == "script" || local == "use");
+}
+
+void sanitize(document & doc, const atom_table & atoms, node_id at, const sanitize_names & names,
+              bool safe) {
+    const auto listed = [](const std::vector<std::pair<std::string, std::string>> & list,
+                           std::string_view ns, std::string_view local) {
+        return std::ranges::any_of(
+            list, [&](const auto & one) { return one.first == ns && one.second == local; });
+    };
+    std::vector<node_id> kids;
+    {
+        const auto txn = doc.read();
+        const std::span<const node_id> held = txn.children(at);
+        kids.assign(held.begin(), held.end());
+    }
+    for (const node_id child : kids) {
+        std::string ns;
+        std::string local;
+        {
+            const auto txn = doc.read();
+            if (!txn.tag(child)) { continue; }
+            ns = element_namespace_uri(txn, atoms, child);
+            local = std::string{txn.local_name(child)};
+        }
+        if ((safe && unsafe_element(ns, local)) || listed(names.remove_elements, ns, local)) {
+            (void)doc.remove_child(child);
+            continue;
+        }
+        // The contents of a <template> and of a declarative shadow root are
+        // the fragment's too.
+        if (const node_id contents = doc.template_content(child)) {
+            sanitize(doc, atoms, contents, names, safe);
+        }
+        if (const node_id shadow = doc.shadow_root_of(child)) {
+            sanitize(doc, atoms, shadow, names, safe);
+        }
+        sanitize(doc, atoms, child, names, safe);
+        std::vector<atom> dropped;
+        {
+            const auto txn = doc.read();
+            for (const attribute & a : txn.attributes(child)) {
+                const std::string_view name = attribute_local_name(atoms, a);
+                const std::string_view uri = atoms.text(a.ns);
+                const std::string value = ascii_lower_copy(trim(a.value, html_whitespace));
+                const bool handler = !a.ns && name.size() > 2 && name.starts_with("on");
+                const bool navigation =
+                    (name == "href" || name == "action" || name == "formaction") &&
+                    value.starts_with("javascript:");
+                if ((safe && (handler || navigation)) ||
+                    listed(names.remove_attributes, uri, name)) {
+                    dropped.push_back(a.name);
+                }
+            }
+        }
+        for (const atom name : dropped) { (void)doc.remove_attribute(child, name); }
+        if (listed(names.unwrap_elements, ns, local)) {
+            std::vector<node_id> inner;
+            {
+                const auto txn = doc.read();
+                const std::span<const node_id> held = txn.children(child);
+                inner.assign(held.begin(), held.end());
+            }
+            for (const node_id one : inner) { (void)doc.insert_before(at, one, child); }
+            (void)doc.remove_child(child);
+        }
+    }
+}
+
+// A configuration's name lists, from the `sanitizer` member of the options:
+// a string names an element in the HTML namespace or an attribute in none, a
+// dictionary its `name` and `namespace`.
+[[nodiscard]] sanitize_names sanitizer_names(context & cx, value config) {
+    sanitize_names out;
+    if (!config.is_object()) { return out; }
+    const auto read = [&](const std::string & member, std::string_view default_ns,
+                          std::vector<std::pair<std::string, std::string>> & into) {
+        const value list = dict_member(cx, config, member);
+        if (!list.is_array()) { return; }
+        for (const value & item : static_cast<script::array_object *>(list.as_heap())->items) {
+            if (item.is_string()) {
+                into.emplace_back(std::string{default_ns}, cx.to_string(item));
+                continue;
+            }
+            if (!item.is_object()) { continue; }
+            const value given = dict_member(cx, item, "namespace");
+            into.emplace_back(given.is_undefined() ? std::string{default_ns}
+                              : given.is_null()    ? std::string{}
+                                                   : cx.to_string(given),
+                              dict_string(cx, item, "name"));
+        }
+    };
+    read("removeElements", xhtml_namespace, out.remove_elements);
+    read("replaceWithChildrenElements", xhtml_namespace, out.unwrap_elements);
+    read("removeAttributes", {}, out.remove_attributes);
+    return out;
 }
 
 } // namespace
@@ -562,6 +696,159 @@ void dom_bindings::install_shadow_dom(context & cx) {
             },
             script::attr_builtin);
     }
+
+    // --- {append,prepend,before,after,replaceWith}HTML{,Unsafe} ---------------
+    //
+    // THE HTML PARTIAL UPDATES (WICG declarative-partial-updates): markup
+    // parsed as a fragment in the context of the element it lands in, then
+    // inserted where the method's name says - the ParentNode positions on an
+    // Element or ShadowRoot (a <template>'s go into its contents), the
+    // ChildNode ones on anything with a parent. The context is that parent,
+    // or the host when the parent is a shadow root or a template's contents;
+    // a Document, a plain DocumentFragment and a <template> ELEMENT give no
+    // context and are a HierarchyRequestError. Declarative shadow roots are
+    // attached, the safe spellings are sanitised (see `sanitize`), and only
+    // an Unsafe one with `{runScripts: true}` runs the scripts it inserts.
+    const auto partial_update = [this](context & c, std::span<value> args, std::string_view where,
+                                       bool safe) -> value {
+        dom_bindings * owner = owner_of(c.current_this());
+        const node_id self = owner == nullptr ? node_id{} : owner->handle_of(c.current_this());
+        if (!self) {
+            c.throw_error("TypeError", "Illegal invocation");
+            return value::undefined();
+        }
+        const std::string markup = arg_string(c, args, 0);
+        const value options = arg(args, 1);
+        document & doc = *owner->doc_;
+        const bool into_self = where == "append" || where == "prepend";
+        node_id parent;
+        node_id context;
+        node_id before;
+        bool refused = false;
+        {
+            const auto txn = doc.read();
+            const auto is_template = [&](node_id n) {
+                return txn.tag(n) && txn.element_ns(n) == node_ns::html &&
+                       txn.local_name(n) == "template";
+            };
+            if (into_self) {
+                parent = context = self;
+                if (const shadow_tree * tree = owner->shadow_tree_of(self)) {
+                    context = tree->host;
+                } else if (is_template(self)) {
+                    parent = node_id{}; // its contents, made below
+                }
+            } else {
+                parent = dom_parent(txn, self);
+                if (!parent) { return value::undefined(); }
+                const node_kind kind = txn.kind(parent).value_or(node_kind::document);
+                if (kind == node_kind::document) {
+                    refused = true;
+                } else if (kind == node_kind::document_fragment) {
+                    if (const shadow_tree * tree = owner->shadow_tree_of(parent)) {
+                        context = tree->host;
+                    } else {
+                        context = doc.template_of(parent);
+                        refused = !context;
+                    }
+                } else if (is_template(parent)) {
+                    refused = true;
+                } else {
+                    context = parent;
+                }
+                // After the node - and for replaceWith too, the node itself
+                // going before the markup comes in.
+                if (where == "before") {
+                    before = self;
+                } else {
+                    const std::span<const node_id> row = txn.children(parent);
+                    const auto here = std::ranges::find(row, self);
+                    before = here != row.end() && here + 1 != row.end() ? *(here + 1) : node_id{};
+                }
+            }
+        }
+        if (refused) {
+            throw_dom_exception(c, "HierarchyRequestError",
+                                std::string{where} + "HTML: the node's parent gives the markup "
+                                                     "no context element");
+            return value::undefined();
+        }
+        if (!parent) {
+            parent = doc.template_content(self);
+            if (!parent) {
+                parent = doc.create_fragment();
+                doc.set_template_content(self, parent);
+            }
+        }
+        if (into_self && where == "prepend") {
+            const auto txn = doc.read();
+            const std::span<const node_id> row = txn.children(parent);
+            before = row.empty() ? node_id{} : row.front();
+        }
+        const bool run_scripts = !safe && dict_flag(c, options, "runScripts");
+        const sanitize_names names = sanitizer_names(c, dict_member(c, options, "sanitizer"));
+        document scratch{*atoms_};
+        node_id body;
+        {
+            const auto txn = doc.read();
+            body = parse_html_fragment(scratch, markup, txn.local_name(context),
+                                       txn.element_ns(context), doc.scripting(), true);
+        }
+        sanitize(scratch, *atoms_, body, names, safe);
+        const node_id holder = doc.create_fragment();
+        {
+            const auto from = scratch.read();
+            const std::span<const node_id> kids = from.children(body);
+            const std::vector<node_id> sources{kids.begin(), kids.end()};
+            for (const node_id child : sources) {
+                owner->copy_shadow_trees(scratch, from, child,
+                                         owner->copy_subtree(from, child, holder));
+            }
+        }
+        if (run_scripts) {
+            std::vector<node_id> scripts;
+            {
+                const auto txn = doc.read();
+                const auto walk = [&](auto && walk_self, node_id at) -> void {
+                    const node_ns ns = txn.element_ns(at);
+                    if (txn.tag(at) && (ns == node_ns::html || ns == node_ns::svg) &&
+                        txn.local_name(at) == "script") {
+                        scripts.push_back(at);
+                    }
+                    if (const node_id shadow = doc.shadow_root_of(at)) {
+                        walk_self(walk_self, shadow);
+                    }
+                    for (const node_id child : txn.children(at)) { walk_self(walk_self, child); }
+                };
+                walk(walk, holder);
+            }
+            for (const node_id script : scripts) { owner->note_unstarted_script(script); }
+        }
+        if (where == "replaceWith") { (void)doc.remove_child(self); }
+        (void)owner->insert_node(parent, holder, before);
+        return value::undefined();
+    };
+    const auto install_positions = [&](const char * interface,
+                                       std::initializer_list<std::string_view> positions) {
+        const value proto = interface_prototype(interface);
+        if (!proto.is_object()) { return; }
+        auto * on = static_cast<script::object_object *>(proto.as_heap());
+        for (const std::string_view where : positions) {
+            for (const bool safe : {true, false}) {
+                const std::string name = std::string{where} + (safe ? "HTML" : "HTMLUnsafe");
+                set_method(
+                    cx, *on, name.c_str(),
+                    [partial_update, where, safe](context & c, std::span<value> args) {
+                        return partial_update(c, args, where, safe);
+                    },
+                    script::attr_builtin);
+            }
+        }
+    };
+    install_positions("Element", {"append", "prepend", "before", "after", "replaceWith"});
+    install_positions("ShadowRoot", {"append", "prepend"});
+    install_positions("CharacterData", {"before", "after", "replaceWith"});
+    install_positions("DocumentType", {"before", "after", "replaceWith"});
 }
 
 } // namespace ctbrowser::shell
