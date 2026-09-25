@@ -15,6 +15,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
@@ -66,15 +67,22 @@ struct ContentsValue {
     bool string() const { return kind == ContentsKind::String; }
 };
 
-inline std::pair<mlir::Value, bool> conditionChoiceKey(mlir::Value condition) {
+inline std::pair<mlir::Value, bool> conditionChoiceKey(
+    mlir::Value condition, llvm::function_ref<bool(std::size_t)> spend) {
     // Truthy and logical Not are total, without object conversion. The flag
     // records whether the branch reverses the exact input's truthiness.
     auto truthy = condition.getDefiningOp<ctjs::TruthyOp>();
     if (!truthy) { return {condition, false}; }
-    // ponytail: unwrap one Not; longer expressions need a bounded proof.
-    auto unary = truthy.getValue().getDefiningOp<ctjs::UnaryOp>();
-    if (unary && unary.getKind() == ctjs::UnaryKind::Not) { return {unary.getOperand(), true}; }
-    return {truthy.getValue(), false};
+    mlir::Value input = truthy.getValue();
+    bool negated = false;
+    while (true) {
+        // The shared budget bounds traversal; exhaustion supplies no partial key.
+        if (!spend(1)) { return {}; }
+        auto unary = input.getDefiningOp<ctjs::UnaryOp>();
+        if (!unary || unary.getKind() != ctjs::UnaryKind::Not) { return {input, negated}; }
+        input = unary.getOperand();
+        negated = !negated;
+    }
 }
 
 using HeldProperties = llvm::MapVector<mlir::StringAttr, ContentsValue>;

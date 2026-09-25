@@ -623,6 +623,31 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     auto mutatedNot = reloadedNot;
     mutatedNot.insert(mutatedNot.find("    %secondRead ="),
                       "    ctjs.set_property %guard[%zero], %one\n");
+    const auto notChain = [](unsigned length, std::string input = "%p") {
+        std::string body;
+        for (unsigned i = 0; i < length; ++i) {
+            const std::string result = "%not" + std::to_string(i);
+            body += "    " + result + " = ctjs.unary not " + input + "\n";
+            input = result;
+        }
+        return body + "    %secondFlag = ctjs.truthy " + input + "\n";
+    };
+    const std::string chainKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", notChain(3), true));
+    const std::string chainGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", notChain(3), true));
+    auto firstChain = siblingInput("%zero", "%one", "%flag", "", true);
+    firstChain.replace(firstChain.find("%flag"), 5, "%secondFlag");
+    auto reloadedChain = reloadedConditions("", true);
+    reloadedChain.replace(reloadedChain.find("    %secondFlag = ctjs.truthy %secondRead\n"),
+                          std::string{"    %secondFlag = ctjs.truthy %secondRead\n"}.size(),
+                          notChain(3, "%secondRead"));
+    auto mutatedChain = reloadedChain;
+    mutatedChain.insert(mutatedChain.find("    %secondRead ="),
+                        "    ctjs.set_property %guard[%zero], %one\n");
+    auto unsupportedChain = notChain(3);
+    unsupportedChain.replace(unsupportedChain.find("not %p"), 6, "void %p");
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -2097,6 +2122,122 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(oppositeKeys) + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "two logical Not links preserve the input's branch orientation",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%one", "%secondFlag", notChain(2)))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "three logical Not links reverse the corresponding finite Number arms",
+         .body = loopValues + allocationLoop(chainKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "an even long Not chain uses the shared work budget",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%one", "%secondFlag", notChain(64)))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "an odd Not chain beyond sixty-four links retains its exact polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", notChain(65), true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "a first Not chain snapshots the correctly oriented input choice",
+         .body = loopValues + allocationLoop(selectedStore(notChain(3) + firstChain)) + done,
+         .confinedNested = "fresh"},
+        {.what = "a preheader Not chain shares the exact input snapshot",
+         .body = loopValues + notChain(3) + allocationLoop(selectedStore(firstChain)) + done,
+         .confinedNested = "fresh"},
+        {.what = "nested Not-chain correspondence preserves the independent guard read gap",
+         .body =
+             loopValues + allocationLoop(chainGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "an even Not chain cannot reverse unswapped operand correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", notChain(2), true))) +
+                 done,
+         .complete = false},
+        {.what = "an odd Not chain cannot keep same-arm operand correspondence",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%one", "%secondFlag", notChain(3)))) +
+                 done,
+         .complete = false},
+        {.what = "a Not chain cannot correlate a distinct SSA input",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", notChain(3, "%q"), true))) +
+                 done,
+         .complete = false},
+        {.what = "a Not chain stops at a different unary producer",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", unsupportedChain, true))) +
+                 done,
+         .complete = false},
+        {.what = "a Not chain over a separate read retains its own predicate snapshot",
+         .body = loopValues + allocationLoop(reloadedChain) + done,
+         .complete = false},
+        {.what = "mutation between reads cannot provide Not-chain correspondence",
+         .body = loopValues + allocationLoop(mutatedChain) + done,
+         .complete = false},
+        {.what = "Not-chain correspondence cannot overwrite its current guard dependency",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(
+                     "      %read = ctjs.get_property %guard[%zero]\n" +
+                     siblingInput("%read", "%one", "%secondFlag", notChain(3), true))) +
+                 done,
+         .complete = false},
+        {.what = "Not-chain correspondence still proves both Number operands independently",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%p", "%secondFlag", notChain(3), true))) +
+                 done,
+         .complete = false},
+        {.what = "Not-chain correspondence cannot cancel a nonfinite Number",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%nan", "%secondFlag", notChain(3), true))) +
+                 done,
+         .complete = false},
+        {.what = "every retaining exit preserves a child stored through a Not chain",
+         .body = loopValues + allocationLoop(chainKeys) +
+                 "  cf.cond_br %flag, ^plain, ^retain\n^plain:\n  ctjs.return %zero\n"
+                 "^retain:\n  ctjs.return %guard\n"},
+        {.what = "clearing a Not-chain zero key releases its child",
+         .body = loopValues + allocationLoop(chainKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved Not-chain alias survives clearing its holder",
+         .body = loopValues + allocationLoop(chainKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "Not-chain correspondence cannot hide a no-result transient cycle",
+         .body =
+             loopValues +
+             allocationLoop(chainKeys + "    scf.if %secondFlag {\n"
+                                        "      ctjs.set_property %fresh[%zero], %guard\n"
+                                        "      ctjs.set_property %fresh[%zero], %zero\n    }\n") +
+             clearGuard + done,
+         .complete = false},
+        {.what = "a Not chain cannot hide an unsupported producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  notChain(3) + "    %called = ctjs.call %p(%q)\n", true))) +
+                 done,
+         .complete = false},
+        {.what = "Not-chain correspondence cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(chainKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "zero visits cannot authorize Not-chain allocation identities",
+         .body = loopValues + allocationLoop(chainKeys, "%one") + done,
+         .complete = false},
+        {.what = "Not-chain correspondence still requires current initialized solver inputs",
+         .body = loopValues + allocationLoop(chainKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "calls in an arithmetic key arm still refuse the complete census",
          .body = loopValues +
                  allocationLoop(
@@ -2833,7 +2974,68 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = oppositeMutation.what, .body = oppositeMutation.body, .expected = ""},
              "the opposite predicate mutation fixture did not parse");
     }
-    std::printf("array retention: %zu rows, fifty-eight live states, %zu budget cutoffs\n",
+    retention_row chainMutation{
+        .what = "Not-chain correspondence reproves interior links, polarity, yields and guards",
+        .body = loopValues + allocationLoop(chainGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto chainModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + chainMutation.body + "}\n", &context);
+    if (chainModule) {
+        ctjs::FuncOp function = *chainModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto outer = second.getCondition()
+                         .getDefiningOp<ctjs::TruthyOp>()
+                         .getValue()
+                         .getDefiningOp<ctjs::UnaryOp>();
+        auto middle = outer.getOperand().getDefiningOp<ctjs::UnaryOp>();
+        auto inner = middle.getOperand().getDefiningOp<ctjs::UnaryOp>();
+        auto * firstYield = first.getThenRegion().front().getTerminator();
+        auto * secondYield = second.getThenRegion().front().getTerminator();
+        auto load = firstYield->getOperand(0).getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = inner.getOperand();
+        const mlir::Value originalYield = secondYield->getOperand(0);
+        const mlir::Value originalPosition = load->getOperand(1);
+        mlir::Value zero;
+        for (auto literal : function.getBody().front().getOps<ctjs::ConstantOp>()) {
+            if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue());
+                number && number.getBits() == 0) {
+                zero = literal;
+            }
+        }
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*chainModule))) {
+            fail(row{.what = chainMutation.what, .body = chainMutation.body, .expected = ""},
+                 "the Not-chain stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 7; ++state) {
+            inner->setOperand(0, state == 1 ? function.getBody().front().getArgument(4)
+                                            : originalInput);
+            middle.setKindAttr(ctjs::UnaryKindAttr::get(
+                &context, state == 2 ? ctjs::UnaryKind::Void : ctjs::UnaryKind::Not));
+            outer->setOperand(0, state == 3 ? inner.getResult() : middle.getResult());
+            secondYield->setOperand(0, state == 4 ? originalPosition : originalYield);
+            load->setOperand(1, state == 5 ? zero : originalPosition);
+            chainMutation.complete = state == 0 || state == 6;
+            chainMutation.confinedNested = chainMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*chainModule, chainMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete != chainMutation.complete) {
+                fail(row{.what = chainMutation.what, .body = chainMutation.body, .expected = ""},
+                     "a stale solver or forged marker supplied Not-chain correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = chainMutation.what, .body = chainMutation.body, .expected = ""},
+             "the Not-chain mutation fixture did not parse");
+    }
+    std::printf("array retention: %zu rows, sixty-five live states, %zu budget cutoffs\n",
                 rows.size(), budgets);
 }
 
