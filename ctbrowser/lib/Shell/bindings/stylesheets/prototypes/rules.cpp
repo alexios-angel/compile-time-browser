@@ -248,7 +248,28 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
             return value::undefined();
         },
         script::attr_configurable);
-    (void)cssom_interface(cx, internals, "CSSSupportsRule", "CSSConditionRule", nullptr);
+    // `matches` (CSS Conditional 3 §7.2 and §7.3): whether the condition
+    // holds now - the media list against the window, the supports condition
+    // as the parser decided it.
+    define_getter(
+        cx, *media_rule_proto, "matches",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr || selector_engine_ == nullptr) { return value::boolean(false); }
+            return value::boolean(style::css::evaluate(
+                style::css::parse_media_query_list(serialize_media_query_list(rule->media_queries)),
+                selector_engine_->environment()));
+        },
+        {}, script::attr_configurable);
+    script::object_object * supports_proto =
+        cssom_interface(cx, internals, "CSSSupportsRule", "CSSConditionRule", nullptr);
+    define_getter(
+        cx, *supports_proto, "matches",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            return value::boolean(rule != nullptr && style::css::supports_condition(rule->prelude));
+        },
+        {}, script::attr_configurable);
     // --- CSSContainerRule, css-conditional-5. The prelude is `<container-name>?
     // <container-query>`: a name is an identifier and a query begins with `(`
     // (or `not`/`and`/`or` of one), so the first component decides which.
