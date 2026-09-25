@@ -2,6 +2,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "llvm/ADT/APFloat.h"
 
 #include <bit>
 
@@ -208,6 +209,37 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         default: return std::nullopt;
         }
     };
+    const auto exactNumberArithmetic = [](ctjs::BinaryOp binary) -> ctjs::NumberAttr {
+        if (binary->getNumOperands() != 2 || !binary.getKindAttr()) { return {}; }
+        auto lhs = binary->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
+        auto rhs = binary->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
+        auto left =
+            lhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(lhs.getValue()) : ctjs::NumberAttr{};
+        auto right =
+            rhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
+        if (!left || !right) { return {}; }
+        // Exact Number operands cannot invoke conversion hooks. LLVM supplies
+        // binary64 rounding independently of the host's floating-point state.
+        llvm::APFloat result(llvm::APFloat::IEEEdouble(), llvm::APInt(64, left.getBits()));
+        const llvm::APFloat operand(llvm::APFloat::IEEEdouble(), llvm::APInt(64, right.getBits()));
+        switch (binary.getKind()) {
+        case ctjs::BinaryKind::Add:
+            (void)result.add(operand, llvm::APFloat::rmNearestTiesToEven);
+            break;
+        case ctjs::BinaryKind::Sub:
+            (void)result.subtract(operand, llvm::APFloat::rmNearestTiesToEven);
+            break;
+        case ctjs::BinaryKind::Mul:
+            (void)result.multiply(operand, llvm::APFloat::rmNearestTiesToEven);
+            break;
+        case ctjs::BinaryKind::Div:
+            (void)result.divide(operand, llvm::APFloat::rmNearestTiesToEven);
+            break;
+        case ctjs::BinaryKind::Mod: (void)result.mod(operand); break;
+        default: return {};
+        }
+        return ctjs::NumberAttr::get(binary.getContext(), result.bitcastToAPInt().getZExtValue());
+    };
     const auto prepareTarget = [&](ctjs::CreateClosureOp closure) {
         ctjs::FuncOp found;
         for (auto function : candidate.getOps<ctjs::FuncOp>()) {
@@ -235,6 +267,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
                 if (auto comparison = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
                     projectBranches |= exactNumberComparison(comparison).has_value();
+                }
+                if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation)) {
+                    projectBranches |= static_cast<bool>(exactNumberArithmetic(binary));
                 }
                 size += uint64_t(1) + operation->getNumOperands() + operation->getNumResults() +
                         operation->getNumSuccessors();
@@ -267,6 +302,16 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             bool changed = true;
             while (changed) {
                 changed = false;
+                const auto calculated = found.walk([&](ctjs::BinaryOp binary) {
+                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    auto result = exactNumberArithmetic(binary);
+                    if (!result) { return mlir::WalkResult::advance(); }
+                    rewriter.setInsertionPoint(binary);
+                    rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(binary, result);
+                    changed = true;
+                    return mlir::WalkResult::advance();
+                });
+                if (calculated.wasInterrupted()) { return ctjs::FuncOp{}; }
                 const auto folded = found.walk([&](ctjs::UnaryOp unary) {
                     if (!spend()) { return mlir::WalkResult::interrupt(); }
                     if (unary.getKind() != ctjs::UnaryKind::Not) {
