@@ -22,6 +22,43 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native iterator closure scheduling and nested inventory, 2026-09-25 UTC
+
+Resumed clean **dcec1bd6** and its closure-scheduling boundary, including the
+interrupted trace and agent candidates. **f8482c73** proves closure and capture
+assignment order through Invoke normal/unwind and Try catch ancestry. The
+original getter and method iterator sources now **compile and execute natively**
+with their bodies unchanged. Generated C++ calls the existing DOM APIs; caught
+node identity, exhaustion and source writes retain their proved behavior.
+Fourteen direct ordering controls preserve initialization, unsupported-region
+and budget refusals; the existing protocol/lifetime controls still pass.
+
+**840c07dc** inventories nested allocation sites conservatively. The historical
+two-array fixture now has both verdict entries; its nested site is UnknownOp
+without a sinking-operand witness. Retention still refuses. Seven new controls
+cover loop instances, dead regions, raw-frame retention and missing lattices.
+This completes an inventory prerequisite, with **no confinement gain**.
+
+Focused recovery **1/1, 5.32 s**, host contract **1/1, 2.71 s**, escape completion
+**1/1, 0.01 s** and arrays **1/1, 4.69 s** pass. The earlier selected three-source
+native checks and refusal controls completed; the final two-original selector
+passes both providers, optimization/printer modes, GCC/Clang and Node/VM checks.
+All **40** generated C++ files pass namespace checks, their **80** binaries pass
+the harness, and seven final source hashes match the devbox. Formatting passes
+**1127 C++, 159 Python, 114 web files**. Full suites were skipped. Both agents
+hit rate limits; the parent completed their candidates, checks and review.
+
+**Next:** the raw-helper variants in `testObservedIteratorRecovery` still refuse
+at **`DOM iterator getter requires a terminal throw`** and **`DOM Symbol.iterator
+must be a closed identity method`**. Normalize those helper CFGs before their
+identity/getter proofs, retaining source effects and rollback. Nested allocations
+still need an instance/lifetime proof before confinement. Mutable exceptional
+state, escaping owners, unguarded Bootstrap defaults, the native application
+driver and full native Bootstrap remain unfinished; these two admitted iterator
+sources are not full Bootstrap admission.
+
+[Exact checks and next boundary](handoff/2026-09-25-closure-scheduling.md).
+
 ## Callable continuations and nested-site inventory, 2026-09-25 UTC
 
 Resumed clean **ed11eedd** and its callable-holder ordering boundary, then
