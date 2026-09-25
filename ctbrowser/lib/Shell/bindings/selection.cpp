@@ -22,10 +22,10 @@
 // `getSelection` function object, which is a global and therefore a root -
 // the arrangement install_custom_elements uses for its registry.
 //
-// ponytail: no `selectionchange`/`selectstart` events, no `modify()` and no
-// user selection. Nothing here is driven by a click; the engine's own visual
-// selection lives in shell/browser/selection.cpp and the two are not yet one
-// selection.
+// ponytail: no `selectstart` event, no selectionchange for a boundary a Range
+// method or a tree edit moves, no `modify()` and no user selection. Nothing here is driven by a
+// click; the engine's own visual selection lives in shell/browser/selection.cpp and the two are not
+// yet one selection.
 
 #include <ctbrowser/shell/bindings.hpp>
 
@@ -42,6 +42,9 @@ namespace {
 // The Range this selection holds, and which end the focus is at.
 constexpr std::string_view range_slot = "__range";
 constexpr std::string_view backwards_slot = "__backwards";
+// The document's "has scheduled selectionchange event" flag, kept on the one
+// Selection of the window.
+constexpr std::string_view scheduled_slot = "__selectionchangeScheduled";
 
 [[nodiscard]] script::object_object * self_object(context & c) {
     const value self = c.current_this();
@@ -156,6 +159,33 @@ void dom_bindings::install_selection(context & cx) {
                txn.kind(top).value_or(node_kind::element) == node_kind::document;
     };
 
+    // EVERY CHANGE OF THE RANGE GOES THROUGH HERE, and schedules a
+    // `selectionchange` (Selection API 5): a new range, none, or one a method
+    // moved. ONE task per burst - the flag is set until the task runs - and
+    // the task CLEARS it before it fires, so a listener that moves the
+    // selection again gets one more event, in a later task. The event bubbles
+    // and cannot be cancelled, and it is fired at the document.
+    const auto store = [this](context & c, value range, bool backwards) {
+        script::object_object * self = self_object(c);
+        if (self == nullptr) { return; }
+        const value before = held_slot(self, range_slot);
+        store_range(c, range, backwards);
+        if (!before.is_object() && !range.is_object()) { return; }
+        if (context::truthy(held_slot(self, scheduled_slot))) { return; }
+        self->set(std::string{scheduled_slot}, value::boolean(true));
+        (void)add_timer(native(c, "selectionchange",
+                               [this, self](context & inner, std::span<value>) {
+                                   self->set(std::string{scheduled_slot}, value::boolean(false));
+                                   const value event =
+                                       make_event(inner, "selectionchange", node_id{});
+                                   static_cast<script::object_object *>(event.as_heap())
+                                       ->set("cancelable", value::boolean(false));
+                                   (void)dispatch_event("selectionchange", node_id{}, event);
+                                   return value::undefined();
+                               }),
+                        0, false);
+    };
+
     // A fresh Range of this document collapsed at (node, offset). `setStart`
     // is where a doctype and an offset past the end are refused.
     const auto range_at = [this](context & c, value node, value offset) -> value {
@@ -178,7 +208,7 @@ void dom_bindings::install_selection(context & cx) {
     });
     // THE CALLER'S OWN Range OBJECT, KEPT: `getRangeAt(0) === range`. A second
     // range is ignored - this engine, like every shipping one, holds one.
-    method("addRange", [rooted_here](context & c, std::span<value> a) {
+    method("addRange", [rooted_here, store](context & c, std::span<value> a) {
         const value range = arg(a, 0);
         if (!range.is_object()) {
             c.throw_error("TypeError", "Failed to execute 'addRange' on 'Selection': parameter 1 "
@@ -187,10 +217,10 @@ void dom_bindings::install_selection(context & cx) {
         }
         if (!rooted_here(c.lookup_property(range, "startContainer"))) { return value::undefined(); }
         if (range_of(c).is_object()) { return value::undefined(); }
-        store_range(c, range, false);
+        store(c, range, false);
         return value::undefined();
     });
-    method("removeRange", [this](context & c, std::span<value> a) {
+    method("removeRange", [this, store](context & c, std::span<value> a) {
         const value range = arg(a, 0);
         if (!range.is_object()) {
             c.throw_error("TypeError", "Failed to execute 'removeRange' on 'Selection': parameter "
@@ -202,22 +232,22 @@ void dom_bindings::install_selection(context & cx) {
                                 "removeRange: that range is not in the selection");
             return value::undefined();
         }
-        store_range(c, value::undefined(), false);
+        store(c, value::undefined(), false);
         return value::undefined();
     });
     for (const char * name : {"removeAllRanges", "empty"}) {
-        method(name, [](context & c, std::span<value>) {
-            store_range(c, value::undefined(), false);
+        method(name, [store](context & c, std::span<value>) {
+            store(c, value::undefined(), false);
             return value::undefined();
         });
     }
     // `collapse(null)` is `removeAllRanges()` - the one place in this API
     // where null is a value an argument may have rather than a missing one.
     for (const char * name : {"collapse", "setPosition"}) {
-        method(name, [range_at, rooted_here](context & c, std::span<value> a) {
+        method(name, [range_at, rooted_here, store](context & c, std::span<value> a) {
             const value node = arg(a, 0);
             if (node.is_null() || node.is_undefined()) {
-                store_range(c, value::undefined(), false);
+                store(c, value::undefined(), false);
                 return value::undefined();
             }
             // VALIDATE, THEN ABORT - in that order, which is observable: a
@@ -226,13 +256,13 @@ void dom_bindings::install_selection(context & cx) {
             // node kind and the offset before it asks where the node is.
             const value made = range_at(c, node, value::number(arg_number(a, 1)));
             if (c.throw_pending() || !rooted_here(node)) { return value::undefined(); }
-            if (made.is_object()) { store_range(c, made, false); }
+            if (made.is_object()) { store(c, made, false); }
             return value::undefined();
         });
     }
     for (const bool to_start : {true, false}) {
         method(to_start ? "collapseToStart" : "collapseToEnd",
-               [this, to_start](context & c, std::span<value>) {
+               [this, to_start, store](context & c, std::span<value>) {
                    const value range = range_of(c);
                    if (!range.is_object()) {
                        throw_dom_exception(c, "InvalidStateError",
@@ -242,14 +272,14 @@ void dom_bindings::install_selection(context & cx) {
                    const value made = call_on(c, range, "cloneRange", {});
                    if (!made.is_object()) { return value::undefined(); }
                    (void)call_on(c, made, "collapse", {value::boolean(to_start)});
-                   store_range(c, made, false);
+                   store(c, made, false);
                    return value::undefined();
                });
     }
     // `extend(node, offset)`: the ANCHOR stays where it is and the focus moves
     // to the new point, so the range grows in whichever direction that point
     // lies - and the direction follows it.
-    method("extend", [this, rooted_here](context & c, std::span<value> a) {
+    method("extend", [this, rooted_here, store](context & c, std::span<value> a) {
         const value range = range_of(c);
         if (!range.is_object()) {
             throw_dom_exception(c, "InvalidStateError", "extend: there is no range to extend");
@@ -274,10 +304,10 @@ void dom_bindings::install_selection(context & cx) {
         if (c.throw_pending()) { return value::undefined(); }
         (void)call_on(c, made, side < 0 ? "setStart" : "setEnd", {node, offset});
         if (c.throw_pending()) { return value::undefined(); }
-        store_range(c, made, side < 0);
+        store(c, made, side < 0);
         return value::undefined();
     });
-    method("setBaseAndExtent", [this, rooted_here](context & c, std::span<value> a) {
+    method("setBaseAndExtent", [this, rooted_here, store](context & c, std::span<value> a) {
         const value anchor_node = arg(a, 0);
         const value anchor_offset = value::number(arg_number(a, 1));
         const value focus_node = arg(a, 2);
@@ -293,7 +323,7 @@ void dom_bindings::install_selection(context & cx) {
         if (c.throw_pending()) { return value::undefined(); }
         (void)call_on(c, made, side < 0 ? "setStart" : "setEnd", {focus_node, focus_offset});
         if (c.throw_pending()) { return value::undefined(); }
-        store_range(c, made, side < 0);
+        store(c, made, side < 0);
         return value::undefined();
     });
     // `selectAllChildren(node)`: (node, 0) to (node, THE NUMBER OF CHILDREN) -
@@ -302,7 +332,7 @@ void dom_bindings::install_selection(context & cx) {
     // one selects its text; selectAllChildren counts children and selects
     // nothing. selectAllChildren.html asserts `focusOffset ===
     // node.childNodes.length` for every node it has, text nodes included.
-    method("selectAllChildren", [this, rooted_here](context & c, std::span<value> a) {
+    method("selectAllChildren", [this, rooted_here, store](context & c, std::span<value> a) {
         const value node = arg(a, 0);
         // `is_object_like`: a Document is a PROXY, and `is_object()` is false
         // for one - selectAllChildren(document) is a call on a Node.
@@ -320,7 +350,7 @@ void dom_bindings::install_selection(context & cx) {
         if (c.throw_pending()) { return value::undefined(); }
         (void)call_on(c, made, "setEnd", {node, value::number(static_cast<double>(children))});
         if (c.throw_pending() || !rooted_here(node)) { return value::undefined(); }
-        store_range(c, made, false);
+        store(c, made, false);
         return value::undefined();
     });
     method("deleteFromDocument", [](context & c, std::span<value>) {
