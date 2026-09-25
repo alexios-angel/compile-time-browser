@@ -22,6 +22,74 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Logical-not helpers and equal-yield store inputs, 2026-09-25 UTC
+
+Resumed clean **29031f16** and its recorded computed-helper/equal-yield boundary.
+The old WIP branch is already an ancestor. Parallel agents prepared native
+controls and escape changes; after two service limits, the parent completed
+review, live-mutation coverage, formatting, focused validation and commits.
+
+**aa63632f** folds logical-not of exact primitive constants to Boolean in
+verified private iterator helpers, reusing `PrimitiveAlternatives::literal`.
+Operand evaluation and other uses remain; source-order chains fold without a
+new evaluator or Script dependency. Forty new paired raw/structured controls
+(156 total) cover primitive tags, signed zero/NaN, chains, shared results,
+selected payloads/effects, unknown/coercing/BigInt inputs and public rollback at
+zero and a late nonzero budget. Arithmetic and comparison producers remain
+outside this proof.
+
+**84e1fff8** forwards counted-store proof inputs through the exact `scf.if`
+result slot when both yields have the same SSA value or exactly equal constant
+attributes. Both arms still undergo the single-visit census and current-state
+replay; equal ranges are insufficient. Twenty-three new rows (165 total), one
+former refusal and three live payload mutations preserve alias retention,
+publication, guard-reload gaps, every exit, all-write cycles, stale-solver,
+forged-marker and incomplete-budget refusals. This proves frame confinement,
+not region lifetime or native ownership.
+
+The devbox built `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 6.18 s**,
+`ctcompile_host_contract` **1/1, 2.75 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.73 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+The first build caught a test-only clone-overload error; using the existing
+Operation clone plus ModuleOp cast corrected it. Production and assertions
+were unchanged. Formatting passes **1126 C++, 159 Python, 114 web files**;
+final scoped formatting and diff checks pass. The original ten C++ raw literals
+and 71 Python multiline literals are preserved. Parent review and logs:
+`/tmp/ctcompile-iteration24/`. No independent review pass is claimed after the
+reviewer's service limit.
+
+**95466ade** adds two complete derived source witnesses, each importing four
+logical-not operations. Raw and structured preparation pass at the default
+100,000-step budget. Node/VM traces agree; **20 generated C++ files and 40
+GCC/Clang binaries** pass across both printers, structured providers and
+optimization modes, checking ordered DOM writes, two documents and 16 lifetimes.
+Ten zero-budget refusals pass. Generated source and linked symbols have no
+Script/AOT dependency; inspected output uses typed values and public DOM calls.
+All five final code/test hashes match the devbox and local files. Emitted C++
+and raw IR are saved under `/tmp/ctcompile-iteration24/generated/`.
+
+**Next:** computed arithmetic/comparison helper producers need exact values and
+inertness together. The initial logical-not pass also cannot fold a constant
+exposed only by later CFG block-argument merging; this is a code-traced boundary,
+not a new frontend measurement. Escape stores with unequal known in-bounds
+yields still need per-arm footprint proofs; separately computed equal-looking
+expressions do not establish value correspondence. Dynamic differing helper
+branches, repeated allocation identities/lifetimes, mutable exceptional state,
+escaping owners, unguarded Bootstrap defaults, the native application driver and
+full native Bootstrap remain unfinished.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. No full-Bootstrap admission or raw-oracle
+precision gain is claimed. Linux identified the live Claude loop; the corrected
+Windows identity query succeeded with no matches. Concurrent rules applied;
+no browser/runtime/shared implementation changed.
+
 ## Primitive helper predicates and branch-local store inputs, 2026-09-25 UTC
 
 Resumed **33b3811d** and the interrupted iteration23 candidates. The initial
