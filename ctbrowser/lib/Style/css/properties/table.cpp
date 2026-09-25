@@ -306,7 +306,9 @@ constexpr property_syntax table[] = {
     {"widows", k::integer, "", "2", true, true},
     // Three more `<integer>` properties nothing lays out, so that `1e1` and
     // `10.1` are refused where `calc(10.1)` rounds (calc-rounds-to-integer).
-    {"max-lines", k::integer, "none auto", "auto", false, true},
+    // `auto`, not `none`: line-clamp's `none` is the three longhands at their
+    // initial values, and max-lines-invalid refuses `none`.
+    {"max-lines", k::integer, "auto", "auto", false, true},
     {"hyphenate-limit-lines", k::integer, "no-limit", "no-limit", true, true},
     {"hyphenate-limit-chars", k::freeform, "", "auto", true, false}, // declaration.cpp
     {"column-span", k::keyword_only, "none all", "none", false, false},
