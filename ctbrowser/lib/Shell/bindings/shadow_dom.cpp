@@ -249,6 +249,11 @@ void dom_bindings::signal_slot_changes(const std::vector<document::write_note> &
     // the root it named. A page with ten thousand hosts that appends one
     // element must not recompute ten thousand trees.
     std::vector<node_id> roots;
+    // DOM 4.2.3 "insert" step 7.4 and "remove" step 11: a slot WITH NOTHING
+    // ASSIGNED whose children change has changed what it shows - its
+    // fallback content - and that is a slot change too, though no assignment
+    // moved (moveBefore/slotchange-events.html).
+    std::vector<node_id> fallback;
     const auto note_root = [&](node_id root) {
         if (root && shadow_tree_of(root) != nullptr &&
             std::ranges::find(roots, root) == roots.end()) {
@@ -271,6 +276,10 @@ void dom_bindings::signal_slot_changes(const std::vector<document::write_note> &
             note_root(shadow_root_of(note.node));
             if (const node_id parent = txn.parent(note.node)) { note_root(shadow_root_of(parent)); }
             if (note.kind == edit::attribute) { continue; }
+            if (is_slot(txn, note.node) &&
+                std::ranges::find(fallback, note.node) == fallback.end()) {
+                fallback.push_back(note.node);
+            }
             if (note.child && txn.contains(note.child)) {
                 note_root(root_of_tree(txn, note.child, false));
                 note_root(shadow_root_of(note.child));
@@ -279,7 +288,19 @@ void dom_bindings::signal_slot_changes(const std::vector<document::write_note> &
         for (const node_id root : slot_roots_dirty_) { note_root(root); }
     }
     slot_roots_dirty_.clear();
-    if (roots.empty()) { return; }
+    bool any = false;
+    for (const node_id slot : fallback) {
+        if (!assigned_nodes_of(slot).empty() ||
+            std::ranges::find(signal_slots_, slot) != signal_slots_.end()) {
+            continue;
+        }
+        signal_slots_.push_back(slot);
+        any = true;
+    }
+    if (roots.empty()) {
+        if (any) { queue_mutation_delivery(); }
+        return;
+    }
     flat_map<std::uint64_t, std::vector<node_id>> now;
     {
         const auto txn = doc_->read();
@@ -291,7 +312,6 @@ void dom_bindings::signal_slot_changes(const std::vector<document::write_note> &
         };
         for (const node_id root : roots) { walk(walk, root); }
     }
-    bool any = false;
     for (const auto & [key, assigned] : now) {
         const auto before = slot_assignments_.find(key);
         const bool moved =
