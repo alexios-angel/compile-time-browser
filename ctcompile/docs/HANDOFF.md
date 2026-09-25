@@ -22,6 +22,74 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Exact Number arithmetic helpers and same-value store keys, 2026-09-25 UTC
+
+Resumed clean **daa04c51** and its explicit arithmetic/correlated-key boundary.
+The old WIP branch is already an ancestor. After a service interruption, the
+parent retained the native candidate and resumed the parallel agents from their
+checkpoints. Agents completed native controls and the escape production branch;
+the parent completed escape regressions and final review after service limits.
+The independent native review saved an interim report with no blocking findings;
+no completed independent final review is claimed.
+
+**f518ec8c** folds exact Number `Add`, `Sub`, `Mul`, `Div` and `Mod` in
+private iterator helpers through LLVM APFloat binary64 operations. Nearest-even
+rounding, signed zero, NaN, overflow and subnormals retain Number behavior; `mod`
+is truncating JavaScript remainder. Input evaluation and other uses remain.
+Existing budgeted CFG/SCF projection, complete helper and DOM/ownership proofs
+still govern publication. Forty-eight new controls (**280 total**) pin result
+bits, transported arithmetic/comparison/Not chains, shared uses, effects and
+payload refusals, malformed inputs and public zero/late-budget rollback.
+
+**c2612f6e** proves same-SSA subtraction yields zero only after the existing
+range proof establishes a bounded finite Number. It does not equate different
+SSA values or receiver identities. Recursive guard reload dependencies, current
+replay, every exit, all-write cycles and single-visit allocation requirements
+remain. Thirteen new rows (**220 total**), one former refusal and five live
+mutations (**32 states total**) cover signed values, arithmetic composition,
+non-Number/nonfinite inputs, distinct values, guard overlap and alias retention,
+including stale solvers, forged markers and incomplete-budget rollback.
+This proves frame confinement, not native ownership or shorter lifetimes.
+
+The devbox built five explicit native targets: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate` and
+`ctcompile-test-native-reference`; then the two escape targets
+`ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 8.77 s**,
+`ctcompile_host_contract` **1/1, 2.76 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.99 s**, and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+No failed gates or unrelated test replays were needed in this slice.
+
+**8011ea5a** adds two complete derived source witnesses. Each raw import retains
+all five arithmetic producers, including a CFG-transported division input.
+Both pass raw and structured preparation at the default **100,000-step** budget.
+Node/VM traces agree; **20 generated C++ files and 40 GCC/Clang binaries**, both
+printers/providers/optimization modes, ten zero-budget refusals, ordered DOM
+writes, two documents and 16 lifetimes pass. Source and symbol checks find no
+Script/AOT dependency; inspected output uses typed values and public DOM APIs.
+
+All five final source/test hashes match local and devbox files. The original ten
+C++ raw literals and 71 Python multiline literals remain intact. Repository
+formatting passes **1126 C++, 159 Python, 114 web files**; diff checks pass.
+Exact logs, selectors, reviews and generated output are in
+`/tmp/ctcompile-iteration27/`.
+
+**Next:** exact unary numeric producers, static arithmetic, power/bitwise helper
+operations and non-Number comparisons remain outside this helper proof. Escape
+correlation across distinct SSA values and differing receivers remain separate.
+Protected numeric `setAttribute`, repeated allocation identities/lifetimes,
+mutable exceptional state, escaping owners, unguarded Bootstrap defaults, the
+native application driver and full native Bootstrap remain unfinished. No
+full-Bootstrap admission or raw escape-oracle precision gain is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrix runs, raw
+escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance measurements were skipped. Claude's Linux loop was running; Windows
+process identity inspection succeeded with no matches. Concurrent rules applied;
+no browser/runtime/shared implementation, local build, push or history rewrite.
+
 ## Number-comparison helpers and conditional key arithmetic, 2026-09-25 UTC
 
 Resumed clean **2db4e815** and its computed-helper/conditional-key boundary in
