@@ -129,6 +129,21 @@ void test_serialize_prefixes_and_declarations() {
              "<package/>||");
 }
 
+// XML 1.0 [75]: a PUBLIC identifier with no system literal after it is
+// ill-formed, so the document is the parser's error document; with one - even
+// an empty one - it parses.
+void test_an_external_id_needs_its_system_literal() {
+    CHECK_EQ(said("<html><body><script>"
+                  "var p = new DOMParser();"
+                  "var bad = p.parseFromString('<!DOCTYPE html PUBLIC \"x\"><html/>',"
+                  " 'application/xml');"
+                  "var good = p.parseFromString('<!DOCTYPE html PUBLIC \"x\" \"\"><html/>',"
+                  " 'application/xml');"
+                  "alert(bad.documentElement.localName + ',' + good.documentElement.localName);"
+                  "</script></body></html>"),
+             "parsererror,html");
+}
+
 // THE HTML PARTIAL UPDATES: each position lands where its name says, the safe
 // spelling drops the script and an event handler the Unsafe one keeps (and
 // runs only with runScripts), a sanitizer's removeElements takes the element
@@ -165,6 +180,7 @@ void test_positional_html_methods() {
 int main() {
     test_positional_html_methods();
     test_serialize_prefixes_and_declarations();
+    test_an_external_id_needs_its_system_literal();
     test_serialize_to_string();
     test_serialize_namespaces();
     test_noscript_follows_the_documents_scripting_flag();
