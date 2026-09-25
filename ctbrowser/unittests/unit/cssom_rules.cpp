@@ -295,6 +295,9 @@ void test_a_grouping_rule_inserts_and_deletes() {
             try { group.insertRule(text, 0); refused.push('ok'); } catch (e) { refused.push(e.name); }
         }
         console.log('refused=' + refused.join(',') + ',' + group.cssRules.length);
+        // A `{` in a bracket is no block (supports-conditionText).
+        sheet.insertRule('@supports ({x}) {}', 1);
+        console.log('braced=' + sheet.cssRules[1].conditionText);
         group.deleteRule(0);
         console.log('gone=' + group.cssRules.length + ',' + group.cssText);
     </script></body></html>)");
@@ -314,6 +317,7 @@ void test_a_grouping_rule_inserts_and_deletes() {
     CHECK_EQ(logged(page, "import="), std::string{"import=HierarchyRequestError"});
     CHECK_EQ(logged(page, "refused="),
              std::string{"refused=SyntaxError,SyntaxError,SyntaxError,2"});
+    CHECK_EQ(logged(page, "braced="), std::string{"braced=({x})"});
     CHECK_EQ(logged(page, "gone="),
              std::string{"gone=1,@media print {\n  #foo { z-index: 23; float: left; }\n}"});
 }

@@ -450,11 +450,11 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         {
             // The prelude is what stands between the at-keyword and the block
             // (or the `;` that ends a statement at-rule): `@media` -> `all and
-            // (min-width: 10px)`.
+            // (min-width: 10px)`. A `{` inside a bracket is no block:
+            // `@supports ({}) {}` has the prelude `({})`.
             const std::size_t after =
                 name_end == std::string_view::npos ? trimmed.size() : name_end;
-            std::size_t body = trimmed.find_first_of("{;", after);
-            if (body == std::string_view::npos) { body = trimmed.size(); }
+            const std::size_t body = scan_to(trimmed, after, "{;");
             made.prelude = std::string{trim(trimmed.substr(after, body - after), html_whitespace)};
         }
         if (ascii_iequals(name, "media")) {
