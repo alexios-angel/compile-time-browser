@@ -414,7 +414,12 @@ int main() {
     refused("class C { static prototype = 1; }");
 
     accepted("class C { constructor() { this.x = 1; } m() {} } new C();");
-    accepted("class C { static ['prototype']() { return 1; } }");
+    // NOT an early error when the key is computed - and a RUNTIME TypeError:
+    // the method is defined (DefineMethodProperty), and a class's own
+    // `prototype` is not configurable (test262 static-method-non-configurable-err).
+    answers("try { class C { static ['prototype']() { return 1; } } return 'defined'; }"
+            " catch (e) { return e.name; }",
+            "TypeError");
     accepted("class C { static m() {} get x() { return 1; } }");
     // `constructor` on the STATIC side is an ordinary name, and a computed key
     // is never the constructor.
