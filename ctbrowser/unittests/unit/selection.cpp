@@ -93,21 +93,28 @@ void test_collapse_and_extend_carry_the_direction() {
 }
 
 void test_what_the_selection_refuses() {
-    CHECK_EQ(said("<html><body><p id=p>hello</p><script>"
-                  "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"
-                  "var s = getSelection();"
-                  "alert(threw(function(){ s.extend(document.body, 0); }));"
-                  "alert(threw(function(){ s.getRangeAt(0); }));"
-                  // A node in a detached fragment is not in this document: the
-                  // call is ABORTED, not an exception, and nothing is selected.
-                  "var loose = document.createElement('div');"
-                  "s.collapse(loose, 0);"
-                  "alert(s.rangeCount);"
-                  "alert(threw(function(){ s.collapse(document.getElementById('p'), 9); }));"
-                  "s.collapse(null);"
-                  "alert(s.rangeCount + ',' + s.direction);"
-                  "</script></body></html>"),
-             "InvalidStateError;IndexSizeError;0;IndexSizeError;0,none");
+    CHECK_EQ(
+        said("<html><body><p id=p>hello</p><script>"
+             "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"
+             "var s = getSelection();"
+             "alert(threw(function(){ s.extend(document.body, 0); }));"
+             "alert(threw(function(){ s.getRangeAt(0); }));"
+             // A node in a detached fragment is not in this document: the
+             // call is ABORTED, not an exception, and nothing is selected.
+             "var loose = document.createElement('div');"
+             "s.collapse(loose, 0);"
+             "alert(s.rangeCount);"
+             "alert(threw(function(){ s.collapse(document.getElementById('p'), 9); }));"
+             "s.collapse(null);"
+             "alert(s.rangeCount + ',' + s.direction);"
+             // WebIDL's argument conversion: a Range must be a Range, and
+             // setBaseAndExtent's four arguments are all required.
+             "alert(threw(function(){ s.removeRange(s); }) + ',' + threw(function(){"
+             " s.addRange(new StaticRange({startContainer: document.body, startOffset: 0,"
+             " endContainer: document.body, endOffset: 0})); }) + ',' + threw(function(){"
+             " s.setBaseAndExtent(document.body, 0, document.body); }));"
+             "</script></body></html>"),
+        "InvalidStateError;IndexSizeError;0;IndexSizeError;0,none;TypeError,TypeError,TypeError");
 }
 
 // A SELECTION ACROSS A SHADOW BOUNDARY: the anchor inside a closed tree and

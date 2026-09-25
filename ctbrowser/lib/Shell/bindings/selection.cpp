@@ -223,6 +223,17 @@ void dom_bindings::install_selection(context & cx) {
         return c.throw_pending() ? value::undefined() : made;
     };
 
+    // A RANGE, as the argument conversion of addRange/removeRange means it: a
+    // live range of the realm - a Selection, a StaticRange or a plain object
+    // is a TypeError.
+    const auto is_live_range = [this](value v) {
+        if (!v.is_object()) { return false; }
+        const std::vector<value> & held = primary().live_ranges_;
+        return static_cast<script::object_object *>(v.as_heap())->find("__startContainer") !=
+                   nullptr &&
+               std::ranges::any_of(held, [&](const value & one) { return one.bits() == v.bits(); });
+    };
+
     // --- points in different trees of the document ---------------------------
     //
     // THE SHADOW-INCLUDING ORDER OF TWO BOUNDARY POINTS: each is lifted out of
@@ -323,9 +334,9 @@ void dom_bindings::install_selection(context & cx) {
     });
     // THE CALLER'S OWN Range OBJECT, KEPT: `getRangeAt(0) === range`. A second
     // range is ignored - this engine, like every shipping one, holds one.
-    method("addRange", [rooted_here, store](context & c, std::span<value> a) {
+    method("addRange", [rooted_here, store, is_live_range](context & c, std::span<value> a) {
         const value range = arg(a, 0);
-        if (!range.is_object()) {
+        if (!is_live_range(range)) {
             c.throw_error("TypeError", "Failed to execute 'addRange' on 'Selection': parameter 1 "
                                        "is not of type 'Range'.");
             return value::undefined();
@@ -335,9 +346,9 @@ void dom_bindings::install_selection(context & cx) {
         store(c, range, false);
         return value::undefined();
     });
-    method("removeRange", [this, store](context & c, std::span<value> a) {
+    method("removeRange", [this, store, is_live_range](context & c, std::span<value> a) {
         const value range = arg(a, 0);
-        if (!range.is_object()) {
+        if (!is_live_range(range)) {
             c.throw_error("TypeError", "Failed to execute 'removeRange' on 'Selection': parameter "
                                        "1 is not of type 'Range'.");
             return value::undefined();
@@ -424,6 +435,13 @@ void dom_bindings::install_selection(context & cx) {
     });
     method("setBaseAndExtent", [rooted_here, store, range_at, node_of, same_tree, compare_composed,
                                 store_across](context & c, std::span<value> a) {
+        // FOUR REQUIRED ARGUMENTS: fewer is WebIDL's TypeError, before any of
+        // them is converted.
+        if (a.size() < 4) {
+            c.throw_error("TypeError", "Failed to execute 'setBaseAndExtent' on 'Selection': 4 "
+                                       "arguments required.");
+            return value::undefined();
+        }
         const value anchor_node = arg(a, 0);
         const value anchor_offset = value::number(arg_number(a, 1));
         const value focus_node = arg(a, 2);
@@ -500,6 +518,25 @@ void dom_bindings::install_selection(context & cx) {
         }
         const node_id id = handle_of(node);
         if (!id || !dom_parent(doc_->read(), id)) { return value::boolean(false); }
+        // NOT IN THE FLAT TREE, NOT IN THE SELECTION: a host's child no slot
+        // took, or a slot's fallback content while something is assigned to
+        // it, is not rendered - and so not selected, whatever the DOM range
+        // spans (selection-at-nodes-not-part-of-flattened-tree.html).
+        {
+            const auto txn = doc_->read();
+            for (node_id at = id; at;) {
+                const node_id parent = txn.parent(at);
+                if (!parent) { break; }
+                if (shadow_root_of(parent) && !assigned_slot_of(at)) {
+                    return value::boolean(false);
+                }
+                if (txn.tag(parent) && txn.element_ns(parent) == node_ns::html &&
+                    txn.local_name(parent) == "slot" && !assigned_nodes_of(parent).empty()) {
+                    return value::boolean(false);
+                }
+                at = parent;
+            }
+        }
         const value about = create_range(c);
         (void)call_on(c, about, "selectNode", {node});
         if (c.throw_pending()) { return value::boolean(false); }
