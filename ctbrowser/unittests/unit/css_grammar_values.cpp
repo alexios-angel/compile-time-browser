@@ -216,7 +216,7 @@ void test_keyword_combinations() {
     ok("counter-reset", "foo", "foo 0");
     ok("counter-increment", "foo 2 bar", "foo 2 bar 1");
     ok("counter-reset", "reversed(foo) 3", "reversed(foo) 3");
-    ok("counter-set", "foo calc(1.6)", "foo 2");
+    ok("counter-set", "foo calc(1.6)", "foo calc(1.6)"); // rounded when it computes
     bad("counter-reset", "none foo");
     ok("will-change", "TRANSFORM, transform", "TRANSFORM, transform");
     ok("will-change", "auto", "auto");

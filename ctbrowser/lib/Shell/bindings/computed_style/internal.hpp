@@ -85,7 +85,8 @@ namespace ctbrowser::shell::detail {
 [[nodiscard]] std::optional<color> system_color(std::string_view text);
 [[nodiscard]] std::optional<std::array<double, 6>> transform_matrix(std::string_view text);
 [[nodiscard]] std::string transform_matrix_text(std::string_view text);
-[[nodiscard]] std::string collapse_keyword(std::string_view text);
+// `keep_case` for a value that names something, whose idents are case-sensitive.
+[[nodiscard]] std::string collapse_keyword(std::string_view text, bool keep_case = false);
 [[nodiscard]] std::string shadow_text(std::string_view text, float font_size, bool box);
 
 } // namespace ctbrowser::shell::detail

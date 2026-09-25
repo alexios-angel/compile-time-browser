@@ -60,9 +60,11 @@ std::string fold_value(std::string text, std::string_view name,
         }
         return result;
     }
-    if (name == "hyphenate-limit-chars") {
-        // Three <integer>s: a math function in one computes to its value,
-        // rounded (CSS Values 4 §10.9), and the whole is written canonically.
+    if (name == "hyphenate-limit-chars" || name == "counter-increment" || name == "counter-reset" ||
+        name == "counter-set") {
+        // <integer>s among other words: a math function computes to its
+        // value, rounded (CSS Values 4 §10.9), and the whole is written
+        // canonically.
         std::string result;
         for (const std::string_view raw : split_top_level(text, html_whitespace)) {
             const std::string_view part = trim(raw, html_whitespace);

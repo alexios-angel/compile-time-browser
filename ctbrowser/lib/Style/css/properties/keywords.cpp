@@ -239,14 +239,14 @@ constexpr or_grammar or_grammars[] = {
             const css_token & last = ts.tokens[at[end - 1]];
             const std::string_view text =
                 std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
+            // The SPECIFIED value keeps the function (CSS Values 4 §10.12);
+            // it is rounded to its integer when it computes, in the cascade.
             const math_answer answer = evaluate_math(text, length_context{});
             if (answer.outcome == math_outcome::invalid) { return std::nullopt; }
-            if (answer.outcome == math_outcome::resolved) {
-                if (!answer.value.is_number) { return std::nullopt; }
-                count = serialize_number(std::round(answer.value.px));
-            } else {
-                count = simplify_math(text);
+            if (answer.outcome == math_outcome::resolved && !answer.value.is_number) {
+                return std::nullopt;
             }
+            count = simplify_math(text);
             k = end;
         } else if (reversed) {
             // A reversed counter with no number counts down from its end.

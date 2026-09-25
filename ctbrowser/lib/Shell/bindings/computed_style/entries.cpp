@@ -658,8 +658,27 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
         }
         // 5. Everything else is a keyword or a list, and its computed value IS
-        //    its specified text.
-        return collapse_keyword(text);
+        //    its specified text - lowercased, EXCEPT where the value names
+        //    something: a <custom-ident> is case-sensitive (CSS Values 4
+        //    §3.2), so `counter-reset: myCounter` and `animation-name: Both`
+        //    read back as written. The grammar lowercased every keyword of
+        //    these already.
+        static constexpr std::string_view names_something[] = {"counter-increment",
+                                                               "counter-reset",
+                                                               "counter-set",
+                                                               "animation-name",
+                                                               "page",
+                                                               "view-transition-name",
+                                                               "view-transition-class",
+                                                               "container-name",
+                                                               "anchor-name",
+                                                               "position-anchor",
+                                                               "anchor-scope",
+                                                               "font-palette",
+                                                               "scroll-timeline-name",
+                                                               "view-timeline-name",
+                                                               "timeline-scope"};
+        return collapse_keyword(text, ascii_iequals_any(property, names_something));
     };
 
     // `currentcolor` IS NOT A COLOUR. It is the initial value of all six border
