@@ -473,6 +473,13 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(indent + (hanging ? " hanging" : "") + (each_line ? " each-line" : ""));
     }
 
+    // `<opacity-value>` (CSS Shapes 1 §5.1), whose percentage is written as
+    // the number it is: `50%` is `0.5`.
+    if (ascii_iequals(property, "shape-image-threshold") && found.significant.size() == 1 &&
+        ts.tokens[found.significant.front()].type == token_type::percentage) {
+        return yes(serialize_number(ts.tokens[found.significant.front()].number / 100));
+    }
+
     // `[ clip | ellipsis | <string> | fade | <fade()> ]{1,2}`, CSS Overflow 4
     // §6.1: one end, or the start and the end.
     if (ascii_iequals(property, "text-overflow")) {

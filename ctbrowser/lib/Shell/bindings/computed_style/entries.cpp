@@ -647,7 +647,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //     `calc(log(0))` the cascade folded to a very negative number is
         //     `0` here, and `opacity: 2` is `1`. exp-log-serialize asks for the
         //     first.
-        if (property == "opacity") {
+        if (property == "opacity" || property == "shape-image-threshold") {
             const std::string_view given = trim(text, html_whitespace);
             const bool percent = given.ends_with('%');
             float number = 0;

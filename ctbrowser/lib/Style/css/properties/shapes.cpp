@@ -39,6 +39,114 @@ struct shape_parts {
     std::string box;                 // the box beside it, or empty for the default
 };
 
+// --- SVG path data (SVG 2 §9.3.9), for path() -------------------------------
+
+// One command and its numbers; an implicit repetition is its own segment,
+// written with the letter it stands for (`M 1 2 3 4` is `M 1 2 L 3 4`).
+struct path_segment {
+    char command = 'M';
+    std::vector<double> numbers;
+};
+
+[[nodiscard]] std::size_t path_arity(char command) {
+    switch (command | 0x20) {
+    case 'm':
+    case 'l':
+    case 't': return 2;
+    case 'h':
+    case 'v': return 1;
+    case 'c': return 6;
+    case 's':
+    case 'q': return 4;
+    case 'a': return 7;
+    case 'z': return 0;
+    default: return static_cast<std::size_t>(-1);
+    }
+}
+
+// The whole data, or nullopt for anything SVG's grammar refuses - an empty
+// path, a first command that is not a moveto, a command short of numbers.
+[[nodiscard]] std::optional<std::vector<path_segment>> parse_path_data(std::string_view data) {
+    std::vector<path_segment> out;
+    std::size_t i = 0;
+    const auto skip = [&](bool comma) {
+        while (i < data.size() &&
+               (data[i] == ' ' || data[i] == '\t' || data[i] == '\n' || data[i] == '\r' ||
+                data[i] == '\f' || (comma && data[i] == ','))) {
+            ++i;
+        }
+    };
+    const auto number = [&](bool flag) -> std::optional<double> {
+        skip(true);
+        if (i >= data.size()) { return std::nullopt; }
+        if (flag) {
+            // An arc flag is one digit, and may be run into what follows.
+            if (data[i] != '0' && data[i] != '1') { return std::nullopt; }
+            return data[i++] == '1' ? 1.0 : 0.0;
+        }
+        const std::size_t start = i;
+        if (data[i] == '+' || data[i] == '-') { ++i; }
+        bool digits = false, point = false;
+        while (i < data.size() &&
+               ((data[i] >= '0' && data[i] <= '9') || (data[i] == '.' && !point))) {
+            point = point || data[i] == '.';
+            digits = digits || data[i] != '.';
+            ++i;
+        }
+        if (!digits) { return std::nullopt; }
+        if (i < data.size() && (data[i] == 'e' || data[i] == 'E')) {
+            std::size_t e = i + 1;
+            if (e < data.size() && (data[e] == '+' || data[e] == '-')) { ++e; }
+            if (e < data.size() && data[e] >= '0' && data[e] <= '9') {
+                i = e;
+                while (i < data.size() && data[i] >= '0' && data[i] <= '9') { ++i; }
+            }
+        }
+        double value = 0;
+        const auto [end, ec] = std::from_chars(data.data() + start, data.data() + i, value);
+        if (ec != std::errc{} || end != data.data() + i) { return std::nullopt; }
+        return value;
+    };
+    char command = 0;
+    for (;;) {
+        skip(false);
+        if (i >= data.size()) { break; }
+        const char c = data[i];
+        if (path_arity(c) != static_cast<std::size_t>(-1)) {
+            if (out.empty() && (c | 0x20) != 'm') { return std::nullopt; }
+            command = c;
+            ++i;
+        } else if (command == 0 || (command | 0x20) == 'z') {
+            return std::nullopt;
+        } else if ((command | 0x20) == 'm') {
+            command = command == 'M' ? 'L' : 'l';
+        }
+        path_segment segment{command, {}};
+        const std::size_t arity = path_arity(command);
+        for (std::size_t k = 0; k < arity; ++k) {
+            const bool flag = (command | 0x20) == 'a' && (k == 3 || k == 4);
+            const std::optional<double> n = number(flag);
+            if (!n) { return std::nullopt; }
+            segment.numbers.push_back(*n);
+        }
+        if ((command | 0x20) == 'z') { segment.command = 'Z'; }
+        out.push_back(std::move(segment));
+        skip(true);
+    }
+    if (out.empty()) { return std::nullopt; }
+    return out;
+}
+
+[[nodiscard]] std::string path_text(std::span<const path_segment> data) {
+    std::string out;
+    for (const path_segment & s : data) {
+        if (!out.empty()) { out += ' '; }
+        out += s.command;
+        for (const double n : s.numbers) { out += " " + serialize_number(n); }
+    }
+    return out;
+}
+
 constexpr std::string_view geometry_boxes =
     "border-box padding-box content-box margin-box fill-box stroke-box view-box";
 
@@ -247,7 +355,10 @@ constexpr std::string_view geometry_boxes =
                 ts.tokens[found.significant.front()].type != token_type::string) {
                 return std::nullopt;
             }
-            out.path = string_text(ts.value_of(ts.tokens[found.significant.front()]));
+            std::optional<std::vector<path_segment>> data =
+                parse_path_data(ts.value_of(ts.tokens[found.significant.front()]));
+            if (!data) { return std::nullopt; }
+            out.path = path_text(*data);
             return out;
         }
         if (items.empty()) { return std::nullopt; }
@@ -287,7 +398,7 @@ constexpr std::string_view geometry_boxes =
         }
         out += joined(items, ", ");
     } else if (s.function == "path") {
-        out += (s.fill_rule.empty() ? "" : s.fill_rule + ", ") + s.path;
+        out += (s.fill_rule.empty() ? "" : s.fill_rule + ", ") + string_text(s.path);
     }
     out += ")";
     if (!s.box.empty()) { out += " " + s.box; }
@@ -440,7 +551,7 @@ std::optional<std::string> blend_basic_shapes(std::string_view property, std::st
     std::optional<shape_parts> x = parse_shape_value(a, default_box_of(property));
     std::optional<shape_parts> y = parse_shape_value(b, default_box_of(property));
     if (!x || !y || x->function != y->function || x->box != y->box ||
-        x->fill_rule != y->fill_rule || x->function == "path") {
+        x->fill_rule != y->fill_rule) {
         return std::nullopt;
     }
     bool ok = true;
@@ -491,6 +602,31 @@ std::optional<std::string> blend_basic_shapes(std::string_view property, std::st
         if (x->radii.empty()) { x->radii.assign(8, "0px"); }
         if (y->radii.empty()) { y->radii.assign(8, "0px"); }
         mix_all(x->radii, y->radii, true);
+    }
+    if (x->function == "path") {
+        // SVG 2 §9.3.9's path interpolation: the same commands in the same
+        // order, their numbers blended - an arc's two flags as booleans.
+        std::optional<std::vector<path_segment>> p = parse_path_data(x->path);
+        std::optional<std::vector<path_segment>> q = parse_path_data(y->path);
+        if (!p || !q || p->size() != q->size()) { return std::nullopt; }
+        for (std::size_t i = 0; i < p->size(); ++i) {
+            path_segment & s = (*p)[i];
+            const path_segment & t = (*q)[i];
+            if (s.command != t.command || s.numbers.size() != t.numbers.size()) {
+                return std::nullopt;
+            }
+            for (std::size_t k = 0; k < s.numbers.size(); ++k) {
+                const bool flag = (s.command | 0x20) == 'a' && (k == 3 || k == 4);
+                if (!flag) {
+                    s.numbers[k] = wa * s.numbers[k] + wb * t.numbers[k];
+                } else if (wa + wb == 1) {
+                    s.numbers[k] = wb < 0.5 ? s.numbers[k] : t.numbers[k];
+                } else {
+                    s.numbers[k] = s.numbers[k] != 0 || t.numbers[k] != 0 ? 1 : 0;
+                }
+            }
+        }
+        x->path = path_text(*p);
     }
     if (x->function == "polygon") {
         mix_all(x->points, y->points, false);
