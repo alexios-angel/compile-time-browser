@@ -87,14 +87,16 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
     if (compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
         // Strict equality is total and noncoercing, including opaque objects.
         // The first same-block producer owns the choice snapshot; later
-        // comparisons must use the exact same ordered SSA operands.
+        // comparisons must use the exact same SSA operands in either order.
         // ponytail: linear block scan; cache keys only if profiling warrants it.
         for (mlir::Operation & operation : *compare->getBlock()) {
             if (!spend(1)) { return {}; }
             if (&operation == compare.getOperation()) { break; }
             auto previous = llvm::dyn_cast<ctjs::CompareOp>(operation);
             if (previous && previous.getKind() == ctjs::CompareKind::StrictEq &&
-                previous.getLhs() == compare.getLhs() && previous.getRhs() == compare.getRhs()) {
+                ((previous.getLhs() == compare.getLhs() && previous.getRhs() == compare.getRhs()) ||
+                 (previous.getLhs() == compare.getRhs() &&
+                  previous.getRhs() == compare.getLhs()))) {
                 return {previous.getResult(), negated};
             }
         }

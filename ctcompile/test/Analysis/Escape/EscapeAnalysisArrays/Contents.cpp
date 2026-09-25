@@ -664,6 +664,16 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string comparedKeys = selectedStore(comparedInput());
     const std::string comparedGap = nestedSiblingStore(
         "      %read = ctjs.get_property %guard[%one]\n" + comparedInput("%read", "%two"));
+    const auto reversedInput = [&](const std::string & left = "%zero",
+                                   const std::string & right = "%one", unsigned negations = 0) {
+        return comparedInput(left, right, "strict_eq %zero, %p", "", negations);
+    };
+    const std::string reversedKeys = selectedStore(reversedInput());
+    const std::string reversedGap = nestedSiblingStore(
+        "      %read = ctjs.get_property %guard[%one]\n" + reversedInput("%read", "%two"));
+    auto firstReversed = comparedInput();
+    firstReversed.replace(firstReversed.find("strict_eq %p, %zero"),
+                          std::string{"strict_eq %p, %zero"}.size(), "strict_eq %zero, %p");
     auto eagerComparisons = comparedInput();
     const std::string secondComparison = "    %secondCompare = ctjs.compare strict_eq %p, %zero\n"
                                          "    %secondFlag = ctjs.truthy %secondCompare\n";
@@ -672,8 +682,10 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     auto crossBlockComparisons = comparedInput();
     crossBlockComparisons.insert(crossBlockComparisons.find("    %secondCompare"),
                                  "    scf.if %flag {\n");
-    const auto comparedReads = [&](const std::string & between = "") {
-        auto input = comparedInput("%zero", "%one", "strict_eq %secondRead, %zero",
+    const auto comparedReads = [&](const std::string & between = "", bool reversed = false) {
+        auto input = comparedInput("%zero", "%one",
+                                   reversed ? "strict_eq %zero, %secondRead"
+                                            : "strict_eq %secondRead, %zero",
                                    between + "    %secondRead = ctjs.get_property %guard[%zero]\n");
         input.replace(input.find("strict_eq %p, %zero"), std::string{"strict_eq %p, %zero"}.size(),
                       "strict_eq %firstRead, %zero");
@@ -2311,12 +2323,12 @@ void checkArrayRetention(mlir::MLIRContext & context) {
              allocationLoop(selectedStore(comparedInput("%zero", "%one", "strict_eq %p, %one"))) +
              done,
          .complete = false},
-        {.what = "reversed strict comparison operands remain outside ordered correspondence",
+        {.what = "reversed strict comparison operands share exact SSA correspondence",
          .body =
              loopValues +
              allocationLoop(selectedStore(comparedInput("%zero", "%one", "strict_eq %zero, %p"))) +
              done,
-         .complete = false},
+         .confinedNested = "fresh"},
         {.what = "a coercing comparison cannot borrow strict equality correspondence",
          .body = loopValues +
                  allocationLoop(selectedStore(comparedInput("%zero", "%one", "eq %p, %zero"))) +
@@ -2381,6 +2393,95 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .complete = false},
         {.what = "strict comparison choices still require initialized solver inputs",
          .body = loopValues + allocationLoop(comparedKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "a reversed first strict comparison remains the shared representative",
+         .body = loopValues + allocationLoop(selectedStore(firstReversed)) + done,
+         .confinedNested = "fresh"},
+        {.what = "nested reversed strict comparisons preserve Number correspondence",
+         .body = loopValues + allocationLoop(nestedSiblingStore(reversedInput())) + done,
+         .confinedNested = "fresh"},
+        {.what = "reversed strict comparisons compose with odd logical Not parity",
+         .body =
+             loopValues + allocationLoop(selectedStore(reversedInput("%zero", "%one", 3))) + done,
+         .confinedNested = "fresh"},
+        {.what = "reversed strict comparisons compose with even logical Not parity",
+         .body =
+             loopValues + allocationLoop(selectedStore(reversedInput("%zero", "%one", 2))) + done,
+         .confinedNested = "fresh"},
+        {.what = "reversed strict comparisons retain signed finite Number cancellation",
+         .body =
+             loopValues + allocationLoop(selectedStore(reversedInput("%negative", "%one"))) + done,
+         .confinedNested = "fresh"},
+        {.what = "reversed strict comparisons preserve the guard dependency gap",
+         .body =
+             loopValues + allocationLoop(reversedGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "reversed strict comparisons cannot overwrite their guard dependency",
+         .body =
+             loopValues +
+             allocationLoop(nestedSiblingStore("      %read = ctjs.get_property %guard[%zero]\n" +
+                                               reversedInput("%read", "%one"))) +
+             done,
+         .complete = false},
+        {.what = "a changed reversed operand cannot reuse a strict comparison choice",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(comparedInput("%zero", "%one", "strict_eq %zero, %q"))) +
+             done,
+         .complete = false},
+        {.what = "reversed equal literal attributes do not replace SSA identity",
+         .body = loopValues + "  %otherZero = ctjs.constant #ctjs.number<0>\n" +
+                 allocationLoop(
+                     selectedStore(comparedInput("%zero", "%one", "strict_eq %otherZero, %p"))) +
+                 done,
+         .complete = false},
+        {.what = "a reversed coercing comparison cannot borrow strict equality correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput("%zero", "%one", "eq %zero, %p"))) +
+                 done,
+         .complete = false},
+        {.what = "reversed strict comparisons keep separate read snapshots distinct",
+         .body = loopValues + allocationLoop(comparedReads("", true)) + done,
+         .complete = false},
+        {.what = "mutation between reversed strict comparison reads cannot reuse a choice",
+         .body =
+             loopValues +
+             allocationLoop(comparedReads("    ctjs.set_property %guard[%zero], %one\n", true)) +
+             done,
+         .complete = false},
+        {.what = "reversed strict comparisons still need independent finite Number operands",
+         .body = loopValues + allocationLoop(selectedStore(reversedInput("%zero", "%p"))) + done,
+         .complete = false},
+        {.what = "reversed strict comparisons cannot cancel NaN Numbers",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(selectedStore(reversedInput("%zero", "%nan"))) + done,
+         .complete = false},
+        {.what = "a returned reversed-comparison holder retains its stored child",
+         .body = loopValues + allocationLoop(reversedKeys) + "  ctjs.return %guard\n"},
+        {.what = "clearing a reversed-comparison key releases its stored child",
+         .body = loopValues + allocationLoop(reversedKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved reversed-comparison alias survives clearing its holder",
+         .body = loopValues + allocationLoop(reversedKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "every retaining exit preserves a child stored through reversed comparisons",
+         .body = loopValues + allocationLoop(reversedKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "reversed strict comparisons preserve no-result transient cycle checks",
+         .body = loopValues +
+                 allocationLoop(reversedKeys + "    scf.if %secondFlag {\n"
+                                               "      ctjs.set_property %fresh[%zero], %guard\n"
+                                               "      ctjs.set_property %fresh[%zero], %zero\n"
+                                               "    }\n") +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "reversed strict comparisons cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(reversedKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "reversed strict comparisons still require current initialized solver inputs",
+         .body = loopValues + allocationLoop(reversedKeys) + done,
          .complete = false,
          .withAnalysis = false},
         {.what = "calls in an arithmetic key arm still refuse the complete census",
@@ -3221,18 +3322,24 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  "the strict comparison stale solver did not converge");
         }
         function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
-        for (unsigned state = 0; state < 10; ++state) {
-            secondCompare->setOperand(0, state == 1 ? independent : originalLeft);
-            secondCompare->setOperand(1, state == 2 ? originalPosition : originalRight);
+        for (unsigned state = 0; state < 20; ++state) {
+            const bool reversed = state >= 10;
+            const unsigned mutation = state % 10;
+            secondCompare->setOperand(0, mutation == 1 ? independent
+                                         : reversed    ? originalRight
+                                                       : originalLeft);
+            secondCompare->setOperand(1, mutation == 2 ? originalPosition
+                                         : reversed    ? originalLeft
+                                                       : originalRight);
             secondCompare.setKindAttr(ctjs::CompareKindAttr::get(
-                &context, state == 3 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+                &context, mutation == 3 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
             firstCompare.setKindAttr(ctjs::CompareKindAttr::get(
-                &context, state == 4 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
-            firstCompare->setOperand(0, state == 5 ? independent : originalLeft);
-            firstCompare->setOperand(1, state == 6 ? originalPosition : originalRight);
-            secondYield->setOperand(0, state == 7 ? originalPosition : originalYield);
-            load->setOperand(1, state == 8 ? originalRight : originalPosition);
-            comparisonMutation.complete = state == 0 || state == 9;
+                &context, mutation == 4 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+            firstCompare->setOperand(0, mutation == 5 ? independent : originalLeft);
+            firstCompare->setOperand(1, mutation == 6 ? originalPosition : originalRight);
+            secondYield->setOperand(0, mutation == 7 ? originalPosition : originalYield);
+            load->setOperand(1, mutation == 8 ? originalRight : originalPosition);
+            comparisonMutation.complete = mutation == 0 || mutation == 9;
             comparisonMutation.confinedNested = comparisonMutation.complete ? "fresh" : "";
             budgets += checkArrayRetention(*comparisonModule, comparisonMutation);
             if (computeVerdicts(stale, function).arrayRetentionComplete !=
@@ -3247,7 +3354,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = comparisonMutation.what, .body = comparisonMutation.body, .expected = ""},
              "the strict comparison mutation fixture did not parse");
     }
-    std::printf("array retention: %zu rows, seventy-five live states, %zu budget cutoffs\n",
+    std::printf("array retention: %zu rows, eighty-five live states, %zu budget cutoffs\n",
                 rows.size(), budgets);
 }
 
