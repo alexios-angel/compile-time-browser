@@ -676,11 +676,26 @@ bool dom_bindings::fire_handler_property(value target, std::string_view type, va
     // that exists to report a throw. dom/events/Event-dispatch-throwing.html
     // asserts `typeof e === 'string'` for exactly this reason.
     //
-    // ONLY AT THE WINDOW and only for `error`: an `onerror` on an <img> is an
-    // ordinary event handler and takes the event, which is the distinction the
-    // specification draws with the ErrorEvent type rather than the name.
+    // ONLY AT THE WINDOW, only for `error`, and ONLY FOR AN ErrorEvent (HTML
+    // 8.1.8.1 step 4): an `onerror` on an <img> is an ordinary event handler
+    // and takes the event, and so is the window's for a plain
+    // `new Event("error")` a page dispatched - it gets that event, and it is
+    // `false`, not `true`, that cancels it (window-synthetic-event.html).
+    const auto is_error_event = [this, event] {
+        const value ctor =
+            cx_->has_global("ErrorEvent") ? cx_->global("ErrorEvent") : value::undefined();
+        const value proto =
+            ctor.is_object_like() ? cx_->lookup_property(ctor, "prototype") : value::undefined();
+        if (!proto.is_object() || !event.is_object()) { return false; }
+        for (value at = static_cast<script::object_object *>(event.as_heap())->prototype;
+             at.is_object(); at = static_cast<script::object_object *>(at.as_heap())->prototype) {
+            if (at.bits() == proto.bits()) { return true; }
+        }
+        return false;
+    };
     if (type == "error" &&
-        target.bits() == object_of_step(*cx_, path_step{node_id{}, listen_on::window}).bits()) {
+        target.bits() == object_of_step(*cx_, path_step{node_id{}, listen_on::window}).bits() &&
+        is_error_event()) {
         // AN ARRAY, because that is what the fence spreads. The five arguments
         // are built into one so that the handler still runs behind the same
         // `try` every listener does - `window.onerror` is exactly the handler a

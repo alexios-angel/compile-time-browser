@@ -67,7 +67,10 @@ struct prefix_map {
     // string" answers the LAST prefix recorded for a namespace unless the
     // preferred one is among them.
     std::vector<std::pair<std::string, std::vector<std::string>>> entries;
-    std::size_t index = 1;
+    // THE PREFIX INDEX IS THE SERIALIZATION'S, not the scope's: every copy of
+    // the map points at the one counter, so a sibling's generated prefix is
+    // ns3 after an earlier one's ns1 and ns2 (2.2.1 step "prefix index").
+    std::size_t * index = nullptr;
 
     [[nodiscard]] const std::vector<std::string> * find(std::string_view ns) const {
         for (const auto & [key, prefixes] : entries) {
@@ -101,7 +104,7 @@ struct prefix_map {
     }
     // 2.2.1.6 "generate a prefix": `ns` + the index, recorded for `ns`.
     [[nodiscard]] std::string generate(std::string_view ns) {
-        std::string made = "ns" + std::to_string(index++);
+        std::string made = "ns" + std::to_string((*index)++);
         add(made, ns);
         return made;
     }
@@ -119,7 +122,9 @@ struct prefix_map {
 } // namespace
 
 std::string dom_bindings::serialize_xml(node_id node, std::string_view inherited) const {
+    std::size_t prefix_index = 1;
     prefix_map map;
+    map.index = &prefix_index;
     map.add("xml", xml_namespace);
     const auto txn = doc_->read();
     const auto serialize = [&](auto && self, node_id at, std::string_view context_ns,
@@ -163,8 +168,16 @@ std::string dom_bindings::serialize_xml(node_id node, std::string_view inherited
         // this element carries, into the copy and the local prefixes map.
         std::vector<std::pair<std::string, std::string>> local_prefixes;
         std::optional<std::string> local_default;
+        // A NAMESPACE DECLARATION is an attribute in the XMLNS namespace - or
+        // one called `xmlns` in none, which is what `setAttribute("xmlns",
+        // uri)` makes and what every browser reads as the default namespace
+        // (XMLSerializer-serializeToString.html, "matching on local name").
+        const auto declaration = [&](const attribute & held) {
+            const std::string_view uri = atoms_->text(held.ns);
+            return uri == xmlns_namespace || (uri.empty() && atoms_->text(held.name) == "xmlns");
+        };
         for (const attribute & held : txn.attributes(at)) {
-            if (atoms_->text(held.ns) != xmlns_namespace) { continue; }
+            if (!declaration(held)) { continue; }
             const std::string_view name = atoms_->text(held.name);
             if (prefix_part(name).empty()) {
                 local_default = held.value; // xmlns="": the null namespace, ""
@@ -228,9 +241,9 @@ std::string dom_bindings::serialize_xml(node_id node, std::string_view inherited
             const std::string_view attr_prefix = prefix_part(name);
             const std::string_view attr_local = local_part(name);
             std::optional<std::string> candidate;
-            if (!attr_ns.empty()) {
-                candidate = local_map.preferred(attr_prefix, attr_ns);
-                if (attr_ns == xmlns_namespace) {
+            if (!attr_ns.empty() || declaration(held)) {
+                if (!attr_ns.empty()) { candidate = local_map.preferred(attr_prefix, attr_ns); }
+                if (declaration(held)) {
                     // A declaration: dropped when it says nothing new - the
                     // XML namespace, a default the element already wrote, a
                     // prefix the map already has with this value.
@@ -252,6 +265,9 @@ std::string dom_bindings::serialize_xml(node_id node, std::string_view inherited
                 } else {
                     // Not a declaration: the namespace needs a prefix in
                     // scope, generated and declared here when there is none.
+                    // A GENERATED one, not the attribute's own prefix: DOM
+                    // Parsing 3.2.1.2 step 3.5.3.2, and w3c/DOM-Parsing#29's
+                    // "NOT preserved" row in XMLSerializer-serializeToString.
                     if (!candidate) {
                         candidate = local_map.generate(attr_ns);
                         out += " xmlns:" + *candidate + "=\"" + escape_xml(attr_ns, true) + "\"";
@@ -298,6 +314,9 @@ void dom_bindings::install_xml_serializer(context & cx) {
             // is usually one DOMParser just made: the bindings that own it
             // answer for it, and a Document object has no handle of its own.
             const value given = arg(args, 0);
+            // An Attr is a Node, and its XML serialisation is the empty
+            // string (2.2.1: "an Attr ... return the empty string").
+            if (attribute_of_object(c, given).name) { return c.string(std::string{}); }
             dom_bindings * top = primary_ == nullptr ? this : primary_;
             if (top->is_the_document(given)) {
                 return c.string(top->serialize_xml(top->doc_->document_node(), ""));

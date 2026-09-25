@@ -26,11 +26,14 @@ struct parse_result {
 // `scripting` is the DOCUMENT's scripting flag - see tree_builder::set_scripting.
 // A page parses with it on; a document no script will ever run in (DOMParser's,
 // createHTMLDocument's) parses with it off, which is what makes `<noscript>`
-// hold elements rather than text.
+// hold elements rather than text. The same split is "allow declarative shadow
+// roots" (document.hpp): the documents parsed with scripting on are the ones a
+// navigation made, which HTML gives the flag, and DOMParser's is not.
 [[nodiscard]] inline parse_result parse_html(document & doc, std::string_view source,
                                              bool scripting = true) {
     html::tree_builder builder{doc, doc.atoms()};
     doc.set_scripting(scripting);
+    doc.set_allow_declarative_shadow_roots(scripting);
     builder.set_scripting(scripting);
     parse_result out;
     out.root = builder.parse(source);
@@ -48,11 +51,15 @@ struct parse_result {
 // `scripting` is the flag of the document the fragment is FOR (the scratch
 // document here is nobody's): a `<noscript>` in a DOMParser document's
 // innerHTML holds elements, in the page's it is raw text.
+// `declarative_shadow_roots` is 13.2.9's allowDeclarativeShadowRoots: true for
+// `setHTMLUnsafe`, false for `innerHTML`.
 [[nodiscard]] inline node_id parse_html_fragment(document & doc, std::string_view source,
                                                  std::string_view context,
                                                  node_ns context_ns = node_ns::html,
-                                                 bool scripting = true) {
+                                                 bool scripting = true,
+                                                 bool declarative_shadow_roots = false) {
     html::tree_builder builder{doc, doc.atoms()};
+    doc.set_allow_declarative_shadow_roots(declarative_shadow_roots);
     builder.set_scripting(scripting);
     return builder.parse_fragment(source, context, context_ns);
 }

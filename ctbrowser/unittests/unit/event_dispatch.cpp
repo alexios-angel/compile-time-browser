@@ -607,6 +607,50 @@ void test_a_made_documents_nodes_have_a_path_that_ends_at_it() {
           "the made document's path: " + (log.empty() ? std::string{} : log[0]));
 }
 
+// THE EVENT PATH ACROSS A SHADOW BOUNDARY, DOM 2.9 dispatch step 5: a
+// non-composed event stops only at the TARGET's own shadow root, so one at a
+// light child slotted into a tree travels through the slot and out again; a
+// listener outside a closed tree does not see its slot or root in
+// composedPath(); and the path ends at the step the relatedTarget retargets
+// to, with the targets cleared when the target is still inside the tree.
+void test_the_event_path_across_a_shadow_boundary() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><div id=host><span id=light></span></div><script>
+    var host = document.getElementById('host'), light = document.getElementById('light');
+    var sr = host.attachShadow({mode: 'closed'});
+    var s = document.createElement('slot'); s.id = 's';
+    var inner = document.createElement('b'); inner.id = 'in';
+    sr.appendChild(s); sr.appendChild(inner);
+    function name(n) { return n === sr ? 'SR' : n === window ? 'W' : n === document ? 'D' : n.id || n.nodeName; }
+    var seen = [];
+    for (var n of [light, s, inner, sr, host, document.body]) {
+        for (var type of ['a', 'c']) n.addEventListener(type, function (e) { seen.push(name(e.currentTarget)); });
+    }
+    light.dispatchEvent(new Event('a', {bubbles: true}));
+    console.log(seen.join(' '));
+    var paths = [];
+    document.addEventListener('b', function (e) { paths.push(e.composedPath().map(name).join(',')); });
+    light.dispatchEvent(new Event('b', {bubbles: true}));
+    console.log(paths.join(' '));
+    seen = [];
+    var ev = new FocusEvent('c', {bubbles: true, composed: true, relatedTarget: host});
+    inner.dispatchEvent(ev);
+    console.log(seen.join(' ') + ';' + ev.target + ',' + ev.relatedTarget);
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 3, "three lines logged");
+    check(log.size() > 0 && log[0] == "light s SR host BODY",
+          "a non-composed event from a slotted child leaves the tree: " +
+              (log.empty() ? std::string{} : log[0]));
+    check(log.size() > 1 && log[1] == "light,host,BODY,HTML,D,W",
+          "the closed tree's slot and root are hidden from the document: " +
+              (log.size() > 1 ? log[1] : std::string{}));
+    check(log.size() > 2 && log[2] == "in SR;null,null",
+          "the path ends at the relatedTarget's host and the targets clear: " +
+              (log.size() > 2 ? log[2] : std::string{}));
+}
+
 } // namespace
 
 // AbortSignal IS AN EVENT TARGET (DOM 3.2): aborting fires `abort` at it once,
@@ -691,5 +735,6 @@ int main() {
     test_passive_listeners_and_a_throwing_one();
     test_abort_signal();
     test_inline_handler_scope();
+    test_the_event_path_across_a_shadow_boundary();
     REPORT("event_dispatch");
 }

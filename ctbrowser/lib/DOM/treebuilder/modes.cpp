@@ -156,12 +156,14 @@ void tree_builder::mode_in_head(const token & t) {
             return;
         }
         if (tag == "template") {
-            const node_id element = insert_element(t);
-            doc_->set_template_content(element, doc_->create_fragment());
             push_marker();
             frameset_ok_ = false;
             mode_ = mode::in_template;
             template_modes_.push_back(mode::in_template);
+            if (!declarative_shadow_root(t)) {
+                const node_id element = insert_element(t);
+                doc_->set_template_content(element, doc_->create_fragment());
+            }
             return;
         }
         if (tag == "head") { return; }
@@ -191,6 +193,50 @@ void tree_builder::mode_in_head(const token & t) {
     pop(); // the head
     mode_ = mode::after_head;
     process(t, mode_);
+}
+
+// "In head", a template start tag, steps 9-10: A DECLARATIVE SHADOW ROOT.
+// The template is made and pushed but NOT inserted, and its contents ARE the
+// adjusted current node's new shadow root - so everything up to `</template>`
+// is parsed straight into the shadow tree, a script in it runs connected, and
+// a mutation observer never sees a template come and go. Every refusal of
+// "attach a shadow root" (an element that cannot host one, or already does)
+// inserts the template as an ordinary one instead, contents and all.
+//
+// NOT AT THE TOP OF A FRAGMENT: there the adjusted current node is the
+// context element, which is not in the tree being built.
+bool tree_builder::declarative_shadow_root(const token & t) {
+    const auto attribute = [&](std::string_view name) -> const token_attribute * {
+        const auto it = std::ranges::find(t.attributes, name, &token_attribute::name);
+        return it == t.attributes.end() ? nullptr : &*it;
+    };
+    const token_attribute * mode = attribute("shadowrootmode");
+    if (mode == nullptr || !ascii_iequals_any(mode->value, {"open", "closed"}) ||
+        !doc_->allow_declarative_shadow_roots()) {
+        return false;
+    }
+    const entry * host = adjusted_current();
+    if (host == nullptr || !host->id || host->id == open_.front().id) { return false; }
+    const insertion_point where = appropriate_place();
+    const node_id element = create_element(t.name, t.attributes);
+    open_.push_back(make_entry(element, t.name, node_ns::html, t.attributes));
+    const token_attribute * slots = attribute("shadowrootslotassignment");
+    const auto root = doc_->attach_shadow(
+        host->id, document::shadow_tree{
+                      .host = host->id,
+                      .open = ascii_iequals(mode->value, "open"),
+                      .delegates_focus = attribute("shadowrootdelegatesfocus") != nullptr,
+                      .manual_slots = slots != nullptr && ascii_iequals(slots->value, "manual"),
+                      .clonable = attribute("shadowrootclonable") != nullptr,
+                      .serializable = attribute("shadowrootserializable") != nullptr,
+                      .declarative = true});
+    if (root) {
+        doc_->set_template_content(element, *root);
+    } else {
+        doc_->set_template_content(element, doc_->create_fragment());
+        insert_at(where, element);
+    }
+    return true;
 }
 
 // 13.2.6.4.5 "in head noscript"

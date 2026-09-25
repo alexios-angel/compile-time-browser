@@ -856,9 +856,8 @@ private:
     void install_shadow_dom(context & cx);
     [[nodiscard]] std::vector<node_id> assigned_nodes_of(node_id slot) const;
     [[nodiscard]] node_id assigned_slot_of(node_id slottable) const;
-    void attach_declarative_shadow_roots(document & doc, node_id within);
-    // `innerHTML` plus those roots, and the copy that carries them across.
-    void set_html_unsafe(node_id target, std::string_view markup);
+    // `innerHTML` plus the declarative shadow roots, and the copy that carries them across.
+    void set_html_unsafe(node_id target, std::string_view markup, bool run_scripts = false);
     void copy_shadow_trees(const document & src, const read_txn & from, node_id source,
                            node_id made);
     [[nodiscard]] node_id root_of_tree(const read_txn & txn, node_id from, bool composed) const;

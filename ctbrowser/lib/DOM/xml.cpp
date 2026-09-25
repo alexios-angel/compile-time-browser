@@ -220,16 +220,27 @@ private:
         skip_space();
         std::string public_id;
         std::string system_id;
+        // XML 1.0 [75] ExternalID: after PUBLIC the system literal is NOT
+        // optional, and neither is SYSTEM's - `PUBLIC "p">` is ill-formed.
         if (looking_at("PUBLIC")) {
             advance(6);
             skip_space();
-            (void)quoted_literal(public_id);
+            if (!quoted_literal(public_id)) {
+                fail("PUBLIC without a public identifier");
+                return;
+            }
             skip_space();
-            (void)quoted_literal(system_id);
+            if (!quoted_literal(system_id)) {
+                fail("PUBLIC without a system identifier");
+                return;
+            }
         } else if (looking_at("SYSTEM")) {
             advance(6);
             skip_space();
-            (void)quoted_literal(system_id);
+            if (!quoted_literal(system_id)) {
+                fail("SYSTEM without a system identifier");
+                return;
+            }
         }
         skip_space();
         if (peek() == '[') {

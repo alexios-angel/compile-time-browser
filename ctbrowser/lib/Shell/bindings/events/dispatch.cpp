@@ -146,9 +146,127 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // value, so a wrapper still holding the old one is the whole bug.
     (void)refresh_wrappers();
     const std::string type = cx.to_string(cx.lookup_property(event, "type"));
-    const std::vector<path_step> path =
+    std::vector<path_step> path =
         propagation_path(at, context::truthy(cx.lookup_property(event, "composed")));
     const bool bubbles = context::truthy(cx.lookup_property(event, "bubbles"));
+
+    // THE EVENT PATH'S STRUCTS, DOM 2.9 dispatch step 5 - what each step knows
+    // besides its invocation target: its SHADOW-ADJUSTED TARGET (non-null at
+    // the target and at every host the target was retargeted to - those are
+    // the AT_TARGET steps), the relatedTarget retargeted against it, whether
+    // it is inside a shadow tree (then `window.event` is not set for it), and
+    // the two closed-tree marks composedPath() filters by. Fixed as the path
+    // is built, before any listener runs, so a listener that moves a node
+    // (relatedTarget.window.js "part 2", event-global-extra.window.js) changes
+    // nothing later steps see.
+    //
+    // A DOCUMENT WITH NO SHADOW ROOT has the trivial answer - the target is
+    // the only adjusted step and nothing is retargeted - and pays nothing.
+    const value related_value = cx.lookup_property(event, "relatedTarget");
+    const node_id related = handle_of(related_value);
+    const bool shadows = doc_ != nullptr && doc_->has_shadow_roots();
+    struct hop {
+        bool adjusted = false; // has a shadow-adjusted target...
+        node_id target;        // ...which is this node, or `at` itself when empty
+        node_id related;       // relatedTarget retargeted against this step
+        bool in_shadow = false;
+        bool closed_root = false;
+        bool closed_slot = false;
+    };
+    std::vector<hop> hops(path.size());
+    if (!hops.empty()) {
+        hops.front().adjusted = true;
+        hops.front().target = at.node;
+    }
+    // DOM 4.4 "retarget": A climbs out of every shadow tree whose root is not
+    // a shadow-including inclusive ancestor of B - the document and the window
+    // (no node) pull A all the way into the light tree.
+    const auto holds = [&](const read_txn & txn, node_id root, node_id b) {
+        while (b) {
+            if (b == root) { return true; }
+            const node_id up = txn.parent(b);
+            const shadow_tree * above = up ? nullptr : shadow_tree_of(b);
+            b = up ? up : above == nullptr ? node_id{} : above->host;
+        }
+        return false;
+    };
+    const auto retarget = [&](node_id a, const path_step & against) {
+        const auto txn = doc_->read();
+        for (int guard = 0; a && guard < 64; ++guard) {
+            const node_id root = root_of_tree(txn, a, false);
+            const shadow_tree * tree = shadow_tree_of(root);
+            if (tree == nullptr) { return a; }
+            if (against.on == listen_on::node && holds(txn, root, against.node)) { return a; }
+            a = tree->host;
+        }
+        return a;
+    };
+    const auto in_shadow = [&](node_id node) {
+        const auto txn = doc_->read();
+        return node && shadow_tree_of(root_of_tree(txn, node, false)) != nullptr;
+    };
+    if (shadows) {
+        node_id target = at.node;
+        bool slotted = at.on == listen_on::node && at.node && assigned_slot_of(at.node);
+        for (std::size_t i = 0; i < path.size(); ++i) {
+            const path_step & step = path[i];
+            hop & h = hops[i];
+            if (related) { h.related = retarget(related, step); }
+            const auto txn = doc_->read();
+            const shadow_tree * tree = step.on == listen_on::node
+                                           ? shadow_tree_of(root_of_tree(txn, step.node, false))
+                                           : nullptr;
+            h.in_shadow = tree != nullptr;
+            h.closed_root = tree != nullptr && !tree->open && shadow_tree_of(step.node) != nullptr;
+            if (i == 0) { continue; }
+            // 5.9.1: the slot a slotted node was handed to, in a closed tree.
+            h.closed_slot = slotted && tree != nullptr && !tree->open;
+            slotted = step.on == listen_on::node && assigned_slot_of(step.node);
+            // 5.9.5: a step inside the target's tree (or the document, or the
+            // window) is an ordinary one.
+            if (step.on != listen_on::node ||
+                (target && holds(txn, root_of_tree(txn, target, false), step.node))) {
+                continue;
+            }
+            // 5.9.6: the path ENDS where the retargeted relatedTarget is the
+            // step - a focus moving within a host's tree is not news to it.
+            if (related && h.related == step.node) {
+                path.resize(i);
+                hops.resize(i);
+                break;
+            }
+            // 5.9.7: a host, which the target is retargeted to.
+            target = step.node;
+            h.adjusted = true;
+            h.target = target;
+        }
+    }
+    // A relatedTarget that retargets to the target itself while not being it
+    // (step 5's condition) is a dispatch that does not happen: the targets are
+    // cleared and nothing is invoked - relatedTarget.window.js's "Reset
+    // targets on early return".
+    if (shadows && related && at.on == listen_on::node && !hops.empty() &&
+        hops.front().related == at.node && related != at.node) {
+        object->set("target", value::null());
+        object->set("srcElement", value::null());
+        object->set("relatedTarget", value::null());
+        object->set(std::string{cancel_bubble_property}, value::boolean(false));
+        object->set(std::string{stop_immediate_property}, value::boolean(false));
+        return prevented(event);
+    }
+    // Steps 5.10-5.11, decided here too: what the event names as `target` and
+    // `relatedTarget` once it has stopped travelling - the last adjusted
+    // step's pair - and whether both are cleared because either is still
+    // inside a shadow tree (`clearTargets`).
+    std::size_t last_adjusted = 0;
+    for (std::size_t i = 0; i < hops.size(); ++i) {
+        if (hops[i].adjusted) { last_adjusted = i; }
+    }
+    const bool clear_targets =
+        shadows && !hops.empty() &&
+        (in_shadow(hops[last_adjusted].target) || in_shadow(hops[last_adjusted].related));
+    const bool closed_anywhere =
+        std::ranges::any_of(hops, [](const hop & h) { return h.closed_root || h.closed_slot; });
 
     // THE ACTIVATION TARGET - DOM 2.9 dispatch, steps 5.5 to 5.9.11 - and the
     // legacy-pre-activation behaviour, which runs BEFORE any listener. A
@@ -244,120 +362,43 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
         }
     }
 
-    // SHADOW TREES: THE TARGET IS RETARGETED AND `window.event` IS HIDDEN.
-    //
-    // A listener outside a shadow tree sees the HOST as the target of an event
-    // from inside it - DOM's "retarget", run for each step against that step's
-    // node - and a listener on a node whose root is a shadow root does not get
-    // `window.event` at all (concept-event-listener-inner-invoke step 8 sets
-    // the current event only when the invocation target is not in a shadow
-    // tree). After the dispatch the target is the last shadow-adjusted one, and
-    // null if even that is still inside a shadow tree, so a closed tree's
-    // internals never leak out on the event object.
-    //
-    // ALL OF IT IS GATED ON THE TARGET BEING IN A SHADOW TREE AT ALL, which is
-    // one root walk, so a page with no shadow DOM pays nothing per step.
-    // ponytail: `composedPath()` does not hide a closed tree's nodes.
-    const auto in_shadow = [&](node_id node) {
-        const auto txn = doc_->read();
-        return shadow_tree_of(root_of_tree(txn, node, false)) != nullptr;
-    };
-    const bool target_in_shadow =
-        at.on == listen_on::node && at.node && doc_ != nullptr && in_shadow(at.node);
-    // DOM 4.4 "retarget": A climbs out of every shadow tree that does not also
-    // hold B - the B here being a step, so the document and the window (no
-    // node) pull A all the way into the light tree.
-    const auto retarget = [&](node_id a, const path_step & against) {
-        const auto txn = doc_->read();
-        for (int guard = 0; a && guard < 64; ++guard) {
-            const node_id root = root_of_tree(txn, a, false);
-            const shadow_tree * tree = shadow_tree_of(root);
-            if (tree == nullptr) { return a; }
-            if (against.on == listen_on::node) {
-                // Is `root` a shadow-including inclusive ancestor of B?
-                bool holds = false;
-                for (node_id b = against.node; b && !holds;) {
-                    holds = b == root;
-                    const node_id up = txn.parent(b);
-                    const shadow_tree * above = up ? nullptr : shadow_tree_of(b);
-                    b = up ? up : above == nullptr ? node_id{} : above->host;
-                }
-                if (holds) { return a; }
-            }
-            a = tree->host;
-        }
-        return a;
-    };
-    // `relatedTarget` IS RETARGETED TOO - concept-event-dispatch step 4 against
-    // the target, then per step (invoke step 4) - so a `focus` leaving a
-    // closed shadow tree names the host and not the input inside it. A
-    // relatedTarget that retargets to the target itself while not being it
-    // (step 6's condition) is a dispatch that does not happen: the targets
-    // are cleared and nothing is invoked - relatedTarget.window.js's "Reset
-    // targets on early return".
-    const value related_value = cx.lookup_property(event, "relatedTarget");
-    const node_id related = handle_of(related_value);
-    const bool related_in_shadow = related && doc_ != nullptr && in_shadow(related);
-    // PER STEP, AND BEFORE ANY LISTENER RUNS: "append to an event path"
-    // fixes each item's relatedTarget as the path is built, so a listener
-    // that moves the related node (relatedTarget.window.js, "part 2") does
-    // not change what the later steps and the final value see.
-    std::vector<node_id> related_steps(path.size());
-    if (related_in_shadow) {
-        for (std::size_t i = 0; i < path.size(); ++i) {
-            related_steps[i] = retarget(related, path[i]);
-        }
-    }
-    // AND THE TARGET'S SIDE THE SAME WAY: each step's shadow-adjusted target
-    // and whether the step's own node is in a shadow tree are the path
-    // struct's fields, fixed as it is appended - so a listener that moves a
-    // node out of the shadow tree mid-dispatch (event-global-extra.window.js,
-    // "nodes moving post-dispatch") changes neither what the later steps see
-    // as `target` nor whether `window.event` is hidden from them.
-    std::vector<node_id> shown_steps(path.size());
-    std::vector<bool> hidden_steps(path.size());
-    if (target_in_shadow) {
-        for (std::size_t i = 0; i < path.size(); ++i) {
-            shown_steps[i] = retarget(at.node, path[i]);
-            hidden_steps[i] = path[i].on == listen_on::node && in_shadow(path[i].node);
-        }
-    }
-    // Steps 6.10-6.11, decided here too: what the event names as `target` and
-    // `relatedTarget` once it has stopped travelling - the last node step's
-    // shadow-adjusted pair - and whether both are cleared because either is
-    // still inside a shadow tree.
-    node_id last = at.node;
-    node_id last_related = related;
-    for (std::size_t i = path.size(); i-- > 0;) {
-        if (path[i].on != listen_on::node) { continue; }
-        if (target_in_shadow) { last = shown_steps[i]; }
-        if (related_in_shadow) { last_related = related_steps[i]; }
-        break;
-    }
-    const bool clear_targets =
-        (target_in_shadow || related_in_shadow) &&
-        ((last && in_shadow(last)) || (last_related && in_shadow(last_related)));
-    if (related_in_shadow && at.on == listen_on::node && retarget(related, at) == at.node &&
-        related != at.node) {
-        object->set("target", value::null());
-        object->set("srcElement", value::null());
-        object->set("relatedTarget", value::null());
-        object->set(std::string{cancel_bubble_property}, value::boolean(false));
-        object->set(std::string{stop_immediate_property}, value::boolean(false));
-        return prevented(event);
-    }
     object->set(std::string{stop_immediate_property}, value::boolean(false));
     object->set(std::string{dispatch_property}, value::boolean(true));
     ++dispatch_depth_;
     // `composedPath()` is the path AS A LIST, and it is empty outside a
-    // dispatch. Built once here rather than recomputed by the method, because
-    // the tree may have moved by the time a page asks.
-    {
+    // dispatch. Built here rather than recomputed by the method, because the
+    // tree may have moved by the time a page asks - and PER LISTENER when a
+    // closed tree is on the path: DOM 2.10 hides a closed tree's nodes from a
+    // listener that is not itself inside it, by counting the closed roots and
+    // closed-tree slots between that listener's step and each other step.
+    const auto composed_path_for = [&](std::size_t current) {
         value listed = cx.make_array();
-        auto * items = static_cast<script::array_object *>(listed.as_heap());
-        for (const path_step & step : path) { items->items.push_back(object_of_step(cx, step)); }
-        object->set(std::string{path_property}, listed);
-    }
+        auto & items = static_cast<script::array_object *>(listed.as_heap())->items;
+        int level = 0;
+        for (std::size_t k = path.size(); k-- > 0;) {
+            if (hops[k].closed_root) { ++level; }
+            if (k == current) { break; }
+            if (hops[k].closed_slot) { --level; }
+        }
+        std::vector<value> before;
+        int now = level;
+        int most = level;
+        for (std::size_t k = current; k-- > 0;) {
+            if (hops[k].closed_root) { ++now; }
+            if (now <= most) { before.push_back(object_of_step(cx, path[k])); }
+            if (hops[k].closed_slot && --now < most) { most = now; }
+        }
+        items.assign(before.rbegin(), before.rend());
+        items.push_back(object_of_step(cx, path[current]));
+        now = most = level;
+        for (std::size_t k = current + 1; k < path.size(); ++k) {
+            if (hops[k].closed_slot) { ++now; }
+            if (now <= most) { items.push_back(object_of_step(cx, path[k])); }
+            if (hops[k].closed_root && --now < most) { most = now; }
+        }
+        return listed;
+    };
+    if (!path.empty()) { object->set(std::string{path_property}, composed_path_for(0)); }
 
     // `window.event`, WHICH IS SET FOR THE WHOLE DISPATCH AND RESTORED AFTER IT.
     //
@@ -395,68 +436,31 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     expose(event);
 
     const auto stopped = [&] { return flag_of(cx, event, cancel_bubble_property); };
-    // ONE STEP'S BOOKKEEPING: `currentTarget`, `eventPhase`, and inside a shadow
-    // tree the retargeted `target` and whether `window.event` shows. Answers
-    // whether this step is AT_TARGET - which the HOST of a shadow tree also is,
-    // its shadow-adjusted target being itself, so a listener there sees phase 2
-    // and hears a non-bubbling event.
-    // `composedPath()` IS PER LISTENER, NOT PER DISPATCH. DOM 2.9 builds it
-    // from the INVOCATION TARGET, and a node inside a closed shadow tree that
-    // the listener is not itself in is left out: a page that put a listener on
-    // the document must not learn what is inside a closed tree from the path.
-    // An OPEN tree hides nothing - being reachable through `shadowRoot` is
-    // what open means.
-    const auto closed_to = [&](const path_step & item, const path_step & from) {
-        if (item.on != listen_on::node || !item.node) { return false; }
-        const auto txn = doc_->read();
-        node_id a = item.node;
-        for (int guard = 0; a && guard < 64; ++guard) {
-            const node_id root = root_of_tree(txn, a, false);
-            const shadow_tree * tree = shadow_tree_of(root);
-            if (tree == nullptr) { return false; }
-            if (!tree->open) {
-                // Is the closed root a shadow-including inclusive ancestor of
-                // the listener's own node? The walk `retarget` uses, and a
-                // listener that is not on a node at all - the document, the
-                // window - is never inside one.
-                bool holds = false;
-                for (node_id b = from.on == listen_on::node ? from.node : node_id{}; b && !holds;) {
-                    holds = b == root;
-                    const node_id up = txn.parent(b);
-                    const shadow_tree * above = up ? nullptr : shadow_tree_of(b);
-                    b = up ? up : above == nullptr ? node_id{} : above->host;
-                }
-                if (!holds) { return true; }
-            }
-            a = tree->host;
-        }
-        return false;
-    };
+    // ONE STEP'S BOOKKEEPING, DOM 2.9 "invoke" steps 1-5: `target` is the
+    // shadow-adjusted target of the nearest adjusted step at or before this
+    // one, `relatedTarget` this step's retargeted one, `window.event` hidden
+    // from a listener inside a shadow tree, then `currentTarget` and
+    // `eventPhase`. Answers whether this step is AT_TARGET - which a HOST the
+    // target was retargeted to also is, so a listener there sees phase 2 and
+    // hears a non-bubbling event.
     const auto visit = [&](std::size_t index, double otherwise) {
         const path_step & step = path[index];
-        node_id shown = at.node;
-        if (target_in_shadow) {
-            shown = shown_steps[index];
-            const value shown_object = wrap(cx, shown);
+        if (shadows) {
+            std::size_t shown = index;
+            while (shown > 0 && !hops[shown].adjusted) { --shown; }
+            const value shown_object =
+                hops[shown].target ? wrap(cx, hops[shown].target) : target_object;
             object->set("target", shown_object);
             object->set("srcElement", shown_object);
-            expose(hidden_steps[index] ? value::undefined() : event);
-            // The path AS THIS STEP MAY SEE IT. Rebuilt per step rather than
-            // filtered by the method, for the reason the whole list is built
-            // here: the tree may have moved by the time a page asks.
-            value listed = cx.make_array();
-            auto * items = static_cast<script::array_object *>(listed.as_heap());
-            for (const path_step & one : path) {
-                if (!closed_to(one, step)) { items->items.push_back(object_of_step(cx, one)); }
+            expose(hops[index].in_shadow ? value::undefined() : event);
+            if (related) { object->set("relatedTarget", wrap(cx, hops[index].related)); }
+            if (closed_anywhere) {
+                object->set(std::string{path_property}, composed_path_for(index));
             }
-            object->set(std::string{path_property}, listed);
         }
-        const bool is_target = (step.on == at.on && step.node == at.node) ||
-                               (step.on == listen_on::node && step.node == shown);
-        if (related_in_shadow) { object->set("relatedTarget", wrap(cx, related_steps[index])); }
         object->set("currentTarget", object_of_step(cx, step));
-        object->set("eventPhase", value::number(is_target ? 2 : otherwise));
-        return is_target;
+        object->set("eventPhase", value::number(hops[index].adjusted ? 2 : otherwise));
+        return hops[index].adjusted;
     };
 
     // CAPTURE: from the window down to the target. The target's own capturing
@@ -478,18 +482,20 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // AFTER THE DISPATCH the event is not travelling any more, and the two
     // properties that say where it is have to say so - a page keeps the object
     // and reads them later.
-    if (target_in_shadow || related_in_shadow) {
-        // concept-event-dispatch steps 6.10-6.11 and 11: the target is the
-        // last step's shadow-adjusted target and the relatedTarget its
-        // retargeted one - and BOTH are null when either is still inside a
-        // shadow tree (`clearTargets`), so nothing of a closed tree is left
-        // on the object.
-        const value final_target = clear_targets ? value::null() : wrap(cx, last);
+    if (shadows && !hops.empty()) {
+        // concept-event-dispatch steps 5.10-5.11 and 11: the target is the
+        // last adjusted step's target and the relatedTarget its retargeted
+        // one - and BOTH are null when either is still inside a shadow tree
+        // (`clearTargets`), so nothing of a closed tree is left on the object.
+        const hop & last = hops[last_adjusted];
+        const value final_target = clear_targets ? value::null()
+                                   : last.target ? wrap(cx, last.target)
+                                                 : target_object;
         object->set("target", final_target);
         object->set("srcElement", final_target);
-        object->set("relatedTarget", clear_targets       ? value::null()
-                                     : related_in_shadow ? wrap(cx, last_related)
-                                                         : related_value);
+        object->set("relatedTarget", clear_targets ? value::null()
+                                     : related     ? wrap(cx, last.related)
+                                                   : related_value);
     }
     object->set("currentTarget", value::null());
     object->set("eventPhase", value::number(0));

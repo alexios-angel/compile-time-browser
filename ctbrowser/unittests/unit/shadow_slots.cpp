@@ -141,6 +141,67 @@ void test_set_html_unsafe_attaches_a_declarative_root() {
              "true,false;true;true,true,<b>s</b>,about:blank,1");
 }
 
+// THE PAGE'S OWN PARSER attaches them as it meets the template, not
+// afterwards: a script inside the root already runs connected, the host keeps
+// only its light children, and a template on an element that cannot host one
+// - or on one that already does - stays an ordinary template. DOMParser's
+// document does not allow declarative roots at all.
+void test_the_page_parser_attaches_declarative_roots() {
+    CHECK_EQ(said("<html><body><div id=h><template shadowrootmode=OPEN><b>in</b><script>"
+                  "alert('ran:' + document.getElementById('h').shadowRoot.firstChild.textContent)"
+                  "</script></template><span>light</span></div>"
+                  "<progress id=g><template shadowrootmode=open>y</template></progress>"
+                  "<div id=m><template shadowrootmode=closed>1</template>"
+                  "<template shadowrootmode=open>2</template></div><script>"
+                  "var h = document.getElementById('h');"
+                  "alert((h.querySelector('template') === null) + ',' + h.children.length);"
+                  "var g = document.getElementById('g');"
+                  "alert(!!g.querySelector('template') + ',' + g.shadowRoot);"
+                  "var m = document.getElementById('m');"
+                  "alert(m.shadowRoot + ',' + m.querySelector('template').content.textContent);"
+                  "var d = new DOMParser().parseFromString("
+                  "'<div id=x><template shadowrootmode=open></template></div>', 'text/html');"
+                  "alert(d.getElementById('x').shadowRoot);"
+                  "</script></body></html>"),
+             "ran:in;true,1;true,null;null,2;null");
+}
+
+// setHTMLUnsafe's OPTIONS AND ITS TEMPLATE TARGET: with `runScripts` the
+// parsed scripts run once the whole fragment is in, one inside a declarative
+// shadow root included, and without it none does; a <template>'s markup goes
+// into its contents, never under the element.
+void test_set_html_unsafe_options() {
+    CHECK_EQ(said("<html><body><div id=w></div><script>"
+                  "var w = document.getElementById('w'); window.ran = [];"
+                  "w.setHTMLUnsafe('<script>ran.push(1)</scr' + 'ipt>');"
+                  "w.setHTMLUnsafe('<script>ran.push(2)</scr' + 'ipt><div>"
+                  "<template shadowrootmode=open><script>ran.push(3)</scr' + 'ipt>"
+                  "</template></div>', {runScripts: true});"
+                  "alert(ran.join());"
+                  "var t = document.createElement('template'); t.setHTMLUnsafe('<b>x</b>');"
+                  "alert(t.childNodes.length + ',' + t.content.firstChild.nodeName);"
+                  "</script></body></html>"),
+             "2,3;0,B");
+}
+
+// THE TEMPLATE'S DECLARATIVE ATTRIBUTES, reflected: the mode as an
+// enumerated attribute limited to known values, the slot assignment with
+// "named" for missing and invalid, and the booleans.
+void test_template_reflects_its_declarative_attributes() {
+    CHECK_EQ(said("<html><body><script>"
+                  "var t = document.createElement('template');"
+                  "t.setAttribute('shadowrootmode', 'OpEn');"
+                  "var before = t.shadowRootMode; t.shadowRootMode = 'blah';"
+                  "alert(before + ',' + JSON.stringify(t.shadowRootMode) + ','"
+                  " + t.getAttribute('shadowrootmode'));"
+                  "t.shadowRootClonable = true; t.shadowRootSlotAssignment = 'invalid';"
+                  "alert(t.hasAttribute('shadowrootclonable') + ',' + t.shadowRootSlotAssignment"
+                  " + ',' + t.shadowRootDelegatesFocus + ','"
+                  " + HTMLTemplateElement.prototype.hasOwnProperty('shadowRootMode'));"
+                  "</script></body></html>"),
+             "open,\"\",blah;true,named,false,true");
+}
+
 } // namespace
 
 // slotchange-event.html: not synchronous, once per change however many
@@ -184,6 +245,9 @@ int main() {
     test_slots_assign_by_name();
     test_manual_slot_assignment();
     test_set_html_unsafe_attaches_a_declarative_root();
+    test_the_page_parser_attaches_declarative_roots();
+    test_set_html_unsafe_options();
+    test_template_reflects_its_declarative_attributes();
     test_slotchange_events();
     REPORT("shadow_slots");
 }

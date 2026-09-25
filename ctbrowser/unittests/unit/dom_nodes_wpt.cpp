@@ -158,6 +158,29 @@ void test_a_collection_owns_its_indices_and_names() {
                 !(kids.values() instanceof Array), kids.values().next().value === kids[0]].join('|');
     })())JS",
        "0|0,1|b1 b2 afterb1 afterb2|0 1 2 3|b2|true|true");
+    // WebIDL's legacy platform object (3.9): an index and a visible name are
+    // read-only DATA properties that can be neither redefined nor deleted, an
+    // assignment does not shadow a name, and `length` is branded - asked of
+    // anything but a collection it is a TypeError.
+    is(R"JS((function () {
+        var list = document.getElementsByTagName('p');
+        var d = Object.getOwnPropertyDescriptor(list, 0);
+        var n = Object.getOwnPropertyDescriptor(list, 'p1');
+        var redefined;
+        try { Object.defineProperty(list, 0, {value: 5}); redefined = 'ok'; }
+        catch (e) { redefined = e.name; }
+        list.p1 = 5;
+        var deleted = delete list[0], named = delete list.p1;
+        var derived;
+        try {
+            Object.getOwnPropertyDescriptor(HTMLCollection.prototype, 'length').get.call({});
+            derived = 'ok';
+        } catch (e) { derived = e.name; }
+        return [d.value === list[0], d.writable, d.enumerable, d.configurable,
+                n.value === list[0], n.enumerable, redefined, list.p1 === list[0],
+                deleted, named, list[0].id, derived].join();
+    })())JS",
+       "true,false,true,true,true,false,TypeError,true,false,false,p1,TypeError");
 }
 
 void test_a_colon_is_a_prefix_only_when_it_was_made_as_one() {

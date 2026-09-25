@@ -234,6 +234,10 @@ public:
     // are a handful of templates in a page. Empty when the element has none.
     [[nodiscard]] node_id template_content(node_id element) const;
     void set_template_content(node_id element, node_id fragment);
+    // ...and the other way: the <template> whose contents `fragment` is -
+    // the fragment's HOST, which is what an insertion into it takes as its
+    // context element. Empty for any other fragment.
+    [[nodiscard]] node_id template_of(node_id fragment) const;
 
     // THE NAMESPACE URI OF AN ELEMENT `node_ns` DOES NOT NAME - an `other`
     // element's. `node` has no room for a URI (node_ns says why), and a page
@@ -353,6 +357,17 @@ public:
     [[nodiscard]] bool scripting() const noexcept { return scripting_; }
     void set_scripting(bool on) noexcept { scripting_ = on; }
 
+    // "ALLOW DECLARATIVE SHADOW ROOTS" (HTML 3.1.1): whether the parser makes
+    // a `<template shadowrootmode>` its parent's shadow root. On for a
+    // document a navigation made and for `parseHTMLUnsafe`'s; off - the
+    // specification's default - for DOMParser's, createHTMLDocument's and the
+    // scratch document an `innerHTML` is parsed into, which is the whole
+    // difference between `innerHTML` and `setHTMLUnsafe`.
+    [[nodiscard]] bool allow_declarative_shadow_roots() const noexcept {
+        return declarative_shadow_roots_;
+    }
+    void set_allow_declarative_shadow_roots(bool on) noexcept { declarative_shadow_roots_ = on; }
+
     // THE NAME OF THE DECLARED ENCODING - `document.characterSet`. The bytes
     // are decoded as UTF-8 whatever it says (dom/encoding.hpp explains why
     // that is what a page observes anyway); the loader that has the bytes sets
@@ -370,6 +385,7 @@ private:
     // HTML tree builder, and `parse_xml` is the only thing that sets it.
     bool xml_ = false;
     bool scripting_ = true;
+    bool declarative_shadow_roots_ = false;
     std::string encoding_ = "UTF-8";
 
     [[nodiscard]] node * find(node_id id) const noexcept { return nodes_.get(id); }

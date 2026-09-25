@@ -67,6 +67,9 @@ parse_result dom_bindings::parse_document(std::string_view html) {
     deferred_scripts_.clear();
     asap_scripts_.clear();
     parser_script_created_ = false;
+    // A NAVIGATION'S DOCUMENT, so a `<template shadowrootmode>` in the page is
+    // a shadow root (HTML 7.4.6.4 "create and initialize a Document object").
+    doc_->set_allow_declarative_shadow_roots(true);
     parser_ = std::make_unique<html::tree_builder>(*doc_, *atoms_);
     parser_->set_script_hook([this](node_id script) { prepare_parser_script(script); });
     // THE BYTES, DECODED (HTML 13.2.3.1): the loader sniffed the encoding

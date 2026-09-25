@@ -54,10 +54,22 @@ void dom_bindings::refresh_document() {
     // property refreshed on the tick answered a read taken in the same
     // statement as the write with the value from before it, which is the shape
     // of nearly every test in html/dom's title group: set it, read it back.
-    // HTML 6.6.2: when nothing in the document is focused the answer is the
-    // body element, and null only while there is no body (a page reads
-    // `document.activeElement === document.body` after blur()).
-    doc->set("activeElement", wrap(*cx_, focused_ ? focused_ : body_element()));
+    // HTML 6.6.3: the focused element RETARGETED AGAINST THE DOCUMENT - a
+    // focus inside a shadow tree answers with the outermost host, and what is
+    // inside a closed tree never leaks out this way. When nothing connected is
+    // focused the answer is the body element, and null only while there is no
+    // body (a page reads `document.activeElement === document.body` after
+    // blur(), or after removing the focused element).
+    node_id active = focused_ && is_connected(focused_) ? focused_ : node_id{};
+    {
+        const auto txn = doc_->read();
+        for (int guard = 0; active && guard < 64; ++guard) {
+            const shadow_tree * tree = shadow_tree_of(root_of_tree(txn, active, false));
+            if (tree == nullptr) { break; }
+            active = tree->host;
+        }
+    }
+    doc->set("activeElement", wrap(*cx_, active ? active : body_element()));
 }
 
 } // namespace ctbrowser::shell
