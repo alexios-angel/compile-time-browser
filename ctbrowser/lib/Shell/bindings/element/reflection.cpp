@@ -907,7 +907,8 @@ void dom_bindings::install_option_reflection(context & cx) {
     // descendant text (textContent, 4.5.1), a title's and a script's the
     // CHILD text content (4.2.2, 4.12.1.1) - Text children only - and every
     // one is set by "string replace all", the textContent setter's removal
-    // and one new Text.
+    // and one new Text. The document that owns the receiver answers: the
+    // prototype is shared with every document in the realm.
     for (const auto & [which, descendants] :
          {std::pair{"HTMLAnchorElement", true}, std::pair{"HTMLTitleElement", false},
           std::pair{"HTMLScriptElement", false}}) {
@@ -920,11 +921,12 @@ void dom_bindings::install_option_reflection(context & cx) {
                 value::object(cx.allocate<script::native_object>(
                     "text",
                     [this, all](context & c, std::span<value>) {
-                        const node_id id = receiver(c);
+                        dom_bindings & owner = target_owner(c.current_this());
+                        const node_id id = owner.receiver(c);
                         if (!id) { return c.string(""); }
-                        if (all) { return c.string(text_content(id)); }
+                        if (all) { return c.string(owner.text_content(id)); }
                         std::string text;
-                        const auto txn = doc_->read();
+                        const auto txn = owner.doc_->read();
                         for (const node_id child : txn.children(id)) {
                             const node_kind kind = txn.kind(child).value_or(node_kind::element);
                             if (kind == node_kind::text || kind == node_kind::cdata_section) {
@@ -935,7 +937,10 @@ void dom_bindings::install_option_reflection(context & cx) {
                     })),
                 value::object(cx.allocate<script::native_object>(
                     "text", [this](context & c, std::span<value> a) {
-                        if (const node_id id = receiver(c)) { set_text(id, arg_string(c, a, 0)); }
+                        dom_bindings & owner = target_owner(c.current_this());
+                        if (const node_id id = owner.receiver(c)) {
+                            owner.set_text(id, arg_string(c, a, 0));
+                        }
                         return value::undefined();
                     })));
     }
