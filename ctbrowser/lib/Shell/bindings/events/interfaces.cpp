@@ -763,6 +763,27 @@ void dom_bindings::install_event_interfaces(context & cx) {
                      e.set("error", dict_member(c, init, "error"));
                  });
 
+    // `MessageEvent` (HTML 9.3.1): what postMessage fires at a window. `data`
+    // is any and defaults to null, `source` a window or null, and `ports` a
+    // frozen array - always empty, as this engine has no MessagePort.
+    message_event_prototype_ = interface_of(
+        "MessageEvent", event_prototype_, [](context & c, script::object_object & e, value init) {
+            const value data = dict_member(c, init, "data");
+            e.set("data", data.is_undefined() ? value::null() : data);
+            e.set("origin", c.string(dict_string(c, init, "origin")));
+            e.set("lastEventId", c.string(dict_string(c, init, "lastEventId")));
+            const value source = dict_member(c, init, "source");
+            if (!source.is_undefined() && !source.is_null() && !source.is_heap()) {
+                c.throw_error("TypeError", "Failed to construct 'MessageEvent': "
+                                           "member source is not a window.");
+                return;
+            }
+            e.set("source", source.is_undefined() ? value::null() : source);
+            const value ports = c.make_array();
+            c.prevent_extensions(ports);
+            e.set("ports", ports);
+        });
+
     // --- the legacy init* methods -----------------------------------------
     //
     // `initUIEvent`, `initMouseEvent` and `initKeyboardEvent` predate the

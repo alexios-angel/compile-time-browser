@@ -495,6 +495,17 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     frame_window->set("top", top_view);
     frame_window->set("opener", value::null());
     frame_window->set("event", value::undefined());
+    // `self.origin`: this document's, serialized - "null" for a file: one,
+    // as its location.origin says.
+    frame_window->define_accessor("origin",
+                                  value::object(cx.allocate<script::native_object>(
+                                      "origin",
+                                      [this](context & c, std::span<value>) {
+                                          const std::string origin =
+                                              location_parts(location_href_).origin;
+                                          return c.string(origin.empty() ? "null" : origin);
+                                      })),
+                                  value::undefined());
     // `length` counts THIS document's child frames, as the page's does.
     frame_window->define_accessor(
         "length",
@@ -539,6 +550,7 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     // Listening at THIS window: a frame script's `addEventListener("load", f)`
     // hears the frame's load, not the page's.
     install_window_listeners(cx, *frame_window);
+    install_post_message(cx, *frame_window);
     install_window_handlers(cx, *frame_window);
     const value frame_dispatch =
         native(cx, "dispatchEvent", [this](context & c, std::span<value> a) {

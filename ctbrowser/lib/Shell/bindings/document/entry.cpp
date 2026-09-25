@@ -132,6 +132,7 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     // and an event whose prototype was collected stops being an Event.
     mark(event_prototype_);
     mark(custom_event_prototype_);
+    mark(message_event_prototype_);
     mark(event_target_prototype_);
     mark(abort_signal_prototype_);
     mark(media_query_list_prototype_);

@@ -593,6 +593,9 @@ private:
     // `addEventListener` / `removeEventListener` on `window` and as bare
     // globals of the current realm, for this document's window.
     void install_window_listeners(context & cx, script::object_object & window);
+    // `postMessage` on `window`, delivering to THIS document's window -
+    // window/messaging.cpp.
+    void install_post_message(context & cx, script::object_object & window);
     // A frame document's own browsing context (frames.cpp): its window, its
     // realm, the scripts its parse left, and the two events a load ends in.
     void install_frame_realm(context & cx, dom_bindings & owner, node_id element);
@@ -782,6 +785,7 @@ private:
 
     value event_prototype_;
     value custom_event_prototype_;
+    value message_event_prototype_; // what postMessage fires
     value mouse_event_prototype_;
     value pointer_event_prototype_;
     value event_target_prototype_;

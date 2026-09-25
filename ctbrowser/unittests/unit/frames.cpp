@@ -221,6 +221,39 @@ void test_a_frame_runs_its_scripts_in_its_own_realm() {
     }
 }
 
+void test_windows_post_messages_to_each_other() {
+    // HTML 9.4.3: the message is CLONED when posted and arrives in a later
+    // task as a MessageEvent whose `source` is the sender's window - so the
+    // frame's reply names the frame, and the page's names the page.
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///pages/the-page.html");
+    page.assets().add(
+        "echo.html",
+        bytes_of("<html><body><script>"
+                 "addEventListener('message', function (e) {"
+                 "  e.source.postMessage({got: e.data.n, fromParent: e.source === parent,"
+                 "    type: e.constructor.name}, '*'); });"
+                 "</script></body></html>"));
+    page.load_html(
+        "<!DOCTYPE html><html><body><iframe id=f src=echo.html></iframe><script>"
+        "var log = [];"
+        "addEventListener('message', function (e) {"
+        "  var w = document.getElementById('f').contentWindow;"
+        "  log.push([e.data.got, e.data.fromParent, e.data.type, e.source === w, e.origin,"
+        "            e.ports.length].join());"
+        "  console.log(log.join('|')); });"
+        "window.addEventListener('load', function () {"
+        "  var msg = {n: 1}, w = document.getElementById('f').contentWindow;"
+        "  w.postMessage(msg, '*'); msg.n = 2; log.push('sync');"
+        "});</script></body></html>");
+    for (int i = 0; i < 5; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) {
+        CHECK_EQ(logged.back(), std::string{"sync|1,true,MessageEvent,true,null,0"});
+    }
+}
+
 void test_a_named_frame_is_its_window_on_the_window() {
     // nameditem-02.html: `window.x` for `<iframe name=x>` is the frame's
     // WindowProxy - HTML 7.3.3 puts child navigables first - while an id
@@ -383,6 +416,7 @@ int main() {
     test_a_frame_appended_by_script_loads_too();
     test_a_data_url_frame_carries_its_own_type();
     test_a_frame_runs_its_scripts_in_its_own_realm();
+    test_windows_post_messages_to_each_other();
     test_a_form_submits_into_a_named_frame();
     REPORT("frames");
 }

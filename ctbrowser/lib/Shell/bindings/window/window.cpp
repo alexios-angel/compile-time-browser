@@ -27,6 +27,7 @@ void dom_bindings::install_window(context & cx) {
     install_window_scrolling(cx,
                              *window); // scrollX/scrollY, scroll/scrollTo/scrollBy (scrolling.cpp)
     install_window_listeners(cx, *window);
+    install_post_message(cx, *window);
     // `localStorage`, IN MEMORY AND FOR THIS PAGE ONLY. 38 uses in p5.js, which
     // reads it before it draws anything.
     //
@@ -700,10 +701,9 @@ void dom_bindings::install_window(context & cx) {
     // including the one that reports results. Every test that ran perfectly
     // reported nothing at all and was recorded as a timeout.
     //
-    // `postMessage` is deliberately still absent. With this chain correct
-    // nothing on a single-document page reaches it, and defining a fake one
-    // would let tests that genuinely need a second browsing context appear to
-    // work instead of failing honestly.
+    // `postMessage` was deliberately absent until frames had realms of their
+    // own to receive one; it is real now (window/messaging.cpp), and with this
+    // chain correct testharness.js still never posts to the page itself.
     window->set("parent", window_view);
     window->set("top", window_view);
     window->set("opener", value::null());
