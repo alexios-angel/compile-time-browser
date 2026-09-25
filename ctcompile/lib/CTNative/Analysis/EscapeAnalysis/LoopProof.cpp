@@ -113,6 +113,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     const auto * guardSite = base ? base.getDefiningOp() : nullptr;
     auto invariantFailure = unsupported;
     llvm::SmallDenseSet<std::size_t, 4> guardReloads;
+    // The census adds conditional arms only after proving one body visit.
+    // Their producers then reuse the same invariant and index proofs below.
+    llvm::SmallPtrSet<mlir::Block *, 4> bodyBlocks{body};
     const auto invariant = [&](auto && self, mlir::Value operand,
                                unsigned depth) -> std::optional<ContentsValue> {
         if (!spend()) {
@@ -128,7 +131,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                               : ContentsKind::Identity};
         }
         auto * definition = operand.getDefiningOp();
-        if (!definition || (definition->getBlock() != header && definition->getBlock() != body)) {
+        if (!definition ||
+            (definition->getBlock() != header && !bodyBlocks.contains(definition->getBlock()))) {
             return held(operand);
         }
         // Every visited value spends the shared proof budget. Keep a stack
@@ -351,7 +355,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         const bool remainder = binary && binary.getKind() == ctjs::BinaryKind::Mod;
         const bool power = binary && binary.getKind() == ctjs::BinaryKind::Pow;
         if (auto load = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(expression)) {
-            if (load->getBlock() != body) { return std::nullopt; }
+            if (!bodyBlocks.contains(load->getBlock())) { return std::nullopt; }
             const auto receiver = invariant(invariant, load.getObject(), 0);
             if (!receiver || !receiver->origin()) { return std::nullopt; }
             const auto table = state.arrays.find(receiver->origin().getDefiningOp());
@@ -405,7 +409,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         if (auto unary = llvm::dyn_cast_or_null<ctjs::UnaryOp>(expression);
             (use == IndexUse::ArithmeticOperand || use == IndexUse::PropertyKey) && unary &&
-            unary->getBlock() == body &&
+            bodyBlocks.contains(unary->getBlock()) &&
             (unary.getKind() == ctjs::UnaryKind::Plus || unary.getKind() == ctjs::UnaryKind::Neg)) {
             const auto input =
                 self(self, unary.getOperand(), depth + 1, IndexUse::ArithmeticOperand);
@@ -432,9 +436,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             return IndexRange{*scalar, *scalar, 1};
         }
         if (auto unary = llvm::dyn_cast_or_null<ctjs::UnaryOp>(expression)) {
-            if (unary->getBlock() != body || (unary.getKind() != ctjs::UnaryKind::Plus &&
-                                              unary.getKind() != ctjs::UnaryKind::Neg &&
-                                              unary.getKind() != ctjs::UnaryKind::BitNot)) {
+            if (!bodyBlocks.contains(unary->getBlock()) ||
+                (unary.getKind() != ctjs::UnaryKind::Plus &&
+                 unary.getKind() != ctjs::UnaryKind::Neg &&
+                 unary.getKind() != ctjs::UnaryKind::BitNot)) {
                 return std::nullopt;
             }
             auto range = self(self, unary.getOperand(), depth + 1,
@@ -495,7 +500,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         const bool shift =
             leftShift || (addition && (addition.getKind() == ctjs::BinaryKind::Shr ||
                                        addition.getKind() == ctjs::BinaryKind::UShr));
-        if (!expression || expression->getBlock() != body ||
+        if (!expression || !bodyBlocks.contains(expression->getBlock()) ||
             !(add || subtract || divide || remainder || multiply || power || shift || bitAnd ||
               bitOr || bitXor)) {
             return std::nullopt;
@@ -1126,6 +1131,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     if (region.empty()) { continue; }
                     if (!llvm::hasSingleElement(region)) { return unsupported; }
                     blocks.push_back(&region.front());
+                    bodyBlocks.insert(&region.front());
                 }
                 continue;
             }

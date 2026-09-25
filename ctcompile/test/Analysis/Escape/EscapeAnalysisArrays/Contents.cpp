@@ -466,11 +466,10 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const auto allocationLoop = [](const std::string & body, const std::string & start = "%zero",
                                    const std::string & stride = "%one",
                                    const std::string & elements = "%zero",
-                                   const std::string & header = "") {
-        return "  %guard = ctjs.create_array [" + elements +
-               "] {storage_test_id = \"guard\"}\n"
-               "  %loop:2 = scf.while (%index = " +
-               start +
+                                   const std::string & header = "",
+                                   const std::string & preheader = "") {
+        return "  %guard = ctjs.create_array [" + elements + "] {storage_test_id = \"guard\"}\n" +
+               preheader + "  %loop:2 = scf.while (%index = " + start +
                ", %saved = %zero) : (!ctjs.value, !ctjs.value) -> (!ctjs.value, !ctjs.value) {\n" +
                header +
                "    %length = ctjs.get_property %guard[%name]\n"
@@ -507,6 +506,16 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         "      ctjs.set_property %guard[%zero], %other\n"
         "      %elseSaved = ctjs.get_property %guard[%zero]\n"
         "      scf.yield %elseSaved : !ctjs.value\n    }\n";
+    const auto computedStore = [&](const std::string & inputs,
+                                   const std::string & receiver = "%guard") {
+        return localArray + "    scf.if %flag {\n" + inputs + "      ctjs.set_property " +
+               receiver + "[%key], %fresh\n    }\n";
+    };
+    const std::string computedKey = "      %key = ctjs.binary add %i, %zero\n";
+    const std::string guardAlias =
+        "  %aliases = ctjs.create_array [%guard] {storage_test_id = \"aliases\"}\n";
+    const std::string loadedReceiver = "      %slot = ctjs.binary add %zero, %zero\n"
+                                       "      %reloaded = ctjs.get_property %aliases[%slot]\n";
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -1002,13 +1011,115 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                                          "      ctjs.set_property %fresh[%zero], %zero\n    }\n") +
              done,
          .complete = false},
-        {.what = "a nested key producer does not inherit a top-level invariant snapshot",
+        {.what = "a nested exact key producer reuses the admitted body proof",
          .body =
              loopValues +
              allocationLoop(localArray + "    scf.if %flag {\n"
                                          "      %key = ctjs.binary add %zero, %zero\n"
                                          "      ctjs.set_property %guard[%key], %fresh\n    }\n") +
              done,
+         .confinedNested = "fresh"},
+        {.what = "a branch-local induction key keeps the counted own bounds",
+         .body = loopValues + allocationLoop(computedStore(computedKey)) + done,
+         .confinedNested = "fresh"},
+        {.what = "an untouched branch retains a child through its computed write key",
+         .body =
+             loopValues + allocationLoop(computedStore(computedKey)) + "  ctjs.return %guard\n"},
+        {.what = "clearing a computed-key holder confines its conditional child",
+         .body = loopValues + allocationLoop(computedStore(computedKey)) + clearGuard +
+                 "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved computed-key alias survives clearing its holder",
+         .body = loopValues + allocationLoop(computedStore(computedKey)) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "nested branch-local unary and bitwise key producers retain exact bounds",
+         .body =
+             loopValues +
+             allocationLoop(localArray + "    scf.if %flag {\n"
+                                         "      %outer = ctjs.unary plus %i\n"
+                                         "      scf.if %flag {\n"
+                                         "        %key = ctjs.binary_static bitxor %outer, %zero\n"
+                                         "        ctjs.set_property %guard[%key], %fresh\n"
+                                         "      }\n    }\n") +
+             done,
+         .confinedNested = "fresh"},
+        {.what = "a branch-local unchanged-table read proves its own write key",
+         .body = loopValues + "  %keys = ctjs.create_array [%zero]\n" +
+                 allocationLoop(computedStore("      %key = ctjs.get_property %keys[%i]\n")) + done,
+         .confinedNested = "fresh"},
+        {.what = "an arm-local receiver reload keeps its exact unchanged holder identity",
+         .body = loopValues +
+                 allocationLoop(computedStore(loadedReceiver + computedKey, "%reloaded"), "%zero",
+                                "%one", "%zero", "", guardAlias) +
+                 done,
+         .discharged = "guard",
+         .confinedNested = "fresh"},
+        {.what = "a returned alias holder retains the branch-local receiver's stored child",
+         .body = loopValues +
+                 allocationLoop(computedStore(loadedReceiver + computedKey, "%reloaded"), "%zero",
+                                "%one", "%zero", "", guardAlias) +
+                 "  ctjs.return %aliases\n"},
+        {.what = "a disjoint guard reload proves the branch-local store key",
+         .body = loopValues +
+                 allocationLoop(computedStore("      %key = ctjs.get_property %guard[%one]\n"),
+                                "%one", "%one", "%zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "an overlapping guard reload cannot prove its later branch store key",
+         .body = loopValues +
+                 allocationLoop(computedStore("      %key = ctjs.get_property %guard[%zero]\n")) +
+                 done,
+         .complete = false},
+        {.what = "a receiver alias cannot hide a guard-key reload overlapping the store",
+         .body =
+             loopValues +
+             allocationLoop(
+                 computedStore(loadedReceiver + "      %key = ctjs.get_property %reloaded[%zero]\n",
+                               "%reloaded"),
+                 "%zero", "%one", "%zero", "", guardAlias) +
+             done,
+         .complete = false},
+        {.what = "an out-of-bounds branch-local expression cannot extend the guard array",
+         .body = loopValues +
+                 allocationLoop(computedStore("      %key = ctjs.binary add %i, %one\n")) + done,
+         .complete = false},
+        {.what = "an opaque operand cannot borrow a branch-local arithmetic proof",
+         .body = loopValues +
+                 allocationLoop(computedStore("      %key = ctjs.binary add %i, %p\n")) + done,
+         .complete = false},
+        {.what = "a loaded alternate receiver cannot borrow the guard-array mutation proof",
+         .body =
+             loopValues + "  %otherArray = ctjs.create_array [%zero]\n" +
+             allocationLoop(computedStore(loadedReceiver + computedKey, "%reloaded"), "%zero",
+                            "%one", "%zero", "", "  %aliases = ctjs.create_array [%otherArray]\n") +
+             done,
+         .complete = false},
+        {.what = "an unknown second arm discards a proved computed-key store",
+         .body = loopValues +
+                 allocationLoop(localArray + "    scf.if %flag {\n" + computedKey +
+                                "      ctjs.set_property %guard[%key], %fresh\n"
+                                "    } else {\n"
+                                "      %badKey = ctjs.binary add %zero, %p\n"
+                                "      ctjs.set_property %guard[%badKey], %fresh\n    }\n") +
+                 done,
+         .complete = false},
+        {.what = "a transient computed-key cycle still refuses all-write confinement",
+         .body =
+             loopValues +
+             allocationLoop("    %fresh = ctjs.create_array [%guard]\n"
+                            "    scf.if %flag {\n" +
+                            computedKey + "      ctjs.set_property %guard[%key], %fresh\n    }\n") +
+             clearGuard + done,
+         .complete = false},
+        {.what = "an If result still needs its own branch-correspondence key proof",
+         .body = loopValues +
+                 allocationLoop(localArray +
+                                "    %key = scf.if %flag -> (!ctjs.value) {\n"
+                                "      scf.yield %zero : !ctjs.value\n"
+                                "    } else {\n      scf.yield %zero : !ctjs.value\n    }\n"
+                                "    ctjs.set_property %guard[%key], %fresh\n") +
+                 done,
          .complete = false},
         {.what = "an arm store cannot resize the array that proves its trip count",
          .body =
@@ -1191,7 +1302,53 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = countedMutation.what, .body = countedMutation.body, .expected = ""},
              "the current counted retention fixture did not parse");
     }
-    std::printf("array retention: %zu rows, ten live states, %zu budget cutoffs\n", rows.size(),
+    retention_row inputMutation{
+        .what = "branch-local store inputs are reproved after live key and receiver changes",
+        .body = loopValues +
+                allocationLoop(computedStore(loadedReceiver + computedKey, "%reloaded"), "%zero",
+                               "%one", "%zero", "", guardAlias) +
+                done,
+        .discharged = "guard",
+        .confinedNested = "fresh"};
+    auto inputModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + inputMutation.body + "}\n", &context);
+    if (inputModule) {
+        ctjs::FuncOp function = *inputModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        inputModule->walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto receiver = store.getObject().getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalKey = key.getRhs();
+        const mlir::Value originalReceiver = receiver.getObject();
+        const mlir::Value opaque = function.getBody().front().getArgument(3);
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*inputModule))) {
+            fail(row{.what = inputMutation.what, .body = inputMutation.body, .expected = ""},
+                 "the branch-local input stale solver did not converge");
+        }
+        mlir::OpBuilder builder(function);
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        function->setAttr("ctnative.confined", builder.getUnitAttr());
+        for (unsigned state = 0; state < 5; ++state) {
+            key->setOperand(1, state == 1 ? opaque : originalKey);
+            receiver->setOperand(0, state == 3 ? opaque : originalReceiver);
+            inputMutation.complete = state % 2 == 0;
+            inputMutation.discharged = inputMutation.complete ? "guard" : "";
+            inputMutation.confinedNested = inputMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*inputModule, inputMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete != inputMutation.complete) {
+                fail(row{.what = inputMutation.what, .body = inputMutation.body, .expected = ""},
+                     "a stale solver or forged marker supplied a branch-local input proof");
+            }
+        }
+    } else {
+        fail(row{.what = inputMutation.what, .body = inputMutation.body, .expected = ""},
+             "the branch-local input mutation fixture did not parse");
+    }
+    std::printf("array retention: %zu rows, fifteen live states, %zu budget cutoffs\n", rows.size(),
                 budgets);
 }
 
