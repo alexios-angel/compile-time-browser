@@ -127,7 +127,7 @@ endif()
 
 if(CTCOMPILE_ENABLE_MLIR)
   add_executable(ctcompile-test-host-contract)
-  target_link_libraries(ctcompile-test-host-contract PRIVATE CTNativeAnalysis MLIRParser)
+  target_link_libraries(ctcompile-test-host-contract PRIVATE ctcompile::ctnative-lowering MLIRParser)
   ctcompile_target(ctcompile-test-host-contract)
   add_test(NAME ctcompile_host_contract COMMAND ctcompile-test-host-contract)
   # checkSeededMapResults - the seeded/per-key/joined Map result proofs over the

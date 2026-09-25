@@ -179,9 +179,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         } else if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
             auto constant = truthy.getValue().getDefiningOp<ctjs::ConstantOp>();
-            auto value = constant ? llvm::dyn_cast<ctjs::BooleanAttr>(constant.getValue())
-                                  : ctjs::BooleanAttr{};
-            if (value) { return value.getValue(); }
+            if (constant) {
+                auto value = PrimitiveAlternatives::literal(constant.getValue());
+                if (value.known) { return value.truthy != 0; }
+            }
         }
         return std::nullopt;
     };
