@@ -58,6 +58,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     // This is structural protocol proof. Keep the protected call and original
     // throw until complete DOM admission reproves their effects and payload.
     llvm::DenseMap<mlir::Operation *, ctjs::CallOp> protectedCloses;
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> observedInvocations;
     unsigned returns = 0;
     const auto completion = entry.walk([&](mlir::Operation * operation) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -116,6 +117,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
                 // In particular, an observed close(false) is never entered in
                 // protectedCloses: that map authorizes suppressed cleanup only.
+                observedInvocations[invocation] = call;
                 return mlir::WalkResult::advance();
             }
             if (helper(call) != "__ctbrowser_iter_close" || !exit.getState().empty()) {
@@ -331,6 +333,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         open->moveBefore(invocation);
         invocation.replaceAllUsesWith(*projected);
+        observedInvocations.erase(invocation);
         invocation.erase();
     }
     // Mutable captures join the existing receiver-state tuple only after a
@@ -1668,27 +1671,48 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     // A return can reduce the traversal to one next call and put closes in
     // separate completion arms. Every close must remain after the complete
     // traversal, with no enclosing loop that could revisit next after close.
-    const auto continuationRoot = [&](mlir::Operation * operation) -> mlir::Operation * {
+    const auto continuationParent = [&](mlir::Operation * operation) -> mlir::Operation * {
+        auto * parent = operation->getParentOp();
+        if (llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(parent) ||
+            protectedCloses.lookup(parent) == operation ||
+            observedInvocations.lookup(parent) == operation) {
+            return parent;
+        }
+        return nullptr;
+    };
+    const auto continuationRoot = [&](mlir::Operation * operation,
+                                      mlir::Block * block) -> mlir::Operation * {
         unsigned depth = 0;
-        while (operation->getBlock() != open->getBlock()) {
+        while (operation && operation->getBlock() != block) {
             if (!spend() || ++depth == 64) { return nullptr; }
-            operation = operation->getParentOp();
-            if (!llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(operation) &&
-                !protectedCloses.contains(operation)) {
-                return nullptr;
-            }
+            operation = continuationParent(operation);
         }
         return operation;
     };
     auto sourceLoop = next->getParentOfType<mlir::scf::WhileOp>();
-    auto * traversal = sourceLoop ? sourceLoop.getOperation() : continuationRoot(next);
-    if (!traversal || traversal->getBlock() != open->getBlock() ||
-        !open->isBeforeInBlock(traversal) ||
+    auto * traversal = sourceLoop ? sourceLoop.getOperation() : next.getOperation();
+    // Find the innermost common continuation block. An outer selection can
+    // contain both the traversal and its later closes in the same arm.
+    for (unsigned depth = 0; traversal && traversal->getBlock() != open->getBlock();) {
+        if (!spend() || ++depth == 64) {
+            traversal = nullptr;
+            break;
+        }
+        bool common = true;
+        for (auto close : closes) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            common &= continuationRoot(close, traversal->getBlock()) != nullptr;
+        }
+        if (common) { break; }
+        traversal = continuationParent(traversal);
+    }
+    if (!traversal || !continuationRoot(traversal, open->getBlock()) ||
+        !recordDominance.properlyDominates(open.getResult(), traversal) ||
         (sourceLoop && !sourceLoop.getBefore().isAncestor(next->getParentRegion()))) {
         return error("DOM custom next requires one direct loop test");
     }
     for (auto close : closes) {
-        auto * root = continuationRoot(close);
+        auto * root = continuationRoot(close, traversal->getBlock());
         if (!root || root == traversal || !traversal->isBeforeInBlock(root)) {
             if (sourceLoop && root && root != traversal) {
                 return error("DOM custom next requires one direct loop test");
@@ -1697,22 +1721,54 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
     }
     const auto closesEveryPath = [&](auto && self, mlir::Block::iterator begin,
-                                     mlir::Block::iterator end, unsigned depth) -> bool {
+                                     mlir::Block::iterator end, unsigned depth,
+                                     mlir::Value selector, mlir::IntegerAttr tag) -> bool {
         if (depth == 64) { return false; }
         for (auto cursor = begin; cursor != end; ++cursor) {
             if (!spend()) { return false; }
-            if (llvm::is_contained(closes, &*cursor) || protectedCloses.contains(&*cursor)) {
+            if (llvm::is_contained(closes, &*cursor) || protectedCloses.contains(&*cursor) ||
+                llvm::is_contained(closes, observedInvocations.lookup(&*cursor))) {
                 return true;
             }
             if (!llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(*cursor)) { continue; }
+            mlir::Region * selected = nullptr;
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(*cursor);
+            auto compare = branch ? branch.getCondition().getDefiningOp<mlir::arith::CmpIOp>()
+                                  : mlir::arith::CmpIOp{};
+            if (selector && compare &&
+                (compare.getPredicate() == mlir::arith::CmpIPredicate::eq ||
+                 compare.getPredicate() == mlir::arith::CmpIPredicate::ne)) {
+                auto value = compare.getLhs();
+                auto key = compare.getRhs().getDefiningOp<mlir::arith::ConstantOp>();
+                if (!key) {
+                    value = compare.getRhs();
+                    key = compare.getLhs().getDefiningOp<mlir::arith::ConstantOp>();
+                }
+                auto cast = value.getDefiningOp<mlir::arith::IndexCastUIOp>();
+                if (cast && cast.getIn() == selector && value.getType().isIndex()) {
+                    value = cast.getIn();
+                }
+                auto integer =
+                    key ? llvm::dyn_cast<mlir::IntegerAttr>(key.getValue()) : mlir::IntegerAttr{};
+                if (value == selector && integer && !integer.getValue().isNegative() &&
+                    integer.getValue().getActiveBits() <= 32) {
+                    const bool equal =
+                        integer.getValue().getZExtValue() == tag.getValue().getZExtValue();
+                    selected = equal == (compare.getPredicate() == mlir::arith::CmpIPredicate::eq)
+                                   ? &branch.getThenRegion()
+                                   : &branch.getElseRegion();
+                }
+            }
             bool closed = true;
             for (auto & region : cursor->getRegions()) {
                 if (!spend()) { return false; }
+                if (selected && selected != &region) { continue; }
                 if (!region.hasOneBlock()) {
                     closed = false;
                     continue;
                 }
-                if (self(self, region.front().begin(), region.front().end(), depth + 1)) {
+                if (self(self, region.front().begin(), region.front().end(), depth + 1, selector,
+                         tag)) {
                     continue;
                 }
                 // CFG structuring may close one arm, then yield an integer
@@ -1724,16 +1780,84 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 auto * continuation = selectedContinuation(yield);
                 closed &= continuation && continuation->hasOneBlock() &&
                           self(self, continuation->front().begin(), continuation->front().end(),
-                               depth + 1);
+                               depth + 1, selector, tag);
             }
             if (closed) { return true; }
         }
         return false;
     };
-    if (!closesEveryPath(closesEveryPath, std::next(traversal->getIterator()),
-                         open->getBlock()->end(), 0)) {
-        return error("DOM iterator completion must close every traversal exit");
+    auto observedNext = llvm::dyn_cast<ctjs::InvokeOp>(next->getParentOp());
+    const auto failedNext = [&](mlir::Operation * leaf) {
+        for (auto * parent = leaf->getParentOp(); parent && parent != traversal;
+             parent = parent->getParentOp()) {
+            if (!spend()) { return false; }
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(parent);
+            auto truth =
+                branch ? branch.getCondition().getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
+            auto flag = truth ? llvm::dyn_cast<mlir::OpResult>(truth.getValue()) : mlir::OpResult{};
+            if (!flag || flag.getOwner() != observedNext) { continue; }
+            auto normal =
+                llvm::cast<ctjs::InvokeYieldOp>(observedNext.getNormalBody().front().back());
+            auto unwind =
+                llvm::cast<ctjs::InvokeYieldOp>(observedNext.getUnwindBody().front().back());
+            const auto boolean = [&](ctjs::InvokeYieldOp yield) {
+                auto literal =
+                    yield.getValues()[flag.getResultNumber()].getDefiningOp<ctjs::ConstantOp>();
+                return literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
+                               : ctjs::BooleanAttr{};
+            };
+            auto success = boolean(normal), failure = boolean(unwind);
+            if (success && failure && success.getValue() != failure.getValue() &&
+                (failure.getValue() ? branch.getThenRegion() : branch.getElseRegion())
+                    .isAncestor(leaf->getParentRegion())) {
+                return true;
+            }
+        }
+        return false;
+    };
+    bool covered = closesEveryPath(closesEveryPath, std::next(traversal->getIterator()),
+                                   traversal->getBlock()->end(), 0, {}, {});
+    // Only the exact next-failure arm can omit close. Enumerate complete tag
+    // leaves; a constant tag alone never proves that next threw.
+    if (!covered && observedNext && observedInvocations.lookup(observedNext) == next) {
+        for (auto selector : traversal->getResults()) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            if (!selector.getType().isInteger(32)) { continue; }
+            bool success = false;
+            const auto leaves = [&](auto && self, mlir::Value value, mlir::Operation * leaf,
+                                    unsigned depth) -> bool {
+                if (!spend() || depth == 64) { return false; }
+                if (auto constant = value.getDefiningOp<mlir::arith::ConstantOp>()) {
+                    auto tag = llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue());
+                    if (!tag || !value.getType().isInteger(32)) { return false; }
+                    if (failedNext(leaf)) { return true; }
+                    success = true;
+                    return closesEveryPath(closesEveryPath, std::next(traversal->getIterator()),
+                                           traversal->getBlock()->end(), 0, selector, tag);
+                }
+                auto result = llvm::dyn_cast<mlir::OpResult>(value);
+                if (!result || !traversal->isAncestor(result.getOwner()) ||
+                    !llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(result.getOwner())) {
+                    return false;
+                }
+                for (auto & region : result.getOwner()->getRegions()) {
+                    if (!spend() || !region.hasOneBlock()) { return false; }
+                    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().back());
+                    if (!yield ||
+                        !self(self, yield.getOperand(result.getResultNumber()), yield, depth + 1)) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            if (leaves(leaves, selector, traversal, 0) && success) {
+                covered = true;
+                break;
+            }
+        }
     }
+    if (!covered) { return error("DOM iterator completion must close every traversal exit"); }
+    if (observedNext) { return error("DOM iterator observed completions require state transport"); }
     for (mlir::Operation * user : next->getUsers()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         if (llvm::isa<ctjs::RootOp>(user)) { continue; }
