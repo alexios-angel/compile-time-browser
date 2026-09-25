@@ -547,6 +547,11 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string arithmeticKeys = selectedStore(arithmeticInput("%zero", "%one"));
     const std::string arithmeticGap = selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
                                                     arithmeticInput("%read", "%two"));
+    const std::string correlatedKeys =
+        selectedStore(arithmeticInput("%zero", "%one", "sub %selectedKey, %selectedKey"));
+    const std::string correlatedGap =
+        selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
+                      arithmeticInput("%read", "%two", "sub %selectedKey, %selectedKey"));
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -1496,13 +1501,88 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                                 "%zero, %zero") +
                  done,
          .complete = false},
-        {.what = "correlated unequal arms cannot be treated as one exact arithmetic operand",
+        {.what = "the same finite Number cancels even when conditional arms differ",
          .body = loopValues +
                  allocationLoop(selectedStore(arithmeticInput("%zero", "%one",
                                                               "sub %selectedKey, %selectedKey")),
                                 "%one", "%one", "%zero, %zero") +
                  done,
+         .confinedNested = "fresh"},
+        {.what = "signed conditional Numbers cancel without primitive coercion",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     arithmeticInput("%negative", "%one", "sub %selectedKey, %selectedKey"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "a cancelled Number result composes with an ordinary offset",
+         .body = loopValues +
+                 allocationLoop(selectedStore(arithmeticInput("%zero", "%two",
+                                                              "sub %selectedKey, %selectedKey") +
+                                                  "    %final = ctjs.binary add %key, %one\n",
+                                              "%guard", "%final"),
+                                "%one", "%one", "%zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "cancellation retains an unwritten guard reload dependency",
+         .body = loopValues + allocationLoop(correlatedGap, "%two", "%one", "%zero, %zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "cancellation cannot hide a guard reload overwritten by its zero key",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     "    %read = ctjs.get_property %guard[%zero]\n" +
+                     arithmeticInput("%read", "%one", "sub %selectedKey, %selectedKey"))) +
+                 done,
          .complete = false},
+        {.what = "matching ranges of different SSA values do not prove cancellation",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(selectedInput("%one", "%zero", "", "", "%otherKey") +
+                                   arithmeticInput("%zero", "%one", "sub %selectedKey, %otherKey")),
+                     "%one", "%one", "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "unknown values cannot borrow the finite Number cancellation proof",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     arithmeticInput("%zero", "%p", "sub %selectedKey, %selectedKey"))) +
+                 done,
+         .complete = false},
+        {.what = "String arms need a separate conversion proof before cancellation",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     arithmeticInput("%zero", "%text", "sub %selectedKey, %selectedKey", "",
+                                     "      %text = ctjs.constant #ctjs.string<\"1\">\n"))) +
+                 done,
+         .complete = false},
+        {.what = "NaN never cancels to an array index",
+         .body = loopValues +
+                 allocationLoop(selectedStore(arithmeticInput(
+                     "%zero", "%nan", "sub %selectedKey, %selectedKey", "",
+                     "      %nan = ctjs.constant #ctjs.number<9221120237041090560>\n"))) +
+                 done,
+         .complete = false},
+        {.what = "Infinity never cancels to an array index",
+         .body = loopValues +
+                 allocationLoop(selectedStore(arithmeticInput(
+                     "%zero", "%infinity", "sub %selectedKey, %selectedKey", "",
+                     "      %infinity = ctjs.constant #ctjs.number<9218868437227405312>\n"))) +
+                 done,
+         .complete = false},
+        {.what = "a returned zero-key holder retains its stored child",
+         .body = loopValues + allocationLoop(correlatedKeys) + "  ctjs.return %guard\n"},
+        {.what = "clearing the proved zero key releases its stored child",
+         .body =
+             loopValues + allocationLoop(correlatedKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved zero-key child survives clearing the holder",
+         .body = loopValues + allocationLoop(correlatedKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "finite Number cancellation still requires initialized solver inputs",
+         .body = loopValues + allocationLoop(correlatedKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "calls in an arithmetic key arm still refuse the complete census",
          .body = loopValues +
                  allocationLoop(
@@ -1883,7 +1963,68 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = arithmeticMutation.what, .body = arithmeticMutation.body, .expected = ""},
              "the conditional arithmetic mutation fixture did not parse");
     }
-    std::printf("array retention: %zu rows, twenty-seven live states, %zu budget cutoffs\n",
+    retention_row correlationMutation{
+        .what = "Number cancellation is reproved after identity, value and guard-read mutations",
+        .body = loopValues + allocationLoop(correlatedGap, "%two", "%one", "%zero, %zero, %zero") +
+                done,
+        .confinedNested = "fresh"};
+    auto correlationModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + correlationMutation.body + "}\n", &context);
+    if (correlationModule) {
+        ctjs::FuncOp function = *correlationModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto branch = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto * yield = branch.getElseRegion().front().getTerminator();
+        auto load = branch.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalYield = yield->getOperand(0);
+        const mlir::Value originalInput = key.getRhs();
+        const mlir::Value originalPosition = load->getOperand(1);
+        const mlir::Value opaque = function.getBody().front().getArgument(3);
+        mlir::Value zero;
+        for (auto literal : function.getBody().front().getOps<ctjs::ConstantOp>()) {
+            if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue());
+                number && number.getBits() == 0) {
+                zero = literal;
+            }
+        }
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*correlationModule))) {
+            fail(row{.what = correlationMutation.what,
+                     .body = correlationMutation.body,
+                     .expected = ""},
+                 "the cancellation stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 5; ++state) {
+            key->setOperand(1, state == 1 ? originalPosition : originalInput);
+            yield->setOperand(0, state == 2 ? opaque : originalYield);
+            load->setOperand(1, state == 3 ? zero : originalPosition);
+            correlationMutation.complete = state == 0 || state == 4;
+            correlationMutation.confinedNested = correlationMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*correlationModule, correlationMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                correlationMutation.complete) {
+                fail(row{.what = correlationMutation.what,
+                         .body = correlationMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied a Number cancellation proof");
+            }
+        }
+    } else {
+        fail(
+            row{.what = correlationMutation.what, .body = correlationMutation.body, .expected = ""},
+            "the cancellation mutation fixture did not parse");
+    }
+    std::printf("array retention: %zu rows, thirty-two live states, %zu budget cutoffs\n",
                 rows.size(), budgets);
 }
 

@@ -588,6 +588,16 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
               bitOr || bitXor)) {
             return std::nullopt;
         }
+        if (subtract && binary.getLhs() == binary.getRhs()) {
+            // Identical SSA operands cancel only after their original value is
+            // proved a bounded Number. Equal ranges and primitive conversions
+            // supply no identity; the recursive proof retains every guard read.
+            if (self(self, binary.getLhs(), depth + 1, IndexUse::Number)) {
+                const ContentsValue zero{operand, ContentsKind::NonBigInt, 0};
+                return IndexRange{zero, zero, 1};
+            }
+            if (invariantFailure == ArrayContentsFailure::WorkLimit) { return std::nullopt; }
+        }
         if ((subtract || add || multiply || divide || remainder || power) &&
             (use == IndexUse::BitwiseConversion || use == IndexUse::ArithmeticOperand ||
              use == IndexUse::PropertyKey)) {
