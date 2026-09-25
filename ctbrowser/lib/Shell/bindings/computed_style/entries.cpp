@@ -488,6 +488,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             property == "background-size" || property == "mask-size" ||
             property == "background-position" || property == "background-position-x" ||
             property == "background-position-y" || property == "mask-position";
+        // `outline-color: auto` is the UA's focus-ring colour, and it stays
+        // `auto` only while the outline's style is `auto` too; beside any
+        // other style it computes to `currentcolor` (CSS UI 4 §5.3).
+        if (property == "outline-color" && ascii_iequals(trim(text, html_whitespace), "auto")) {
+            return collapse_keyword(declared("outline-style")) == "auto" ? "auto" : "currentcolor";
+        }
         if (is_color_property(property) || image_property || filter_property || grid_property ||
             transform_property || layer_property) {
             style::css::length_context bases;

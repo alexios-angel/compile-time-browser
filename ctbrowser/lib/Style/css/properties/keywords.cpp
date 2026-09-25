@@ -78,6 +78,16 @@ constexpr or_grammar or_grammars[] = {
      {"jis78 jis83 jis90 jis04 simplified traditional", "full-width proportional-width", "ruby"},
      true},
     {"text-underline-position", "auto", {"from-font under", "left right"}, true},
+    // `none | all | [ start || end ]`, CSS Text Decoration 4 §2.6.
+    {"text-decoration-skip-spaces", "none all", {"start", "end"}, true},
+    // `fill | none | [ contain | cover ] || scale-down`, CSS Images 4 §5.5:
+    // `contain scale-down` is `scale-down`, the same box either way.
+    {"object-fit",
+     "fill none",
+     {"contain cover", "scale-down"},
+     true,
+     "contain scale-down",
+     "scale-down"},
     {"hanging-punctuation", "none", {"first", "force-end allow-end", "last"}, false},
     {"text-emphasis-position", "auto", {"over under", "right left"}, true},
     {"ruby-position", "inter-character", {"alternate", "over under"}, true},

@@ -248,7 +248,13 @@ constexpr property_syntax modules[] = {
     {"text-combine-upright", k::freeform, "", "none", true, false},
     {"text-orientation", k::keyword_only, "mixed upright sideways", "mixed", true, false},
     {"text-decoration-skip-ink", k::keyword_only, "auto none all", "auto", true, false},
-    {"text-underline-position", k::freeform, "", "auto", true, false}, // keywords.cpp
+    // CSS Text Decoration 4 §2.4-2.5: the line's thickness and the underline's
+    // offset, each a keyword or a <length-percentage> of 1em.
+    {"text-decoration-thickness", k::length_percentage, "auto from-font", "auto", false, false},
+    {"text-underline-offset", k::length_percentage, "auto", "auto", true, false},
+    {"text-decoration-inset", k::freeform, "", "0px", false, false},            // declaration.cpp
+    {"text-decoration-skip-spaces", k::freeform, "", "start end", true, false}, // keywords.cpp
+    {"text-underline-position", k::freeform, "", "auto", true, false},          // keywords.cpp
     {"text-emphasis", k::freeform, "", "none currentcolor", true, false, true},
     {"text-emphasis-style", k::freeform, "", "none", true, false},
     {"text-emphasis-color", k::color, "", "currentcolor", true, false},
@@ -257,8 +263,8 @@ constexpr property_syntax modules[] = {
     {"initial-letters-align", k::freeform, "", "alphabetic", true, false},
     {"initial-letters-wrap", k::freeform, "", "none", true, false},
     {"alignment-baseline", k::keyword_only,
-     "baseline text-bottom alphabetic ideographic middle central mathematical text-top", "baseline",
-     false, false},
+     "baseline text-bottom alphabetic ideographic middle central mathematical text-top hanging",
+     "baseline", false, false},
     {"dominant-baseline", k::keyword_only,
      "auto text-bottom alphabetic ideographic middle central mathematical hanging text-top", "auto",
      true, false},

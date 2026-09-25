@@ -3,6 +3,8 @@
 
 #include "internal.hpp"
 
+#include <unordered_set>
+
 namespace ctbrowser::style::css {
 
 using namespace detail;
@@ -175,10 +177,13 @@ constexpr property_syntax table[] = {
     {"border-spacing", k::freeform, "", "0px", true, false},
     {"outline", k::freeform, "", "medium none currentcolor", false, false, true},
     {"outline-width", k::length, "thin medium thick", "medium", false, true},
+    // CSS UI 4 §5: an outline's style is a border style but `hidden`, its
+    // colour gained `auto` - the UA's focus colour when the style is `auto` -
+    // and lost CSS 2.1's `invert`, and its offset gained `inset`.
     {"outline-style", k::keyword_only,
-     "auto none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
-    {"outline-color", k::color, "invert", "currentcolor", false, false},
-    {"outline-offset", k::length, "", "0px", false, false},
+     "auto none dotted dashed solid double groove ridge inset outset", "none", false, false},
+    {"outline-color", k::color, "auto", "currentcolor", false, false},
+    {"outline-offset", k::length, "inset", "0px", false, false},
 
     // --- colour and background ------------------------------------------
     {"color", k::color, "", "rgb(0, 0, 0)", true, false},
@@ -364,7 +369,7 @@ constexpr property_syntax table[] = {
     {"pointer-events", k::freeform, "", "auto", true, false},
     {"user-select", k::keyword_only, "auto text none contain all", "auto", false, false},
     {"resize", k::keyword_only, "none both horizontal vertical block inline", "none", false, false},
-    {"object-fit", k::keyword_only, "fill contain cover none scale-down", "fill", false, false},
+    {"object-fit", k::freeform, "", "fill", false, false}, // keywords.cpp's grammar
     {"object-position", k::position, "", "50% 50%", false, false},
     {"rotate", k::freeform, "", "none", false, false}, // transforms.cpp's grammar
     {"scale", k::freeform, "", "none", false, false},
@@ -394,6 +399,17 @@ const property_syntax * find_property(std::string_view name) {
 
 std::span<const property_syntax> known_properties() {
     return std::span<const property_syntax>{every_property()};
+}
+
+bool inherited_property(std::string_view name) {
+    static const std::unordered_set<std::string_view> inherited = [] {
+        std::unordered_set<std::string_view> out;
+        for (const property_syntax & one : every_property()) {
+            if (one.inherited) { out.insert(one.name); }
+        }
+        return out;
+    }();
+    return inherited.contains(name);
 }
 
 // CSS Logical 1 §2: the four flow-relative sides as physical ones. Block

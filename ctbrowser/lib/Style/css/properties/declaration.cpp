@@ -411,6 +411,27 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(std::move(serialized));
     }
 
+    // `auto | <length-percentage>{1,2}`, CSS Text Decoration 4 §2.7: how far
+    // a line starts and ends inside its text, the end defaulting to the start
+    // and written once when the two agree.
+    if (ascii_iequals(property, "text-decoration-inset")) {
+        std::vector<std::string_view> parts;
+        for (const std::string_view part : split_top_level(text, html_whitespace)) {
+            if (!trim(part, html_whitespace).empty()) { parts.push_back(part); }
+        }
+        if (parts.size() == 1 && ascii_iequals(trim(parts[0], html_whitespace), "auto")) {
+            return yes("auto");
+        }
+        if (parts.empty() || parts.size() > 2) { return {}; }
+        const property_syntax length{"", k::length_percentage, "", "", false, false};
+        std::string ends[2];
+        for (std::size_t i = 0; i < parts.size(); ++i) {
+            if (!typed_component(parts[i], length, ends[i])) { return {}; }
+        }
+        if (parts.size() == 1 || ends[0] == ends[1]) { return yes(std::move(ends[0])); }
+        return yes(ends[0] + " " + ends[1]);
+    }
+
     if (ascii_iequals(property, "columns")) {
         std::vector<std::string> parts;
         return split_columns(simplified, parts) ? yes(simplified) : value_check{};
@@ -491,6 +512,22 @@ value_check check_declaration(std::string_view property, std::string_view value,
         if (p->kind != k::keyword_only && match_typed(ts, only, *p, serialized)) {
             return yes(std::move(serialized));
         }
+    }
+
+    // `fit-content(<length-percentage [0,∞]>)`, CSS Sizing 3 §3.2: a sizing
+    // property that takes the `fit-content` keyword takes the function too,
+    // and its argument is that property's own <length-percentage> - never a
+    // keyword and never a calc-size().
+    if (p->kind == k::length_percentage && has_keyword(p->keywords, "fit-content") &&
+        ascii_istarts_with(text, "fit-content(") && text.back() == ')') {
+        // One typed component, so neither a keyword nor a nested function.
+        const std::string_view given = trim(text.substr(12, text.size() - 13), html_whitespace);
+        if (ascii_istarts_with(given, "calc-size(")) { return {}; }
+        property_syntax argument = *p;
+        argument.keywords = {};
+        std::string inner;
+        if (!typed_component(given, argument, inner)) { return {}; }
+        return yes("fit-content(" + inner + ")");
     }
 
     // A calc-size() HAS A GRAMMAR OF ITS OWN, and only a sizing property takes

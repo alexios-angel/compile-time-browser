@@ -102,6 +102,11 @@ struct property_syntax {
 // `getComputedStyle`'s indexed properties enumerate.
 [[nodiscard]] std::span<const property_syntax> known_properties();
 
+// Whether the table says `name` INHERITS - its "Inherited: yes" - by a hash
+// lookup, because the cascade asks it once per declaration per element. The
+// name is the lowercase CSS spelling the cascade interns.
+[[nodiscard]] bool inherited_property(std::string_view name);
+
 // The answer `el.style[p] = v` and `CSS.supports(p, v)` both need.
 //
 // `serialized` is the CANONICAL form: `0` becomes `0px` for a length, a keyword

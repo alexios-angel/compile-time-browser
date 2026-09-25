@@ -101,6 +101,12 @@ struct scan {
                                                  std::size_t end = static_cast<std::size_t>(-1));
 [[nodiscard]] bool match_typed(const token_stream & ts, const css_token & t,
                                const property_syntax & p, std::string & out);
+// ONE COMPONENT of a multi-value grammar, typed as `syntax` says: one of its
+// keywords, a single typed token, or a math function of the right type -
+// which is what a `border-image-width` side or a `text-decoration-inset`
+// half is. Defined in grammar.cpp.
+[[nodiscard]] bool typed_component(std::string_view part, const property_syntax & syntax,
+                                   std::string & out);
 // Defined in color.cpp.
 [[nodiscard]] bool match_color(const token_stream & ts, const scan & found,
                                std::string_view normalized, std::string & out);
