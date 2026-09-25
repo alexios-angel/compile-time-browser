@@ -159,10 +159,13 @@ struct gap_shape {
     to = trim(to, html_whitespace);
     interpolable = true;
     // A gap rule LIST, which a single value is not: that pairs as the lone
-    // length or colour it is, below.
-    if (gap_list_property(property) &&
-        (from.find(',') != std::string_view::npos || to.find(',') != std::string_view::npos ||
-         ascii_istarts_with(from, "repeat(") || ascii_istarts_with(to, "repeat("))) {
+    // length or colour it is, below. A comma at the TOP LEVEL makes a list -
+    // `rgb(170, 70, 70)` is one colour, and taking its inner commas for a list
+    // handed the one item straight back here, forever.
+    const auto listed = [](std::string_view text) {
+        return split_top_level(text, ",").size() > 1 || ascii_istarts_with(text, "repeat(");
+    };
+    if (gap_list_property(property) && (listed(from) || listed(to))) {
         if (std::optional<std::string> list = interpolate_gap_list(property, from, to, p, ctx)) {
             return *list;
         }
