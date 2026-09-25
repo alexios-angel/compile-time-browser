@@ -26,6 +26,7 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
 
+#include "element/internal.hpp"
 #include "events/internal.hpp"
 
 #include <cstddef>
@@ -388,7 +389,8 @@ void dom_bindings::install_element_internals(context & cx,
                 at.internals->set(flag_key(validity_flags[i]), value::boolean(held[i]));
             }
             at.internals->set(std::string{message_key},
-                              any ? c.string(c.to_string(message)) : c.string(""));
+                              any ? c.string(detail::normalize_newlines(c.to_string(message)))
+                                  : c.string(""));
             return value::undefined();
         });
 

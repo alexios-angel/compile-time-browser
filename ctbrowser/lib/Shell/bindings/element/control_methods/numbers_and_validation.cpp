@@ -125,7 +125,8 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
         });
     // `value`, `checked` and `files` ON THE PROTOTYPE, for the inputs the
     // wrapper installs no own accessor on - a hidden input has none, so its
-    // value read `undefined` - and `indeterminate`, a slot on the wrapper.
+    // value read `undefined` - and `indeterminate`, which lives in the form
+    // store beside checkedness so the cloning steps carry it.
     // Where the wrapper's own accessor exists it shadows these, as it must.
     helpers.accessor(
         cx, "HTMLInputElement", "value",
@@ -182,15 +183,16 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
             dom_bindings * b = where.first;
             const node_id id = where.second;
             if (!id) { return value::boolean(false); }
-            return value::boolean(context::truthy(helpers.slot_of(c, b, id, "__indeterminate")));
+            const auto txn = b->doc_->read();
+            return value::boolean(b->forms_->state_of(txn, *b->atoms_, id).indeterminate);
         },
         [helpers](context & c, std::span<value> a) {
             const auto where = helpers.at(c);
             dom_bindings * b = where.first;
             const node_id id = where.second;
             if (id) {
-                helpers.set_slot(c, b, id, "__indeterminate",
-                                 value::boolean(context::truthy(arg(a, 0))));
+                const auto txn = b->doc_->read();
+                b->forms_->state_of(txn, *b->atoms_, id).indeterminate = context::truthy(arg(a, 0));
             }
             return value::undefined();
         });
@@ -360,7 +362,8 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
         helpers.operation(
             cx, which, "setCustomValidity", 1, [this, helpers](context & c, std::span<value> a) {
                 if (const node_id id = receiver(c)) {
-                    helpers.set_slot(c, this, id, custom_slot, c.string(arg_string(c, a, 0)));
+                    helpers.set_slot(c, this, id, custom_slot,
+                                     c.string(normalize_newlines(arg_string(c, a, 0))));
                 }
                 return value::undefined();
             });

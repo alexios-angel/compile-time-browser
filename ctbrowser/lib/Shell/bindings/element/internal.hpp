@@ -144,6 +144,23 @@ inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Mat
 
 // --- helpers shared by more than one file of bindings/element/ ---------------
 
+// "NORMALIZE NEWLINES", Infra 4.7: every CR LF pair and then every lone CR
+// becomes one LF. setCustomValidity and ElementInternals.setValidity run it on
+// their message.
+[[nodiscard]] inline std::string normalize_newlines(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] != '\r') {
+            out += text[i];
+            continue;
+        }
+        out += '\n';
+        if (i + 1 < text.size() && text[i + 1] == '\n') { ++i; }
+    }
+    return out;
+}
+
 // The object behind an interface prototype, or null before the interfaces are
 // built - which is what every installer in this directory checks first.
 [[nodiscard]] inline script::object_object * prototype_object(const value & proto) {
