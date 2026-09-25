@@ -439,8 +439,13 @@ void test_how_much_of_bootstrap_can_match() {
     // is now recorded with a condition that evaluates false. The rules exist, gated,
     // and would apply to a print target - which is why the count went up while nothing
     // on screen changed.
-    CHECK(sheet.rules.size() == 2550);
-    CHECK(total == 2961);
+    // AND ONE FEWER SINCE 2026-09-25: a style rule whose selector list does not
+    // parse is dropped whole (Selectors 4 §3.1, CSS Syntax 3 §9), and exactly one
+    // Bootstrap rule has one - `.form-select:-moz-focusring`, a pseudo-class no
+    // browser but Firefox knows, which Chrome drops the same way. It styled
+    // nothing before either; it is now not there to count.
+    CHECK_EQ(sheet.rules.size(), std::size_t{2549});
+    CHECK_EQ(total, std::size_t{2960});
 }
 
 } // namespace
