@@ -39,7 +39,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             state.values[argument] = {argument, ContentsKind::Opaque};
         }
     }
-    state.visited.insert(&function.getBody().front());
+    state.predecessors.try_emplace(&function.getBody().front(), nullptr);
     state.current = &function.getBody().front().front();
     llvm::SmallVector<State, 2> alternatives;
     llvm::SmallPtrSet<mlir::Operation *, 8> arraySites;
@@ -66,9 +66,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         }
         return ArrayContentsFailure::None;
     };
-    const auto forward = [&](State & path, mlir::Block * next, mlir::ValueRange operands) {
+    const auto forward = [&](State & path, mlir::Block * previous, mlir::Block * next,
+                             mlir::ValueRange operands) {
         if (next->getParent() != &function.getBody() || next->empty() ||
-            (!path.visited.insert(next).second &&
+            (!path.predecessors.try_emplace(next, previous).second &&
              (!path.loop || (next != path.loop->header && next != path.loop->body)))) {
             return ArrayContentsFailure::UnsupportedControlFlow;
         }
@@ -79,8 +80,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     };
     const auto snapshot = [&]() -> std::optional<State> {
         // Path enumeration can be exponential. Charge every copied value,
-        // visited block, container and element before allocating the snapshot.
-        if (!spend(state.values.size()) || !spend(state.visited.size())) { return std::nullopt; }
+        // incoming edge, container and element before allocating the snapshot.
+        if (!spend(state.values.size()) || !spend(state.predecessors.size())) {
+            return std::nullopt;
+        }
         for (const auto & [array, elements] : state.arrays) {
             (void)array;
             if (!spend() || !spend(elements.size())) { return std::nullopt; }
@@ -91,10 +94,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         }
         return state;
     };
-    const auto alternative = [&](mlir::Block * next, mlir::ValueRange operands) {
+    const auto alternative = [&](mlir::Block * previous, mlir::Block * next,
+                                 mlir::ValueRange operands) {
         auto copy = snapshot();
         if (!copy) { return ArrayContentsFailure::WorkLimit; }
-        const auto failure = forward(*copy, next, operands);
+        const auto failure = forward(*copy, previous, next, operands);
         if (failure == ArrayContentsFailure::None) { alternatives.push_back(std::move(*copy)); }
         return failure;
     };
@@ -236,7 +240,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 continue;
             }
             if (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(&op)) {
-                const auto failure = forward(state, branch.getDest(), branch.getDestOperands());
+                const auto failure =
+                    forward(state, op.getBlock(), branch.getDest(), branch.getDestOperands());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
                 continue;
             }
@@ -262,14 +267,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // all unrelated conditions retain both structural paths.
                     if (!*continued) { state.loop.reset(); }
                     const auto failure = forward(
-                        state, *continued ? branch.getTrueDest() : branch.getFalseDest(),
+                        state, op.getBlock(),
+                        *continued ? branch.getTrueDest() : branch.getFalseDest(),
                         *continued ? branch.getTrueDestOperands() : branch.getFalseDestOperands());
                     if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
                     continue;
                 }
-                auto failure = alternative(branch.getFalseDest(), branch.getFalseDestOperands());
+                auto failure = alternative(op.getBlock(), branch.getFalseDest(),
+                                           branch.getFalseDestOperands());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                failure = forward(state, branch.getTrueDest(), branch.getTrueDestOperands());
+                failure = forward(state, op.getBlock(), branch.getTrueDest(),
+                                  branch.getTrueDestOperands());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
                 continue;
             }
@@ -282,12 +290,13 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // supply a liveness fact. Repeated destinations still carry
                 // their own operands. Push in reverse for default/case order.
                 for (unsigned i = branch->getNumSuccessors() - 1; i != 0; --i) {
-                    const auto failure = alternative(branch.getCaseDestinations()[i - 1],
-                                                     branch.getCaseOperands(i - 1));
+                    const auto failure =
+                        alternative(op.getBlock(), branch.getCaseDestinations()[i - 1],
+                                    branch.getCaseOperands(i - 1));
                     if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
                 }
-                const auto failure =
-                    forward(state, branch.getDefaultDestination(), branch.getDefaultOperands());
+                const auto failure = forward(state, op.getBlock(), branch.getDefaultDestination(),
+                                             branch.getDefaultOperands());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
                 continue;
             }

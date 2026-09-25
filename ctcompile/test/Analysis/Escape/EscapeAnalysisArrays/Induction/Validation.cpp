@@ -140,9 +140,23 @@ void InductionCases::validation() {
     reject("a joined cached receiver retains the current extent check",
            replace(joined, "  cf.br ^header",
                    "  ctjs.set_property %transported[%key], %two\n  cf.br ^header"));
-    reject("visited shortcut predecessors cannot supply an unambiguous execution path",
-           replace(joined, "  cf.cond_br %choice, ^left, ^right",
-                   "  cf.cond_br %choice, ^preheader(%loaded : !ctjs.value), ^right"));
+    const std::string shortcut =
+        replace(joined, "  cf.cond_br %choice, ^left, ^right",
+                "  cf.cond_br %choice, ^preheader(%loaded : !ctjs.value), ^right");
+    run({.what = "shortcut joins retain the actual incoming edge of each path",
+         .body = shortcut,
+         .arrays = "a:[zero,zero,zero]; box:[a] | a:[zero,zero,zero]; box:[a]",
+         .reads = "box[0]=a; a[0]=zero; a[1]=zero; a[2]=zero; "
+                  "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}; a -> {a}"},
+        "x");
+    reject(
+        "a shortcut path cannot borrow its sibling's receiver identity",
+        replace(shortcut, "^right:\n  cf.br ^preheader(%loaded", "^right:\n  cf.br ^preheader(%p"),
+        ArrayContentsFailure::UnknownArray);
+    reject("a shortcut path keeps its own current extent",
+           replace(shortcut, "  cf.br ^header",
+                   "  ctjs.set_property %transported[%key], %two\n  cf.br ^header"));
     reject("a transported cached guard cannot change the saved bound",
            replace(transported, "%added, %savedBound :", "%added, %zero :"));
     reject("a transported cached guard cannot clear a different receiver",

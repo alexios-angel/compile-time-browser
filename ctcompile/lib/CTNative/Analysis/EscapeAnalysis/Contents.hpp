@@ -80,7 +80,8 @@ struct State {
     llvm::DenseMap<mlir::Value, ContentsValue> values;
     llvm::MapVector<mlir::Operation *, llvm::SmallVector<ContentsValue, 4>> arrays;
     llvm::MapVector<mlir::Operation *, HeldProperties> objects;
-    llvm::SmallPtrSet<mlir::Block *, 8> visited;
+    // First incoming edge on this exact path; ordinary CFG revisits refuse.
+    llvm::DenseMap<mlir::Block *, mlir::Block *> predecessors;
     ctjs::FrameEnterOp frame;
     bool frameExited = false;
     mlir::Operation * current = nullptr;

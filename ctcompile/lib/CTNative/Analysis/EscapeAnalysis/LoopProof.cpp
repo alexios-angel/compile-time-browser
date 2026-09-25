@@ -59,11 +59,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                  ? carriedArray.getOwner()
                                  : nullptr;
     if (!savedArray && savedArrayBlock && allocation) {
-        // Immutable states retain the blocks actually visited on each structural
-        // path. The actual predecessor must be among them; a unique visited
-        // predecessor therefore preserves execution provenance through a join.
+        // Each immutable path records its actual incoming edges, including
+        // shortcut joins whose other syntactic predecessors were also visited.
         // Every path is replayed separately, and repeated CFG blocks are refused.
-        // ponytail: ambiguous visited predecessors and structured origins need a richer trace.
+        // ponytail: structured origins still need their own region correspondence.
         mlir::Block * allocated = allocation->getBlock();
         if (allocated->getParent() != &function.getBody() || allocated == header ||
             allocated == body) {
@@ -74,17 +73,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             for (mlir::Block * block = read; block != allocated;) {
                 if (!spend()) { return ArrayContentsFailure::WorkLimit; }
                 if (!block || block->getParent() != &function.getBody() || block == header ||
-                    block == body || !state.visited.contains(block) || depth++ == 64) {
+                    block == body || !state.predecessors.contains(block) || depth++ == 64) {
                     return unsupported;
                 }
-                mlir::Block * previous = nullptr;
-                for (mlir::Block * predecessor : block->getPredecessors()) {
-                    if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-                    if (!state.visited.contains(predecessor)) { continue; }
-                    if (previous) { return unsupported; }
-                    previous = predecessor;
-                }
-                block = previous;
+                block = state.predecessors.lookup(block);
             }
         }
         savedArray = true;
