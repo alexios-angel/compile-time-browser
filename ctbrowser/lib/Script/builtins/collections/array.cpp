@@ -1007,10 +1007,11 @@ void install_array(context & cx) {
             std::ranges::reverse(dense->items);
             return self;
         }
-        if (!detail::mutable_receiver(c, self, "reverse")) { return self; }
         detail::generic_walk walk{c};
         const double len = detail::array_like_length(c, self);
         if (walk.threw()) { return self; }
+        // A String of one character or none has nothing to swap.
+        if (len > 1 && !detail::mutable_receiver(c, self, "reverse")) { return self; }
         const double middle = std::floor(len / 2);
         for (double lower = 0; lower < middle; lower += 1.0) {
             if (!walk.step()) { return self; }

@@ -585,8 +585,10 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             dense->items = std::move(work);
             return self;
         }
-        if (!detail::mutable_receiver(c, self, "sort")) { return self; }
         const double len = detail::array_like_length(c, self);
+        // A String's indices refuse the write-back - but an EMPTY one has
+        // nothing to write, and `[].sort.call("")` is its wrapper.
+        if (len > 0 && !detail::mutable_receiver(c, self, "sort")) { return self; }
         if (!detail::generic_walk_ok(c, len)) { return self; }
         // SortIndexedProperties, 23.1.3.30.1, with holes SKIPPED: the present
         // elements are read out, sorted, written back over 0..n-1, and every

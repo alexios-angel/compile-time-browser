@@ -116,5 +116,19 @@ int main() {
     js_expect("(function(){var d = Object.getOwnPropertyDescriptor(Function, 'prototype');"
               "return '' + d.writable + d.enumerable + d.configurable; })()",
               "falsefalsefalse");
+    // `Object` under a subclass's NewTarget makes the subclass's instance,
+    // whatever it was handed (20.1.1.1 step 1); a plain call still passes an
+    // object through.
+    js_expect("(function(){class O extends Object {} var o = new O({a: 1});"
+              "var r = Reflect.construct(Object, [{b: 2}], O); var p = {c: 3};"
+              "return o.a + ',' + r.b + ',' + (Object.getPrototypeOf(o) === O.prototype) +"
+              " (Object.getPrototypeOf(r) === O.prototype) + (Object(p) === p) +"
+              " (new Object(p) === p); })()",
+              "undefined,undefined,truetruetruetrue");
+    // A String receiver refuses a WRITE, and an empty one has none to refuse.
+    js_expect("(function(){var s = [].sort.call(''); var r = [].reverse.call('a');"
+              "var t; try { [].sort.call('ba'); t = 'sorted'; } catch (e) { t = e.name; }"
+              "return (s instanceof String) + ',' + (r instanceof String) + ',' + t; })()",
+              "true,true,TypeError");
     REPORT("receivers_and_throws");
 }

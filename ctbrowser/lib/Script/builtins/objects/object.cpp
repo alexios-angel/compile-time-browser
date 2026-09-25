@@ -591,11 +591,21 @@ void install_object(context & cx) {
         // object, and a primitive is BOXED (ToObject) - see
         // detail::wrap_primitive.
         const value v = arg_at(a, 0);
-        if (v.is_object_like()) { return v; }
         // 20.1.1.1 step 1: under `new` from a subclass (`class O extends
-        // Object`, reached through super()) the instance [[Construct]] made
-        // from NewTarget IS the answer; a plain `new Object()` or a call
-        // makes a fresh one, which the instance also is.
+        // Object`, reached through super(), or Reflect.construct with a
+        // NewTarget) the instance [[Construct]] made from NewTarget IS the
+        // answer, WHATEVER the argument - `new O({a: 1}).a` is undefined.
+        const value self = c.current_this();
+        if (detail::constructing_this(self)) {
+            const value proto = static_cast<object_object *>(self.as_heap())->prototype;
+            if (proto.is_object_like() &&
+                proto.as_heap() != c.prototype(context::proto_kind::object)) {
+                return self;
+            }
+        }
+        if (v.is_object_like()) { return v; }
+        // A plain `new Object()` or a call makes a fresh one, which the
+        // instance also is.
         if (v.is_nullish()) {
             return detail::constructing_this(c.current_this()) ? c.current_this() : c.make_object();
         }
