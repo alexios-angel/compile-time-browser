@@ -619,6 +619,12 @@ void test_basic_shapes() {
     bad("clip-path", "circle(1px 2px)");
     bad("clip-path", "inset(1px round)");
     bad("clip-path", "polygon(evenodd)");
+    ok("clip-path", "path('M10,10h80v80h-80z')", "path(\"M 10 10 h 80 v 80 h -80 Z\")");
+    bad("clip-path", "path('')");
+    bad("clip-path", "path('L 1 2')");
+    ok("offset-path", "ray(0rad closest-side)", "ray(0rad)");
+    ok("offset-path", "ray(at 10px 10px 0deg contain)", "ray(0deg contain at 10px 10px)");
+    bad("offset-path", "ray(closest-side)");
     using ctbrowser::style::css::blend_basic_shapes;
     using ctbrowser::style::css::computed_basic_shape;
     const ctbrowser::style::css::length_context ctx;
@@ -633,6 +639,12 @@ void test_basic_shapes() {
                  .value_or(""),
              std::string{"circle(54% at 13% 27%)"});
     CHECK(!blend_basic_shapes("clip-path", "circle(10px)", "inset(10px)", 0.5, 0.5));
+    CHECK_EQ(computed_basic_shape("offset-path", "ray(0.25turn closest-corner contain)", ctx),
+             std::string{"ray(90deg closest-corner contain)"});
+    CHECK_EQ(
+        blend_basic_shapes("offset-path", "path(\"M 0 0 H 10\")", "path(\"M 0 0 H 20\")", 0.5, 0.5)
+            .value_or(""),
+        std::string{"path(\"M 0 0 H 15\")"});
 }
 
 } // namespace

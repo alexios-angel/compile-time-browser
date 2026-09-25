@@ -37,6 +37,8 @@ struct shape_parts {
     std::vector<std::string> points; // polygon: x, y, x, y ...
     std::string path;                // path's string, serialised
     std::string box;                 // the box beside it, or empty for the default
+    std::string size;                // ray()'s size, or empty for `closest-side`
+    bool contain = false;            // ray()'s `contain`
 };
 
 // --- SVG path data (SVG 2 §9.3.9), for path() -------------------------------
@@ -317,6 +319,44 @@ constexpr std::string_view geometry_boxes =
         }
         return out;
     }
+    if (out.function == "ray") {
+        // `ray( <angle> && <ray-size>? && contain? && [ at <position> ]? )`,
+        // Motion Path 1 §3.1: any order, written angle, size, contain,
+        // position; `closest-side` is the default size.
+        static const property_syntax angle{"", value_kind::angle, "", "", false, false};
+        static constexpr std::string_view sizes =
+            "closest-side closest-corner farthest-side farthest-corner sides";
+        for (std::size_t i = 0; i < words.size(); ++i) {
+            const std::string_view w = words[i];
+            std::string one;
+            if (ascii_iequals(w, "at") && out.position.empty()) {
+                // The position is every word up to the next that is not one.
+                std::size_t end = i + 1;
+                std::string rest;
+                while (end < words.size() && !ascii_iequals(words[end], "contain") &&
+                       !has_keyword(sizes, words[end]) &&
+                       !(out.args.empty() && typed_component(words[end], angle, one))) {
+                    rest += (rest.empty() ? "" : " ") + std::string{words[end]};
+                    ++end;
+                }
+                std::optional<std::string> position = canonical_position(rest);
+                if (!position) { return std::nullopt; }
+                out.position = std::move(*position);
+                i = end - 1;
+            } else if (ascii_iequals(w, "contain") && !out.contain) {
+                out.contain = true;
+            } else if (has_keyword(sizes, w) && out.size.empty()) {
+                out.size = ascii_lower_copy(w);
+            } else if (out.args.empty() && typed_component(w, angle, one)) {
+                out.args.push_back(std::move(one));
+            } else {
+                return std::nullopt;
+            }
+        }
+        if (out.args.empty()) { return std::nullopt; }
+        if (out.size == "closest-side") { out.size.clear(); }
+        return out;
+    }
     if (out.function == "polygon" || out.function == "path") {
         std::vector<std::string_view> items = split_top_level(body, ",");
         for (std::string_view & item : items) { item = trim(item, html_whitespace); }
@@ -397,6 +437,11 @@ constexpr std::string_view geometry_boxes =
             items.push_back(s.points[i] + " " + s.points[i + 1]);
         }
         out += joined(items, ", ");
+    } else if (s.function == "ray") {
+        out += s.args.empty() ? std::string{} : s.args.front();
+        if (!s.size.empty()) { out += " " + s.size; }
+        if (s.contain) { out += " contain"; }
+        if (!s.position.empty()) { out += " at " + s.position; }
     } else if (s.function == "path") {
         out += (s.fill_rule.empty() ? "" : s.fill_rule + ", ") + string_text(s.path);
     }
@@ -471,7 +516,9 @@ constexpr std::string_view geometry_boxes =
 namespace detail {
 
 bool match_basic_shape(std::string_view property, std::string_view text, std::string & out) {
-    if (!ascii_iequals_any(property, {"clip-path", "shape-outside"})) { return false; }
+    if (!ascii_iequals_any(property, {"clip-path", "shape-outside", "offset-path"})) {
+        return false;
+    }
     // A box alone is a value too, written as itself.
     const std::vector<std::string_view> parts = words_of(text);
     bool any_function = false;
@@ -509,10 +556,6 @@ std::string computed_basic_shape(std::string_view property, std::string_view tex
     for (std::string & r : s->radii) { r = computed_component(r, ctx, true); }
     for (std::string & p : s->points) { p = computed_component(p, ctx, false); }
     if (!s->round.empty()) { s->round = computed_component(s->round, ctx, true); }
-    // An omitted centre is still the centre, and the computed value says so.
-    if ((s->function == "circle" || s->function == "ellipse") && s->position.empty()) {
-        s->position = "50% 50%";
-    }
     if (!s->position.empty()) {
         const std::string physical = computed_position(s->position, "", "");
         if (!physical.empty()) {
@@ -551,7 +594,7 @@ std::optional<std::string> blend_basic_shapes(std::string_view property, std::st
     std::optional<shape_parts> x = parse_shape_value(a, default_box_of(property));
     std::optional<shape_parts> y = parse_shape_value(b, default_box_of(property));
     if (!x || !y || x->function != y->function || x->box != y->box ||
-        x->fill_rule != y->fill_rule) {
+        x->fill_rule != y->fill_rule || x->size != y->size || x->contain != y->contain) {
         return std::nullopt;
     }
     bool ok = true;
@@ -569,6 +612,8 @@ std::optional<std::string> blend_basic_shapes(std::string_view property, std::st
         out.px = wa * u->px + wb * v->px;
         out.percent = wa * u->percent + wb * v->percent;
         out.has_percent = u->has_percent || v->has_percent;
+        out.type = u->has_percent && u->px == 0 ? v->type : u->type;
+        out.is_number = u->is_number && v->is_number;
         std::string text = serialize_calc(out);
         return nonnegative ? non_negative(text) : text;
     };
@@ -588,9 +633,13 @@ std::optional<std::string> blend_basic_shapes(std::string_view property, std::st
     if (radial) {
         // An omitted radius is `closest-side` and blends with nothing else.
         if (x->args.size() != y->args.size()) { return std::nullopt; }
-        // An omitted position is the centre.
-        if (x->position.empty()) { x->position = "50% 50%"; }
-        if (y->position.empty()) { y->position = "50% 50%"; }
+    }
+    // An omitted position is the centre, written once either side has one.
+    if (radial || x->function == "ray") {
+        if (x->position.empty() != y->position.empty()) {
+            if (x->position.empty()) { x->position = "50% 50%"; }
+            if (y->position.empty()) { y->position = "50% 50%"; }
+        }
     }
     mix_all(x->args, y->args, radial);
     if (!x->position.empty() || !y->position.empty()) {
