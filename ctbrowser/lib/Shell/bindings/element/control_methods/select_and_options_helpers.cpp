@@ -39,6 +39,17 @@ std::vector<bool> control_helpers::selected_flags(context & c, const read_txn & 
                                                   std::vector<node_id> & options) const {
     const auto helpers = *this;
     options = helpers.options_of(txn, b, select);
+    // THE LIST OF OPTIONS AS IT WAS the last time it was asked about: an
+    // option inserted or removed since is a change to the list, and HTML
+    // 4.10.7 runs the selectedness setting algorithm on one - which a model
+    // read lazily can only see here, by comparing.
+    std::string signature = ",";
+    for (const node_id option : options) { signature += std::to_string(option.key()) + ","; }
+    const value seen = helpers.slot_of(c, b, select, "__optionList");
+    const bool changed = seen.is_string() && c.to_string(seen) != signature;
+    if (!seen.is_string() || changed) {
+        helpers.set_slot(c, b, select, "__optionList", c.string(signature));
+    }
     std::vector<bool> flags;
     flags.reserve(options.size());
     bool any_slot = false;
@@ -50,7 +61,11 @@ std::vector<bool> control_helpers::selected_flags(context & c, const read_txn & 
     // "Ask for a reset": the last of several selected wins - a single select
     // never has two, however it got them (a `multiple` removed afterwards
     // included) - and a select nothing has touched, whose insertions the
-    // parser made, selects its first enabled option at display size 1.
+    // parser made, selects its first enabled option at display size 1. So
+    // does one whose list CHANGED with nothing selected: its slots are
+    // forgotten, and it is a select nothing has chosen in again - removing
+    // the selected option selects the first that is left, and an option
+    // put back ahead of that one is the first again.
     std::size_t count = 0;
     std::size_t last = options.size();
     for (std::size_t i = 0; i < options.size(); ++i) {
@@ -61,23 +76,48 @@ std::vector<bool> control_helpers::selected_flags(context & c, const read_txn & 
     }
     if (count > 1) {
         for (std::size_t i = 0; i < options.size(); ++i) { flags[i] = i == last; }
-    } else if (!any_slot) {
-        if (count == 0 && helpers.display_size(txn, b, select) == 1) {
-            for (std::size_t i = 0; i < options.size(); ++i) {
-                if (!helpers.is_disabled(txn, b, options[i])) {
-                    flags[i] = true;
-                    break;
-                }
+    } else if (count == 0 && (!any_slot || changed) && helpers.display_size(txn, b, select) == 1) {
+        if (changed) {
+            for (const node_id option : options) {
+                helpers.erase_slot(c, b, option, selected_slot);
+                helpers.erase_slot(c, b, option, dirty_slot);
+            }
+        }
+        for (std::size_t i = 0; i < options.size(); ++i) {
+            if (!helpers.is_disabled(txn, b, options[i])) {
+                flags[i] = true;
+                break;
             }
         }
     }
     const control_state * held = b->forms_->find(select);
     if (held == nullptr) { return flags; }
     const value synced = helpers.slot_of(c, b, select, "__syncedValue");
+    if (changed && (!synced.is_string() || held->value == c.to_string(synced))) {
+        // The store FOLLOWS the model when the list moved and nothing wrote
+        // the store since it was last synced: its value is stale then, not a
+        // choice the chrome or the `value` setter made.
+        std::string first;
+        for (std::size_t i = 0; i < options.size(); ++i) {
+            if (flags[i]) {
+                first = helpers.option_value(txn, b, options[i]);
+                break;
+            }
+        }
+        b->forms_->state_of(txn, *b->atoms_, select).value = first;
+        helpers.set_slot(c, b, select, "__syncedValue", c.string(first));
+        return flags;
+    }
     const std::string reference = synced.is_string()
                                       ? c.to_string(synced)
                                       : form_store::selected_option_value(txn, *b->atoms_, select);
-    if (held->value == reference) { return flags; }
+    if (held->value == reference) {
+        // The baseline a later write to the store is told apart from.
+        if (!synced.is_string()) {
+            helpers.set_slot(c, b, select, "__syncedValue", c.string(held->value));
+        }
+        return flags;
+    }
     helpers.set_slot(c, b, select, "__syncedValue", c.string(held->value));
     std::size_t match = options.size();
     for (std::size_t i = 0; i < options.size(); ++i) {

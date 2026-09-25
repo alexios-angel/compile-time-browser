@@ -430,7 +430,8 @@ std::string normalize_newlines(std::string_view text) {
 
 std::string sanitize_value(std::string_view type, std::string value, std::string_view min,
                            std::string_view max, std::string_view step,
-                           std::string_view value_attribute, bool multiple) {
+                           std::string_view value_attribute, bool multiple, bool display_p3,
+                           bool alpha) {
     // "Strip newlines from the value" - the text, search, tel and password
     // states; url and email also "strip leading and trailing ASCII whitespace",
     // and a multiple email is each address so stripped, comma-joined.
@@ -531,10 +532,9 @@ std::string sanitize_value(std::string_view type, std::string value, std::string
     if (type == "color") {
         // HTML's "update a color well control color": the value parsed as a
         // CSS <color> (opaque black when it is not one) and serialised for
-        // the control's colour space. The `colorspace` and `alpha` attributes
-        // are not threaded through here yet, so this is the limited-sRGB,
-        // opaque form: `#rrggbb`.
-        return style::css::sanitize_color(value, false, false);
+        // the control's colour space - `#rrggbb` when it is limited sRGB
+        // without alpha, `color(srgb ...)` or `color(display-p3 ...)` else.
+        return style::css::sanitize_color(value, display_p3, alpha);
     }
     if (type == "date" || type == "month" || type == "week" || type == "time" ||
         type == "datetime-local") {

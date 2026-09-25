@@ -26,7 +26,9 @@ namespace {
         type, std::move(text), txn.attribute_value(id, atoms.intern("min")),
         txn.attribute_value(id, atoms.intern("max")), txn.attribute_value(id, atoms.intern("step")),
         txn.attribute_value(id, atoms.intern("value")),
-        txn.has_attribute(id, atoms.intern("multiple")));
+        txn.has_attribute(id, atoms.intern("multiple")),
+        ascii_iequals(txn.attribute_value(id, atoms.intern("colorspace")), "display-p3"),
+        txn.has_attribute(id, atoms.intern("alpha")));
 }
 
 // A textarea's value as its children make it: the CHILD TEXT CONTENT - the
@@ -143,10 +145,11 @@ control_state & form_store::state_of(const read_txn & txn, atom_table & atoms, n
                     clamp_selection(held);
                 }
             }
-        } else if (type == "email") {
+        } else if (type == "email" || type == "color") {
             // A dirty email value is still re-sanitised when `multiple` comes
-            // or goes (4.10.5.1.5) - the sanitisation is idempotent, so a read
-            // that changed nothing changes nothing.
+            // or goes (4.10.5.1.5), a dirty color value when `colorspace` or
+            // `alpha` does (4.10.5.1.16) - the sanitisation is idempotent, so
+            // a read that changed nothing changes nothing.
             if (std::string fresh = sanitized(txn, atoms, id, type, held.value);
                 fresh != held.value) {
                 held.value = std::move(fresh);

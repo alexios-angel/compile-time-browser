@@ -1,5 +1,7 @@
 #include "helpers.hpp"
 
+#include <ctbrowser/dom/encoding.hpp>
+
 namespace ctbrowser::shell {
 using namespace detail;
 using namespace input_types;
@@ -33,11 +35,14 @@ void dom_bindings::install_control_form_data(context & cx) {
         if (held == nullptr || !held->is_array()) { return nullptr; }
         return static_cast<script::array_object *>(held->as_heap());
     };
+    // "Create an entry" (XHR 5.1): the name, and a string value, converted to
+    // SCALAR VALUE STRINGS - a lone surrogate is U+FFFD - whether the entry
+    // comes from a form control or from FormData's append/set (USVString).
     const auto make_entry = [](context & c, const std::string & name, value held) {
         const value pair = c.make_array();
         auto & items = static_cast<script::array_object *>(pair.as_heap())->items;
-        items.push_back(c.string(name));
-        items.push_back(held.is_object_like() ? held : c.string(c.to_string(held)));
+        items.push_back(c.string(to_usv_string(name)));
+        items.push_back(held.is_object_like() ? held : c.string(to_usv_string(c.to_string(held))));
         return pair;
     };
     const auto entry_name = [](context & c, const value & pair) {
@@ -51,8 +56,11 @@ void dom_bindings::install_control_form_data(context & cx) {
     // the specification's null - when the form is already constructing one
     // (its "constructing entry list" flag, a slot on the form): a `formdata`
     // listener that submits the form again must not recurse.
+    // `encoding` is the one "_charset_" reports: the submission's picked
+    // encoding, and UTF-8 for a FormData (which has none).
     const auto entry_list = [helpers, make_entry](context & c, dom_bindings * b, node_id form,
-                                                  node_id submitter, value form_data) -> bool {
+                                                  node_id submitter, value form_data,
+                                                  std::string_view encoding = "UTF-8") -> bool {
         if (context::truthy(helpers.slot_of(c, b, form, constructing_slot))) { return false; }
         helpers.set_slot(c, b, form, constructing_slot, value::boolean(true));
         auto * list = static_cast<script::array_object *>(
@@ -156,7 +164,7 @@ void dom_bindings::install_control_form_data(context & cx) {
             }
             if (type == "hidden" && ascii_lower_copy(name) == "_charset_" &&
                 !helpers.has_attribute(txn, b, one, "value")) {
-                add(name, c.string("UTF-8"));
+                add(name, c.string(std::string{encoding}));
                 continue;
             }
             if (local == "textarea") {
@@ -237,7 +245,7 @@ void dom_bindings::install_control_form_data(context & cx) {
         });
         fd_method("delete", 1, [entries_of, entry_name](context & c, std::span<value> a) {
             if (auto * list = entries_of(c)) {
-                const std::string name = arg_string(c, a, 0);
+                const std::string name = to_usv_string(arg_string(c, a, 0));
                 std::erase_if(list->items,
                               [&](const value & pair) { return entry_name(c, pair) == name; });
             }
@@ -245,7 +253,7 @@ void dom_bindings::install_control_form_data(context & cx) {
         });
         fd_method("get", 1, [entries_of, entry_name, entry_value](context & c, std::span<value> a) {
             if (auto * list = entries_of(c)) {
-                const std::string name = arg_string(c, a, 0);
+                const std::string name = to_usv_string(arg_string(c, a, 0));
                 for (const value & pair : list->items) {
                     if (entry_name(c, pair) == name) { return entry_value(pair); }
                 }
@@ -256,7 +264,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                   [entries_of, entry_name, entry_value](context & c, std::span<value> a) {
                       const value out = c.make_array();
                       if (auto * list = entries_of(c)) {
-                          const std::string name = arg_string(c, a, 0);
+                          const std::string name = to_usv_string(arg_string(c, a, 0));
                           for (const value & pair : list->items) {
                               if (entry_name(c, pair) == name) {
                                   static_cast<script::array_object *>(out.as_heap())
@@ -268,7 +276,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                   });
         fd_method("has", 1, [entries_of, entry_name](context & c, std::span<value> a) {
             if (auto * list = entries_of(c)) {
-                const std::string name = arg_string(c, a, 0);
+                const std::string name = to_usv_string(arg_string(c, a, 0));
                 for (const value & pair : list->items) {
                     if (entry_name(c, pair) == name) { return value::boolean(true); }
                 }
@@ -282,7 +290,7 @@ void dom_bindings::install_control_form_data(context & cx) {
             }
             auto * list = entries_of(c);
             if (list == nullptr) { return value::undefined(); }
-            const std::string name = c.to_string(a[0]);
+            const std::string name = to_usv_string(c.to_string(a[0]));
             const value fresh = make_entry(c, name, a[1]);
             bool replaced = false;
             std::vector<value> kept;
@@ -409,6 +417,75 @@ void dom_bindings::install_control_form_data(context & cx) {
         form_data_ctor->define("length", value::number(0), script::attr_configurable);
         form_data_proto->define("constructor", value::object(form_data_ctor), script::attr_builtin);
         cx.define_global("FormData", value::object(form_data_ctor));
+
+        // --- SubmitEvent and FormDataEvent, HTML 4.10.21.2 and 4.10.21.3 -------------
+        //
+        // Events, so `Event` does the EventInit half - the type, bubbles,
+        // cancelable, composed, in that order - and each adds its own member
+        // after: `submitter` an HTMLElement or null, `formData` a FormData
+        // and required. The events the forms fire take these prototypes
+        // (requestSubmit's `submit`, the entry list's `formdata`).
+        const auto form_event = [&cx](const char * name, auto member) {
+            auto * proto = cx.allocate<script::object_object>();
+            const value event_ctor = cx.global("Event");
+            if (event_ctor.is_object_like()) {
+                proto->prototype = cx.lookup_property(event_ctor, "prototype");
+            }
+            const value proto_value = value::object(proto);
+            auto * ctor = cx.allocate<script::native_object>(
+                name, [name, proto_value, member](context & c, std::span<value> a) -> value {
+                    const value self = c.current_this();
+                    if (!self.is_object()) {
+                        c.throw_error("TypeError", std::string{"Failed to construct '"} + name +
+                                                       "': please use the 'new' operator.");
+                        return value::undefined();
+                    }
+                    const value init = arg(a, 1);
+                    if (!init.is_nullish() && !init.is_object_like()) {
+                        c.throw_error("TypeError", std::string{"Failed to construct '"} + name +
+                                                       "': parameter 2 is not an object.");
+                        return value::undefined();
+                    }
+                    auto * event = static_cast<script::object_object *>(self.as_heap());
+                    if (!event->prototype.is_object()) { event->prototype = proto_value; }
+                    (void)c.call(c.global("Event"), a, self);
+                    if (c.throw_pending()) { return value::undefined(); }
+                    if (!member(c, *event, init)) { return value::undefined(); }
+                    return self;
+                });
+            ctor->retained.push_back(proto_value);
+            ctor->define("prototype", proto_value, script::attr_none);
+            ctor->define("length", value::number(1), script::attr_configurable);
+            proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+            proto->define("constructor", value::object(ctor), script::attr_builtin);
+            cx.define_global(name, value::object(ctor));
+        };
+        form_event("SubmitEvent", [this](context & c, script::object_object & event, value init) {
+            value submitter = dict_object(c, init, "submitter");
+            if (!submitter.is_null()) {
+                dom_bindings * b = owner_of(submitter);
+                const node_id id = b == nullptr ? node_id{} : b->handle_of(submitter);
+                if (!id || b->doc_->read().element_ns(id) != node_ns::html) {
+                    c.throw_error("TypeError", "Failed to construct 'SubmitEvent': member "
+                                               "submitter is not of type 'HTMLElement'.");
+                    return false;
+                }
+            }
+            event.set("submitter", submitter);
+            return true;
+        });
+        form_event("FormDataEvent", [](context & c, script::object_object & event, value init) {
+            const value form_data = dict_member(c, init, "formData");
+            if (!form_data.is_object() ||
+                static_cast<script::object_object *>(form_data.as_heap())->find(entries_slot) ==
+                    nullptr) {
+                c.throw_error("TypeError", "Failed to construct 'FormDataEvent': member "
+                                           "formData is not of type 'FormData'.");
+                return false;
+            }
+            event.set("formData", form_data);
+            return true;
+        });
     }
     // A fresh FormData for a submission, made through the constructor so the
     // page's `FormData.prototype` is the one on it.
@@ -428,10 +505,49 @@ void dom_bindings::install_control_form_data(context & cx) {
                                                 node_id submitter) {
         const value data = new_form_data(c);
         if (!data.is_object()) { return; }
-        if (!entry_list(c, b, form, submitter, data) || c.throw_pending()) { return; }
+        // "Picking an encoding for the form" (4.10.21.3): the first label in
+        // `accept-charset` that names an encoding - UTF-8 when the attribute
+        // names none - else the document's, and UTF-8 for the three an output
+        // encoding cannot be.
+        std::string encoding;
+        {
+            const auto txn = b->doc_->read();
+            encoding = b->doc_->encoding();
+            if (txn.has_attribute(form, b->atoms_->intern("accept-charset"))) {
+                encoding = "UTF-8";
+                for (const std::string_view label :
+                     split_top_level(txn.attribute_value(form, b->atoms_->intern("accept-charset")),
+                                     html_whitespace)) {
+                    if (const std::string_view named = encoding_from_label(label); !named.empty()) {
+                        encoding = std::string{named};
+                        break;
+                    }
+                }
+            }
+            if (encoding == "UTF-16BE" || encoding == "UTF-16LE" || encoding == "replacement") {
+                encoding = "UTF-8";
+            }
+        }
+        if (!entry_list(c, b, form, submitter, data, encoding) || c.throw_pending()) { return; }
         // ...AND THE NAVIGATION, when the form aims a GET at a frame this
-        // document names (frames.cpp): the entries as strings - a File by
-        // its name, as the urlencoded serialiser says.
+        // document names (frames.cpp): the entry list "converted to a list
+        // of name-value pairs" (4.10.21.6) - a File by its name, and in the
+        // name and the value every CR not followed by LF and every LF not
+        // preceded by CR made a CR LF, which the urlencoded serialiser then
+        // writes as %0D%0A.
+        const auto crlf = [](std::string text) {
+            std::string out;
+            out.reserve(text.size());
+            for (std::size_t i = 0; i < text.size(); ++i) {
+                if (text[i] == '\r' || text[i] == '\n') {
+                    out += "\r\n";
+                    if (text[i] == '\r' && i + 1 < text.size() && text[i + 1] == '\n') { ++i; }
+                } else {
+                    out += text[i];
+                }
+            }
+            return out;
+        };
         std::vector<std::pair<std::string, std::string>> pairs;
         const value * held =
             static_cast<script::object_object *>(data.as_heap())->find(entries_slot);
@@ -440,10 +556,50 @@ void dom_bindings::install_control_form_data(context & cx) {
                 const value v = entry_value(pair);
                 std::string text =
                     v.is_object_like() ? c.to_string(c.lookup_property(v, "name")) : c.to_string(v);
-                pairs.emplace_back(entry_name(c, pair), std::move(text));
+                pairs.emplace_back(crlf(entry_name(c, pair)), crlf(std::move(text)));
             }
         }
         (void)b->navigate_form_target(form, pairs);
+    };
+    // HTML 4.10.21.3 "submit" FROM A SUBMITTER - not from submit(): the form
+    // must be connected; interactive validation unless `novalidate` or the
+    // submitter's `formnovalidate`; the firing-submission-events flag (step
+    // 6: while this submission validates and fires `submit`, another one
+    // started from an `invalid` or `submit` listener returns at once); a
+    // cancelable `submit` SubmitEvent carrying the submitter; then the entry
+    // list and the navigation. requestSubmit() runs it after its own checks,
+    // and a submit button's activation behaviour is the same call
+    // (`submit_from_`, for the browser's default action).
+    const auto submit_from = [this, helpers, build_submission](context & c, node_id form,
+                                                               node_id submitter) {
+        if (!is_connected(form)) { return; }
+        bool validate = true;
+        {
+            const auto txn = doc_->read();
+            if (helpers.has_attribute(txn, this, form, "novalidate") ||
+                (submitter && helpers.has_attribute(txn, this, submitter, "formnovalidate"))) {
+                validate = false;
+            }
+        }
+        if (context::truthy(helpers.slot_of(c, this, form, firing_slot))) { return; }
+        helpers.set_slot(c, this, form, firing_slot, value::boolean(true));
+        bool cancelled = validate && !helpers.validate_form(c, this, form);
+        if (!cancelled && !c.throw_pending()) {
+            const value submitter_value = submitter ? wrap(c, submitter) : value::null();
+            const value submit_proto = interface_prototype_of(c, "SubmitEvent");
+            cancelled =
+                helpers.fire(c, this, form, "submit", true, true,
+                             [submitter_value, submit_proto](script::object_object & event) {
+                                 if (submit_proto.is_object()) { event.prototype = submit_proto; }
+                                 event.set("submitter", submitter_value);
+                             });
+        }
+        helpers.erase_slot(c, this, form, firing_slot);
+        if (cancelled || c.throw_pending()) { return; }
+        build_submission(c, this, form, submitter);
+    };
+    submit_from_ = [this, submit_from](node_id form, node_id submitter) {
+        if (cx_ != nullptr) { submit_from(*cx_, form, submitter); }
     };
     submit_form_ = [this, build_submission](node_id form, node_id submitter) {
         if (cx_ != nullptr) { build_submission(*cx_, this, form, submitter); }
@@ -457,7 +613,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                       });
     helpers.operation(
         cx, "HTMLFormElement", "requestSubmit", 0,
-        [this, helpers, build_submission](context & c, std::span<value> a) {
+        [this, helpers, submit_from](context & c, std::span<value> a) {
             const node_id form = receiver(c);
             if (!form) { return value::undefined(); }
             node_id submitter;
@@ -492,38 +648,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                     return value::undefined();
                 }
             }
-            if (!is_connected(form)) { return value::undefined(); }
-            bool validate = true;
-            {
-                const auto txn = doc_->read();
-                if (helpers.has_attribute(txn, this, form, "novalidate") ||
-                    (submitter && helpers.has_attribute(txn, this, submitter, "formnovalidate"))) {
-                    validate = false;
-                }
-            }
-            // THE FIRING-SUBMISSION-EVENTS FLAG (4.10.21.3 step 6): while this
-            // submission validates and fires `submit`, another one started
-            // from an `invalid` or `submit` listener returns at once.
-            if (context::truthy(helpers.slot_of(c, this, form, firing_slot))) {
-                return value::undefined();
-            }
-            helpers.set_slot(c, this, form, firing_slot, value::boolean(true));
-            bool cancelled = validate && !helpers.validate_form(c, this, form);
-            if (!cancelled && !c.throw_pending()) {
-                const value submitter_value = submitter ? wrap(c, submitter) : value::null();
-                const value submit_proto = interface_prototype_of(c, "SubmitEvent");
-                cancelled =
-                    helpers.fire(c, this, form, "submit", true, true,
-                                 [submitter_value, submit_proto](script::object_object & event) {
-                                     if (submit_proto.is_object()) {
-                                         event.prototype = submit_proto;
-                                     }
-                                     event.set("submitter", submitter_value);
-                                 });
-            }
-            helpers.erase_slot(c, this, form, firing_slot);
-            if (cancelled || c.throw_pending()) { return value::undefined(); }
-            build_submission(c, this, form, submitter);
+            submit_from(c, form, submitter);
             return value::undefined();
         });
     helpers.operation(

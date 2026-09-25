@@ -12,15 +12,45 @@ void control_helpers::operation(context & cx, const char * which, const char * n
     bindings->define_operation(cx, {which}, name, length, std::move(fn));
 }
 
+// AN ACCESSOR ON A SHARED PROTOTYPE, answered by the document that owns the
+// receiver - define_operation's arrangement, for a getter/setter pair. Every
+// document's bindings run this installer and keep their own pair (closing over
+// their own tree) in their operations; only the primary defines the accessor,
+// and it routes to the owner's pair. It used to define the accessor from every
+// document that ran it, so after a frame's first operation `table.caption`
+// read the FRAME's tree with the page's node ids, and before one a frame's
+// table was read in the page's tree - either way null.
 void control_helpers::getter(context & cx, const char * which, const char * name,
                              script::native_fn get, script::native_fn set) const {
-    const auto helpers = *this;
-    auto * on = helpers.proto(which);
+    dom_bindings * b = bindings;
+    const std::string key = std::string{which} + "." + name;
+    const std::size_t index = b->operations_.size();
+    const bool settable = set != nullptr;
+    b->operations_.push_back(binding_detail::operation{"get " + key, std::move(get)});
+    b->operations_.push_back(binding_detail::operation{"set " + key, std::move(set)});
+    if (b->secondary_) { return; }
+    auto * on = proto(which);
     if (on == nullptr) { return; }
-    on->define_accessor(
-        name, value::object(cx.allocate<script::native_object>(name, std::move(get))),
-        set == nullptr ? value::undefined()
-                       : value::object(cx.allocate<script::native_object>(name, std::move(set))));
+    const auto route = [b, index, key](bool setter) {
+        return [b, index, setter, op = (setter ? "set " : "get ") + key](context & c,
+                                                                         std::span<value> a) {
+            dom_bindings * owner = b->owner_of(c.current_this());
+            dom_bindings & target = owner == nullptr ? *b : *owner;
+            if (target.operations_.empty()) { target.install_operations(c); }
+            const std::size_t at = index + (setter ? 1 : 0);
+            if (at < target.operations_.size() && target.operations_[at].name == op) {
+                return target.operations_[at].fn(c, a);
+            }
+            for (const binding_detail::operation & each : target.operations_) {
+                if (each.name == op) { return each.fn(c, a); }
+            }
+            return value::undefined();
+        };
+    };
+    on->define_accessor(name, value::object(cx.allocate<script::native_object>(name, route(false))),
+                        settable
+                            ? value::object(cx.allocate<script::native_object>(name, route(true)))
+                            : value::undefined());
 }
 
 bool control_helpers::is(const read_txn & txn, node_id id, std::string_view name) const {

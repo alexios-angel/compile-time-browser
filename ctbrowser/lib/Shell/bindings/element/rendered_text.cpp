@@ -264,7 +264,43 @@ public:
         // "Blockification": the in-flow children of a flex or grid container
         // are block-level whatever their display says.
         const bool blockify = lists_token("flex inline-flex grid inline-grid", display);
-        for (const node_id child : txn_.children(node)) {
+        // A TABULAR CONTAINER'S WHITE SPACE has no box (CSS 2.1 17.2.1): a
+        // white-space-only text child whose neighbours - where it has any -
+        // are table-internal boxes or captions is `display: none`, whatever
+        // `white-space` says.
+        const bool tabular = lists_token(
+            "table inline-table table-row-group table-header-group table-footer-group table-row",
+            display);
+        const auto boxless_space = [&](std::span<const node_id> siblings, std::size_t i) {
+            const std::string_view data = txn_.text(siblings[i]);
+            if (data.find_first_not_of(html_whitespace) != std::string_view::npos) { return false; }
+            const auto tabular_box = [&](std::size_t at) {
+                const node_kind held = txn_.kind(siblings[at]).value_or(node_kind::comment);
+                if (held != node_kind::element) { return held != node_kind::text; }
+                return display_of(siblings[at]).starts_with("table-");
+            };
+            for (std::size_t at = i; at-- > 0;) {
+                if (txn_.kind(siblings[at]).value_or(node_kind::comment) == node_kind::comment) {
+                    continue;
+                }
+                if (!tabular_box(at)) { return false; }
+                break;
+            }
+            for (std::size_t at = i + 1; at < siblings.size(); ++at) {
+                if (txn_.kind(siblings[at]).value_or(node_kind::comment) == node_kind::comment) {
+                    continue;
+                }
+                return tabular_box(at);
+            }
+            return true;
+        };
+        const std::span<const node_id> children = txn_.children(node);
+        for (std::size_t i = 0; i < children.size(); ++i) {
+            const node_id child = children[i];
+            if (tabular && txn_.kind(child).value_or(node_kind::comment) == node_kind::text &&
+                boxless_space(children, i)) {
+                continue;
+            }
             if (closed_details && !(is_html(child) && tag_of(child) == "summary")) { continue; }
             if (!widget_children.empty() &&
                 !(is_html(child) && lists_token(widget_children, tag_of(child)))) {

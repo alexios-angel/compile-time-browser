@@ -23,6 +23,7 @@ constexpr std::string_view files_key = "@#ctbrowser:file-list";
 constexpr std::string_view dt_items_key = "@#ctbrowser:data-transfer-items";
 constexpr std::string_view dt_list_key = "@#ctbrowser:data-transfer-item-list";
 constexpr std::string_view owner_key = "@#ctbrowser:data-transfer-owner";
+constexpr std::string_view dt_files_key = "@#ctbrowser:data-transfer-files";
 
 [[nodiscard]] script::object_object * as_object(value v) {
     return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
@@ -96,15 +97,41 @@ constexpr std::string_view owner_key = "@#ctbrowser:data-transfer-owner";
 
 } // namespace
 
-value make_file_list(context & c, const std::vector<value> & files) {
-    auto * list = c.allocate<script::object_object>();
-    list->prototype = file_list_prototype(c);
+namespace {
+
+// A FileList's indices and hidden array, (re)written to hold `files`.
+void fill_file_list(context & c, script::object_object & list, const std::vector<value> & files) {
+    for (std::size_t i = 0;; ++i) {
+        if (list.find(std::to_string(i)) == nullptr) { break; }
+        (void)list.erase(std::to_string(i));
+    }
     const value held = c.make_array();
     for (std::size_t i = 0; i < files.size(); ++i) {
         as_array(held)->items.push_back(files[i]);
-        list->define(std::to_string(i), files[i], script::attr_enumerable);
+        list.define(std::to_string(i), files[i], script::attr_enumerable);
     }
-    list->define(std::string{files_key}, held, script::attr_none);
+    list.define(std::string{files_key}, held, script::attr_none);
+}
+
+// The Files among a transfer's items, in order.
+[[nodiscard]] std::vector<value> transfer_files(context & c, value transfer) {
+    std::vector<value> files;
+    if (script::array_object * records = entries_of(transfer, dt_items_key)) {
+        for (const value & record : records->items) {
+            if (c.to_string(c.lookup_property(record, "kind")) == "file") {
+                files.push_back(c.lookup_property(record, "data"));
+            }
+        }
+    }
+    return files;
+}
+
+} // namespace
+
+value make_file_list(context & c, const std::vector<value> & files) {
+    auto * list = c.allocate<script::object_object>();
+    list->prototype = file_list_prototype(c);
+    fill_file_list(c, *list, files);
     return value::object(list);
 }
 
@@ -148,6 +175,14 @@ void control_helpers::install_data_transfer(context & cx) const {
             (void)on->erase(std::to_string(i));
         }
         if (records == nullptr) { return; }
+        // ...and the transfer's FileList, which is LIVE: the one `files`
+        // handed out follows the items (an <input> it was given included).
+        if (script::object_object * transfer = as_object(*owner)) {
+            if (const value * files = transfer->find(std::string{dt_files_key});
+                files != nullptr && as_object(*files) != nullptr) {
+                fill_file_list(c, *as_object(*files), transfer_files(c, *owner));
+            }
+        }
         for (std::size_t i = 0; i < records->items.size(); ++i) {
             auto * item = c.allocate<script::object_object>();
             item->prototype = item_proto_value;
@@ -243,16 +278,18 @@ void control_helpers::install_data_transfer(context & cx) const {
         const value * list = self == nullptr ? nullptr : self->find(std::string{dt_list_key});
         return list == nullptr ? value::undefined() : *list;
     });
+    // `files` is [SameObject] and live: one FileList per transfer, made on the
+    // first read and kept in step with the items from then on.
     define_getter(cx, *dt_proto, "files", [](context & c, std::span<value>) {
-        std::vector<value> files;
-        if (script::array_object * records = entries_of(c.current_this(), dt_items_key)) {
-            for (const value & record : records->items) {
-                if (c.to_string(c.lookup_property(record, "kind")) == "file") {
-                    files.push_back(c.lookup_property(record, "data"));
-                }
-            }
+        const value self = c.current_this();
+        script::object_object * transfer = as_object(self);
+        if (transfer == nullptr) { return make_file_list(c, {}); }
+        if (const value * held = transfer->find(std::string{dt_files_key}); held != nullptr) {
+            return *held;
         }
-        return make_file_list(c, files);
+        const value made = make_file_list(c, transfer_files(c, self));
+        transfer->define(std::string{dt_files_key}, made, script::attr_none);
+        return made;
     });
     define_getter(cx, *dt_proto, "types", [](context & c, std::span<value>) {
         const value out = c.make_array();
