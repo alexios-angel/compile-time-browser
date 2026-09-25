@@ -221,7 +221,15 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(set_global) do {
-            vm_frame->realm->globals[vm_proto->names[in.bx()]] = reg(in.a);
+            const std::string & name = vm_proto->names[in.bx()];
+            if (immutable_global(name)) [[unlikely]] {
+                if (vm_proto->is_strict) {
+                    throw_error("TypeError",
+                                "Cannot assign to read only property '" + name + "' of object");
+                }
+                break;
+            }
+            vm_frame->realm->globals[name] = reg(in.a);
             break;
         }
         while (0);

@@ -53,6 +53,23 @@ inline auto context::define_global(std::string name, value v) -> void {
     current_realm().globals[std::move(name)] = v;
 }
 
+inline auto context::declare_global_var(std::string name) -> void {
+    realm_record & realm = current_realm();
+    if (realm.globals.find(name) != realm.globals.end()) { return; }
+    // The global object is a proxy over the table; what `Object.defineProperty
+    // (globalThis, ...)` defines lands on its TARGET, and that is an own
+    // property of the global object too. Asked of the target directly, so a
+    // page's named elements - which the window's traps also report - do not
+    // pass for declared variables.
+    value holder = realm.global_this;
+    if (holder.is_kind(heap_kind::proxy)) {
+        holder = static_cast<proxy_object *>(holder.as_heap())->target;
+    }
+    property_descriptor own;
+    if (holder.is_object() && own_property(holder, name, own)) { return; }
+    realm.globals[std::move(name)] = value::undefined();
+}
+
 // `delete globalThis.x`: the binding is a table entry, and every global
 // is { configurable: true } (clause 17), so the delete succeeds.
 inline auto context::erase_global(std::string_view name) -> bool {
@@ -205,9 +222,7 @@ inline auto context::set_module_evaluator(std::function<bool(context &, module_r
     if (!prog.ok || prog.functions.empty()) { return value::undefined(); }
     // Its `var`s exist before it starts, as run() gives a script's
     // (19.2.1.3 EvalDeclarationInstantiation binds them the same way).
-    for (const std::string & name : prog.hoisted_vars) {
-        if (!has_global(name)) { define_global(name, value::undefined()); }
-    }
+    for (const std::string & name : prog.hoisted_vars) { declare_global_var(name); }
     auto * entry = allocate<closure_object>(&prog.functions[0]);
     entry->owner = &prog;
     entry->realm = &current_realm();

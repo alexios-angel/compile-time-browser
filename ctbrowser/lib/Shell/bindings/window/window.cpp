@@ -910,6 +910,7 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
         if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
             c.store_property(args[0], name, args[2]);
         } else {
+            if (context::immutable_global(name)) { return value::boolean(false); }
             realm_of->globals[name] = args[2];
         }
         return value::boolean(true);
@@ -943,8 +944,9 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
                    }
                    if (const auto it = realm_of->globals.find(name);
                        it != realm_of->globals.end()) {
-                       return c.from_property_descriptor(
-                           context::property_descriptor::data(it->second, script::attr_default));
+                       return c.from_property_descriptor(context::property_descriptor::data(
+                           it->second, context::immutable_global(name) ? script::attr_none
+                                                                       : script::attr_default));
                    }
                    value held = frame_at(c, name);
                    if (held.is_undefined()) { held = named_value(c, name); }

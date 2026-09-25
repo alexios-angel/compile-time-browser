@@ -78,9 +78,7 @@ run_result context::run(const program & prog) {
     failed_ = false;
     error_.clear();
     // See program::hoisted_vars: the script's `var`s exist before it starts.
-    for (const std::string & name : prog.hoisted_vars) {
-        if (!has_global(name)) { define_global(name, value::undefined()); }
-    }
+    for (const std::string & name : prog.hoisted_vars) { declare_global_var(name); }
     result.returned = execute(prog, prog.functions[0]);
     // THE END OF THE TURN. A script's promise handlers run after its last
     // statement, not between two of them - so the checkpoint is here, once the

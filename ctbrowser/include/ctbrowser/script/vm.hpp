@@ -30,6 +30,22 @@ public:
 
     void define_global(std::string name, value v);
 
+    // CreateGlobalVarBinding (9.1.1.4.17): a script's or an eval's `var` - a
+    // new binding is undefined, and a name the global object already owns,
+    // in the binding table or as a property defined on the object itself,
+    // keeps its value.
+    void declare_global_var(std::string name);
+
+    // THE THREE VALUE PROPERTIES OF THE GLOBAL OBJECT (19.1): NaN, Infinity
+    // and undefined are { writable: false, enumerable: false, configurable:
+    // false } on every global object. A store to one is refused - silently in
+    // sloppy code, a TypeError in strict - and neither can be deleted or
+    // redefined. By name, so the store path pays three length compares rather
+    // than a table lookup.
+    [[nodiscard]] static constexpr bool immutable_global(std::string_view name) noexcept {
+        return name == "undefined" || name == "NaN" || name == "Infinity";
+    }
+
     bool erase_global(std::string_view name);
 
     void define_native(std::string name, native_fn fn);

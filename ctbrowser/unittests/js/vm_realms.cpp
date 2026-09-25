@@ -107,11 +107,31 @@ void test_realms_survive_collection() {
     r.expect("var result = other.read();", "42");
 }
 
+// The global environment's own rules, which every realm shares.
+void test_global_bindings() {
+    two_realms r;
+    // CreateGlobalVarBinding: a `var` over a property the global object
+    // already owns keeps its value (an eval's var, and a script's).
+    r.expect("Object.defineProperty(globalThis, 'kept', {value: 'x', writable: true,"
+             " enumerable: true, configurable: false});"
+             " (0, eval)('var kept;'); var result = kept;",
+             "x");
+    // 19.1: NaN, Infinity and undefined are read-only and not configurable.
+    r.expect("undefined = 1; NaN = 2; var d = Object.getOwnPropertyDescriptor(globalThis, 'NaN');"
+             " var result = [typeof undefined, NaN !== NaN, d.writable, d.configurable,"
+             " delete globalThis.Infinity].join();",
+             "undefined,true,false,false,false");
+    r.expect("var result; try { (function () { 'use strict'; undefined = 1; })(); result = 'no'; }"
+             " catch (e) { result = e.name; }",
+             "TypeError");
+}
+
 } // namespace
 
 int main() {
     test_separate_bindings();
     test_shared_intrinsics();
     test_realms_survive_collection();
+    test_global_bindings();
     REPORT("vm_realms");
 }

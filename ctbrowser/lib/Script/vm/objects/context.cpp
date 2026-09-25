@@ -65,6 +65,8 @@ value context::make_global_object(realm_record & r) {
         const std::string name = cx.to_string(args[1]);
         if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
             cx.store_property(args[0], name, args[2]);
+        } else if (immutable_global(name)) {
+            return value::boolean(false); // 19.1: read-only - a TypeError in strict code
         } else {
             realm->globals[name] = args[2];
         }
@@ -88,8 +90,8 @@ value context::make_global_object(realm_record & r) {
         if (cx.own_property(args[0], name, found)) { return cx.from_property_descriptor(found); }
         const auto it = realm->globals.find(name);
         if (it == realm->globals.end()) { return value::undefined(); }
-        return cx.from_property_descriptor(
-            property_descriptor::data(it->second, attr_writable | attr_configurable));
+        return cx.from_property_descriptor(property_descriptor::data(
+            it->second, immutable_global(name) ? attr_none : attr_writable | attr_configurable));
     });
     // `delete globalThis.x` reaches the binding table the way `set` does;
     // an own property of the target deletes as one.
@@ -98,6 +100,9 @@ value context::make_global_object(realm_record & r) {
         property_descriptor found;
         if (cx.own_property(args[0], name, found)) {
             return value::boolean(cx.delete_own_property(args[0], name));
+        }
+        if (immutable_global(name) && realm->globals.contains(name)) {
+            return value::boolean(false); // not configurable
         }
         (void)realm->globals.erase(name);
         return value::boolean(true);
