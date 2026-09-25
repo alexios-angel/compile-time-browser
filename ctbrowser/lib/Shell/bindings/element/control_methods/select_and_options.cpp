@@ -360,7 +360,8 @@ void dom_bindings::install_control_select_options(context & cx) {
         });
     // `options`, one HTMLOptionsCollection per select, live over its options,
     // with `selectedIndex`, `add`, `remove` and a settable `length` of its own.
-    const auto options_collection = [helpers](context & c, dom_bindings * b, node_id select) {
+    const auto options_collection = [helpers, ask_for_reset](context & c, dom_bindings * b,
+                                                             node_id select) {
         const value held = helpers.slot_of(c, b, select, "__options");
         if (held.is_object_like()) { return held; }
         const value list = b->make_live_collection(
@@ -371,6 +372,75 @@ void dom_bindings::install_control_select_options(context & cx) {
                                             : std::vector<node_id>{};
             },
             "HTMLOptionsCollection");
+        // THE INDEXED SETTER (HTML 4.10.10.1), which a plain collection does
+        // not have: `options[i] = option` replaces the i-th option, or - past
+        // the end - pads with blank options and appends; `= null` removes the
+        // i-th. Any other key is the collection's own `set` trap's.
+        if (list.is_kind(script::heap_kind::proxy)) {
+            auto & handler = static_cast<script::proxy_object *>(list.as_heap())->handler;
+            auto * traps = handler.is_object()
+                               ? static_cast<script::object_object *>(handler.as_heap())
+                               : nullptr;
+            const value * plain = traps == nullptr ? nullptr : traps->find("set");
+            if (plain != nullptr && plain->is_callable()) {
+                const value fallback = *plain;
+                auto * trap = c.allocate<script::native_object>(
+                    "set",
+                    [b, select, helpers, ask_for_reset, fallback,
+                     handler](context & c2, std::span<value> args) -> value {
+                        const std::string key = args.size() > 1 ? c2.to_string(args[1]) : "";
+                        const bool index_key =
+                            !key.empty() && key.size() <= 10 &&
+                            std::ranges::all_of(key,
+                                                [](char ch) { return ch >= '0' && ch <= '9'; }) &&
+                            (key == "0" || key.front() != '0') && std::stoull(key) < 4294967295ULL;
+                        if (args.size() < 3 || !index_key) {
+                            return c2.call(fallback, args, handler);
+                        }
+                        const std::size_t index = std::stoull(key);
+                        const value given = args[2];
+                        const node_id option = given.is_null() ? node_id{} : b->handle_of(given);
+                        std::vector<node_id> options;
+                        {
+                            const auto txn = b->doc_->read();
+                            if (!given.is_null() && !helpers.is(txn, option, "option")) {
+                                c2.throw_error("TypeError", "Failed to set an indexed property on "
+                                                            "'HTMLOptionsCollection': the value "
+                                                            "is not an HTMLOptionElement.");
+                                return value::boolean(false);
+                            }
+                            options = helpers.options_of(txn, b, select);
+                        }
+                        if (!option) {
+                            if (index < options.size()) {
+                                (void)b->doc_->remove_child(options[index]);
+                                ask_for_reset(c2, b, select);
+                                b->mutated();
+                            }
+                            return value::boolean(true);
+                        }
+                        if (index >= options.size()) {
+                            for (std::size_t i = options.size(); i < index && i < 100000; ++i) {
+                                (void)b->insert_node(
+                                    select, b->doc_->create_element(b->atoms_->intern("option")),
+                                    node_id{});
+                            }
+                            (void)b->insert_node(select, option, node_id{});
+                        } else if (options[index] != option) {
+                            const node_id old = options[index];
+                            const node_id parent = b->doc_->read().parent(old);
+                            (void)b->insert_node(parent, option, old);
+                            (void)b->doc_->remove_child(old);
+                            b->mutated();
+                        }
+                        ask_for_reset(c2, b, select);
+                        return value::boolean(true);
+                    });
+                trap->retained.push_back(fallback);
+                trap->retained.push_back(handler);
+                traps->set("set", value::object(trap));
+            }
+        }
         c.store_property(list, "@@sym:ctbrowser:options-owner", b->wrap(c, select));
         helpers.set_slot(c, b, select, "__options", list);
         return list;
