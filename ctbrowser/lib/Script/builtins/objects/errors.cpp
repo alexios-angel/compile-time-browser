@@ -134,11 +134,13 @@ void install_errors(context & cx) {
             // ToString'd (a Symbol refuses), and an ABSENT argument installs no
             // own property at all - which is why
             // `new TypeError().hasOwnProperty('message')` is false.
+            // ToString is ToPrimitive first: an object whose @@toPrimitive
+            // answers a Symbol is the TypeError too (string_arg).
             std::string text;
             if (!a.empty() && !a[0].is_undefined()) {
-                if (!stringable_arg(c, a[0])) { return value::undefined(); }
-                text = c.to_string(a[0]);
-                if (c.throw_pending()) { return value::undefined(); }
+                const detail::unwind_watch watch{c};
+                text = string_arg(c, a[0]);
+                if (watch.threw()) { return value::undefined(); }
                 made->define("message", c.string(text), attr_builtin);
             }
             // Step 4, InstallErrorCause: `cause` comes off the options object
