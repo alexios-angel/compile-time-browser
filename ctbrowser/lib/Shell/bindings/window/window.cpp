@@ -402,6 +402,10 @@ void dom_bindings::install_window(context & cx) {
     // traces arrays, and `new Path2D(other)` is then a copy of one vector.
     cx.define_native("Path2D", [](context & c, std::span<value> args) {
         auto * path = c.allocate<script::object_object>();
+        if (const value proto = c.lookup_property(c.global("Path2D"), "prototype");
+            proto.is_object()) {
+            path->prototype = proto;
+        }
         value commands = c.make_array();
         auto * steps = static_cast<script::array_object *>(commands.as_heap());
         // `new Path2D(other)` starts as a copy. p5 makes separate fill and
@@ -560,6 +564,20 @@ void dom_bindings::install_window(context & cx) {
         }
         return detail::make_image_data(c, width, height, given ? args[0] : value::undefined());
     });
+    // AN INTERFACE OBJECT HAS A PROTOTYPE OBJECT (WebIDL 3.7.3), and since
+    // instanceof is OrdinaryHasInstance a constructor without one is a
+    // TypeError to test against - p5's WebGL textures ask `obj instanceof
+    // ImageData` of every source. The objects each one makes inherit from it
+    // (make_image_data, the Path2D native).
+    for (const char * name : {"ImageData", "Path2D"}) {
+        const value ctor = cx.global(name);
+        if (!ctor.is_kind(script::heap_kind::native)) { continue; }
+        auto * proto = cx.allocate<script::object_object>();
+        proto->define("constructor", ctor, script::attr_builtin);
+        proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+        static_cast<script::native_object *>(ctor.as_heap())
+            ->define("prototype", value::object(proto), script::attr_none);
+    }
 
     // `Event`, `CustomEvent`, `EventTarget` and `window.dispatchEvent` USED TO
     // BE HERE, and each was a stub that answered the shape of the question and

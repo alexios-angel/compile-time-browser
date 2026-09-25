@@ -201,6 +201,16 @@ void dom_bindings::install(context & cx) {
     // reads as flakiness, and it was the same one behind `createHTMLDocument`
     // and `make_live_collection` earlier on this branch.
     ensure_dom_interfaces(cx);
+    // `Image` IS A LEGACY FACTORY FUNCTION for HTMLImageElement (HTML 4.8.4.1):
+    // its `prototype` is HTMLImageElement.prototype, so `new Image() instanceof
+    // Image` - and every <img> - answers true. Set here, where the interface
+    // prototypes exist.
+    if (const value image = cx.global("Image"); image.is_kind(script::heap_kind::native)) {
+        if (const value proto = interface_prototype("HTMLImageElement"); proto.is_object()) {
+            static_cast<script::native_object *>(image.as_heap())
+                ->define("prototype", proto, script::attr_none);
+        }
+    }
     // AFTER the interface table: `document.getSelection` goes on
     // Document.prototype, which does not exist until ensure_dom_interfaces
     // has built it.
