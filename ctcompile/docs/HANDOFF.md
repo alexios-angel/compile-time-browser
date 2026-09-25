@@ -22,6 +22,52 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Structured iterator helper branches, 2026-09-25 UTC
+
+Resumed **84fdf55f** and the interrupted iteration21 candidates.
+**bbbe6c30** projects exact Boolean, zero-result `scf.if` arms in private iterator
+helpers, including bodies that already have one block. The existing counted
+census and quadratic reservation cover verification and projection. CFG merges
+may expose the constant predicate first. Evaluated inputs and selected effects
+retain source order; getter, receiver, capture, result and DOM proofs still run.
+Nineteen new controls (56 total) cover nested/shared predicates, selected effects,
+unknown conditions, result-bearing refusals and late nonzero-budget rollback.
+Independent read-only review of all seven helper callers found no defects.
+
+The devbox built `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate` and
+`ctcompile-test-native-reference`. Final exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 5.46 s** and
+`ctcompile_host_contract` **1/1, 2.72 s**. The first host run exposed two budget
+diagnostic failures: a census cutoff had not cleared the remaining budget.
+Restoring that marker fixed both without weakening tests; the final checks ran
+after the correction. The passing escape checks below were not repeated.
+
+Both unchanged conditional-helper source witnesses now execute through raw and
+structured preparation. Node/VM observations agree; **20 generated C++ files and
+40 GCC/Clang binaries** pass across both printers, with both structured providers
+and optimization modes, real DOM identities, ordered writes, two documents and
+16 lifetimes. Ten zero-budget refusals pass. Native source/symbol checks pass;
+the output uses the existing public DOM helpers without Script/AOT dependencies.
+All five final code/test hashes match the devbox. The 10 original C++ raw literals
+and 71 Python multiline literals remain; only the obsolete refusal diagnostic
+was removed. Final formatting passes **1126 C++, 159 Python, 114 web files**;
+diff checks pass. Logs, selectors, review and generated C++ are in
+`/tmp/ctcompile-iteration21/`.
+
+**Next:** constant result-bearing helper `scf.if` arms still refuse (direct
+control 51 returns the receiver through a one-result branch). Prove selected
+`scf.yield` payload correspondence and substitution before widening projection.
+Dynamic differing branches, repeated allocation instances/lifetimes, nested
+counted stores, mutable exceptional state, escaping owners, unguarded Bootstrap
+defaults, the native application driver and full native Bootstrap remain.
+No full-Bootstrap admission or raw escape-oracle gain is claimed.
+
+Full CTest/compiler lit, the whole browser fixture, broad corpora/matrices,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance runs were skipped. No browser/runtime/shared implementation changed;
+Claude availability remained uncertain, so concurrent-agent rules were retained.
+
 ## Conditional allocations in single-visit loops, 2026-09-25 UTC
 
 Resumed **84fdf55f** and the interrupted iteration21 candidates.
@@ -41,13 +87,9 @@ Formatting passed **1126 C++, 159 Python, 114 web files**; diff checks passed.
 Full CTest/compiler lit, broad corpora/matrices, raw escape oracle,
 WPT/test262, sanitizers and cross-platform/performance runs were skipped.
 
-Native zero-result structured helper projection is still in flight.
-Its initial recovery CTest passed **1/1, 5.47 s**; host-contract checks exposed
-two budget diagnostic failures. The census cutoff now clears the remaining
-budget before refusal, restoring the existing diagnostic path. Final native
-rebuild, recovery/host checks and two unchanged conditional source executions
-are queued. No final native pass is claimed yet. Checkpoints and logs are in
-`/tmp/ctcompile-iteration21/`.
+The native continuation subsequently landed as **bbbe6c30**, described above.
+Result-bearing helper branches, repeated allocation instances/lifetimes and
+native ownership remain separate proof boundaries.
 
 ## Exact conditional iterator helper edges, 2026-09-25 UTC
 
