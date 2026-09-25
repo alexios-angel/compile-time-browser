@@ -24,13 +24,16 @@ namespace ctbrowser::shell::input_types {
 
 // The "value sanitization algorithm" of a type state over `value`; `min`,
 // `max`, `step` and `value_attribute` are the content attributes' text (range
-// needs them - the last for its step base) and `multiple` the attribute's
-// presence (email). The result is what the control's value becomes.
+// needs them - the last for its step base), `multiple` the attribute's
+// presence (email), and `display_p3` and `alpha` a color control's
+// `colorspace` state and `alpha` attribute. The result is what the control's
+// value becomes.
 [[nodiscard]] std::string sanitize_value(std::string_view type, std::string value,
                                          std::string_view min = {}, std::string_view max = {},
                                          std::string_view step = {},
                                          std::string_view value_attribute = {},
-                                         bool multiple = false);
+                                         bool multiple = false, bool display_p3 = false,
+                                         bool alpha = false);
 
 // "Normalize newlines" (Infra): every CR LF and then every lone CR becomes LF.
 // A textarea's API value, and a custom validity message.
