@@ -727,20 +727,27 @@ bool context::define_own_property(value target, const std::string & name,
             wanted.has_set
                 ? wanted.setter
                 : (exists && current.is_accessor() ? current.setter : value::undefined());
-        if (target.is_object()) {
-            static_cast<object_object *>(target.as_heap())
-                ->define_accessor(name, getter, setter, accessor_attrs);
+        // `getter` and `setter` are the RESULT - the wanted half or the current
+        // one - so an existing accessor takes both as they are: a table's
+        // define_accessor keeps a half passed as undefined (an object
+        // literal's `get x` and `set x` arrive one at a time), which would
+        // make `defineProperty(o, "x", {set: undefined})` a no-op.
+        const auto replace = [&](auto * table) {
+            if (accessor_entry * entry = table->find_accessor(name)) {
+                entry->getter = getter;
+                entry->setter = setter;
+                entry->attrs = accessor_attrs;
+            } else {
+                table->define_accessor(name, getter, setter, accessor_attrs);
+            }
             return true;
-        }
+        };
+        if (target.is_object()) { return replace(static_cast<object_object *>(target.as_heap())); }
         if (target.is_kind(heap_kind::function)) {
-            static_cast<closure_object *>(target.as_heap())
-                ->define_accessor(name, getter, setter, accessor_attrs);
-            return true;
+            return replace(static_cast<closure_object *>(target.as_heap()));
         }
         if (target.is_kind(heap_kind::native)) {
-            static_cast<native_object *>(target.as_heap())
-                ->define_accessor(name, getter, setter, accessor_attrs);
-            return true;
+            return replace(static_cast<native_object *>(target.as_heap()));
         }
         // AN ARRAY'S ELEMENTS HAVE NOWHERE TO PUT ONE, and answer true.
         //

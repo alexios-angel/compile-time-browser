@@ -183,6 +183,12 @@ int main() {
               "return Object.keys(o).join();})()",
               "b,c");
 
+    // An explicit `set: undefined` REPLACES the setter (10.1.6.3 step 6).
+    js_expect("(function(){var o={};Object.defineProperty(o,'x',{get(){return 1;},"
+              "set(v){},configurable:true});Object.defineProperty(o,'x',{set:undefined});"
+              "var d=Object.getOwnPropertyDescriptor(o,'x');return typeof d.get+','+d.set;})()",
+              "function,undefined");
+
     // 13.10.2 InstanceofOperator: @@hasInstance first, then a callable check.
     js_expect("(function(){var C={[Symbol.hasInstance](v){return v===1;}};"
               "return (1 instanceof C)+','+(2 instanceof C);})()",
