@@ -552,6 +552,18 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string correlatedGap =
         selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
                       arithmeticInput("%read", "%two", "sub %selectedKey, %selectedKey"));
+    const auto pairedInput = [](const std::string & thenValues, const std::string & elseValues,
+                                const std::string & thenBody = "",
+                                const std::string & elseBody = "") {
+        return "    %paired:2 = scf.if %flag -> (!ctjs.value, !ctjs.value) {\n" + thenBody +
+               "      scf.yield " + thenValues + " : !ctjs.value, !ctjs.value\n    } else {\n" +
+               elseBody + "      scf.yield " + elseValues +
+               " : !ctjs.value, !ctjs.value\n    }\n"
+               "    %key = ctjs.binary sub %paired#0, %paired#1\n";
+    };
+    const std::string pairedKeys = selectedStore(pairedInput("%zero, %zero", "%one, %one"));
+    const std::string pairedGap = selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
+                                                pairedInput("%read, %read", "%two, %two"));
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -1583,6 +1595,90 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(correlatedKeys) + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "matching result slots of one If cancel as finite Numbers",
+         .body = loopValues + allocationLoop(pairedKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "paired signed conditional Number values cancel without conversion",
+         .body = loopValues +
+                 allocationLoop(selectedStore(pairedInput("%negative, %negative", "%one, %one"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "paired distinct constants need equal attributes in each corresponding arm",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(pairedInput("%left, %right", "%one, %one",
+                                               "      %left = ctjs.constant #ctjs.number<0>\n"
+                                               "      %right = ctjs.constant #ctjs.number<0>\n"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "a paired cancellation result composes with an ordinary offset",
+         .body = loopValues +
+                 allocationLoop(selectedStore(pairedInput("%zero, %zero", "%one, %one") +
+                                                  "    %final = ctjs.binary add %key, %one\n",
+                                              "%guard", "%final"),
+                                "%one", "%one", "%zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "paired cancellation preserves the guard read gap",
+         .body =
+             loopValues + allocationLoop(pairedGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "paired cancellation cannot overwrite its input guard read",
+         .body = loopValues +
+                 allocationLoop(selectedStore("    %read = ctjs.get_property %guard[%zero]\n" +
+                                              pairedInput("%read, %read", "%one, %one"))) +
+                 done,
+         .complete = false},
+        {.what = "swapped arm values do not correlate merely because their ranges agree",
+         .body = loopValues +
+                 allocationLoop(selectedStore(pairedInput("%zero, %one", "%one, %zero")), "%one",
+                                "%one", "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "corresponding unknown values still need finite Number evidence",
+         .body = loopValues + allocationLoop(selectedStore(pairedInput("%zero, %zero", "%p, %p"))) +
+                 done,
+         .complete = false},
+        {.what = "corresponding String values do not borrow the Number cancellation proof",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     pairedInput("%zero, %zero", "%text, %text", "",
+                                 "      %text = ctjs.constant #ctjs.string<\"1\">\n"))) +
+                 done,
+         .complete = false},
+        {.what = "corresponding NaN values never cancel to an own key",
+         .body = loopValues +
+                 allocationLoop(selectedStore(pairedInput(
+                     "%zero, %zero", "%nan, %nan", "",
+                     "      %nan = ctjs.constant #ctjs.number<9221120237041090560>\n"))) +
+                 done,
+         .complete = false},
+        {.what = "corresponding Infinity values never cancel to an own key",
+         .body = loopValues +
+                 allocationLoop(selectedStore(pairedInput(
+                     "%zero, %zero", "%infinity, %infinity", "",
+                     "      %infinity = ctjs.constant #ctjs.number<9218868437227405312>\n"))) +
+                 done,
+         .complete = false},
+        {.what = "paired cancellation cannot bypass an effect in either arm",
+         .body = loopValues +
+                 allocationLoop(selectedStore(pairedInput("%zero, %zero", "%one, %one", "",
+                                                          "      %called = ctjs.call %p(%q)\n"))) +
+                 done,
+         .complete = false},
+        {.what = "a returned paired-key holder retains its child",
+         .body = loopValues + allocationLoop(pairedKeys) + "  ctjs.return %guard\n"},
+        {.what = "clearing a paired zero key releases the stored child",
+         .body = loopValues + allocationLoop(pairedKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved paired-key child survives clearing its holder",
+         .body = loopValues + allocationLoop(pairedKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "paired cancellation still requires initialized solver inputs",
+         .body = loopValues + allocationLoop(pairedKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "calls in an arithmetic key arm still refuse the complete census",
          .body = loopValues +
                  allocationLoop(
@@ -2024,7 +2120,61 @@ void checkArrayRetention(mlir::MLIRContext & context) {
             row{.what = correlationMutation.what, .body = correlationMutation.body, .expected = ""},
             "the cancellation mutation fixture did not parse");
     }
-    std::printf("array retention: %zu rows, thirty-two live states, %zu budget cutoffs\n",
+    retention_row pairedMutation{
+        .what = "paired slot cancellation reproves current yields and guard reads",
+        .body =
+            loopValues + allocationLoop(pairedGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto pairedModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + pairedMutation.body + "}\n", &context);
+    if (pairedModule) {
+        ctjs::FuncOp function = *pairedModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto branch = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto * thenYield = branch.getThenRegion().front().getTerminator();
+        auto * elseYield = branch.getElseRegion().front().getTerminator();
+        auto load = thenYield->getOperand(0).getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalThen = thenYield->getOperand(0);
+        const mlir::Value originalElse = elseYield->getOperand(1);
+        const mlir::Value originalPosition = load->getOperand(1);
+        const mlir::Value opaque = function.getBody().front().getArgument(3);
+        mlir::Value zero;
+        for (auto literal : function.getBody().front().getOps<ctjs::ConstantOp>()) {
+            if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue());
+                number && number.getBits() == 0) {
+                zero = literal;
+            }
+        }
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*pairedModule))) {
+            fail(row{.what = pairedMutation.what, .body = pairedMutation.body, .expected = ""},
+                 "the paired cancellation stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 5; ++state) {
+            elseYield->setOperand(1, state == 1 ? originalPosition : originalElse);
+            thenYield->setOperand(0, state == 2 ? opaque : originalThen);
+            thenYield->setOperand(1, state == 2 ? opaque : originalThen);
+            load->setOperand(1, state == 3 ? zero : originalPosition);
+            pairedMutation.complete = state == 0 || state == 4;
+            pairedMutation.confinedNested = pairedMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*pairedModule, pairedMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                pairedMutation.complete) {
+                fail(row{.what = pairedMutation.what, .body = pairedMutation.body, .expected = ""},
+                     "a stale solver or forged marker supplied paired slot cancellation");
+            }
+        }
+    } else {
+        fail(row{.what = pairedMutation.what, .body = pairedMutation.body, .expected = ""},
+             "the paired cancellation mutation fixture did not parse");
+    }
+    std::printf("array retention: %zu rows, thirty-seven live states, %zu budget cutoffs\n",
                 rows.size(), budgets);
 }
 

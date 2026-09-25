@@ -136,19 +136,31 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         return inputs;
     };
+    const auto sameInput = [](mlir::Value left, mlir::Value right) {
+        if (left == right) { return true; }
+        auto first = left.getDefiningOp<ctjs::ConstantOp>();
+        auto second = right.getDefiningOp<ctjs::ConstantOp>();
+        return first && second && first.getValue() == second.getValue();
+    };
     const auto equalYield = [&](mlir::Value operand) -> mlir::Value {
         mlir::Value common;
         for (mlir::Value value : yieldedInputs(operand)) {
-            if (common && common != value) {
-                auto first = common.getDefiningOp<ctjs::ConstantOp>();
-                auto second = value.getDefiningOp<ctjs::ConstantOp>();
-                if (!first || !second || first.getValue() != second.getValue()) { return {}; }
-            }
+            if (common && !sameInput(common, value)) { return {}; }
             common = value;
         }
         // This is only operand correspondence. The census and replay still
         // validate every producer/effect in both arms; equal ranges prove nothing.
         return common;
+    };
+    const auto correspondingInputs = [&](mlir::Value left, mlir::Value right) {
+        if (left == right) { return true; }
+        // ponytail: one If identity; separate branches need their own path proof.
+        auto branch = left.getDefiningOp<mlir::scf::IfOp>();
+        if (!branch || branch != right.getDefiningOp<mlir::scf::IfOp>()) { return false; }
+        const auto first = yieldedInputs(left);
+        const auto second = yieldedInputs(right);
+        return first.size() == 2 && second.size() == 2 && sameInput(first[0], second[0]) &&
+               sameInput(first[1], second[1]);
     };
     const auto invariant = [&](auto && self, mlir::Value operand,
                                unsigned depth) -> std::optional<ContentsValue> {
@@ -588,11 +600,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
               bitOr || bitXor)) {
             return std::nullopt;
         }
-        if (subtract && binary.getLhs() == binary.getRhs()) {
-            // Identical SSA operands cancel only after their original value is
-            // proved a bounded Number. Equal ranges and primitive conversions
-            // supply no identity; the recursive proof retains every guard read.
-            if (self(self, binary.getLhs(), depth + 1, IndexUse::Number)) {
+        if (subtract && correspondingInputs(binary.getLhs(), binary.getRhs())) {
+            // Same-If slots select corresponding values from the same arm.
+            // Both original values must independently prove bounded Numbers.
+            // Neither ranges nor conversions prove correspondence; recursive
+            // Number proofs retain every guard read.
+            if (self(self, binary.getLhs(), depth + 1, IndexUse::Number) &&
+                (binary.getLhs() == binary.getRhs() ||
+                 self(self, binary.getRhs(), depth + 1, IndexUse::Number))) {
                 const ContentsValue zero{operand, ContentsKind::NonBigInt, 0};
                 return IndexRange{zero, zero, 1};
             }
