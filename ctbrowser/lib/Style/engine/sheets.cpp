@@ -548,6 +548,40 @@ bool engine::scope_root_for(const read_txn & txn, const ancestor_filter & ancest
     return found;
 }
 
+namespace {
+
+// `a < b`, `a <= b < c`, `a = b` - a style feature's range form, with every
+// operand present, the two comparisons of a double range pointing one way,
+// and no `!` anywhere.
+[[nodiscard]] bool well_formed_range(std::string_view text) {
+    const css::token_stream s = css::tokenize(text);
+    std::vector<char> ops;
+    bool operand = false;
+    int depth = 0;
+    for (std::size_t i = 0; i + 1 < s.tokens.size(); ++i) {
+        const css::css_token & t = s.tokens[i];
+        if (t.type == css::token_type::whitespace) { continue; }
+        const std::string_view d = s.text_of(t);
+        if (t.type == css::token_type::delim && d == "!") { return false; }
+        if (depth == 0 && t.type == css::token_type::delim && (d == "<" || d == ">" || d == "=")) {
+            if (!operand) { return false; }
+            ops.push_back(d.front());
+            if (d != "=" && css::is_delim_text(s, i + 1, '=')) { ++i; }
+            operand = false;
+            continue;
+        }
+        if (t.type == css::token_type::function || t.type == css::token_type::open_paren) {
+            ++depth;
+        }
+        if (t.type == css::token_type::close_paren) { --depth; }
+        operand = true;
+    }
+    if (!operand || ops.empty() || ops.size() > 2) { return false; }
+    return ops.size() == 1 || (ops[0] == ops[1] && ops[0] != '=');
+}
+
+} // namespace
+
 std::optional<engine::container_size> engine::container_size_of(node_id node) {
     for (const auto & [asked, answer] : container_answers_) {
         if (asked == node) { return answer; }
@@ -687,9 +721,11 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
                 "if(style(" + asked + "): y; not style(" + asked + "): n; else: u)", lookup,
                 *atoms_, attributes, &conditions);
             const std::string_view word = trim(answer.value_or("u"), html_whitespace);
-            return word == "y"   ? css::truth::yes
-                   : word == "n" ? css::truth::no
-                                 : css::truth::unknown;
+            if (word == "y") { return css::truth::yes; }
+            // A WELL-FORMED RANGE ANSWERS: two values that cannot be compared
+            // are not in range (at-container-style-parsing); only one with a
+            // `!` or its comparisons pointing both ways is unknown.
+            return word == "n" || well_formed_range(text) ? css::truth::no : css::truth::unknown;
         };
         // A name alone asks only that there be such a container.
         held =
