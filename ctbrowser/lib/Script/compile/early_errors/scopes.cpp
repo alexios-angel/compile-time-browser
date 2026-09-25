@@ -180,23 +180,39 @@ void checker::check_module_items(std::int32_t root, const std::vector<binding> &
     const std::span<const std::int32_t> items = kids(at(root));
     std::vector<binding> declared = vars;
     lexical_names(items, list_kind::script, declared);
+    // 16.2.1.1: the ModuleItemList's LexicallyDeclaredNames - imports and a
+    // named default export among them - may not repeat, nor name a var. The
+    // names lexical_names already compared are in `declared`; these two kinds
+    // it cannot see are compared against them, and each other, as they join.
+    const auto declare = [&](std::string_view name, std::int32_t node) {
+        for (const binding & b : declared) {
+            if (b.name == name) {
+                report(quoted(name) + " has already been declared", node);
+                break;
+            }
+        }
+        declared.push_back(binding{name, binding_kind::const_, node});
+    };
     for (const std::int32_t s : items) {
         const vp::node & item = at(s);
         // An imported binding is a binding of this module too, and `export
         // { a }` may name one (16.2.3: ExportedBindings are resolved against
-        // everything the module declares, imports included).
+        // everything the module declares, imports included). It is an
+        // ImportedBinding - a BindingIdentifier of strict code, so `eval`
+        // and `arguments` are refused as any strict binding of them is.
         if (item.kind == nk::import_decl) {
             for (const std::int32_t spec : kids(item)) {
-                declared.push_back(binding{at(spec).text, binding_kind::const_, spec});
+                check_strict_binding(at(spec).text, spec);
+                declare(at(spec).text, spec);
             }
         }
         // `export default function f() {}` BINDS f as well as exporting
         // `default` (16.2.3.7: the HoistableDeclaration's BoundNames). The
-        // parser reads the declaration in expression position, so the name
-        // is on a func_expr or a class node and lexical_names cannot see it.
+        // parser reads the function in expression position, so its name is
+        // on a func_expr that lexical_names cannot see (a class it can).
         if (item.kind == nk::export_decl && item.c == 1 && item.a >= 0 &&
-            !at(item.a).text.empty()) {
-            declared.push_back(binding{at(item.a).text, binding_kind::const_, item.a});
+            !at(item.a).text.empty() && at(item.a).kind == nk::func_expr) {
+            declare(at(item.a).text, item.a);
         }
     }
     const auto is_declared = [&](std::string_view name) {

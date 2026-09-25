@@ -614,6 +614,14 @@ int main() {
     module_refused("function x() {} function x() {}");
     module_refused("var x; function x() {}");
     module_accepted("function x() {} function y() {}");
+    // An import binds strictly and lexically; so does a named default export.
+    module_refused("import { eval } from './m.js';");
+    module_refused("import { x as arguments } from './m.js';");
+    module_refused("import { a } from './m.js'; let a;");
+    module_refused("class F {} export default function F() {}");
+    module_refused("var G; export default function* G() {}");
+    module_accepted("export default class C {} export { C as D };");
+    module_accepted("export default function F() {} export { F as G };");
 
     REPORT("early_errors");
 }
