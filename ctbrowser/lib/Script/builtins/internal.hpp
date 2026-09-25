@@ -492,6 +492,26 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
     return false;
 }
 
+// THE SAME CEILING, SPENT ONE STEP AT A TIME - for a walk that CAN see the
+// throw that ends it. The note above predates unwind_watch: a throw that has
+// landed on the page's handler moves context::unwinds, so a loop that asks
+// after each read stops at its first throwing getter, as 23.1.3 has it, and
+// `reverse`/`unshift`/`concat` over `{length: 2**53 - 1}` with a getter that
+// throws near the top are answered rather than refused up front. Only a walk
+// that really takes max_generic_walk steps without one is the RangeError.
+struct generic_walk {
+    context & cx;
+    unwind_watch watch{cx};
+    double steps = 0;
+    explicit generic_walk(context & c) : cx(c) {}
+    // Before each step: false with a throw in flight - the budget spent.
+    [[nodiscard]] bool step() {
+        steps += 1.0;
+        return steps <= max_generic_walk || generic_walk_ok(cx, steps);
+    }
+    [[nodiscard]] bool threw() const { return watch.threw(); }
+};
+
 // ToObject(this value), 23.1.3's first step in every method: a primitive is
 // BOXED (detail::box_primitive) so that `Array.prototype.push.call(true)` sets
 // `length` on a Boolean wrapper and answers 0 rather than refusing a write to

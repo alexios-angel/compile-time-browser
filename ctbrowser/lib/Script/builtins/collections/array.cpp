@@ -600,14 +600,17 @@ void install_array(context & cx) {
                 c.throw_error("TypeError", "Invalid array length");
                 return value::number(len);
             }
-            if (!detail::generic_walk_ok(c, len)) { return value::number(len); }
+            detail::generic_walk walk{c};
             for (double k = len; k > 0; k -= 1.0) {
+                if (!walk.step()) { return value::number(0); }
                 const double from = k - 1;
                 const double to = k + count - 1;
-                if (detail::has_element(c, self, from)) {
-                    if (!detail::put_element(c, self, to, detail::element_at(c, self, from))) {
-                        return value::number(0);
-                    }
+                const bool present = detail::has_element(c, self, from);
+                if (walk.threw()) { return value::number(0); }
+                if (present) {
+                    const value moved = detail::element_at(c, self, from);
+                    if (walk.threw()) { return value::number(0); }
+                    if (!detail::put_element(c, self, to, moved)) { return value::number(0); }
                 } else {
                     if (!detail::delete_element(c, self, to)) { return value::number(0); }
                 }
@@ -726,8 +729,11 @@ void install_array(context & cx) {
         // BOUNDED BY THE WORK, not by `length`. Step 15's shift runs from
         // actualStart to len-actualDeleteCount, so splicing one element out of
         // `{length: 4294967296}` at the very end is two operations and not four
-        // billion - which is what S15.4.4.12_A3_T1 asks for.
-        if (!detail::generic_walk_ok(c, skipped) || !detail::generic_walk_ok(c, len - start)) {
+        // billion - which is what S15.4.4.12_A3_T1 asks for - and one that
+        // inserts as many as it deletes shifts nothing at all, whatever the
+        // length (splice/clamps-length-to-integer-limit).
+        if (!detail::generic_walk_ok(c, skipped) ||
+            (inserted != skipped && !detail::generic_walk_ok(c, len - start - skipped))) {
             return removed;
         }
         if (out != nullptr) { out->items.clear(); } // ArrayCreate sized it; the copy fills it
@@ -932,10 +938,11 @@ void install_array(context & cx) {
                 c.throw_error("TypeError", "Array.prototype.concat: length exceeds 2^53-1");
                 return false;
             }
-            if (!detail::generic_walk_ok(c, len)) { return false; }
+            detail::generic_walk walk{c};
             for (double k = 0; k < len; k += 1.0, n += 1.0) {
+                if (!walk.step()) { return false; }
                 const bool present = detail::has_element(c, item, k);
-                if (c.throw_pending()) { return false; }
+                if (walk.threw()) { return false; }
                 if (!present) {
                     if (result == nullptr) { continue; } // a species object: no property
                     // A HOLE STAYS A HOLE: the slot exists in `items` as a
@@ -949,7 +956,7 @@ void install_array(context & cx) {
                     continue;
                 }
                 const value element = detail::element_at(c, item, k);
-                if (c.throw_pending()) { return false; }
+                if (walk.threw()) { return false; }
                 const context::rooted keep_element(c, element);
                 if (!detail::create_element(c, out, n, element)) { return false; }
             }
@@ -974,21 +981,27 @@ void install_array(context & cx) {
             return self;
         }
         if (!detail::mutable_receiver(c, self, "reverse")) { return self; }
+        detail::generic_walk walk{c};
         const double len = detail::array_like_length(c, self);
-        if (!detail::generic_walk_ok(c, len)) { return self; }
+        if (walk.threw()) { return self; }
         const double middle = std::floor(len / 2);
         for (double lower = 0; lower < middle; lower += 1.0) {
+            if (!walk.step()) { return self; }
             const double upper = len - lower - 1;
             const bool lower_there = detail::has_element(c, self, lower);
+            if (walk.threw()) { return self; }
             const value lower_value =
                 lower_there ? detail::element_at(c, self, lower) : value::undefined();
+            if (walk.threw()) { return self; }
             // ROOTED ACROSS THE SECOND READ. A getter on the far end allocates,
             // an allocation can collect, and what the near end just answered is
             // by then held only by this C++ local.
             const context::rooted keep(c, lower_value);
             const bool upper_there = detail::has_element(c, self, upper);
+            if (walk.threw()) { return self; }
             const value upper_value =
                 upper_there ? detail::element_at(c, self, upper) : value::undefined();
+            if (walk.threw()) { return self; }
             if (lower_there && upper_there) {
                 if (!detail::put_element(c, self, lower, upper_value)) { return self; }
                 if (!detail::put_element(c, self, upper, lower_value)) { return self; }
