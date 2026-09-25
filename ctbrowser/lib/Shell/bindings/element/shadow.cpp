@@ -112,7 +112,22 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
     }
     // Metadata precedes wrapping: prototype_for_node distinguishes the root
     // from an ordinary DocumentFragment by asking the document.
-    return wrap(cx, *root);
+    const value made = wrap(cx, *root);
+    // "AVAILABLE TO ELEMENT INTERNALS" (DOM 4.8 step 8) only when the host's
+    // custom element state is precustomized or custom: a root attached to an
+    // element before it became custom is not one ElementInternals.shadowRoot
+    // hands out. Recorded as its absence, on the root's wrapper, so a root
+    // the parser attached (declarative, which HTML makes available) needs
+    // no mark.
+    const auto state = custom_elements_.find(host.key());
+    if ((state == custom_elements_.end() ||
+         state->second.state == custom_element_state::status::failed) &&
+        made.is_object()) {
+        static_cast<script::object_object *>(made.as_heap())
+            ->define(std::string{shadow_hidden_from_internals_key}, value::boolean(true),
+                     script::attr_none);
+    }
+    return made;
 }
 
 // THE MEMBERS A ShadowRoot HAS THAT A PLAIN DocumentFragment DOES NOT.

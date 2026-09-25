@@ -274,7 +274,15 @@ void dom_bindings::install_element_internals(context & cx,
         const target at = target_of(c, "shadowRoot");
         if (!at.id) { return value::undefined(); }
         const node_id root = at.owner->shadow_root_of(at.id);
-        return root ? at.owner->wrap(c, root) : value::null();
+        if (!root) { return value::null(); }
+        const value wrapped = at.owner->wrap(c, root);
+        // Not "available to element internals" (element/shadow.cpp).
+        if (wrapped.is_object() &&
+            static_cast<script::object_object *>(wrapped.as_heap())
+                    ->find(detail::shadow_hidden_from_internals_key) != nullptr) {
+            return value::null();
+        }
+        return wrapped;
     });
 
     define_getter(cx, *proto, "form", [form_associated_target](context & c, std::span<value>) {

@@ -150,6 +150,10 @@ inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Mat
 // them.
 inline constexpr std::string_view internals_key = "@#ctbrowser:internals";
 inline constexpr std::string_view internals_flag_prefix = "@#ctbrowser:internals-flag:";
+// On a ShadowRoot's wrapper: attached while its host was not (yet) custom, so
+// not "available to element internals" (shadow.cpp sets it).
+inline constexpr std::string_view shadow_hidden_from_internals_key =
+    "@#ctbrowser:shadow-hidden-from-internals";
 
 // The object behind an interface prototype, or null before the interfaces are
 // built - which is what every installer in this directory checks first.
