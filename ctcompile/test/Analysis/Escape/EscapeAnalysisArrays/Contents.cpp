@@ -516,6 +516,23 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         "  %aliases = ctjs.create_array [%guard] {storage_test_id = \"aliases\"}\n";
     const std::string loadedReceiver = "      %slot = ctjs.binary add %zero, %zero\n"
                                        "      %reloaded = ctjs.get_property %aliases[%slot]\n";
+    const auto selectedInput =
+        [](const std::string & left, const std::string & right, const std::string & thenBody = "",
+           const std::string & elseBody = "", const std::string & result = "%key") {
+            return "    " + result + " = scf.if %flag -> (!ctjs.value) {\n" + thenBody +
+                   "      scf.yield " + left + " : !ctjs.value\n    } else {\n" + elseBody +
+                   "      scf.yield " + right + " : !ctjs.value\n    }\n";
+        };
+    const auto selectedStore = [&](const std::string & input,
+                                   const std::string & receiver = "%guard",
+                                   const std::string & key = "%key") {
+        return localArray + input + "    ctjs.set_property " + receiver + "[" + key + "], %fresh\n";
+    };
+    const std::string selectedTuple =
+        "    %key:2 = scf.if %flag -> (!ctjs.value, !ctjs.value) {\n"
+        "      scf.yield %zero, %zero : !ctjs.value, !ctjs.value\n"
+        "    } else {\n"
+        "      scf.yield %one, %zero : !ctjs.value, !ctjs.value\n    }\n";
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -1112,7 +1129,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                             computedKey + "      ctjs.set_property %guard[%key], %fresh\n    }\n") +
              clearGuard + done,
          .complete = false},
-        {.what = "an If result still needs its own branch-correspondence key proof",
+        {.what = "an If result with identical yields preserves its counted store key",
          .body = loopValues +
                  allocationLoop(localArray +
                                 "    %key = scf.if %flag -> (!ctjs.value) {\n"
@@ -1120,7 +1137,136 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                                 "    } else {\n      scf.yield %zero : !ctjs.value\n    }\n"
                                 "    ctjs.set_property %guard[%key], %fresh\n") +
                  done,
+         .confinedNested = "fresh"},
+        {.what = "equal If induction yields reuse the counted index range",
+         .body = loopValues + allocationLoop(selectedStore(selectedInput("%i", "%i"))) + done,
+         .confinedNested = "fresh"},
+        {.what = "equal If expression yields preserve the original arithmetic proof",
+         .body = loopValues +
+                 allocationLoop(selectedStore("    %shared = ctjs.binary add %i, %zero\n" +
+                                              selectedInput("%shared", "%shared"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "distinct If Number constants with equal attributes prove the same key",
+         .body = loopValues +
+                 allocationLoop(selectedStore(selectedInput(
+                     "%left", "%right", "      %left = ctjs.constant #ctjs.number<0>\n",
+                     "      %right = ctjs.constant #ctjs.number<0>\n"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "equal If String constants keep their canonical own-key spelling",
+         .body = loopValues +
+                 allocationLoop(selectedStore(selectedInput(
+                     "%left", "%right", "      %left = ctjs.constant #ctjs.string<\"0\">\n",
+                     "      %right = ctjs.constant #ctjs.string<\"0\">\n"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested exact result correspondence reaches the original induction value",
+         .body = loopValues +
+                 allocationLoop(selectedStore(selectedInput("%i", "%i", "", "", "%shared") +
+                                              selectedInput("%shared", "%shared"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "an equal second tuple slot cannot borrow a different first result",
+         .body = loopValues +
+                 allocationLoop(selectedStore(selectedTuple, "%guard", "%key#1"), "%one", "%one",
+                                "%zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "a differing first tuple slot cannot borrow equality from its neighbor",
+         .body = loopValues +
+                 allocationLoop(selectedStore(selectedTuple, "%guard", "%key#0"), "%one", "%one",
+                                "%zero, %zero") +
+                 done,
          .complete = false},
+        {.what = "different in-bounds If keys still need per-arm correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(selectedInput("%zero", "%one")), "%one", "%one",
+                                "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "identical opaque yields cannot establish an own key",
+         .body = loopValues + allocationLoop(selectedStore(selectedInput("%p", "%p"))) + done,
+         .complete = false},
+        {.what = "one unknown If yield discards the other arm's exact key",
+         .body = loopValues + allocationLoop(selectedStore(selectedInput("%zero", "%p"))) + done,
+         .complete = false},
+        {.what = "equal-looking arithmetic yields do not establish value correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(selectedInput(
+                     "%left", "%right", "      %left = ctjs.binary add %zero, %zero\n",
+                     "      %right = ctjs.binary add %zero, %zero\n"))) +
+                 done,
+         .complete = false},
+        {.what = "matching Number and String key spellings are not equal literal attributes",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(selectedInput(
+                 "%zero", "%right", "", "      %right = ctjs.constant #ctjs.string<\"0\">\n"))) +
+             done,
+         .complete = false},
+        {.what = "an equal If receiver keeps the exact unchanged array alias",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(loadedReceiver + selectedInput("%reloaded", "%reloaded"),
+                                          "%key", "%zero"),
+                            "%zero", "%one", "%zero", "", guardAlias) +
+             done,
+         .discharged = "guard",
+         .confinedNested = "fresh"},
+        {.what = "different If receiver identities cannot borrow the guard footprint",
+         .body = loopValues + "  %otherArray = ctjs.create_array [%zero]\n" +
+                 allocationLoop(
+                     selectedStore(selectedInput("%guard", "%otherArray"), "%key", "%zero")) +
+                 done,
+         .complete = false},
+        {.what = "a returned holder retains the child stored through an equal If key",
+         .body = loopValues + allocationLoop(selectedStore(selectedInput("%i", "%i"))) +
+                 "  ctjs.return %guard\n"},
+        {.what = "clearing an equal-key holder releases its conditional child",
+         .body = loopValues + allocationLoop(selectedStore(selectedInput("%i", "%i"))) +
+                 clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved equal-key store alias survives clearing its holder",
+         .body = loopValues + allocationLoop(selectedStore(selectedInput("%i", "%i"))) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "a call in either equal-yield arm still refuses the complete census",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     selectedInput("%zero", "%zero", "      %call = ctjs.call %p(%q)\n"))) +
+                 done,
+         .complete = false},
+        {.what = "publication in the other equal-yield arm refuses confinement",
+         .body = loopValues +
+                 allocationLoop(selectedStore(selectedInput(
+                     "%zero", "%zero", "", "      ctjs.store_global \"held\", %fresh\n"))) +
+                 done,
+         .complete = false},
+        {.what = "an overlapping guard reload remains visible through equal yields",
+         .body = loopValues +
+                 allocationLoop(selectedStore("    %read = ctjs.get_property %guard[%zero]\n" +
+                                              selectedInput("%read", "%read"))) +
+                 done,
+         .complete = false},
+        {.what = "a disjoint guard reload keeps its footprint through equal yields",
+         .body = loopValues +
+                 allocationLoop(selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
+                                              selectedInput("%read", "%read")),
+                                "%one", "%one", "%zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "a transient equal-key cycle remains in the all-write graph",
+         .body = loopValues +
+                 allocationLoop("    %fresh = ctjs.create_array [%guard]\n" +
+                                selectedInput("%i", "%i") +
+                                "    ctjs.set_property %guard[%key], %fresh\n") +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "equal-yield correspondence still requires initialized solver inputs",
+         .body = loopValues + allocationLoop(selectedStore(selectedInput("%i", "%i"))) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "an arm store cannot resize the array that proves its trip count",
          .body =
              loopValues +
@@ -1348,8 +1494,44 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = inputMutation.what, .body = inputMutation.body, .expected = ""},
              "the branch-local input mutation fixture did not parse");
     }
-    std::printf("array retention: %zu rows, fifteen live states, %zu budget cutoffs\n", rows.size(),
-                budgets);
+    retention_row yieldMutation{
+        .what = "equal-yield store correspondence is reproved after a live payload change",
+        .body = loopValues + allocationLoop(selectedStore(selectedInput("%i", "%i"))) + done,
+        .confinedNested = "fresh"};
+    auto yieldModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + yieldMutation.body + "}\n", &context);
+    if (yieldModule) {
+        ctjs::FuncOp function = *yieldModule->getOps<ctjs::FuncOp>().begin();
+        mlir::scf::IfOp branch;
+        function.walk([&](mlir::scf::IfOp op) { branch = op; });
+        auto * yield = branch.getElseRegion().front().getTerminator();
+        const mlir::Value original = yield->getOperand(0);
+        const mlir::Value opaque = function.getBody().front().getArgument(3);
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*yieldModule))) {
+            fail(row{.what = yieldMutation.what, .body = yieldMutation.body, .expected = ""},
+                 "the equal-yield stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (const bool changed : {false, true, false}) {
+            yield->setOperand(0, changed ? opaque : original);
+            yieldMutation.complete = !changed;
+            yieldMutation.confinedNested = changed ? "" : "fresh";
+            budgets += checkArrayRetention(*yieldModule, yieldMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete != !changed) {
+                fail(row{.what = yieldMutation.what, .body = yieldMutation.body, .expected = ""},
+                     "a stale solver or forged marker supplied an equal-yield proof");
+            }
+        }
+    } else {
+        fail(row{.what = yieldMutation.what, .body = yieldMutation.body, .expected = ""},
+             "the equal-yield mutation fixture did not parse");
+    }
+    std::printf("array retention: %zu rows, eighteen live states, %zu budget cutoffs\n",
+                rows.size(), budgets);
 }
 
 void checkObjectContents(mlir::MLIRContext & context) {

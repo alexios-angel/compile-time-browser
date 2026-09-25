@@ -116,6 +116,34 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     // The census adds conditional arms only after proving one body visit.
     // Their producers then reuse the same invariant and index proofs below.
     llvm::SmallPtrSet<mlir::Block *, 4> bodyBlocks{body};
+    const auto equalYield = [&](mlir::Value operand) -> mlir::Value {
+        auto branch = operand.getDefiningOp<mlir::scf::IfOp>();
+        if (!branch || !bodyBlocks.contains(branch->getBlock())) { return {}; }
+        const auto position = llvm::cast<mlir::OpResult>(operand).getResultNumber();
+        mlir::Value common;
+        for (mlir::Region & region : branch->getRegions()) {
+            if (!spend()) {
+                invariantFailure = ArrayContentsFailure::WorkLimit;
+                return {};
+            }
+            if (!llvm::hasSingleElement(region) || region.front().empty() ||
+                region.front().getNumArguments() != 0) {
+                return {};
+            }
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+            if (!yield || yield.getNumOperands() != branch.getNumResults()) { return {}; }
+            const mlir::Value value = yield.getOperand(position);
+            if (common && common != value) {
+                auto first = common.getDefiningOp<ctjs::ConstantOp>();
+                auto second = value.getDefiningOp<ctjs::ConstantOp>();
+                if (!first || !second || first.getValue() != second.getValue()) { return {}; }
+            }
+            common = value;
+        }
+        // This is only operand correspondence. The census and replay still
+        // validate every producer/effect in both arms; equal ranges prove nothing.
+        return common;
+    };
     const auto invariant = [&](auto && self, mlir::Value operand,
                                unsigned depth) -> std::optional<ContentsValue> {
         if (!spend()) {
@@ -138,6 +166,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         // Every visited value spends the shared proof budget. Keep a stack
         // ceiling; repeated reads need unchanged base and key identities.
         if (depth == 64) { return std::nullopt; }
+        if (mlir::Value value = equalYield(operand)) { return self(self, value, depth + 1); }
         ContentsValue result{operand, ContentsKind::NonBigInt};
         if (auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(definition)) {
             const auto base = self(self, load.getObject(), depth + 1);
@@ -344,6 +373,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                               *stride};
         }
         if (depth == 64) { return std::nullopt; }
+        if (mlir::Value value = equalYield(operand)) { return self(self, value, depth + 1, use); }
         auto * expression = operand.getDefiningOp();
         auto addition = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(expression);
         auto binary = llvm::dyn_cast_or_null<ctjs::BinaryOp>(expression);
