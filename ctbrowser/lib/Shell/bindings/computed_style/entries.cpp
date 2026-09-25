@@ -833,6 +833,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             style::css::declaration_block block;
             for (const std::string_view longhand_name : style::css::longhands_of(p.name)) {
                 std::string held = longhand(longhand_name);
+                // A decoration in the text's own colour is `currentcolor`,
+                // which the shorthand leaves out as it does any initial part.
+                if (p.name == "text-decoration" && longhand_name == "text-decoration-color" &&
+                    held == current_color) {
+                    held = "currentcolor";
+                }
                 if (held.empty()) {
                     block.clear();
                     break;

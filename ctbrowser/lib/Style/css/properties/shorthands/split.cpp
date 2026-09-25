@@ -590,6 +590,45 @@ split split_axes(const expansion & e, std::string_view value, std::vector<std::s
     return split_same(e, value, out);
 }
 
+// `text-decoration`: `<line> || <thickness> || <style> || <color>`, where the
+// line is `underline overline ...` - several words, written together. The
+// run of line keywords is taken whole, so `overline blue underline` is two
+// lines and invalid (CSS Text Decoration 4 §2.6).
+split split_text_decoration(const expansion & e, std::span<const std::string_view> parts,
+                            std::vector<std::string> & out) {
+    static constexpr std::string_view line_words =
+        "none underline overline line-through blink spelling-error grammar-error";
+    static constexpr std::string_view styles = "solid double dotted dashed wavy";
+    out.assign(e.longhands.size(), std::string{});
+    for (std::size_t i = 0; i < parts.size();) {
+        std::size_t slot = e.longhands.size();
+        std::string_view text = parts[i];
+        std::size_t next = i + 1;
+        if (has_keyword(line_words, parts[i])) {
+            slot = 0;
+            while (next < parts.size() && has_keyword(line_words, parts[next])) { ++next; }
+            text = std::string_view{parts[i].data(), static_cast<std::size_t>(
+                                                         parts[next - 1].data() +
+                                                         parts[next - 1].size() - parts[i].data())};
+        } else if (has_keyword(styles, parts[i])) {
+            slot = 2;
+        } else {
+            bool valid = false;
+            (void)canonical(e.longhands[1], parts[i], valid);
+            slot = valid ? 1 : 3;
+        }
+        if (!out[slot].empty()) { return split::invalid; }
+        bool valid = false;
+        out[slot] = canonical(e.longhands[slot], text, valid);
+        if (!valid || out[slot].empty()) { return split::invalid; }
+        i = next;
+    }
+    for (std::size_t slot = 0; slot < out.size(); ++slot) {
+        if (out[slot].empty()) { out[slot] = std::string{initial_of(e.longhands[slot])}; }
+    }
+    return split::ok;
+}
+
 split split_value(const expansion & e, std::string_view text, std::vector<std::string> & out) {
     const std::string_view value = trim(text, html_whitespace);
     if (is_wide_keyword(value)) {
@@ -619,6 +658,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::same: return split_same(e, value, out);
     case shape::rule_inset: return split_rule_inset(e, value, out);
     case shape::axes: return split_axes(e, value, out);
+    case shape::text_decoration: return split_text_decoration(e, parts, out);
     case shape::columns: return split_columns(value, out) ? split::ok : split::invalid;
     case shape::flex: return split_flex(parts, out);
     case shape::border: return split_border(parts, out);

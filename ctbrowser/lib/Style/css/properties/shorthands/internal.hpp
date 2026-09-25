@@ -24,41 +24,43 @@ using namespace detail;
 
 // HOW A SHORTHAND'S PARTS MAP ONTO ITS LONGHANDS.
 enum class shape : std::uint8_t {
-    sides,        // 1-4 values: top, right, bottom, left, in `margin`'s way
-    pair,         // 1-2 values: start/end, x/y or row/column; one sets both
-    background,   // comma-separated layers, with color in the final layer only
-    border_image, // source || slice [ / width? [ / outset ]? ] || repeat
-    radius,       // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
-    place,        // `place-*`: an align value then a justify one, each of several words
-    grid_lines,   // grid-row / grid-column / grid-area: `/`-separated grid lines
-    slash_pair,   // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
-    bar,          // `a || b || c`: each part goes to the longhand that takes it
-    columns,      // width/count and optional `/ column-height`; resets column-wrap
-    flex,         // Flexbox 1 §7.1.1's own defaults
-    font,         // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
-    border,       // `bar` over width/style/color, applied to four sides, plus
-                  // border-image reset to its initial values
-    border_axis,  // `border-block` / `border-inline`: `bar` over width/style/
-                  // color applied to the axis's two sides (CSS Logical 1 §4.4)
-    white_space,  // CSS Text 4 §3: one of six keywords, or `<'white-space-collapse'>
-                  // || <'text-wrap-mode'> || <'white-space-trim'>`
-    animation,    // `<single-animation>#`, CSS Animations 1 §5.9: per item, the
-                  // first <time> is the duration and the second the delay, an
-                  // easing, a count, and the keywords of direction, fill mode
-                  // and play state before anything is a name
-    gap_rule,     // `column-rule`, CSS Gap Decorations 1: a list of `width || style ||
-                  // color` rules (and repeat()s of them), split item by item into the
-                  // three lists; gaps.cpp
-    same,         // one value set on every longhand: `column-rule-inset-start` is
-                  // the cap's start and the junction's
-    rule_inset,   // `column-rule-inset`: `<cap>{1,2} [ / <junction>{1,2} ]?`, the
-                  // junction the cap when omitted
-    axes,         // `rule-*`: the column shorthand (or longhand) of the same name,
-                  // applied to the columns and to the rows; the longhands are the
-                  // column half then the row half
-    all,          // every longhand; CSS-wide keywords only
-    whole,        // a grammar this table does not split: only a CSS-wide keyword
-                  // reaches the longhands, and only one folds back
+    sides,           // 1-4 values: top, right, bottom, left, in `margin`'s way
+    pair,            // 1-2 values: start/end, x/y or row/column; one sets both
+    background,      // comma-separated layers, with color in the final layer only
+    border_image,    // source || slice [ / width? [ / outset ]? ] || repeat
+    radius,          // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
+    place,           // `place-*`: an align value then a justify one, each of several words
+    grid_lines,      // grid-row / grid-column / grid-area: `/`-separated grid lines
+    slash_pair,      // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
+    bar,             // `a || b || c`: each part goes to the longhand that takes it
+    columns,         // width/count and optional `/ column-height`; resets column-wrap
+    flex,            // Flexbox 1 §7.1.1's own defaults
+    font,            // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
+    border,          // `bar` over width/style/color, applied to four sides, plus
+                     // border-image reset to its initial values
+    border_axis,     // `border-block` / `border-inline`: `bar` over width/style/
+                     // color applied to the axis's two sides (CSS Logical 1 §4.4)
+    white_space,     // CSS Text 4 §3: one of six keywords, or `<'white-space-collapse'>
+                     // || <'text-wrap-mode'> || <'white-space-trim'>`
+    animation,       // `<single-animation>#`, CSS Animations 1 §5.9: per item, the
+                     // first <time> is the duration and the second the delay, an
+                     // easing, a count, and the keywords of direction, fill mode
+                     // and play state before anything is a name
+    gap_rule,        // `column-rule`, CSS Gap Decorations 1: a list of `width || style ||
+                     // color` rules (and repeat()s of them), split item by item into the
+                     // three lists; gaps.cpp
+    same,            // one value set on every longhand: `column-rule-inset-start` is
+                     // the cap's start and the junction's
+    rule_inset,      // `column-rule-inset`: `<cap>{1,2} [ / <junction>{1,2} ]?`, the
+                     // junction the cap when omitted
+    axes,            // `rule-*`: the column shorthand (or longhand) of the same name,
+                     // applied to the columns and to the rows; the longhands are the
+                     // column half then the row half
+    text_decoration, // `bar` whose line part is itself several words:
+                     // `underline overline || thickness || style || color`
+    all,             // every longhand; CSS-wide keywords only
+    whole,           // a grammar this table does not split: only a CSS-wide keyword
+                     // reaches the longhands, and only one folds back
 };
 
 struct shorthand_syntax {
@@ -224,8 +226,11 @@ inline constexpr shorthand_syntax table[] = {
      "background-color background-image background-position background-size "
      "background-repeat background-attachment background-origin background-clip",
      ""},
-    {"text-decoration", shape::whole,
-     "text-decoration-line text-decoration-style text-decoration-color", ""},
+    // CSS Text Decoration 4 §2.6, in its canonical order.
+    {"text-decoration", shape::text_decoration,
+     "text-decoration-line text-decoration-thickness text-decoration-style "
+     "text-decoration-color",
+     "none"},
     {"transition", shape::whole,
      "transition-property transition-duration transition-timing-function transition-delay", ""},
     {"animation", shape::animation,

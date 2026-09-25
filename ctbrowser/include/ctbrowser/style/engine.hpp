@@ -356,10 +356,8 @@ public:
     // and every other inherited property - `word-break`, `quotes`, `hyphens`,
     // `caret-color` - then neither inherited nor answered `unset` with its
     // parent's value, which is what every module's `inheritance.html` asks.
-    //
-    // `text-decoration` is the one name the table says does NOT inherit and
-    // this does: a decoration PROPAGATES to the descendants' text (CSS Text
-    // Decoration 3 §2) and the painter reads that propagation as inheritance.
+    // (A text decoration does not inherit: it PROPAGATES to the descendants'
+    // text, CSS Text Decoration 3 §2, and layout's box builder carries that.)
     [[nodiscard]] bool inherits(std::string_view property) const {
         if (property.starts_with("--")) {
             // A registered custom property says whether it does (CSS Properties
@@ -368,7 +366,7 @@ public:
                 registration_of(atoms_->intern(property));
             return registered == nullptr || registered->inherits;
         }
-        return css::inherited_property(property) || property == "text-decoration";
+        return css::inherited_property(property);
     }
 
     // --- the single-element path -------------------------------------------

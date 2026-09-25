@@ -206,7 +206,8 @@ namespace ctbrowser::style::css::shorthand_detail {
     case shape::grid_lines: return fold_grid_lines(v);
     case shape::slash_pair:
         return ascii_iequals(v[1], initial_of(e.longhands[1])) ? v[0] : v[0] + " / " + v[1];
-    case shape::bar: return fold_bar(e, v);
+    case shape::bar:
+    case shape::text_decoration: return fold_bar(e, v);
     case shape::gap_rule: return fold_gap_rule(v);
     case shape::same:
         for (const std::string & one : v) {
