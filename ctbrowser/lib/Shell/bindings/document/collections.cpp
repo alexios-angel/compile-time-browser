@@ -674,7 +674,17 @@ value dom_bindings::make_live_collection(context & cx,
                                 return value::boolean(*at >= held->members.size());
                             }
                             if (visible_name(key)) { return value::boolean(false); }
-                            return value::boolean(c.delete_own_property(args[0], key));
+                            const bool deleted = c.delete_own_property(args[0], key);
+                            // AN EXPANDO THAT SHADOWED A SUPPORTED NAME IS GONE,
+                            // and the name shows again: the next refresh puts
+                            // its accessor back.
+                            if (deleted &&
+                                std::ranges::find(held->names, key) != held->names.end()) {
+                                held->names.clear();
+                                held->version = 0;
+                                refresh(c);
+                            }
+                            return value::boolean(deleted);
                         }));
     // `in` AND hasOwnProperty both come here (builtins/objects/object.cpp): an
     // own key of the refreshed target, or something the prototype answers.
