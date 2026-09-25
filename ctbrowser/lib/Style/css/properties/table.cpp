@@ -3,6 +3,8 @@
 
 #include "internal.hpp"
 
+#include <unordered_set>
+
 namespace ctbrowser::style::css {
 
 using namespace detail;
@@ -31,7 +33,8 @@ constexpr property_syntax table[] = {
      "block inline inline-block flex inline-flex grid inline-grid none table inline-table "
      "table-row table-row-group table-header-group table-footer-group table-column "
      "table-column-group table-cell table-caption list-item flow-root contents ruby run-in "
-     "ruby-base ruby-text ruby-base-container ruby-text-container flow",
+     "ruby-base ruby-text ruby-base-container ruby-text-container flow grid-lanes "
+     "inline-grid-lanes",
      "inline", false, false},
     {"position", k::keyword_only, "static relative absolute fixed sticky", "static", false, false},
     {"float", k::keyword_only, "none left right inline-start inline-end", "none", false, false},
@@ -175,14 +178,17 @@ constexpr property_syntax table[] = {
     {"border-spacing", k::freeform, "", "0px", true, false},
     {"outline", k::freeform, "", "medium none currentcolor", false, false, true},
     {"outline-width", k::length, "thin medium thick", "medium", false, true},
+    // CSS UI 4 §5: an outline's style is a border style but `hidden`, its
+    // colour gained `auto` - the UA's focus colour when the style is `auto` -
+    // and lost CSS 2.1's `invert`, and its offset gained `inset`.
     {"outline-style", k::keyword_only,
-     "auto none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
-    {"outline-color", k::color, "invert", "currentcolor", false, false},
-    {"outline-offset", k::length, "", "0px", false, false},
+     "auto none dotted dashed solid double groove ridge inset outset", "none", false, false},
+    {"outline-color", k::color, "auto", "currentcolor", false, false},
+    {"outline-offset", k::length, "inset", "0px", false, false},
 
     // --- colour and background ------------------------------------------
     {"color", k::color, "", "rgb(0, 0, 0)", true, false},
-    {"caret-color", k::color, "auto", "auto", true, false},
+    {"caret-color", k::freeform, "", "auto", true, false}, // declaration.cpp
     {"accent-color", k::color, "auto", "auto", false, false},
     {"background", k::freeform, "", "none", false, false, true},
     {"background-color", k::color, "", "rgba(0, 0, 0, 0)", false, false},
@@ -213,16 +219,16 @@ constexpr property_syntax table[] = {
     {"font-style", k::freeform, "", "normal", true, false},
     {"font-weight", k::number, "normal bold bolder lighter", "400", true, true},
     {"font-variant", k::freeform, "", "normal", true, false},
-    {"font-stretch", k::freeform, "", "100%", true, false},
+    {"font-stretch", k::freeform, "", "100%", true, true},
     // The rest of CSS Fonts 4's longhands, as freeform text: nothing shapes
     // with them, but each is a real property whose value a page sets and reads
     // back through getComputedStyle, with a math function inside it folded
     // (using-font-relative-units-in-font-properties).
-    {"font-width", k::freeform, "", "normal", true, false},
+    {"font-width", k::freeform, "", "normal", true, true},
     {"font-feature-settings", k::freeform, "", "normal", true, false},
     {"font-variation-settings", k::freeform, "", "normal", true, false},
     {"font-variant-alternates", k::freeform, "", "normal", true, false},
-    {"font-size-adjust", k::freeform, "", "none", true, false},
+    {"font-size-adjust", k::freeform, "", "none", true, true},
     {"font-palette", k::freeform, "", "normal", true, false},
     // NOT HERE YET: font-feature-settings, font-palette, font-size-adjust,
     // font-variant-alternates, font-variation-settings and font-width, which
@@ -241,7 +247,7 @@ constexpr property_syntax table[] = {
     {"word-spacing", k::length_percentage, "normal", "normal", true, false},
     {"text-align", k::keyword_only, "start end left right center justify match-parent", "start",
      true, false},
-    {"text-indent", k::length_percentage, "", "0px", true, false},
+    {"text-indent", k::freeform, "", "0px", true, false},     // declaration.cpp
     {"text-transform", k::freeform, "", "none", true, false}, // keywords.cpp's grammar
     {"text-decoration", k::freeform, "", "none", false, false, true},
     {"text-decoration-line", k::freeform, "", "none", false, false},
@@ -299,10 +305,9 @@ constexpr property_syntax table[] = {
     {"widows", k::integer, "", "2", true, true},
     // Three more `<integer>` properties nothing lays out, so that `1e1` and
     // `10.1` are refused where `calc(10.1)` rounds (calc-rounds-to-integer).
-    // ponytail: hyphenate-limit-chars takes one value here, not the spec's three.
     {"max-lines", k::integer, "none auto", "auto", false, true},
     {"hyphenate-limit-lines", k::integer, "no-limit", "no-limit", true, true},
-    {"hyphenate-limit-chars", k::integer, "auto", "auto", true, true},
+    {"hyphenate-limit-chars", k::freeform, "", "auto", true, false}, // declaration.cpp
     {"column-span", k::keyword_only, "none all", "none", false, false},
 
     // --- tables and lists ------------------------------------------------
@@ -364,7 +369,7 @@ constexpr property_syntax table[] = {
     {"pointer-events", k::freeform, "", "auto", true, false},
     {"user-select", k::keyword_only, "auto text none contain all", "auto", false, false},
     {"resize", k::keyword_only, "none both horizontal vertical block inline", "none", false, false},
-    {"object-fit", k::keyword_only, "fill contain cover none scale-down", "fill", false, false},
+    {"object-fit", k::freeform, "", "fill", false, false}, // keywords.cpp's grammar
     {"object-position", k::position, "", "50% 50%", false, false},
     {"rotate", k::freeform, "", "none", false, false}, // transforms.cpp's grammar
     {"scale", k::freeform, "", "none", false, false},
@@ -394,6 +399,17 @@ const property_syntax * find_property(std::string_view name) {
 
 std::span<const property_syntax> known_properties() {
     return std::span<const property_syntax>{every_property()};
+}
+
+bool inherited_property(std::string_view name) {
+    static const std::unordered_set<std::string_view> inherited = [] {
+        std::unordered_set<std::string_view> out;
+        for (const property_syntax & one : every_property()) {
+            if (one.inherited) { out.insert(one.name); }
+        }
+        return out;
+    }();
+    return inherited.contains(name);
 }
 
 // CSS Logical 1 §2: the four flow-relative sides as physical ones. Block

@@ -101,6 +101,12 @@ struct scan {
                                                  std::size_t end = static_cast<std::size_t>(-1));
 [[nodiscard]] bool match_typed(const token_stream & ts, const css_token & t,
                                const property_syntax & p, std::string & out);
+// ONE COMPONENT of a multi-value grammar, typed as `syntax` says: one of its
+// keywords, a single typed token, or a math function of the right type -
+// which is what a `border-image-width` side or a `text-decoration-inset`
+// half is. Defined in grammar.cpp.
+[[nodiscard]] bool typed_component(std::string_view part, const property_syntax & syntax,
+                                   std::string & out);
 // Defined in color.cpp.
 [[nodiscard]] bool match_color(const token_stream & ts, const scan & found,
                                std::string_view normalized, std::string & out);
@@ -161,6 +167,20 @@ struct scan {
                                          const scan & found, std::string & out);
 // `display`'s two-value grammar and its short forms. Defined in display.cpp.
 [[nodiscard]] bool match_display(const token_stream & ts, const scan & found, std::string & out);
+// CSS Gap Decorations 1: the six rule lists (false for another property, an
+// empty `out` for an invalid list), and the `column-rule` / `row-rule`
+// shorthand split into and folded from its width, style and colour lists.
+// Defined in gaps.cpp.
+[[nodiscard]] bool match_gap_list(std::string_view property, std::string_view text,
+                                  std::string & out);
+[[nodiscard]] bool split_gap_rule(std::string_view value, std::vector<std::string> & out);
+[[nodiscard]] std::string fold_gap_rule(std::span<const std::string> v);
+// A <basic-shape> and its box, for clip-path and shape-outside (CSS Shapes
+// 1 §3): false for another property or a value that is not a basic shape
+// (a url(), an image, a shape()), an empty `out` for an invalid one.
+// Defined in shapes.cpp.
+[[nodiscard]] bool match_basic_shape(std::string_view property, std::string_view text,
+                                     std::string & out);
 // The rows of the property table beyond table.cpp's core set, grouped by
 // module. Defined in table_modules.cpp.
 [[nodiscard]] std::span<const property_syntax> module_properties() noexcept;

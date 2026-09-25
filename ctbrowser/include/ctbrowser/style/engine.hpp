@@ -346,10 +346,18 @@ public:
     // --- element facts -----------------------------------------------------
     [[nodiscard]] element_facts facts_of(const read_txn & txn, node_id id) const;
 
-    // Which properties INHERIT. Not the whole CSS list - the ones a consumer in this
-    // tree can produce a value for, plus custom properties, caught by the `--` prefix
-    // rather than by name. `font-size` inherits as the px the pre-pass in resolve()
-    // computed, so a relative unit never compounds down the tree.
+    // Which properties INHERIT: the property table's own column, which is each
+    // specification's "Inherited: yes", plus custom properties, caught by the
+    // `--` prefix rather than by name. `font-size` inherits as the px the
+    // pre-pass in resolve() computed, so a relative unit never compounds down
+    // the tree.
+    //
+    // It was a hand-kept list of the twenty-five names a consumer here read,
+    // and every other inherited property - `word-break`, `quotes`, `hyphens`,
+    // `caret-color` - then neither inherited nor answered `unset` with its
+    // parent's value, which is what every module's `inheritance.html` asks.
+    // (A text decoration does not inherit: it PROPAGATES to the descendants'
+    // text, CSS Text Decoration 3 §2, and layout's box builder carries that.)
     [[nodiscard]] bool inherits(std::string_view property) const {
         if (property.starts_with("--")) {
             // A registered custom property says whether it does (CSS Properties
@@ -358,20 +366,7 @@ public:
                 registration_of(atoms_->intern(property));
             return registered == nullptr || registered->inherits;
         }
-        static constexpr std::string_view names[] = {
-            "border-collapse", "border-spacing", "caption-side",    "color",
-            "cursor",          "direction",      "empty-cells",     "font-family",
-            "font-size",       "font-style",     "font-variant",    "font-weight",
-            "letter-spacing",  "line-height",    "list-style",      "list-style-position",
-            "list-style-type", "text-align",     "text-decoration", "text-indent",
-            "text-transform",  "visibility",     "white-space",     "word-spacing",
-            "writing-mode"};
-        for (const std::string_view name : names) {
-            if (name == property) { return true; }
-        }
-        // The `white-space` shorthand's inherited longhands (CSS Text 4 §3).
-        return property == "white-space-collapse" || property == "text-wrap-mode" ||
-               property == "text-wrap-style";
+        return css::inherited_property(property);
     }
 
     // --- the single-element path -------------------------------------------

@@ -441,9 +441,37 @@ void test_pseudo_elements() {
     expect_value(f, a, "width", "", "still not the element's");
 }
 
+// HTML's legacy case-insensitive attribute values, :is()'s forgiving list,
+// and what may follow a pseudo-element.
+void test_selector_grammar_edges() {
+    {
+        fixture f;
+        f.load("<p id=a lang=ES></p><p id=b data-x=ES></p>",
+               "[lang|=es] { color: #010101 } [data-x=es] { color: #020202 }"
+               ":is(:total-nonsense, #b) { width: 1px } :is() { height: 1px }");
+        expect_value(f, f.find_id("a"), "color", "#010101", "lang compares case-insensitively");
+        CHECK(f.value_of(f.find_id("b"), "color").empty()); // data-x does not
+        expect_value(f, f.find_id("b"), "width", "1px", ":is() drops what does not parse");
+        CHECK(f.value_of(f.find_id("a"), "height").empty()); // :is() matches nothing
+    }
+    {
+        fixture f;
+        f.load("<p id=a></p>",
+               "#a::before.x, #a { color: #010101 }"
+               "#a::before div, #a { width: 1px } #a, :not(::before) { height: 1px }"
+               "#a::before:hover, #a { border-width: 1px }");
+        // A selector list with one invalid selector is invalid whole.
+        CHECK(f.value_of(f.find_id("a"), "color").empty());
+        CHECK(f.value_of(f.find_id("a"), "width").empty());
+        CHECK(f.value_of(f.find_id("a"), "height").empty());
+        expect_value(f, f.find_id("a"), "border-width", "1px", "::before:hover is valid");
+    }
+}
+
 } // namespace
 
 int main() {
+    test_selector_grammar_edges();
     test_simple_selectors();
     test_namespaces();
     test_pseudo_elements();

@@ -184,8 +184,12 @@ constexpr feature_entry container_features[] = {
 
 [[nodiscard]] bool matches_keyword(const media_feature & f, std::string_view have) {
     // A boolean-context test on a keyword feature - `(hover)` - is true when the value
-    // is anything but `none`.
-    if (f.op == media_feature::compare::boolean) { return !ascii_iequals(have, "none"); }
+    // is anything but `none` or a keyword the feature itself defines as false
+    // there (Media Queries 5 §2.4.3): the preferences' `no-preference`, and
+    // `standard` for the dynamic ranges, which are what a plain screen has.
+    if (f.op == media_feature::compare::boolean) {
+        return !ascii_iequals_any(have, {"none", "no-preference", "standard"});
+    }
     return ascii_iequals(f.keyword, have);
 }
 

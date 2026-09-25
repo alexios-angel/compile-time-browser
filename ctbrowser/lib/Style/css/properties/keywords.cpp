@@ -41,6 +41,7 @@ struct or_grammar {
     std::string_view collapse_to = {};      // ...and the short form
     std::string_view collapse2_from = {};
     std::string_view collapse2_to = {};
+    bool first_group_required = false; // `[ a | b ] && c?`: the first group must be there
 };
 
 constexpr or_grammar or_grammars[] = {
@@ -78,6 +79,35 @@ constexpr or_grammar or_grammars[] = {
      {"jis78 jis83 jis90 jis04 simplified traditional", "full-width proportional-width", "ruby"},
      true},
     {"text-underline-position", "auto", {"from-font under", "left right"}, true},
+    // CSS Box 4 §4: `none | block | block-start || block-end`, the two ends
+    // together being `block`. (The inline keywords are at risk and no
+    // engine takes them.)
+    {"margin-trim",
+     "none block",
+     {"block-start", "block-end"},
+     true,
+     "block-start block-end",
+     "block"},
+    // `none | [ space | ideographic-space ] && auto-phrase?`, CSS Text 4 §8.2.
+    {"word-space-transform",
+     "none",
+     {"space ideographic-space", "auto-phrase"},
+     true,
+     {},
+     {},
+     {},
+     {},
+     true},
+    // `none | all | [ start || end ]`, CSS Text Decoration 4 §2.6.
+    {"text-decoration-skip-spaces", "none all", {"start", "end"}, true},
+    // `fill | none | [ contain | cover ] || scale-down`, CSS Images 4 §5.5:
+    // `contain scale-down` is `scale-down`, the same box either way.
+    {"object-fit",
+     "fill none",
+     {"contain cover", "scale-down"},
+     true,
+     "contain scale-down",
+     "scale-down"},
     {"hanging-punctuation", "none", {"first", "force-end allow-end", "last"}, false},
     {"text-emphasis-position", "auto", {"over under", "right left"}, true},
     {"ruby-position", "inter-character", {"alternate", "over under"}, true},
@@ -124,6 +154,7 @@ constexpr or_grammar or_grammars[] = {
     } else {
         for (const std::string & w : in_order) { out += (out.empty() ? "" : " ") + w; }
     }
+    if (g.first_group_required && chosen[0].empty()) { return std::nullopt; }
     if (out == g.collapse_from) { return std::string{g.collapse_to}; }
     if (out == g.collapse2_from) { return std::string{g.collapse2_to}; }
     return out;
@@ -217,14 +248,14 @@ constexpr or_grammar or_grammars[] = {
             const css_token & last = ts.tokens[at[end - 1]];
             const std::string_view text =
                 std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
+            // The SPECIFIED value keeps the function (CSS Values 4 §10.12);
+            // it is rounded to its integer when it computes, in the cascade.
             const math_answer answer = evaluate_math(text, length_context{});
             if (answer.outcome == math_outcome::invalid) { return std::nullopt; }
-            if (answer.outcome == math_outcome::resolved) {
-                if (!answer.value.is_number) { return std::nullopt; }
-                count = serialize_number(std::round(answer.value.px));
-            } else {
-                count = simplify_math(text);
+            if (answer.outcome == math_outcome::resolved && !answer.value.is_number) {
+                return std::nullopt;
             }
+            count = simplify_math(text);
             k = end;
         } else if (reversed) {
             // A reversed counter with no number counts down from its end.
@@ -354,6 +385,8 @@ constexpr ident_grammar ident_grammars[] = {
     {"page", "auto", "", false, false},
     {"view-transition-group", "normal contain nearest none", "", false, false},
     {"view-transition-class", "none", "", true, false},
+    // `none | match-element | <custom-ident>`, CSS View Transitions 2 §3.1.
+    {"view-transition-name", "none match-element auto", "", false, false},
     {"transition-property", "none", "all", true, true},
 };
 
@@ -487,6 +520,7 @@ struct pair_grammar {
 
 constexpr pair_grammar pair_grammars[] = {
     {"border-image-repeat", "stretch repeat round space"},
+    {"mask-border-repeat", "stretch repeat round space"},
 };
 
 [[nodiscard]] std::optional<std::string> keyword_pair(const pair_grammar & g,

@@ -17,7 +17,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
     for (const std::size_t index : animations_on(id, false)) {
         const animation_record & a = animations_[index];
         const keyframe_effect_record & e = effects_[a.effect];
-        const double progress = sample_timing(a).progress;
+        const timing_sample sample = sample_timing(a);
+        const double progress = sample.progress;
         if (unresolved(progress)) { continue; }
 
         // §5.4.3, "the effect value of a keyframe effect", one property at a time.
@@ -133,13 +134,50 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             // §4.5.1: a keyframe's composite operation - its own, or the
             // effect's when `auto` - applies to its value against the
             // underlying value BEFORE the interpolation.
-            const auto composited = [&](const point & pt) {
+            // A registered custom property composites as its type does: a
+            // transform list appends, and one transform function ADDED to
+            // another combines their arguments, as accumulation does.
+            bool single_function = false;
+            const std::string_view as =
+                interpolates_as(selector_engine_, *atoms_, property, &single_function);
+            const auto composited_once = [&](const point & pt) {
                 const std::string & op = pt.composite == "auto" ? e.composite : pt.composite;
-                return style::composite_text(property, base, pt.text,
-                                             op == "add"          ? style::composite_op::add
+                return style::composite_text(as, base, pt.text,
+                                             op == "add" ? (single_function
+                                                                ? style::composite_op::accumulate
+                                                                : style::composite_op::add)
                                              : op == "accumulate" ? style::composite_op::accumulate
                                                                   : style::composite_op::replace,
                                              ctx);
+            };
+            // ...AND THEN THE ITERATION COMPOSITE (Web Animations 2, "the
+            // effect value of a keyframe effect"): with `accumulate`, each
+            // endpoint has the final keyframe's value accumulated onto it once
+            // per completed iteration, so a 0px -> 100px effect runs 100px ->
+            // 200px in its second. `current iteration` accumulations of one
+            // value are built by doubling, not one at a time, so an infinite
+            // animation deep into its run costs a logarithm per sample.
+            std::string iteration_offset;
+            if (e.iteration_composite == "accumulate" && sample.iteration >= 1) {
+                const auto accumulate = [&](const std::string & a, const std::string & b) {
+                    return style::composite_text(property, a, b, style::composite_op::accumulate,
+                                                 ctx);
+                };
+                std::string power = composited_once(points.back());
+                for (auto n = static_cast<std::uint64_t>(std::min(sample.iteration, 1e18)); n != 0;
+                     n >>= 1) {
+                    if ((n & 1) != 0) {
+                        iteration_offset =
+                            iteration_offset.empty() ? power : accumulate(iteration_offset, power);
+                    }
+                    if (n > 1) { power = accumulate(power, power); }
+                }
+            }
+            const auto composited = [&](const point & pt) {
+                std::string text = composited_once(pt);
+                if (iteration_offset.empty()) { return text; }
+                return style::composite_text(property, iteration_offset, text,
+                                             style::composite_op::accumulate, ctx);
             };
             std::size_t start = 0;
             std::size_t stop = 0;
@@ -183,9 +221,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 const double distance = (progress - points[start].offset) / span;
                 const style::easing keyframe_easing =
                     style::parse_easing(points[start].easing).value_or(style::easing{});
-                text =
-                    interpolate_value(property, composited(points[start]), composited(points[stop]),
-                                      keyframe_easing(distance, false), ctx);
+                text = interpolate_value(as, composited(points[start]), composited(points[stop]),
+                                         keyframe_easing(distance, false), ctx);
             }
             if (seen == out.end()) {
                 out.emplace_back(property, std::move(text));
@@ -476,6 +513,15 @@ value dom_bindings::make_keyframe_effect(context & cx, node_id target, value key
             return value::undefined();
         }
         made.composite = c;
+    }
+    if (const value iteration = dict_member(cx, options, "iterationComposite");
+        !iteration.is_undefined()) {
+        const std::string c = cx.to_string(iteration);
+        if (c != "replace" && c != "accumulate") {
+            cx.throw_error("TypeError", "iterationComposite must be replace or accumulate");
+            return value::undefined();
+        }
+        made.iteration_composite = c;
     }
     if (!read_keyframes(cx, keyframes, made.keyframes)) { return value::undefined(); }
     return effects_[push_effect(cx, std::move(made))].self;

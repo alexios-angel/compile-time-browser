@@ -75,7 +75,16 @@ inline constexpr std::array<std::string_view, 6> performed_substitutions{
 // when the engine does. It costs a false NEGATIVE - a page asking about a
 // function the engine handles but this list has not caught up with - which makes
 // a test skip rather than lie.
-inline constexpr std::array<std::string_view, 44> value_functions{"cross-origin",
+//
+// `repeat()`, `minmax()` and `fit-content()` are grid.cpp's track grammar and,
+// for the last, the sizing properties' (declaration.cpp): both are parsed
+// whole, so a value calling them is one the engine keeps. The ten filter
+// functions are filter.cpp's and the basic shapes shapes.cpp's: parsed,
+// computed and interpolated whole.
+inline constexpr std::array<std::string_view, 66> value_functions{"cross-origin",
+                                                                  "repeat",
+                                                                  "minmax",
+                                                                  "fit-content",
                                                                   "integrity",
                                                                   "referrer-policy",
                                                                   "rgb",
@@ -118,7 +127,26 @@ inline constexpr std::array<std::string_view, 44> value_functions{"cross-origin"
                                                                   "alpha",
                                                                   "contrast-color",
                                                                   "color-layers",
-                                                                  "device-cmyk"};
+                                                                  "device-cmyk",
+                                                                  "skewx",
+                                                                  "skewy",
+                                                                  "blur",
+                                                                  "brightness",
+                                                                  "contrast",
+                                                                  "drop-shadow",
+                                                                  "grayscale",
+                                                                  "hue-rotate",
+                                                                  "invert",
+                                                                  "opacity",
+                                                                  "saturate",
+                                                                  "sepia",
+                                                                  "circle",
+                                                                  "ellipse",
+                                                                  "inset",
+                                                                  "polygon",
+                                                                  "path",
+                                                                  "xywh",
+                                                                  "ray"};
 
 [[nodiscard]] bool is_length_unit(std::string_view unit);
 

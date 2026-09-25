@@ -320,7 +320,7 @@ public:
                          atoms.intern("padding-bottom"), atoms.intern("padding-left")},
           font_family_(atoms.intern("font-family")), font_weight_(atoms.intern("font-weight")),
           font_style_(atoms.intern("font-style")),
-          text_decoration_(atoms.intern("text-decoration")),
+          text_decoration_(atoms.intern("text-decoration-line")),
           white_space_(atoms.intern("white-space")), line_height_(atoms.intern("line-height")),
           min_width_(atoms.intern("min-width")), max_width_(atoms.intern("max-width")),
           min_height_(atoms.intern("min-height")), max_height_(atoms.intern("max-height")),

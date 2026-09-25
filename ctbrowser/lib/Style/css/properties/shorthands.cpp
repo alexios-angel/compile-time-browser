@@ -76,23 +76,8 @@ bool detail::match_border_image(std::string_view property, std::string_view valu
     const property_syntax & syntax = *find_property(property);
     std::vector<std::string> values;
     for (const std::string_view part : parts) {
-        const token_stream ts = tokenize(part);
-        const scan found = scan_tokens(ts);
         std::string one;
-        if (found.significant.size() == 1) {
-            const css_token & token = ts.tokens[found.significant.front()];
-            if (token.type == token_type::ident &&
-                has_keyword(syntax.keywords, ts.text_of(token))) {
-                one = ascii_lower_copy(ts.text_of(token));
-            } else if (!match_typed(ts, token, syntax, one)) {
-                return false;
-            }
-        } else if (whole_value_is_math(ts, found) &&
-                   math_type_fits(syntax, evaluate_math(part, length_context{}), part)) {
-            one = std::string{part};
-        } else {
-            return false;
-        }
+        if (!typed_component(part, syntax, one)) { return false; }
         values.push_back(std::move(one));
     }
     out = fold_sides(values);

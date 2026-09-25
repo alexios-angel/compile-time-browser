@@ -62,6 +62,15 @@ constexpr property_syntax modules[] = {
     {"mask-size", k::freeform, "", "auto", false, true},
     {"mask-composite", k::freeform, "", "add", false, false},
     {"mask-type", k::keyword_only, "luminance alpha", "luminance", false, false},
+    // CSS Masking 1 §8: a border image used as a mask - border-image's
+    // grammars (declaration.cpp), a nothing-sliced initial, and a mode.
+    {"mask-border", k::freeform, "", "none", false, false, true},
+    {"mask-border-source", k::freeform, "", "none", false, false},
+    {"mask-border-slice", k::number_percentage, "", "0", false, true},
+    {"mask-border-width", k::number_length_percentage, "auto", "auto", false, true},
+    {"mask-border-outset", k::number_length, "", "0", false, true},
+    {"mask-border-repeat", k::freeform, "", "stretch", false, false},
+    {"mask-border-mode", k::keyword_only, "luminance alpha", "alpha", false, false},
     {"shape-outside", k::freeform, "", "none", false, false},
     {"shape-image-threshold", k::number_percentage, "", "0", false, false},
     {"offset", k::freeform, "", "normal", false, false, true},
@@ -99,11 +108,58 @@ constexpr property_syntax modules[] = {
     {"column-height", k::length, "auto", "auto", false, true},
     {"column-wrap", k::keyword_only, "auto wrap nowrap", "auto", false, false},
     {"column-fill", k::keyword_only, "auto balance balance-all", "balance", false, false},
+    // CSS Gap Decorations 1: a rule in every gap, columns and rows alike. The
+    // width, style and colour are LISTS - `10px, repeat(auto, thin)` - whose
+    // grammar is gaps.cpp's; `rule` and the other `rule-*` shorthands set
+    // the column and the row property together.
     {"column-rule", k::freeform, "", "medium none currentcolor", false, false, true},
-    {"column-rule-width", k::length, "thin medium thick", "medium", false, true},
-    {"column-rule-style", k::keyword_only,
-     "none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
-    {"column-rule-color", k::color, "", "currentcolor", false, false},
+    {"column-rule-width", k::freeform, "", "medium", false, true},
+    {"column-rule-style", k::freeform, "", "none", false, false},
+    {"column-rule-color", k::freeform, "", "currentcolor", false, false},
+    {"row-rule", k::freeform, "", "medium none currentcolor", false, false, true},
+    {"row-rule-width", k::freeform, "", "medium", false, true},
+    {"row-rule-style", k::freeform, "", "none", false, false},
+    {"row-rule-color", k::freeform, "", "currentcolor", false, false},
+    {"rule", k::freeform, "", "medium none currentcolor", false, false, true},
+    {"rule-width", k::freeform, "", "medium", false, false, true},
+    {"rule-style", k::freeform, "", "none", false, false, true},
+    {"rule-color", k::freeform, "", "currentcolor", false, false, true},
+    {"column-rule-break", k::keyword_only, "none normal intersection", "normal", false, false},
+    {"row-rule-break", k::keyword_only, "none normal intersection", "normal", false, false},
+    {"rule-break", k::freeform, "", "normal", false, false, true},
+    {"column-rule-visibility-items", k::keyword_only, "all around between normal", "normal", false,
+     false},
+    {"row-rule-visibility-items", k::keyword_only, "all around between normal", "normal", false,
+     false},
+    {"rule-visibility-items", k::freeform, "", "normal", false, false, true},
+    {"rule-overlap", k::keyword_only, "row-over-column column-over-row", "row-over-column", false,
+     false},
+    // Where a rule starts and ends: at a cap (the edge of the container) and
+    // at a junction (a crossing gap), each end `<length-percentage> |
+    // overlap-join`, with a shorthand for every grouping of the eight.
+    {"column-rule-inset-cap-start", k::length_percentage, "overlap-join", "0px", false, false},
+    {"column-rule-inset-cap-end", k::length_percentage, "overlap-join", "0px", false, false},
+    {"column-rule-inset-junction-start", k::length_percentage, "overlap-join", "0px", false, false},
+    {"column-rule-inset-junction-end", k::length_percentage, "overlap-join", "0px", false, false},
+    {"row-rule-inset-cap-start", k::length_percentage, "overlap-join", "0px", false, false},
+    {"row-rule-inset-cap-end", k::length_percentage, "overlap-join", "0px", false, false},
+    {"row-rule-inset-junction-start", k::length_percentage, "overlap-join", "0px", false, false},
+    {"row-rule-inset-junction-end", k::length_percentage, "overlap-join", "0px", false, false},
+    {"column-rule-inset", k::freeform, "", "0px", false, false, true},
+    {"row-rule-inset", k::freeform, "", "0px", false, false, true},
+    {"rule-inset", k::freeform, "", "0px", false, false, true},
+    {"column-rule-inset-cap", k::freeform, "", "0px", false, false, true},
+    {"row-rule-inset-cap", k::freeform, "", "0px", false, false, true},
+    {"rule-inset-cap", k::freeform, "", "0px", false, false, true},
+    {"column-rule-inset-junction", k::freeform, "", "0px", false, false, true},
+    {"row-rule-inset-junction", k::freeform, "", "0px", false, false, true},
+    {"rule-inset-junction", k::freeform, "", "0px", false, false, true},
+    {"column-rule-inset-start", k::freeform, "", "0px", false, false, true},
+    {"column-rule-inset-end", k::freeform, "", "0px", false, false, true},
+    {"row-rule-inset-start", k::freeform, "", "0px", false, false, true},
+    {"row-rule-inset-end", k::freeform, "", "0px", false, false, true},
+    {"rule-inset-start", k::freeform, "", "0px", false, false, true},
+    {"rule-inset-end", k::freeform, "", "0px", false, false, true},
     {"break-after", k::keyword_only,
      "auto avoid always all avoid-page page left right recto verso avoid-column column "
      "avoid-region region",
@@ -120,7 +176,7 @@ constexpr property_syntax modules[] = {
     {"overflow-inline", k::keyword_only, "visible hidden clip scroll auto", "visible", false,
      false},
     {"overflow-anchor", k::keyword_only, "auto none", "auto", false, false},
-    {"overflow-clip-margin", k::freeform, "", "0px", false, false},
+    {"overflow-clip-margin", k::freeform, "", "0px", false, true}, // declaration.cpp
     {"block-ellipsis", k::freeform, "", "no-ellipsis", true, false},
     {"line-clamp", k::freeform, "", "none", false, false, true},
     {"-webkit-line-clamp", k::integer, "none", "none", false, true},
@@ -188,7 +244,7 @@ constexpr property_syntax modules[] = {
     {"-webkit-border-top-right-radius", k::freeform, "", "0px", false, true},
     {"-webkit-border-bottom-right-radius", k::freeform, "", "0px", false, true},
     {"-webkit-border-bottom-left-radius", k::freeform, "", "0px", false, true},
-    {"margin-trim", k::freeform, "", "none", false, false},
+    {"margin-trim", k::freeform, "", "none", false, false}, // keywords.cpp
     {"contain", k::freeform, "", "none", false, false},
     // CSS Conditional 5 §4: the container queries' two longhands and their
     // shorthand. `CSS.supports("container-type:size")` is how every
@@ -239,6 +295,10 @@ constexpr property_syntax modules[] = {
     {"word-wrap", k::keyword_only, "normal break-word anywhere", "normal", true, false},
     {"line-break", k::keyword_only, "auto loose normal strict anywhere", "auto", true, false},
     {"hyphens", k::keyword_only, "none manual auto", "manual", true, false},
+    // CSS Text 4 §8.2 and §7.4: turning spaces into the script's word
+    // separator, and aligning a group of lines as one.
+    {"word-space-transform", k::freeform, "", "none", true, false}, // keywords.cpp
+    {"text-group-align", k::keyword_only, "none start end left right center", "none", false, false},
     {"hyphenate-character", k::freeform, "", "auto", true, false},
     {"hanging-punctuation", k::freeform, "", "none", true, false},
     {"text-autospace", k::freeform, "", "normal", true, false},
@@ -248,7 +308,13 @@ constexpr property_syntax modules[] = {
     {"text-combine-upright", k::freeform, "", "none", true, false},
     {"text-orientation", k::keyword_only, "mixed upright sideways", "mixed", true, false},
     {"text-decoration-skip-ink", k::keyword_only, "auto none all", "auto", true, false},
-    {"text-underline-position", k::freeform, "", "auto", true, false}, // keywords.cpp
+    // CSS Text Decoration 4 §2.4-2.5: the line's thickness and the underline's
+    // offset, each a keyword or a <length-percentage> of 1em.
+    {"text-decoration-thickness", k::length_percentage, "auto from-font", "auto", false, false},
+    {"text-underline-offset", k::length_percentage, "auto", "auto", true, false},
+    {"text-decoration-inset", k::freeform, "", "0px", false, false},            // declaration.cpp
+    {"text-decoration-skip-spaces", k::freeform, "", "start end", true, false}, // keywords.cpp
+    {"text-underline-position", k::freeform, "", "auto", true, false},          // keywords.cpp
     {"text-emphasis", k::freeform, "", "none currentcolor", true, false, true},
     {"text-emphasis-style", k::freeform, "", "none", true, false},
     {"text-emphasis-color", k::color, "", "currentcolor", true, false},
@@ -257,8 +323,8 @@ constexpr property_syntax modules[] = {
     {"initial-letters-align", k::freeform, "", "alphabetic", true, false},
     {"initial-letters-wrap", k::freeform, "", "none", true, false},
     {"alignment-baseline", k::keyword_only,
-     "baseline text-bottom alphabetic ideographic middle central mathematical text-top", "baseline",
-     false, false},
+     "baseline text-bottom alphabetic ideographic middle central mathematical text-top hanging",
+     "baseline", false, false},
     {"dominant-baseline", k::keyword_only,
      "auto text-bottom alphabetic ideographic middle central mathematical hanging text-top", "auto",
      true, false},

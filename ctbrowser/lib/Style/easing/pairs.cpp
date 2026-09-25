@@ -30,6 +30,96 @@ namespace ctbrowser::style::easing_detail {
     return css::serialize_number(mixed) + " / 1";
 }
 
+// --- gap rule lists (CSS Gap Decorations 1) ---
+
+[[nodiscard]] bool gap_list_property(std::string_view property) {
+    return property == "column-rule-width" || property == "row-rule-width" ||
+           property == "column-rule-color" || property == "row-rule-color";
+}
+
+// A gap list in the shape it interpolates in: the integer repeats written
+// out, and the one `repeat(auto, ...)` - if any - kept apart with the values
+// before and after it.
+struct gap_shape {
+    std::vector<std::string> leading, repeated, trailing;
+    bool has_auto = false;
+};
+
+[[nodiscard]] std::optional<gap_shape> gap_shape_of(std::string_view text) {
+    gap_shape out;
+    for (const std::string_view raw : split_top_level(text, ",")) {
+        const std::string_view item = trim(raw, html_whitespace);
+        if (item.empty()) { return std::nullopt; }
+        std::vector<std::string> & into = out.has_auto ? out.trailing : out.leading;
+        if (!ascii_istarts_with(item, "repeat(") || !item.ends_with(')')) {
+            into.emplace_back(item);
+            continue;
+        }
+        const std::vector<std::string_view> args =
+            split_top_level(item.substr(7, item.size() - 8), ",");
+        if (args.size() < 2) { return std::nullopt; }
+        const std::string_view count = trim(args[0], html_whitespace);
+        if (ascii_iequals(count, "auto")) {
+            if (out.has_auto) { return std::nullopt; }
+            out.has_auto = true;
+            for (std::size_t i = 1; i < args.size(); ++i) {
+                out.repeated.emplace_back(trim(args[i], html_whitespace));
+            }
+            continue;
+        }
+        const std::optional<double> n = number_of(count);
+        if (!n || *n < 1 || *n > 10000 || std::floor(*n) != *n) { return std::nullopt; }
+        for (int k = 0; k < static_cast<int>(*n); ++k) {
+            for (std::size_t i = 1; i < args.size(); ++i) {
+                into.emplace_back(trim(args[i], html_whitespace));
+            }
+        }
+    }
+    return out;
+}
+
+// CSS Gap Decorations 1 §animation: two lists interpolate item by item once
+// their integer repeats are written out, the shorter repeated to the least
+// common multiple of the two lengths. With a `repeat(auto, ...)` on both
+// sides the values before it must pair one to one, and so must those after
+// it, and the two auto repeats' values match by the same multiple; with one
+// on only one side, the lists do not interpolate.
+[[nodiscard]] std::optional<std::string> interpolate_gap_list(std::string_view property,
+                                                              std::string_view from,
+                                                              std::string_view to, double p,
+                                                              const css::length_context & ctx) {
+    std::optional<gap_shape> a = gap_shape_of(from);
+    std::optional<gap_shape> b = gap_shape_of(to);
+    if (!a || !b || a->has_auto != b->has_auto) { return std::nullopt; }
+    if (a->has_auto) {
+        if (a->leading.size() != b->leading.size() || a->trailing.size() != b->trailing.size()) {
+            return std::nullopt;
+        }
+        repeat_to_match(a->repeated, b->repeated);
+    } else {
+        repeat_to_match(a->leading, b->leading);
+    }
+    bool ok = true;
+    const auto items = [&](const std::vector<std::string> & x, const std::vector<std::string> & y) {
+        std::string out;
+        for (std::size_t i = 0; i < x.size() && ok; ++i) {
+            if (!out.empty()) { out += ", "; }
+            out += interpolate_pair(property, computed_shape(property, x[i], ctx),
+                                    computed_shape(property, y[i], ctx), p, ctx, ok);
+        }
+        return out;
+    };
+    std::string out = items(a->leading, b->leading);
+    if (a->has_auto) {
+        const std::string repeated = "repeat(auto, " + items(a->repeated, b->repeated) + ")";
+        out += (out.empty() ? "" : ", ") + repeated;
+        const std::string trailing = items(a->trailing, b->trailing);
+        if (!trailing.empty()) { out += ", " + trailing; }
+    }
+    if (!ok) { return std::nullopt; }
+    return out;
+}
+
 // --- the pair ---
 
 // calc-size(A, B)'s basis and calculation, or nothing when `text` is not one.
@@ -68,8 +158,29 @@ namespace ctbrowser::style::easing_detail {
     from = trim(from, html_whitespace);
     to = trim(to, html_whitespace);
     interpolable = true;
+    // A gap rule LIST, which a single value is not: that pairs as the lone
+    // length or colour it is, below.
+    if (gap_list_property(property) &&
+        (from.find(',') != std::string_view::npos || to.find(',') != std::string_view::npos ||
+         ascii_istarts_with(from, "repeat(") || ascii_istarts_with(to, "repeat("))) {
+        if (std::optional<std::string> list = interpolate_gap_list(property, from, to, p, ctx)) {
+            return *list;
+        }
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
+    }
     if (property == "transform") {
         if (const std::optional<std::string> t = interpolate_transform(from, to, p)) { return *t; }
+    }
+    // Two basic shapes of one function blend (CSS Shapes 1 §3.3); anything
+    // else in clip-path or shape-outside - a url(), `none`, two functions -
+    // is discrete.
+    if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
+        if (std::optional<std::string> s = css::blend_basic_shapes(property, from, to, 1 - p, p)) {
+            return *s;
+        }
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
     }
     if (property == "aspect-ratio") {
         // `auto <ratio>` on both sides keeps `auto` and interpolates the
@@ -94,7 +205,12 @@ namespace ctbrowser::style::easing_detail {
             return *f;
         }
     }
-    if (const auto a = css::resolve_color(from, {}), b = css::resolve_color(to, {}); a && b) {
+    // A COLOUR, which a comma LIST of colours is not - `rgb(1, 2, 3), red` is
+    // two items, each paired below, and not the first of them alone.
+    const bool single = comma_items(from).size() == 1 && comma_items(to).size() == 1;
+    if (const auto a = single ? css::resolve_color(from, {}) : std::nullopt,
+        b = single ? css::resolve_color(to, {}) : std::nullopt;
+        a && b) {
         return legacy_color(from) && legacy_color(to) ? lerp_color(*a, *b, p)
                                                       : lerp_oklab(*a, *b, p);
     }
@@ -174,7 +290,13 @@ namespace ctbrowser::style::easing_detail {
     underlying = trim(underlying, html_whitespace);
     value = trim(value, html_whitespace);
     if (underlying.empty()) { return std::string{value}; }
-    if (const auto a = css::resolve_color(underlying, {}), b = css::resolve_color(value, {});
+    if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
+        return css::blend_basic_shapes(property, underlying, value, 1, 1)
+            .value_or(std::string{value});
+    }
+    const bool single = comma_items(underlying).size() == 1 && comma_items(value).size() == 1;
+    if (const auto a = single ? css::resolve_color(underlying, {}) : std::nullopt,
+        b = single ? css::resolve_color(value, {}) : std::nullopt;
         a && b) {
         return add_color(*a, *b);
     }

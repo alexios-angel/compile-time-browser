@@ -112,6 +112,9 @@ struct transform_fn {
     // (the px part): `translate(12px, 70%)` keeps its percentages and reads
     // back as written, which is how the computed serialiser prints it.
     std::vector<double> pct;
+    // The name as written, lowercased: `translatey` keeps its one-axis
+    // spelling through an interpolation with another `translateY`.
+    std::string spelled = {};
 };
 
 [[nodiscard]] std::string_view primitive_of(std::string_view name);

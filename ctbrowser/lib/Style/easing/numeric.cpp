@@ -250,7 +250,8 @@ namespace ctbrowser::style::easing_detail {
 
 [[nodiscard]] bool image_sides(std::string_view property) {
     return property == "border-image-outset" || property == "border-image-width" ||
-           property == "border-image-slice";
+           property == "border-image-slice" || property == "mask-border-outset" ||
+           property == "mask-border-width" || property == "mask-border-slice";
 }
 
 [[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text,
@@ -268,6 +269,10 @@ namespace ctbrowser::style::easing_detail {
         if (parts.size() == 3) { parts.push_back(parts[1]); }
         return std::string{parts[0]} + ' ' + std::string{parts[1]} + ' ' + std::string{parts[2]} +
                ' ' + std::string{parts[3]} + (fill ? " fill" : "");
+    }
+    if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
+        std::string computed = css::computed_basic_shape(property, text, ctx);
+        return computed.empty() ? std::string{text} : computed;
     }
     if (repeatable(property)) {
         // Keywords as percentages, a size's second `auto` written, so
@@ -339,7 +344,7 @@ namespace ctbrowser::style::easing_detail {
 }
 
 [[nodiscard]] std::string serialized_shape(std::string_view property, std::string text) {
-    if (image_sides(property)) {
+    if (image_sides(property) || property == "hyphenate-limit-chars") {
         const css::value_check checked = css::check_declaration(property, text, false);
         if (checked.valid) { return checked.serialized; }
     }

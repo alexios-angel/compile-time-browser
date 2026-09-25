@@ -24,31 +24,43 @@ using namespace detail;
 
 // HOW A SHORTHAND'S PARTS MAP ONTO ITS LONGHANDS.
 enum class shape : std::uint8_t {
-    sides,        // 1-4 values: top, right, bottom, left, in `margin`'s way
-    pair,         // 1-2 values: start/end, x/y or row/column; one sets both
-    background,   // comma-separated layers, with color in the final layer only
-    border_image, // source || slice [ / width? [ / outset ]? ] || repeat
-    radius,       // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
-    place,        // `place-*`: an align value then a justify one, each of several words
-    grid_lines,   // grid-row / grid-column / grid-area: `/`-separated grid lines
-    slash_pair,   // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
-    bar,          // `a || b || c`: each part goes to the longhand that takes it
-    columns,      // width/count and optional `/ column-height`; resets column-wrap
-    flex,         // Flexbox 1 §7.1.1's own defaults
-    font,         // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
-    border,       // `bar` over width/style/color, applied to four sides, plus
-                  // border-image reset to its initial values
-    border_axis,  // `border-block` / `border-inline`: `bar` over width/style/
-                  // color applied to the axis's two sides (CSS Logical 1 §4.4)
-    white_space,  // CSS Text 4 §3: one of six keywords, or `<'white-space-collapse'>
-                  // || <'text-wrap-mode'> || <'white-space-trim'>`
-    animation,    // `<single-animation>#`, CSS Animations 1 §5.9: per item, the
-                  // first <time> is the duration and the second the delay, an
-                  // easing, a count, and the keywords of direction, fill mode
-                  // and play state before anything is a name
-    all,          // every longhand; CSS-wide keywords only
-    whole,        // a grammar this table does not split: only a CSS-wide keyword
-                  // reaches the longhands, and only one folds back
+    sides,           // 1-4 values: top, right, bottom, left, in `margin`'s way
+    pair,            // 1-2 values: start/end, x/y or row/column; one sets both
+    background,      // comma-separated layers, with color in the final layer only
+    border_image,    // source || slice [ / width? [ / outset ]? ] || repeat
+    radius,          // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
+    place,           // `place-*`: an align value then a justify one, each of several words
+    grid_lines,      // grid-row / grid-column / grid-area: `/`-separated grid lines
+    slash_pair,      // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
+    bar,             // `a || b || c`: each part goes to the longhand that takes it
+    columns,         // width/count and optional `/ column-height`; resets column-wrap
+    flex,            // Flexbox 1 §7.1.1's own defaults
+    font,            // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
+    border,          // `bar` over width/style/color, applied to four sides, plus
+                     // border-image reset to its initial values
+    border_axis,     // `border-block` / `border-inline`: `bar` over width/style/
+                     // color applied to the axis's two sides (CSS Logical 1 §4.4)
+    white_space,     // CSS Text 4 §3: one of six keywords, or `<'white-space-collapse'>
+                     // || <'text-wrap-mode'> || <'white-space-trim'>`
+    animation,       // `<single-animation>#`, CSS Animations 1 §5.9: per item, the
+                     // first <time> is the duration and the second the delay, an
+                     // easing, a count, and the keywords of direction, fill mode
+                     // and play state before anything is a name
+    gap_rule,        // `column-rule`, CSS Gap Decorations 1: a list of `width || style ||
+                     // color` rules (and repeat()s of them), split item by item into the
+                     // three lists; gaps.cpp
+    same,            // one value set on every longhand: `column-rule-inset-start` is
+                     // the cap's start and the junction's
+    rule_inset,      // `column-rule-inset`: `<cap>{1,2} [ / <junction>{1,2} ]?`, the
+                     // junction the cap when omitted
+    axes,            // `rule-*`: the column shorthand (or longhand) of the same name,
+                     // applied to the columns and to the rows; the longhands are the
+                     // column half then the row half
+    text_decoration, // `bar` whose line part is itself several words:
+                     // `underline overline || thickness || style || color`
+    all,             // every longhand; CSS-wide keywords only
+    whole,           // a grammar this table does not split: only a CSS-wide keyword
+                     // reaches the longhands, and only one folds back
 };
 
 struct shorthand_syntax {
@@ -140,7 +152,62 @@ inline constexpr shorthand_syntax table[] = {
     {"overscroll-behavior", shape::pair, "overscroll-behavior-x overscroll-behavior-y", ""},
     {"grid-gap", shape::pair, "row-gap column-gap", ""},
     {"columns", shape::columns, "column-width column-count column-height column-wrap", "auto"},
-    {"column-rule", shape::bar, "column-rule-width column-rule-style column-rule-color", "medium"},
+    {"column-rule", shape::gap_rule, "column-rule-width column-rule-style column-rule-color",
+     "medium"},
+    {"row-rule", shape::gap_rule, "row-rule-width row-rule-style row-rule-color", "medium"},
+    {"rule", shape::axes,
+     "column-rule-width column-rule-style column-rule-color row-rule-width row-rule-style "
+     "row-rule-color",
+     "medium"},
+    {"rule-width", shape::axes, "column-rule-width row-rule-width", ""},
+    {"rule-style", shape::axes, "column-rule-style row-rule-style", ""},
+    {"rule-color", shape::axes, "column-rule-color row-rule-color", ""},
+    {"rule-break", shape::axes, "column-rule-break row-rule-break", ""},
+    {"rule-visibility-items", shape::axes, "column-rule-visibility-items row-rule-visibility-items",
+     ""},
+    {"column-rule-inset", shape::rule_inset,
+     "column-rule-inset-cap-start column-rule-inset-cap-end column-rule-inset-junction-start "
+     "column-rule-inset-junction-end",
+     ""},
+    {"row-rule-inset", shape::rule_inset,
+     "row-rule-inset-cap-start row-rule-inset-cap-end row-rule-inset-junction-start "
+     "row-rule-inset-junction-end",
+     ""},
+    {"rule-inset", shape::axes,
+     "column-rule-inset-cap-start column-rule-inset-cap-end column-rule-inset-junction-start "
+     "column-rule-inset-junction-end row-rule-inset-cap-start row-rule-inset-cap-end "
+     "row-rule-inset-junction-start row-rule-inset-junction-end",
+     ""},
+    {"column-rule-inset-cap", shape::pair, "column-rule-inset-cap-start column-rule-inset-cap-end",
+     ""},
+    {"row-rule-inset-cap", shape::pair, "row-rule-inset-cap-start row-rule-inset-cap-end", ""},
+    {"rule-inset-cap", shape::axes,
+     "column-rule-inset-cap-start column-rule-inset-cap-end row-rule-inset-cap-start "
+     "row-rule-inset-cap-end",
+     ""},
+    {"column-rule-inset-junction", shape::pair,
+     "column-rule-inset-junction-start column-rule-inset-junction-end", ""},
+    {"row-rule-inset-junction", shape::pair,
+     "row-rule-inset-junction-start row-rule-inset-junction-end", ""},
+    {"rule-inset-junction", shape::axes,
+     "column-rule-inset-junction-start column-rule-inset-junction-end "
+     "row-rule-inset-junction-start row-rule-inset-junction-end",
+     ""},
+    {"column-rule-inset-start", shape::same,
+     "column-rule-inset-cap-start column-rule-inset-junction-start", ""},
+    {"column-rule-inset-end", shape::same,
+     "column-rule-inset-cap-end column-rule-inset-junction-end", ""},
+    {"row-rule-inset-start", shape::same, "row-rule-inset-cap-start row-rule-inset-junction-start",
+     ""},
+    {"row-rule-inset-end", shape::same, "row-rule-inset-cap-end row-rule-inset-junction-end", ""},
+    {"rule-inset-start", shape::axes,
+     "column-rule-inset-cap-start column-rule-inset-junction-start row-rule-inset-cap-start "
+     "row-rule-inset-junction-start",
+     ""},
+    {"rule-inset-end", shape::axes,
+     "column-rule-inset-cap-end column-rule-inset-junction-end row-rule-inset-cap-end "
+     "row-rule-inset-junction-end",
+     ""},
     {"text-emphasis", shape::bar, "text-emphasis-style text-emphasis-color", "none"},
     {"text-wrap", shape::bar, "text-wrap-mode text-wrap-style", "wrap"},
     {"white-space", shape::white_space, "white-space-collapse text-wrap-mode white-space-trim",
@@ -159,8 +226,11 @@ inline constexpr shorthand_syntax table[] = {
      "background-color background-image background-position background-size "
      "background-repeat background-attachment background-origin background-clip",
      ""},
-    {"text-decoration", shape::whole,
-     "text-decoration-line text-decoration-style text-decoration-color", ""},
+    // CSS Text Decoration 4 §2.6, in its canonical order.
+    {"text-decoration", shape::text_decoration,
+     "text-decoration-line text-decoration-thickness text-decoration-style "
+     "text-decoration-color",
+     "none"},
     {"transition", shape::whole,
      "transition-property transition-duration transition-timing-function transition-delay", ""},
     {"animation", shape::animation,

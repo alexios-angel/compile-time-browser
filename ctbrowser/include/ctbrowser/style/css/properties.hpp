@@ -102,6 +102,11 @@ struct property_syntax {
 // `getComputedStyle`'s indexed properties enumerate.
 [[nodiscard]] std::span<const property_syntax> known_properties();
 
+// Whether the table says `name` INHERITS - its "Inherited: yes" - by a hash
+// lookup, because the cascade asks it once per declaration per element. The
+// name is the lowercase CSS spelling the cascade interns.
+[[nodiscard]] bool inherited_property(std::string_view name);
+
 // The answer `el.style[p] = v` and `CSS.supports(p, v)` both need.
 //
 // `serialized` is the CANONICAL form: `0` becomes `0px` for a length, a keyword
@@ -212,6 +217,23 @@ struct color_context {
 // gradient's colours computed, its lengths in pixels and its angles in
 // degrees, a `url()` as written. Empty for text with no image this models.
 [[nodiscard]] std::string computed_image(std::string_view specified, const color_context & ctx);
+// THE COMPUTED VALUE OF A <basic-shape> in clip-path or shape-outside (CSS
+// Shapes 1 §3.2): lengths absolute, the position from the top left in
+// percentages and calc()s, xywh() and rect() as their inset(). Empty for a
+// value that is not one.
+[[nodiscard]] std::string computed_basic_shape(std::string_view property, std::string_view text,
+                                               const length_context & ctx);
+// Two COMPUTED basic shapes of one function, blended component by
+// component: `wa * a + wb * b` - an interpolation at `p` is (1 - p, p), an
+// addition (1, 1). Nullopt when the two do not blend (CSS Shapes 1 §3.3).
+[[nodiscard]] std::optional<std::string> blend_basic_shapes(std::string_view property,
+                                                            std::string_view a, std::string_view b,
+                                                            double wa, double wb);
+// THE COMPUTED VALUE OF A GAP RULE LIST (CSS Gap Decorations 1): a width
+// list's lengths in pixels, a colour list's colours computed, a repeat
+// count as its integer. Empty for another property or text that is not one.
+[[nodiscard]] std::string computed_gap_list(std::string_view property, std::string_view text,
+                                            const color_context & ctx);
 // THE COMPUTED VALUE OF A `<filter-value-list>` (Filter Effects 1 §11): the
 // percentages as numbers, the lengths in pixels, a shadow's colour first.
 [[nodiscard]] std::string computed_filter(std::string_view specified, const color_context & ctx);

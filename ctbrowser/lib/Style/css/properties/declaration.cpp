@@ -285,6 +285,17 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // property answers yes to it and the two orders are the same answer.
     if (!takes_percentage_of(p->kind) && math_uses_percentage(text)) { return {}; }
 
+    // THE GAP RULE LISTS (gaps.cpp): `10px, repeat(auto, thin)`, and the
+    // BASIC SHAPES of clip-path and shape-outside (shapes.cpp).
+    {
+        std::string serialized;
+        if (match_gap_list(property, text, serialized) ||
+            match_basic_shape(property, simplified, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
     // A `#` LIST IS THE PROPERTY'S OWN GRAMMAR, ONCE PER ITEM. Every longhand
     // of CSS Animations 1 and CSS Transitions 1 is a comma-separated list - one
     // value per animation, one per transitioned property - and this table has a
@@ -315,6 +326,15 @@ value_check check_declaration(std::string_view property, std::string_view value,
                                      "border-image-width", "border-image-outset"})) {
         std::string serialized;
         if (!match_border_image(p->name, simplified, serialized)) { return {}; }
+        return yes(std::move(serialized));
+    }
+    // A MASK BORDER IS A BORDER IMAGE whose image is a mask (CSS Masking 1
+    // §8): the same four grammars, under other names and other initials.
+    if (ascii_iequals_any(property, {"mask-border-source", "mask-border-slice", "mask-border-width",
+                                     "mask-border-outset"})) {
+        std::string serialized;
+        const std::string as_border = "border-image-" + std::string{p->name.substr(12)};
+        if (!match_border_image(as_border, simplified, serialized)) { return {}; }
         return yes(std::move(serialized));
     }
 
@@ -411,6 +431,174 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(std::move(serialized));
     }
 
+    // `auto | <length-percentage>{1,2}`, CSS Text Decoration 4 §2.7: how far
+    // a line starts and ends inside its text, the end defaulting to the start
+    // and written once when the two agree.
+    if (ascii_iequals(property, "text-decoration-inset")) {
+        std::vector<std::string_view> parts;
+        for (const std::string_view part : split_top_level(simplified, html_whitespace)) {
+            if (!trim(part, html_whitespace).empty()) { parts.push_back(part); }
+        }
+        if (parts.size() == 1 && ascii_iequals(trim(parts[0], html_whitespace), "auto")) {
+            return yes("auto");
+        }
+        if (parts.empty() || parts.size() > 2) { return {}; }
+        const property_syntax length{"", k::length_percentage, "", "", false, false};
+        std::string ends[2];
+        for (std::size_t i = 0; i < parts.size(); ++i) {
+            if (!typed_component(parts[i], length, ends[i])) { return {}; }
+        }
+        if (parts.size() == 1 || ends[0] == ends[1]) { return yes(std::move(ends[0])); }
+        return yes(ends[0] + " " + ends[1]);
+    }
+
+    // `<length-percentage> && hanging? && each-line?`, CSS Text 3 §8.1, the
+    // keywords after the length in that order whatever the author's.
+    if (ascii_iequals(property, "text-indent")) {
+        static const property_syntax length{"", k::length_percentage, "", "", false, false};
+        std::string indent;
+        bool hanging = false, each_line = false;
+        for (const std::string_view raw : split_top_level(simplified, html_whitespace)) {
+            const std::string_view part = trim(raw, html_whitespace);
+            if (part.empty()) { continue; }
+            if (ascii_iequals(part, "hanging") && !hanging) {
+                hanging = true;
+            } else if (ascii_iequals(part, "each-line") && !each_line) {
+                each_line = true;
+            } else if (!indent.empty() || !typed_component(part, length, indent)) {
+                return {};
+            }
+        }
+        if (indent.empty()) { return {}; }
+        return yes(indent + (hanging ? " hanging" : "") + (each_line ? " each-line" : ""));
+    }
+
+    // `<opacity-value>` (CSS Shapes 1 §5.1), whose percentage is written as
+    // the number it is: `50%` is `0.5`.
+    if (ascii_iequals(property, "shape-image-threshold") && found.significant.size() == 1 &&
+        ts.tokens[found.significant.front()].type == token_type::percentage) {
+        return yes(serialize_number(ts.tokens[found.significant.front()].number / 100));
+    }
+
+    // `[ clip | ellipsis | <string> | fade | <fade()> ]{1,2}`, CSS Overflow 4
+    // §6.1: one end, or the start and the end.
+    if (ascii_iequals(property, "text-overflow")) {
+        std::size_t count = 0;
+        int depth = 0;
+        for (const std::size_t i : found.significant) {
+            const css_token & t = ts.tokens[i];
+            const std::string_view word = ts.text_of(t);
+            if (depth == 0) {
+                const bool end = (t.type == token_type::ident &&
+                                  ascii_iequals_any(word, {"clip", "ellipsis", "fade"})) ||
+                                 t.type == token_type::string ||
+                                 (t.type == token_type::function && ascii_iequals(word, "fade("));
+                if (!end) { return {}; }
+                ++count;
+            }
+            if (t.type == token_type::function || t.type == token_type::open_paren) { ++depth; }
+            if (t.type == token_type::close_paren) { --depth; }
+        }
+        if (count == 0 || count > 2) { return {}; }
+        return yes(simplified);
+    }
+
+    // `[ first | last ] || <'alignment-baseline'> || <'baseline-shift'>`, CSS
+    // Inline 3 §4.4, written in that order with the defaults - `baseline`
+    // and a zero shift - left out, and `baseline` when that is all of it.
+    if (ascii_iequals(property, "vertical-align")) {
+        static constexpr std::string_view alignments =
+            "baseline text-bottom alphabetic ideographic middle central mathematical text-top "
+            "hanging";
+        static const property_syntax shift_syntax{
+            "", k::length_percentage, "sub super top center bottom", "", false, false};
+        std::string source, alignment, shift;
+        for (const std::string_view raw : split_top_level(simplified, html_whitespace)) {
+            const std::string_view part = trim(raw, html_whitespace);
+            if (part.empty()) { continue; }
+            if (source.empty() && ascii_iequals_any(part, {"first", "last"})) {
+                source = ascii_lower_copy(part);
+            } else if (alignment.empty() && has_keyword(alignments, part)) {
+                alignment = ascii_lower_copy(part);
+            } else if (!shift.empty() || !typed_component(part, shift_syntax, shift)) {
+                return {};
+            }
+        }
+        std::string out = source;
+        const auto add = [&out](std::string_view part) {
+            out += (out.empty() ? "" : " ") + std::string{part};
+        };
+        if (!alignment.empty() && alignment != "baseline") { add(alignment); }
+        if (!shift.empty() && shift != "0px") { add(shift); }
+        return yes(out.empty() ? std::string{"baseline"} : out);
+    }
+
+    // `<visual-box> || <length [0,∞]>`, CSS Overflow 4 §3.2: the box first,
+    // `padding-box` (the default) and a zero length after a box left out,
+    // and `0px` when that leaves nothing.
+    if (ascii_iequals(property, "overflow-clip-margin")) {
+        static const property_syntax length{"", k::length, "", "", false, true};
+        std::string box, margin;
+        for (const std::string_view raw : split_top_level(simplified, html_whitespace)) {
+            const std::string_view part = trim(raw, html_whitespace);
+            if (part.empty()) { continue; }
+            if (box.empty() &&
+                ascii_iequals_any(part, {"content-box", "padding-box", "border-box"})) {
+                box = ascii_lower_copy(part);
+            } else if (!margin.empty() || !typed_component(part, length, margin)) {
+                return {};
+            }
+        }
+        if (box.empty() && margin.empty()) { return {}; }
+        if (box == "padding-box") { box.clear(); }
+        if (!box.empty() && margin == "0px") { margin.clear(); }
+        if (box.empty() && margin.empty()) { return yes("0px"); }
+        return yes(box + (box.empty() || margin.empty() ? "" : " ") + margin);
+    }
+
+    // `[ auto | <integer> ]{1,3}`, CSS Text 4 §6.3: the word, and the least
+    // before and after a hyphen. An omitted `before` is `auto` and an omitted
+    // `after` is the `before`, so those are what the shortest form leaves out.
+    if (ascii_iequals(property, "hyphenate-limit-chars")) {
+        static const property_syntax integer{"", k::integer, "auto", "", false, false};
+        std::vector<std::string> parts;
+        for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+            if (trim(raw, html_whitespace).empty()) { continue; }
+            std::string one;
+            if (parts.size() == 3 || !typed_component(raw, integer, one)) { return {}; }
+            parts.push_back(std::move(one));
+        }
+        if (parts.empty()) { return {}; }
+        if (parts.size() == 3 && parts[2] == parts[1]) { parts.pop_back(); }
+        if (parts.size() == 2 && parts[1] == "auto") { parts.pop_back(); }
+        std::string out = parts[0];
+        for (std::size_t i = 1; i < parts.size(); ++i) { out += " " + parts[i]; }
+        return yes(std::move(out));
+    }
+
+    // `[ auto | <color> ]{1,2}`, CSS UI 4 §6.2.1: the caret's colour, and
+    // the second its colour while it animates.
+    if (ascii_iequals(property, "caret-color")) {
+        std::string out;
+        std::size_t count = 0;
+        for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+            const std::string_view part = trim(raw, html_whitespace);
+            if (part.empty()) { continue; }
+            if (++count > 2) { return {}; }
+            std::string one;
+            if (ascii_iequals(part, "auto")) {
+                one = "auto";
+            } else {
+                const value_check colour = check_declaration("text-decoration-color", part, false);
+                if (!colour.valid || is_wide_keyword(colour.serialized)) { return {}; }
+                one = colour.serialized;
+            }
+            out += (out.empty() ? "" : " ") + one;
+        }
+        if (count == 0) { return {}; }
+        return yes(std::move(out));
+    }
+
     if (ascii_iequals(property, "columns")) {
         std::vector<std::string> parts;
         return split_columns(simplified, parts) ? yes(simplified) : value_check{};
@@ -493,6 +681,22 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    // `fit-content(<length-percentage [0,∞]>)`, CSS Sizing 3 §3.2: a sizing
+    // property that takes the `fit-content` keyword takes the function too,
+    // and its argument is that property's own <length-percentage> - never a
+    // keyword and never a calc-size().
+    if (p->kind == k::length_percentage && has_keyword(p->keywords, "fit-content") &&
+        ascii_istarts_with(text, "fit-content(") && text.back() == ')') {
+        // One typed component, so neither a keyword nor a nested function.
+        const std::string_view given = trim(text.substr(12, text.size() - 13), html_whitespace);
+        if (ascii_istarts_with(given, "calc-size(")) { return {}; }
+        property_syntax argument = *p;
+        argument.keywords = {};
+        std::string inner;
+        if (!typed_component(given, argument, inner)) { return {}; }
+        return yes("fit-content(" + inner + ")");
+    }
+
     // A calc-size() HAS A GRAMMAR OF ITS OWN, and only a sizing property takes
     // one (CSS Values 5 §calc-size): the basis is judged against the
     // property's keywords and the calculation is simplified with `size` in it.
@@ -529,6 +733,14 @@ bool supports_declaration(std::string_view property, std::string_view value) {
     // `allow_important` is true because `@supports (color: red !important)` is a
     // <declaration> and the priority does not change the answer.
     const value_check checked = check_declaration(property, value, true);
+    // A SHORTHAND IS SUPPORTED WHEN IT SPLITS. check_declaration takes a
+    // shorthand's text whole - the split is the declaration block's - so
+    // `margin: foo` passed here while `el.style.margin = 'foo'` stored
+    // nothing. The block's own split answers, on a scratch block.
+    if (checked.valid && !checked.substituted && !longhands_of(property).empty()) {
+        declaration_block scratch;
+        if (!set_declaration(scratch, property, checked.serialized, false)) { return false; }
+    }
     // ...AND A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT. `el.style`
     // still stores such a value - CSSOM says a page may - but a declaration
     // calling `attr()` or `random-item()` here really would be dropped by the

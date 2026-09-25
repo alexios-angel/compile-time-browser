@@ -619,6 +619,26 @@ namespace detail {
     return out;
 }
 
+bool typed_component(std::string_view part, const property_syntax & syntax, std::string & out) {
+    const token_stream ts = tokenize(part);
+    const scan found = scan_tokens(ts);
+    if (found.malformed || found.significant.empty()) { return false; }
+    if (found.significant.size() == 1) {
+        const css_token & token = ts.tokens[found.significant.front()];
+        if (token.type == token_type::ident && has_keyword(syntax.keywords, ts.text_of(token))) {
+            out = ascii_lower_copy(ts.text_of(token));
+            return true;
+        }
+        return match_typed(ts, token, syntax, out);
+    }
+    if (whole_value_is_math(ts, found) &&
+        math_type_fits(syntax, evaluate_math(part, length_context{}), part)) {
+        out = std::string{trim(part, html_whitespace)};
+        return true;
+    }
+    return false;
+}
+
 } // namespace detail
 
 } // namespace ctbrowser::style::css

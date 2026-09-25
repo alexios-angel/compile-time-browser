@@ -364,7 +364,7 @@ std::string transform_matrix_text(std::string_view text) {
     return out;
 }
 
-[[nodiscard]] std::string collapse_keyword(std::string_view text) {
+[[nodiscard]] std::string collapse_keyword(std::string_view text, bool keep_case) {
     std::string out;
     bool gap = false;
     char quote = 0; // inside a string, which keeps its case and its spaces
@@ -381,7 +381,7 @@ std::string transform_matrix_text(std::string_view text) {
         if (gap && !out.empty()) { out += ' '; }
         gap = false;
         if (c == '"' || c == '\'') { quote = c; }
-        out += ascii_lower(c);
+        out += keep_case ? c : ascii_lower(c);
     }
     return out;
 }

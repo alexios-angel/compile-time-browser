@@ -217,6 +217,11 @@ struct compound {
     boost::container::small_vector<attribute_match, 1> attributes;
     std::uint32_t states = 0;     // :hover, :focus, ... as bits
     std::uint32_t structural = 0; // :root, :first-child, ... as bits
+    // ...and which of those were written AFTER the pseudo-element -
+    // `::before:hover`, `::view-transition-group(x):only-child` - which
+    // selectorText writes after it again.
+    std::uint32_t states_after_pe = 0;
+    std::uint32_t structural_after_pe = 0;
     // The argument-carrying pseudo-classes. A vector because it is almost always
     // empty and because the type is recursive; tested LAST of everything in a
     // compound, since a nested selector list runs the matcher again.

@@ -113,9 +113,37 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         at.box_abs = abs_rect(id);
         at.containing = rect{0, 0, static_cast<float>(viewport_width_),
                              fragments_ != nullptr ? fragments_->bounds.height : 0.0f};
-        for (std::size_t up = 1; up < at.chain.size(); ++up) {
+        // A FIXED box's containing block is the viewport - unless an ancestor
+        // establishes one for fixed boxes too: a transform, a perspective, a
+        // filter, paint or layout containment, or a will-change of one of them
+        // (CSS Position 3 §2.1, CSS Transforms 1 §2, Filter Effects 1 §5).
+        const auto holds_fixed = [&](node_id node) {
+            if (styles_ == nullptr) { return false; }
+            const auto found = styles_->find(style::engine::key_of(node));
+            if (found == styles_->end() || !found->second) { return false; }
+            const auto value = [&](std::string_view property) {
+                return collapse_keyword(found->second->get(atoms_->intern(property)));
+            };
+            const auto set = [](const std::string & v) { return !v.empty() && v != "none"; };
+            const std::string contain = value("contain");
+            const std::string will = value("will-change");
+            return set(value("transform")) || set(value("perspective")) || set(value("filter")) ||
+                   set(value("backdrop-filter")) || set(value("rotate")) || set(value("scale")) ||
+                   set(value("translate")) || contain.find("paint") != std::string::npos ||
+                   contain.find("layout") != std::string::npos || contain == "strict" ||
+                   contain == "content" || will.find("transform") != std::string::npos ||
+                   will.find("perspective") != std::string::npos ||
+                   will.find("filter") != std::string::npos;
+        };
+        const bool fixed = at.position == layout::position_kind::fixed;
+        // Only an out-of-flow box has one; the walk is not paid for the rest.
+        const bool out_of_flow = fixed || at.position == layout::position_kind::absolute;
+        for (std::size_t up = 1; out_of_flow && up < at.chain.size(); ++up) {
             const layout::box_node * ancestor = box_for(boxes_, at.chain[up]);
-            if (ancestor == nullptr || !ancestor->is_positioned()) { continue; }
+            if (ancestor == nullptr) { continue; }
+            // ...and what holds a fixed box holds an absolute one too.
+            const bool holds = holds_fixed(at.chain[up]);
+            if (fixed ? !holds : !(ancestor->is_positioned() || holds)) { continue; }
             const rect outer = abs_rect(at.chain[up]);
             const layout::constraints c{outer.width, outer.height, ancestor->font_size};
             const layout::resolved_edges e = layout::resolve_edges(*ancestor, c);
@@ -250,6 +278,30 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             declared_size.u != layout::unit::em) {
             at.font_size = declared_size.resolve(0.0f, 16.0f);
         }
+    }
+    // ...AND OF AN ELEMENT WHOSE FONT SIZE IS ANIMATED. The box carries the
+    // cascade's size; a running animation's is the one getComputedStyle owes,
+    // and every `em` below resolves against it. A percentage or an `em` in
+    // `font-size` is the PARENT's, as it is in the cascade.
+    for (const auto & [name, text] : animated) {
+        if (name != "font-size" || at.pseudo) { continue; }
+        const layout::box_node * parent =
+            at.chain.size() >= 2 ? box_for(boxes_, at.chain[1]) : nullptr;
+        style::css::length_context sizes;
+        sizes.font_size = parent != nullptr ? parent->font_size : 16.0f;
+        sizes.viewport_width = static_cast<float>(viewport_width_);
+        const std::string_view given = trim(text, html_whitespace);
+        std::optional<float> px;
+        if (given.ends_with('%')) {
+            float percent = 0;
+            const char * end = given.data() + given.size() - 1;
+            if (std::from_chars(given.data(), end, percent).ptr == end) {
+                px = sizes.font_size * percent / 100.0f;
+            }
+        } else {
+            px = style::css::length_text_to_px(given, sizes);
+        }
+        if (px) { at.font_size = std::max(0.0f, *px); }
     }
     // THE PRINCIPAL BOX, and the two ways there is not one.
     const std::string declared_display = collapse_keyword(declared("display"));
@@ -439,8 +491,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //     §position. `background-position` is not modelled as one - its
         //     grammar has a three-value form and a comma list - so those forms
         //     fall through to the background layer resolver below.
-        if ((known != nullptr && known->kind == style::css::value_kind::position) ||
-            property == "background-position") {
+        //     ...BUT NOT perspective-origin, whose RESOLVED value is the used
+        //     one in pixels against the box (CSS Transforms 2 §6.2, CSSOM's
+        //     resolved-value list) - the transform branch below answers it.
+        if (((known != nullptr && known->kind == style::css::value_kind::position) ||
+             property == "background-position") &&
+            property != "perspective-origin") {
             std::string resolved = style::css::computed_position(text, declared("writing-mode"),
                                                                  declared("direction"));
             if (!resolved.empty()) { return resolved; }
@@ -473,6 +529,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //    with its lengths in pixels (CSS Images 4).
         const bool image_property = property == "background-image" || property == "mask-image" ||
                                     property == "border-image-source" ||
+                                    property == "mask-border-source" ||
                                     property == "list-style-image";
         const bool filter_property = property == "filter" || property == "backdrop-filter";
         const bool grid_property =
@@ -488,8 +545,17 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             property == "background-size" || property == "mask-size" ||
             property == "background-position" || property == "background-position-x" ||
             property == "background-position-y" || property == "mask-position";
+        // `outline-color: auto` is the UA's focus-ring colour, and it stays
+        // `auto` only while the outline's style is `auto` too; beside any
+        // other style it computes to `currentcolor` (CSS UI 4 §5.3).
+        if (property == "outline-color" && ascii_iequals(trim(text, html_whitespace), "auto")) {
+            return collapse_keyword(declared("outline-style")) == "auto" ? "auto" : "currentcolor";
+        }
+        const bool gap_property =
+            ascii_iequals_any(property, {"column-rule-width", "row-rule-width", "column-rule-color",
+                                         "row-rule-color"});
         if (is_color_property(property) || image_property || filter_property || grid_property ||
-            transform_property || layer_property) {
+            transform_property || layer_property || gap_property || property == "caret-color") {
             style::css::length_context bases;
             bases.font_size = at.font_size;
             bases.root_font_size = at.root_font_size;
@@ -525,6 +591,40 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                                 : style::css::computed_color(text, {});
                 if (own_color.empty()) { own_color = "rgb(0, 0, 0)"; }
                 ctx.current_color = own_color;
+            }
+            if (property == "caret-color") {
+                // CSS UI 4 §6.2.1: `auto` computes to currentcolor, and a
+                // second colour that is `auto` is no second colour at all.
+                std::vector<std::string> parts;
+                bool second_auto = false;
+                for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+                    const std::string_view part = trim(raw, html_whitespace);
+                    if (part.empty()) { continue; }
+                    const bool automatic = ascii_iequals(part, "auto");
+                    second_auto = automatic && !parts.empty();
+                    std::string one = automatic || ascii_iequals(part, "currentcolor")
+                                          ? own_color
+                                          : style::css::computed_color(part, ctx);
+                    if (one.empty()) {
+                        if (const std::optional<color> c = paint::parse_color(part)) {
+                            one = color_text(*c);
+                        } else if (const std::optional<color> s = system_color(part)) {
+                            one = color_text(*s);
+                        }
+                    }
+                    parts.push_back(one.empty() ? std::string{part} : std::move(one));
+                }
+                if (parts.empty()) { return own_color; }
+                if (parts.size() == 2 && second_auto) { parts.pop_back(); }
+                return parts.size() == 2 ? parts[0] + " " + parts[1] : parts[0];
+            }
+            if (gap_property) {
+                // A gap rule list, item by item (lib/Style/css/properties/gaps.cpp).
+                const std::string_view given = trim(text, html_whitespace);
+                const bool color = property.ends_with("-color");
+                std::string computed = style::css::computed_gap_list(
+                    property, given.empty() ? (color ? "currentcolor" : "medium") : given, ctx);
+                return computed.empty() ? collapse_keyword(text) : computed;
             }
             if (image_property) {
                 if (std::string computed = style::css::computed_image(text, ctx);
@@ -579,7 +679,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //     `calc(log(0))` the cascade folded to a very negative number is
         //     `0` here, and `opacity: 2` is `1`. exp-log-serialize asks for the
         //     first.
-        if (property == "opacity") {
+        if (property == "opacity" || property == "shape-image-threshold") {
             const std::string_view given = trim(text, html_whitespace);
             const bool percent = given.ends_with('%');
             float number = 0;
@@ -590,9 +690,52 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 return number_text(std::min(1.0f, std::max(0.0f, number)));
             }
         }
+        // 4b'. A BASIC SHAPE (lib/Style/css/properties/shapes.cpp).
+        if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
+            style::css::length_context bases;
+            bases.font_size = at.font_size;
+            bases.root_font_size = at.root_font_size;
+            bases.viewport_width = static_cast<float>(viewport_width_);
+            bases.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
+            std::string computed = style::css::computed_basic_shape(property, text, bases);
+            if (!computed.empty()) { return computed; }
+        }
+        // 4c. AN OVERFLOW AXIS BESIDE A SCROLLING ONE: CSS Overflow 3 §3.1 -
+        //     when either axis is neither `visible` nor `clip`, `visible`
+        //     computes to `auto` and `clip` to `hidden`.
+        if (property == "overflow-x" || property == "overflow-y") {
+            const std::string own = collapse_keyword(text);
+            std::string other =
+                collapse_keyword(declared(property == "overflow-x" ? "overflow-y" : "overflow-x"));
+            if (other.empty()) { other = "visible"; }
+            if (other != "visible" && other != "clip") {
+                if (own.empty() || own == "visible") { return "auto"; }
+                if (own == "clip") { return "hidden"; }
+            }
+            return own;
+        }
         // 5. Everything else is a keyword or a list, and its computed value IS
-        //    its specified text.
-        return collapse_keyword(text);
+        //    its specified text - lowercased, EXCEPT where the value names
+        //    something: a <custom-ident> is case-sensitive (CSS Values 4
+        //    §3.2), so `counter-reset: myCounter` and `animation-name: Both`
+        //    read back as written. The grammar lowercased every keyword of
+        //    these already.
+        static constexpr std::string_view names_something[] = {"counter-increment",
+                                                               "counter-reset",
+                                                               "counter-set",
+                                                               "animation-name",
+                                                               "page",
+                                                               "view-transition-name",
+                                                               "view-transition-class",
+                                                               "container-name",
+                                                               "anchor-name",
+                                                               "position-anchor",
+                                                               "anchor-scope",
+                                                               "font-palette",
+                                                               "scroll-timeline-name",
+                                                               "view-timeline-name",
+                                                               "timeline-scope"};
+        return collapse_keyword(text, ascii_iequals_any(property, names_something));
     };
 
     // `currentcolor` IS NOT A COLOUR. It is the initial value of all six border
@@ -773,6 +916,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             style::css::declaration_block block;
             for (const std::string_view longhand_name : style::css::longhands_of(p.name)) {
                 std::string held = longhand(longhand_name);
+                // A decoration in the text's own colour is `currentcolor`,
+                // which the shorthand leaves out as it does any initial part.
+                if (p.name == "text-decoration" && longhand_name == "text-decoration-color" &&
+                    held == current_color) {
+                    held = "currentcolor";
+                }
                 if (held.empty()) {
                     block.clear();
                     break;

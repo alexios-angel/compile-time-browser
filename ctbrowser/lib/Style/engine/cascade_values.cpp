@@ -3,6 +3,8 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/style/css/calc.hpp>
 
+#include <cmath>
+
 namespace ctbrowser::style::cascade_detail {
 
 // EVERY SHORTHAND expand_shorthand DOES NOT SPLIT goes through the CSSOM's
@@ -39,7 +41,9 @@ std::string fold_value(std::string text, std::string_view name,
     };
     const bool radius = name.starts_with("border-") && name.ends_with("-radius");
     if (radius || name == "border-image-width" || name == "border-image-outset" ||
-        name == "border-image-slice") {
+        name == "border-image-slice" || name == "text-decoration-inset" || name == "text-indent" ||
+        name == "overflow-clip-margin" || name == "mask-border-width" ||
+        name == "mask-border-outset" || name == "mask-border-slice") {
         // Every component computes before inheritance; scalar folding
         // cannot resolve or clamp a list as a single length.
         std::vector<std::string> parts;
@@ -57,6 +61,27 @@ std::string fold_value(std::string text, std::string_view name,
             if (checked.valid) { return checked.serialized; }
         }
         return result;
+    }
+    if (name == "hyphenate-limit-chars" || name == "counter-increment" || name == "counter-reset" ||
+        name == "counter-set") {
+        // <integer>s among other words: a math function computes to its
+        // value, rounded (CSS Values 4 §10.9), and the whole is written
+        // canonically.
+        std::string result;
+        for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+            const std::string_view part = trim(raw, html_whitespace);
+            if (part.empty()) { continue; }
+            std::string one{part};
+            if (css::may_have_math(part)) {
+                const css::math_answer n = css::evaluate_math(part, lengths);
+                if (n.outcome == css::math_outcome::resolved) {
+                    one = css::serialize_number(std::floor(n.value.px + 0.5));
+                }
+            }
+            result += (result.empty() ? "" : " ") + one;
+        }
+        const css::value_check checked = css::check_declaration(name, result, false);
+        return checked.valid ? checked.serialized : result;
     }
     // Shorthands have no range of their own. Clamp after expansion,
     // including components whose math was already folded above.
