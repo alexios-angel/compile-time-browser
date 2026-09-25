@@ -205,8 +205,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             const auto counted = found.walk([&](mlir::Operation * operation) {
                 if (!spend()) { return mlir::WalkResult::interrupt(); }
                 if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-                    projectBranches |=
-                        !branch.getNumResults() && exactBoolean(branch.getCondition()).has_value();
+                    projectBranches |= exactBoolean(branch.getCondition()).has_value();
                 }
                 size += uint64_t(1) + operation->getNumOperands() + operation->getNumResults() +
                         operation->getNumSuccessors();
@@ -270,12 +269,16 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 found.walk<mlir::WalkOrder::PostOrder>([&](mlir::scf::IfOp branch) {
                     if (!spend()) { return mlir::WalkResult::interrupt(); }
                     auto selected = exactBoolean(branch.getCondition());
-                    if (branch.getNumResults() || !selected) { return mlir::WalkResult::advance(); }
+                    if (!selected) { return mlir::WalkResult::advance(); }
                     auto * predicate = branch.getCondition().getDefiningOp();
                     auto & region = *selected ? branch.getThenRegion() : branch.getElseRegion();
                     if (!region.empty()) {
                         auto & body = region.front();
-                        body.getTerminator()->erase();
+                        auto yield = llvm::cast<mlir::scf::YieldOp>(body.getTerminator());
+                        // Verification establishes result count, types and
+                        // dominance; substitute only the selected payload.
+                        branch.replaceAllUsesWith(yield.getOperands());
+                        yield.erase();
                         branch->getBlock()->getOperations().splice(branch->getIterator(),
                                                                    body.getOperations());
                     }

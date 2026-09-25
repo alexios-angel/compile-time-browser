@@ -405,6 +405,16 @@ RAW_HELPER_SOURCES |= {
     name + "-helper-branches": source.replace("() {", "() { if (false) { unknown(); }")
     for name, source in OUTER_SOURCES.items()
 }
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-results": source.replace("return this;", "return true ? this : null;")
+    .replace(
+        "return {done: done, value: anchor};",
+        "return false ? null : {done: done, value: anchor};",
+    )
+    .replace("throw anchor;", "throw true ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
 
 
 def check_outer_catches(args):
