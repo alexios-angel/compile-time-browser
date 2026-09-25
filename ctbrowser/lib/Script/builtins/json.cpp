@@ -590,8 +590,12 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
     // would then never end. The ceiling is the VM's own for the same reason the
     // VM has one.
     if (depth > context::reentry_ceiling) { return value::undefined(); }
+    // A throw that has LANDED is not pending (context::unwinds): a revoked
+    // proxy the reviver grafted in throws from IsArray, and the walk must
+    // stop there rather than delete the child and call the reviver again.
+    const unwind_watch watch{cx};
     const value held = cx.lookup_property(holder, key); // step 1: Get(holder, name)
-    if (cx.throw_pending()) { return value::undefined(); }
+    if (watch.threw()) { return value::undefined(); }
     const context::rooted keep_held{cx, held};
     // The parse record still describes this value only while the value is
     // the one parsed (SameValue): a reviver that replaced it forward
@@ -604,7 +608,7 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
         // the property non-configurable first simply leaves it in place.
         const auto revive_child = [&](const std::string & k, const parse_record * child) {
             const value revived = internalize_json(cx, held, k, reviver, depth + 1, child);
-            if (cx.throw_pending()) { return false; }
+            if (watch.threw()) { return false; }
             if (revived.is_undefined()) {
                 (void)cx.delete_own_property(held, k);
             } else {
@@ -616,13 +620,13 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
                 wanted.writable = wanted.enumerable = wanted.configurable = true;
                 (void)cx.define_own_property(held, k, wanted);
             }
-            return !cx.throw_pending();
+            return !watch.threw();
         };
         bool is_array = false;
         if (!is_array_value(cx, held, is_array)) { return value::undefined(); }
         if (is_array) {
             const double len = array_like_length(cx, held);
-            if (cx.throw_pending() || !generic_walk_ok(cx, len)) { return value::undefined(); }
+            if (watch.threw() || !generic_walk_ok(cx, len)) { return value::undefined(); }
             for (double i = 0; i < len; i += 1.0) {
                 const auto at = static_cast<std::size_t>(i);
                 const parse_record * child =
@@ -630,17 +634,21 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
                 if (!revive_child(number_to_string(i), child)) { return value::undefined(); }
             }
         } else {
-            // EnumerableOwnProperties: the key list is taken BEFORE the walk
-            // (step 2.c.i takes OwnPropertyKeys once) - a property the reviver
-            // adds is not visited - and each is re-checked for being there and
-            // enumerable as its turn comes.
-            const std::vector<std::string> keys = own_property_names(cx, held, key_filter::strings);
-            if (cx.throw_pending()) { return value::undefined(); }
-            for (const std::string & each : keys) {
+            // EnumerableOwnProperties (step 2.c.i), ONCE, before the walk:
+            // OwnPropertyKeys and each key's [[GetOwnProperty]] now, so a
+            // property the reviver adds is not visited - and one it DELETES
+            // still is, its [[Get]] reading whatever the chain holds, which
+            // the reviver may then define back (reviver-object-get-prop-from-
+            // prototype).
+            std::vector<std::string> keys;
+            for (std::string & each : own_property_names(cx, held, key_filter::strings)) {
                 context::property_descriptor found;
                 const bool present = cx.own_property(held, each, found);
-                if (cx.throw_pending()) { return value::undefined(); }
-                if (!present || !found.enumerable) { continue; }
+                if (watch.threw()) { return value::undefined(); }
+                if (present && found.enumerable) { keys.push_back(std::move(each)); }
+            }
+            if (watch.threw()) { return value::undefined(); }
+            for (const std::string & each : keys) {
                 const parse_record * child = nullptr;
                 if (recorded) {
                     for (const parse_entry & e : record->entries) {
