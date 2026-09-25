@@ -34,6 +34,11 @@ void trim_bounds(std::string_view s, bool from_start, bool from_end, std::size_t
                                     std::span<const value> captures, value named_captures,
                                     const std::string & replacement_template, std::string & out);
 
+// The default case conversion of 22.1.3.28/22.1.3.30 over WTF-8 text:
+// Unicode's full lower- (`upper` false) or uppercase mapping, Final_Sigma
+// included. case_mapping.cpp, over the generated case_mapping.inc.
+[[nodiscard]] std::string unicode_case(std::string_view s, bool upper);
+
 // The same byte ceiling as repeat/pad, checked before replacement expansion
 // or concatenation can request an unbounded native allocation.
 [[nodiscard]] inline bool check_string_growth(context & cx, std::size_t length,

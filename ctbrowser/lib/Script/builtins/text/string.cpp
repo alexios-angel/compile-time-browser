@@ -765,20 +765,15 @@ void install_string(context & cx) {
         [replace_string](context & c, const std::string & s, std::span<value> a) -> value {
             return replace_string(c, s, a, true);
         });
-    // ASCII-ONLY, on purpose and for the whole family: core/algorithms.hpp
-    // folds A-Z and nothing else so that a rendered page cannot depend on the
-    // host's locale or Unicode tables. `"Straße".toUpperCase()` is
-    // "STRAßE" here and "STRASSE" in V8, which unittests/js/string_basics
-    // asserts rather than leaves to be discovered.
+    // UNICODE'S DEFAULT CASE CONVERSION, from a table generated off the pinned
+    // Unicode release (case_mapping.cpp says why that is not the host
+    // dependence the ASCII-only fold was avoiding): `"Straße".toUpperCase()`
+    // is "STRASSE" and a final Σ lowercases to ς, as in every browser.
     text("toUpperCase", 0, [](context & c, const std::string & s, std::span<value>) -> value {
-        std::string out = s;
-        ascii_upper_in_place(out);
-        return c.string(out);
+        return c.string(unicode_case(s, true));
     });
     text("toLowerCase", 0, [](context & c, const std::string & s, std::span<value>) -> value {
-        std::string out = s;
-        ascii_lower_in_place(out);
-        return c.string(out);
+        return c.string(unicode_case(s, false));
     });
     text("trim", 0, [](context & c, const std::string & s, std::span<value>) -> value {
         std::size_t from = 0;
@@ -908,23 +903,18 @@ void install_string(context & cx) {
                  return c.string(out);
              });
     }
-    // THE SAME ASCII FOLD as toUpperCase, deliberately. This was `std::toupper`,
+    // THE SAME CONVERSION as toUpperCase, deliberately. This was `std::toupper`,
     // which reads the GLOBAL C LOCALE: what it does to a byte above 0x7F is
     // implementation- and locale-defined, so `toLocaleUpperCase` and
     // `toUpperCase` could disagree about the same string depending on `LC_ALL` -
-    // exactly the host dependence core/algorithms.hpp exists to prevent, and it
-    // would have shown up as a golden that renders differently on two machines.
-    // A real locale fold needs tables this engine does not carry; saying so is
-    // better than a fold that varies.
+    // exactly the host dependence core/algorithms.hpp exists to prevent. With
+    // no ECMA-402 there is no locale to tailor for (Turkish dotless i), and
+    // 22.1.3.26 lets the locale forms answer the default.
     text("toLocaleUpperCase", 0, [](context & c, const std::string & s, std::span<value>) -> value {
-        std::string out = s;
-        ascii_upper_in_place(out);
-        return c.string(out);
+        return c.string(unicode_case(s, true));
     });
     text("toLocaleLowerCase", 0, [](context & c, const std::string & s, std::span<value>) -> value {
-        std::string out = s;
-        ascii_lower_in_place(out);
-        return c.string(out);
+        return c.string(unicode_case(s, false));
     });
     text("concat", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
         const std::string before = c.current_stack();

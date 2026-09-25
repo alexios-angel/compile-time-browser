@@ -18,12 +18,10 @@
 //    day someone migrates the representation the test fails and hands them a
 //    ready-made acceptance list.
 //
-// 2. UNICODE CASE FOLDING. `"Straße".toUpperCase()` is "STRASSE" in V8 and
-//    "STRAßE" here, and `"İ".toLowerCase()` differs likewise. That is BY
-//    DESIGN: `core/algorithms.hpp` folds ASCII only, on the stated grounds that
-//    this repository byte-compares rendered output across Linux and Windows and
-//    a locale- or table-driven fold would make a render depend on the host. The
-//    ASCII behaviour is asserted; the rest is left alone.
+// 2. UNICODE CASE CONVERSION is Unicode's default full mapping since
+//    2026-09-25, from a table generated off the pinned Unicode release
+//    (builtins/text/case_mapping.cpp) - compiled in, so a render still cannot
+//    depend on the host, which is what the ASCII-only fold was protecting.
 
 #include "js_expect.hpp"
 
@@ -641,11 +639,14 @@ int main() {
     js_expect("[...\"\\ud83d\\ude00\"].length", "4");        // V8: 1 - iteration is by code POINT
     js_expect("\"\\u00e9\".slice(0, 1).length", "1");        // V8: 1, but a DIFFERENT character
 
-    // --- ASCII-only case folding: BY DESIGN, not a defect -------------------
-    // core/algorithms.hpp folds A-Z and nothing else, so a golden cannot depend
-    // on the host's locale or Unicode tables. V8's answers are in the comments.
-    js_expect("\"Stra\\u00dfe\".toUpperCase()", "STRA\u00dfE"); // V8: STRASSE
-    js_expect("\"\\u0130\".toLowerCase()", "\u0130");           // V8: i followed by U+0307
+    // --- Unicode's default case conversion ----------------------------------
+    // SpecialCasing's unconditional entries, Final_Sigma, and the supplementary
+    // planes, as V8 answers them.
+    js_expect("\"Stra\\u00dfe\".toUpperCase()", "STRASSE");
+    js_expect("\"\\u0130\".toLowerCase()", "i\u0307");
+    js_expect("\"\\u03a3\\u0391\\u03a3\".toLowerCase()", "\u03c3\u03b1\u03c2");
+    js_expect("\"\\ud801\\udc00\".toLowerCase() === \"\\ud801\\udc28\"", "true");
+    js_expect("\"\\u00e9t\\u00e9\".toLocaleUpperCase()", "\u00c9T\u00c9");
 
     // --- the well-known-symbol protocol: match/replace/search/split/matchAll
     // ask their argument first (22.1.3.13 step 2 and its siblings) --------
