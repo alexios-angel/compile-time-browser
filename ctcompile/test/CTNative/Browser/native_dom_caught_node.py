@@ -546,6 +546,20 @@ RAW_HELPER_SOURCES |= {
 }
 
 
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-coercing-comparisons": source.replace(
+        "return this;", "return '0x10' == 16 ? this : null;"
+    )
+    .replace(
+        "return {done: done, value: anchor};",
+        "return null >= false ? {done: done, value: anchor} : null;",
+    )
+    .replace("throw anchor;", "throw (true ? '1' : '') >= true ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
 # Retain the complete source-global witnesses; the initialized provider and
 # absence of source writes must prove the binding before helper projection.
 RAW_HELPER_SOURCES |= {
