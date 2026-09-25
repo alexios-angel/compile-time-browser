@@ -734,8 +734,26 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
             conditions.functions = [this](std::string_view name) {
                 return function_of(atoms_->intern(name));
             };
+            // `inherit` in a query names the container's PARENT's value.
+            conditions.inherited = [&](std::string_view name) -> std::optional<std::string> {
+                if (d == 0 || d - 1 >= chain_styles_.size() || !chain_styles_[d - 1]) {
+                    return std::nullopt;
+                }
+                const std::string_view v = chain_styles_[d - 1]->get(atoms_->intern(name));
+                if (v.empty() || v == guaranteed_invalid) { return std::nullopt; }
+                return std::string{v};
+            };
             conditions.lengths = box.lengths;
-            const std::string asked{text};
+            // A DECLARATION'S `!important` is no part of the value it asks
+            // about (custom-property-style-queries): `style(--foo: bar
+            // !important)` asks for `bar`.
+            std::string asked{text};
+            if (const std::size_t bang = asked.rfind('!');
+                bang != std::string::npos && asked.find(':') < bang &&
+                ascii_iequals(trim(std::string_view{asked}.substr(bang + 1), html_whitespace),
+                              "important")) {
+                asked.resize(bang);
+            }
             const std::optional<std::string> answer = css::substitute_var(
                 "if(style(" + asked + "): y; not style(" + asked + "): n; else: u)", lookup,
                 *atoms_, attributes, &conditions);
