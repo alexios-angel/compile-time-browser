@@ -22,5 +22,39 @@ int main() {
     // A spread before the elision moves it; the positions are no longer
     // static, and the slot is appended as undefined then.
     js_expect("[...[1, 2], , 4].length", "4");
+
+    // A LENGTH MAKES HOLES TOO (array_object::holes_begin): `new Array(n)`, a
+    // grown `length` and a write past the end leave indices that are not
+    // properties, and a fill in either direction turns them into elements.
+    js_expect("0 in new Array(3)", "false");
+    js_expect("Object.keys(new Array(3)).length", "0");
+    js_expect("(function () { var a = [0]; a.length = 3; return (1 in a) + ',' + a.length; })()",
+              "false,3");
+    js_expect("(function () { var a = []; a[3] = 'x'; return Object.keys(a).join(); })()", "3");
+    js_expect("(function () { var a = new Array(10); a[1] = undefined; var n = 0;"
+              " a.forEach(function () { n++; }); return n; })()",
+              "1");
+    js_expect("(function () { var a = new Array(4); for (var i = 0; i < 4; i++) a[i] = i;"
+              " return Object.keys(a).join() + '|' + a.join(); })()",
+              "0,1,2,3|0,1,2,3");
+    js_expect("(function () { var a = new Array(4); for (var i = 3; i >= 0; i--) a[i] = i;"
+              " return Object.keys(a).join(); })()",
+              "0,1,2,3");
+    js_expect("(function () { var a = new Array(5); a[2] = 'm'; a[0] = 'f';"
+              " return Object.keys(a).join(); })()",
+              "0,2");
+    js_expect("new Array(3).fill(7).join()", "7,7,7");
+    js_expect("(function () { var a = new Array(3); a.push(1); return Object.keys(a).join(); })()",
+              "3");
+    // A HOLE, OR AN INDEX PAST THE END, READS THROUGH TO THE PROTOTYPES -
+    // getters included (OrdinaryGet step 3).
+    js_expect("(function () { Array.prototype[1] = 'p'; var a = [0]; a.length = 2;"
+              " var r = a[1] + a.join(); delete Array.prototype[1]; return r; })()",
+              "p0,p");
+    js_expect("(function () { Object.defineProperty(Array.prototype, '0',"
+              " {get: function () { return 11; }, configurable: true});"
+              " var r = [, 1][0] + ',' + [][0]; delete Array.prototype[0]; return r; })()",
+              "11,11");
+    js_expect("1 / [true].indexOf(true, -0)", "Infinity");
     REPORT("array_holes");
 }

@@ -53,7 +53,8 @@ bool array_set_length(array_object & arr, double n) {
             return false;
         }
     }
-    return arr.set_js_length(n);
+    // Growing makes holes, not elements (steps 17-18 delete; nothing adds).
+    return arr.set_js_length_with_holes(n);
 }
 
 namespace {
@@ -68,7 +69,9 @@ namespace {
     if (static_cast<std::size_t>(at) + 1 - arr.items.size() > array_object::dense_limit) {
         return true; // the caller records it sparse
     }
+    const std::size_t before = arr.items.size();
     arr.items.resize(static_cast<std::size_t>(at) + 1, value::undefined());
+    arr.add_holes(before, at); // what it jumps over is not elements
     return true;
 }
 

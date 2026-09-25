@@ -338,12 +338,14 @@ struct unwind_watch {
     if (self.is_array()) {
         auto * arr = static_cast<array_object *>(self.as_heap());
         // A typed array coerces and drops out of range, never refuses; an
-        // ordinary dense one that is extensible and writable never refuses an
-        // index at or below its size. Neither can run a line of JavaScript.
+        // ordinary one with no element attributes of its own that is
+        // extensible and writable never refuses an index at or below its size
+        // - a hole there included (array_object::holes_begin). Neither can
+        // run a line of JavaScript.
         const bool typed = arr->is_view() || arr->elements != element_kind::none;
         if (typed ||
-            (dense_array_this(self) != nullptr && arr->extensible && arr->elements_writable &&
-             i >= 0 && i <= static_cast<double>(arr->items.size()))) {
+            (arr->element_attrs.empty() && arr->length_writable && arr->extensible &&
+             arr->elements_writable && i >= 0 && i <= static_cast<double>(arr->items.size()))) {
             cx.store_index(self, value::number(i), v);
             return true;
         }
@@ -379,16 +381,19 @@ struct unwind_watch {
 }
 // HasProperty over an index - what makes the iteration methods SKIP A HOLE.
 //
-// Free on a dense array with no holes and no element attributes of its own
-// (array_object::element_attrs): every index below its size is present. For
-// anything else this is the real HasProperty, and it is what makes
+// Free on an array with no element attributes of its own
+// (array_object::element_attrs): every index below its size that is not in
+// its run of holes is present. For anything else - an index past the end
+// included, which Array.prototype may answer for - this is the real
+// HasProperty, and it is what makes
 // `Array.prototype.forEach.call({length: 3, 1: 'x'}, f)` call back once rather
 // than three times.
 [[nodiscard]] inline bool has_element(context & cx, value self, double i) {
     if (self.is_array()) {
         auto * arr = static_cast<array_object *>(self.as_heap());
-        if (arr->sparse.empty() && arr->element_attrs.empty()) {
-            return i >= 0 && i < static_cast<double>(arr->length());
+        if (arr->element_attrs.empty() && i >= 0 && i < static_cast<double>(arr->length()) &&
+            !arr->in_hole_run(static_cast<std::size_t>(i))) {
+            return true;
         }
     }
     return cx.has_property(self, value::number(i));
@@ -424,14 +429,15 @@ struct unwind_watch {
 // array is for.
 //
 // NOR IS ONE WITH A HOLE, AN ACCESSOR ELEMENT OR A NON-WRITABLE `length`
-// (array_object::element_attrs, length_writable): those are exactly the cases
-// where vector surgery would skip a getter, fill a hole or write a length the
-// specification refuses, so they take the generic walk too.
+// (array_object::element_attrs and holes_begin, length_writable): those are
+// exactly the cases where vector surgery would skip a getter, fill a hole or
+// write a length the specification refuses, so they take the generic walk too.
 [[nodiscard]] inline array_object * dense_array_this(value self) {
     if (!self.is_array()) { return nullptr; }
     auto * arr = static_cast<array_object *>(self.as_heap());
     if (arr->is_view() || arr->elements != element_kind::none) { return nullptr; }
-    return arr->element_attrs.empty() && arr->length_writable ? arr : nullptr;
+    return arr->element_attrs.empty() && !arr->has_hole_run() && arr->length_writable ? arr
+                                                                                      : nullptr;
 }
 
 // A STRING RECEIVER CANNOT BE MUTATED, and the mutating methods have to say so.

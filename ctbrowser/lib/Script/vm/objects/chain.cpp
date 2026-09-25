@@ -68,7 +68,7 @@ value context::own_keys(value source) {
         for (std::size_t i = 0; i < n; ++i) {
             // A hole is not a property and a non-enumerable element is not
             // enumerated - see array_object::element_attrs.
-            if (!arr->element_attrs.empty()) {
+            if (!arr->element_attrs.empty() || arr->has_hole_run()) {
                 const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
                 if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
             }
@@ -148,7 +148,7 @@ void context::copy_own_properties(value target, value source) {
         auto * arr = static_cast<array_object *>(source.as_heap());
         const std::vector<value> items = arr->items;
         for (std::size_t i = 0; i < items.size(); ++i) {
-            if (!arr->element_attrs.empty()) {
+            if (!arr->element_attrs.empty() || arr->has_hole_run()) {
                 const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
                 if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
                 if ((a & array_object::elem_accessor) != 0) {

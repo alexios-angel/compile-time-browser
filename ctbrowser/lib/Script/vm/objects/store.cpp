@@ -78,9 +78,17 @@ void context::store_index(value target, value key, value v) {
                     store_rejected_ = true;
                     return;
                 }
-                // An element with attributes of its own, an accessor element,
-                // or a hole - see array_object::element_attrs.
-                if (!arr->element_attrs.empty()) [[unlikely]] {
+                // A hole a length left (array_object::holes_begin) becomes an
+                // element - unless the array takes no new properties.
+                if (arr->in_hole_run(index)) [[unlikely]] {
+                    if (!arr->extensible) {
+                        store_rejected_ = true;
+                        return;
+                    }
+                    arr->fill_hole(static_cast<std::uint32_t>(index));
+                } else if (!arr->element_attrs.empty()) [[unlikely]] {
+                    // An element with attributes of its own, an accessor
+                    // element, or a hole - see array_object::element_attrs.
                     const auto at = static_cast<std::uint32_t>(index);
                     if (const std::uint8_t * e = arr->find_element_attrs(at)) {
                         if ((*e & array_object::elem_accessor) != 0) {
@@ -130,8 +138,12 @@ void context::store_index(value target, value key, value v) {
             // Past 2^32-1 a numeric key is not an index and not a slot either;
             // it is an ordinary property, which an array here cannot hold.
             if (index > 4294967295ull) { return; }
+            // What the write jumps over is holes, not undefined elements:
+            // `a = []; a[3] = x` has no element 0.
+            const std::size_t before = arr->items.size();
             arr->items.resize(static_cast<std::size_t>(index) + 1, value::undefined());
             arr->items[static_cast<std::size_t>(index)] = v;
+            arr->add_holes(before, static_cast<std::size_t>(index));
         }
         return;
     }

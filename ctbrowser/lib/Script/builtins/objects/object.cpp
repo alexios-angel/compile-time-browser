@@ -104,7 +104,7 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
     if (of.is_array()) {
         auto * arr = static_cast<array_object *>(of.as_heap());
         for (std::size_t i = 0; i < arr->length(); ++i) {
-            if (!arr->element_attrs.empty()) {
+            if (!arr->element_attrs.empty() || arr->has_hole_run()) {
                 const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
                 if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
             }

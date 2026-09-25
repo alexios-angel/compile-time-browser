@@ -229,13 +229,26 @@ struct array_object final : heap_object {
         std::erase_if(element_attrs, [wanted](const std::pair<std::uint32_t, std::uint8_t> & e) {
             return e.first >= wanted;
         });
+        if (holes_end > wanted) { holes_end = static_cast<std::uint32_t>(wanted); }
+        if (holes_begin >= holes_end) { holes_begin = holes_end = 0; }
         if (wanted <= dense_limit) {
-            // Growing pads with undefined, exactly as before.
+            // Growing pads with undefined, exactly as before - an ArrayCreate
+            // whose caller fills every index. See set_js_length_with_holes.
             items.resize(static_cast<std::size_t>(wanted), value::undefined());
             sparse_length = 0;
         } else {
             sparse_length = static_cast<std::uint32_t>(wanted);
         }
+        return true;
+    }
+    // THE LENGTH A PAGE SET - `new Array(n)`, `a.length = n` (10.4.2.4) - where
+    // growing makes no elements: every new index is a hole, which [[Get]]
+    // reads through to the prototypes and HasProperty answers false for. A
+    // length past dense_limit already leaves its indices absent.
+    [[nodiscard]] bool set_js_length_with_holes(double n) {
+        const std::size_t before = items.size();
+        if (!set_js_length(n)) { return false; }
+        add_holes(before, items.size());
         return true;
     }
     // What `RegExp.prototype.exec` hangs off its result. The spec puts these on
@@ -294,6 +307,38 @@ struct array_object final : heap_object {
     // masked by the integrity bools freeze and seal set.
     [[nodiscard]] std::uint8_t element_attrs_at(std::uint32_t i);
     [[nodiscard]] bool is_hole(std::uint32_t i);
+
+    // --- A RUN OF HOLES, which a length made rather than a `delete` --------
+    //
+    // `new Array(n)`, a `length` grown and a write past the end all leave
+    // indices that are not properties (10.4.2) - forEach skips them and
+    // [[Get]] reads through to Array.prototype. One element_attrs entry per
+    // hole would say so, and then filling `new Array(100000)` front to back -
+    // the ordinary thing to do with one - would erase from the front of a
+    // sorted vector a hundred thousand times. So ONE contiguous run is two
+    // numbers: `items` [holes_begin, holes_end) are holes, element_attrs has
+    // no entry inside it, and a write at either end just moves that end. A
+    // write inside it (fill_hole, and set_element_attrs through it) splits
+    // it: what lies below becomes entries, and the run keeps what is above.
+    //
+    // Only what those three make is holey here: an ArrayCreate whose caller
+    // fills every index (set_js_length) pads with undefined as it did. A
+    // fast path that tests element_attrs alone therefore sees a hole as an
+    // undefined element, which is what it saw before - the element walks in
+    // builtins/internal.hpp (has_element, dense_array_this) ask for both.
+    std::uint32_t holes_begin = 0;
+    std::uint32_t holes_end = 0;
+    [[nodiscard]] bool has_hole_run() const noexcept { return holes_begin < holes_end; }
+    [[nodiscard]] bool in_hole_run(std::size_t i) const noexcept {
+        return i >= holes_begin && i < holes_end;
+    }
+    // `items` [from, to), slots just added, become holes.
+    void add_holes(std::size_t from, std::size_t to);
+    // The run as element_attrs entries, and no run.
+    void settle_hole_run();
+    // A write fills the hole at `i`, which is in the run.
+    void fill_hole(std::uint32_t i);
+
     // Both out of line, after object_object: the unique_ptr needs the
     // complete type to destroy, and an inline constructor instantiates that.
     array_object();
@@ -399,6 +444,11 @@ inline std::uint8_t * array_object::find_element_attrs(std::uint32_t i) {
     return it != element_attrs.end() && it->first == i ? &it->second : nullptr;
 }
 inline void array_object::set_element_attrs(std::uint32_t i, std::uint8_t a) {
+    // Out of the run first, which leaves an ordinary element behind.
+    if (in_hole_run(i)) {
+        fill_hole(i);
+        if (a == attr_default) { return; }
+    }
     const auto it = std::lower_bound(element_attrs.begin(), element_attrs.end(), i,
                                      [](const std::pair<std::uint32_t, std::uint8_t> & e,
                                         std::uint32_t k) { return e.first < k; });
@@ -413,6 +463,7 @@ inline void array_object::set_element_attrs(std::uint32_t i, std::uint8_t a) {
     if (a != attr_default) { element_attrs.insert(it, {i, a}); }
 }
 inline std::uint8_t array_object::element_attrs_at(std::uint32_t i) {
+    if (in_hole_run(i)) { return elem_hole; }
     const std::uint8_t * entry = element_attrs.empty() ? nullptr : find_element_attrs(i);
     std::uint8_t a = entry == nullptr ? attr_default : *entry;
     if (!elements_writable) { a = static_cast<std::uint8_t>(a & ~attr_writable); }
@@ -420,9 +471,43 @@ inline std::uint8_t array_object::element_attrs_at(std::uint32_t i) {
     return a;
 }
 inline bool array_object::is_hole(std::uint32_t i) {
+    if (in_hole_run(i)) { return true; }
     if (element_attrs.empty()) { return false; }
     const std::uint8_t * entry = find_element_attrs(i);
     return entry != nullptr && (*entry & elem_hole) != 0;
+}
+inline void array_object::add_holes(std::size_t from, std::size_t to) {
+    if (from >= to) { return; }
+    if (has_hole_run() && holes_end != from) { settle_hole_run(); }
+    if (!has_hole_run()) { holes_begin = static_cast<std::uint32_t>(from); }
+    holes_end = static_cast<std::uint32_t>(to);
+}
+inline void array_object::settle_hole_run() {
+    if (!has_hole_run()) { return; }
+    const auto it = std::lower_bound(element_attrs.begin(), element_attrs.end(), holes_begin,
+                                     [](const std::pair<std::uint32_t, std::uint8_t> & e,
+                                        std::uint32_t k) { return e.first < k; });
+    const auto made = element_attrs.insert(it, holes_end - holes_begin,
+                                           std::pair<std::uint32_t, std::uint8_t>{0, elem_hole});
+    for (std::uint32_t k = holes_begin; k < holes_end; ++k) { made[k - holes_begin].first = k; }
+    holes_begin = holes_end = 0;
+}
+inline void array_object::fill_hole(std::uint32_t i) {
+    if (i == holes_begin) {
+        ++holes_begin;
+    } else if (i + 1 == holes_end) {
+        --holes_end;
+    } else {
+        // From the middle: what lies below stays holes as entries, and the
+        // run keeps what lies above - so a fill that started anywhere is
+        // still one step per element from there on.
+        const std::uint32_t end = holes_end;
+        holes_end = i;
+        settle_hole_run();
+        holes_begin = i + 1;
+        holes_end = end;
+    }
+    if (holes_begin >= holes_end) { holes_begin = holes_end = 0; }
 }
 
 inline array_object::array_object() : heap_object(heap_kind::array) {}

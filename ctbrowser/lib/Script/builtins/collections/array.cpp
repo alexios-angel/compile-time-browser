@@ -28,7 +28,10 @@ void install_array(context & cx) {
             // the SIGABRTs test262 found (built-ins/Array/length/
             // S15.4.2.2_A2.1_T1) - while `new Array(1.5)` is a RangeError the
             // silent std::max swallowed.
-            if (!made->set_js_length(a[0].as_number())) {
+            // Every index a hole (23.1.1.1 step 5: ArrayCreate, then only
+            // `length`), which forEach skips and a read takes from
+            // Array.prototype.
+            if (!made->set_js_length_with_holes(a[0].as_number())) {
                 c.throw_error("RangeError", "Invalid array length");
             }
         } else {
