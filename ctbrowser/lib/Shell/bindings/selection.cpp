@@ -75,11 +75,30 @@ constexpr std::string_view across_slot = "__across";
 
 // The selection's range, or undefined - the slot is undefined until something
 // sets it, so `null` never leaks out of here.
+//
+// AND ONLY WHILE IT IS STILL THIS DOCUMENT'S. The range is live and the page
+// holds it: `getRangeAt(0).selectNode(nodeInAFragment)` moves it out of the
+// document, and removing a shadow host takes a range inside its tree out with
+// it. A selection's range is in its document, so the moment one is found
+// outside - an end that is neither the document nor a connected node of it -
+// the selection lets it go (move-selection-range-into-different-root and
+// selection-range-in-shadow-after-the-shadow-removed, both tentative).
 [[nodiscard]] value range_of(context & c) {
     script::object_object * self = self_object(c);
     if (self == nullptr) { return value::undefined(); }
     const value range = held_slot(self, range_slot);
-    return range.is_object() ? range : value::undefined();
+    if (!range.is_object()) { return value::undefined(); }
+    const value here = c.has_global("document") ? c.global("document") : value::undefined();
+    for (const char * end : {"startContainer", "endContainer"}) {
+        const value node = c.lookup_property(range, end);
+        if (node.is_heap() && node.bits() == here.bits()) { continue; }
+        if (!node.is_object_like() || !context::truthy(c.lookup_property(node, "isConnected")) ||
+            c.lookup_property(node, "ownerDocument").bits() != here.bits()) {
+            self->set(std::string{range_slot}, value::undefined());
+            return value::undefined();
+        }
+    }
+    return range;
 }
 
 void store_range(context & c, value range, bool backwards) {
