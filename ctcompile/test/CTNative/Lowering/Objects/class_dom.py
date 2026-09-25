@@ -301,15 +301,7 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "clang", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("build", "include", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = dom.parse_args(__doc__, oracles=True)
     vendor = args.include.parent / "vendor/bootstrap/bootstrap.bundle.js"
     assert BOOTSTRAP_M in vendor.read_text(), "Bootstrap M source pin changed"
     assert strings.BOOTSTRAP_F in vendor.read_text(), "Bootstrap F source pin changed"

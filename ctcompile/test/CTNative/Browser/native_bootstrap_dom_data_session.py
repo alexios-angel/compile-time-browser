@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """Gate the pinned Bootstrap Data program with three document-owned input keys."""
 
-import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
-import shutil
 import subprocess
 
 from CTNative.Browser import native_dom as dom
@@ -190,15 +187,7 @@ int main() {
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "clang", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("build", "include", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = dom.parse_args(__doc__, oracles=True)
     compilers = find_compilers()
     compilers[1] = args.clang
     source, values, prefix = umd_source()

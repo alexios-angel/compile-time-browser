@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 """Check native Element.querySelector against the shared public selector engine."""
 
-import argparse
-from pathlib import Path
-import shutil
-
 from CTNative.Browser import native_dom as dom
 from CTNative.harness import find_compilers
 
@@ -97,15 +93,7 @@ OWNED_CHECKS = r"""
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "clang"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("build", "include", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = dom.parse_args(__doc__)
     compilers = find_compilers()
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args, selectors=True)
