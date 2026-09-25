@@ -97,7 +97,7 @@ void test_interpolation() {
     // this recursed until the stack ran out.
     CHECK_EQ(
         interpolate_text("column-rule-color", "rgb(170, 70, 70)", "rgb(70, 170, 70)", 0.3, context),
-        std::string{"rgb(140, 100, 70)"});
+        std::string{"rgba(140.0000, 100.0000, 70.0000, 1.0000)"});
     CHECK(interpolate_text("left", "calc(50% - 25px)", "calc(100% - 10px)", 0.5, context) ==
           "calc(75% - 17.5px)");
     CHECK(interpolate_text("opacity", "0", "1", 0.25, context) == "0.25");
