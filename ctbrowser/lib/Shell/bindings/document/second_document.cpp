@@ -69,6 +69,10 @@ dom_bindings & dom_bindings::adopt_second_document(context & cx, document & fres
     made.secondary_ = true;
     made.primary_ = &top;
     made.cx_ = &cx;
+    // ONE RESOURCE REGISTRY FOR THE PAGE: a frame's own subresources - its
+    // <script src>, a frame inside it - come from where the page's do. Left
+    // null, a frame's external scripts and nested frames loaded nothing.
+    made.assets_ = top.assets_;
     // BEFORE the adoption, and this is not belt and braces. The primary builds
     // its interface table lazily, on the first `wrap()` - so a page whose very
     // first statement is `createHTMLDocument(...).createElement("div")` adopted
