@@ -214,13 +214,17 @@ void dom_bindings::install_control_select_options(context & cx) {
                 if (const value given = arg(a, 1); !given.is_undefined()) {
                     (void)doc_->set_attribute(id, atoms_->intern("value"), c.to_string(given));
                 }
-                if (context::truthy(arg(a, 2))) {
+                const bool default_selected = context::truthy(arg(a, 2));
+                if (default_selected) {
                     (void)doc_->set_attribute(id, atoms_->intern("selected"), "");
                 }
-                if (a.size() > 3) {
-                    helpers.set_slot(c, this, id, selected_slot,
-                                     value::boolean(context::truthy(a[3])));
-                    helpers.set_slot(c, this, id, dirty_slot, value::boolean(true));
+                // Step 5: the selectedness IS `selected` - false when it is
+                // absent, even with defaultSelected - and the dirtiness is
+                // left alone. Held in the slot only where it differs from
+                // what the attribute alone would say.
+                if (const bool selected = context::truthy(arg(a, 3));
+                    selected != default_selected) {
+                    helpers.set_slot(c, this, id, selected_slot, value::boolean(selected));
                 }
                 mutated();
                 return made;
