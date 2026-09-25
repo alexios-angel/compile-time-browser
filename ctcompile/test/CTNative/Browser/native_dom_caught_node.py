@@ -532,6 +532,20 @@ RAW_HELPER_SOURCES |= {
 }
 
 
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-scalar-loose-equality": source.replace(
+        "return this;", "return null == undefined ? this : null;"
+    )
+    .replace(
+        "return {done: done, value: anchor};",
+        "return false == 0 ? {done: done, value: anchor} : null;",
+    )
+    .replace("throw anchor;", "throw (true ? true : 0) != 1 ? null : anchor;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
 # Retain the complete source-global witnesses; the initialized provider and
 # absence of source writes must prove the binding before helper projection.
 RAW_HELPER_SOURCES |= {
