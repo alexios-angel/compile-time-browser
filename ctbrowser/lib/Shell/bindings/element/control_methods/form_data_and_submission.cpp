@@ -33,11 +33,14 @@ void dom_bindings::install_control_form_data(context & cx) {
         if (held == nullptr || !held->is_array()) { return nullptr; }
         return static_cast<script::array_object *>(held->as_heap());
     };
+    // "Create an entry" (XHR 5.1): the name, and a string value, converted to
+    // SCALAR VALUE STRINGS - a lone surrogate is U+FFFD - whether the entry
+    // comes from a form control or from FormData's append/set (USVString).
     const auto make_entry = [](context & c, const std::string & name, value held) {
         const value pair = c.make_array();
         auto & items = static_cast<script::array_object *>(pair.as_heap())->items;
-        items.push_back(c.string(name));
-        items.push_back(held.is_object_like() ? held : c.string(c.to_string(held)));
+        items.push_back(c.string(to_usv_string(name)));
+        items.push_back(held.is_object_like() ? held : c.string(to_usv_string(c.to_string(held))));
         return pair;
     };
     const auto entry_name = [](context & c, const value & pair) {
@@ -237,7 +240,7 @@ void dom_bindings::install_control_form_data(context & cx) {
         });
         fd_method("delete", 1, [entries_of, entry_name](context & c, std::span<value> a) {
             if (auto * list = entries_of(c)) {
-                const std::string name = arg_string(c, a, 0);
+                const std::string name = to_usv_string(arg_string(c, a, 0));
                 std::erase_if(list->items,
                               [&](const value & pair) { return entry_name(c, pair) == name; });
             }
@@ -245,7 +248,7 @@ void dom_bindings::install_control_form_data(context & cx) {
         });
         fd_method("get", 1, [entries_of, entry_name, entry_value](context & c, std::span<value> a) {
             if (auto * list = entries_of(c)) {
-                const std::string name = arg_string(c, a, 0);
+                const std::string name = to_usv_string(arg_string(c, a, 0));
                 for (const value & pair : list->items) {
                     if (entry_name(c, pair) == name) { return entry_value(pair); }
                 }
@@ -256,7 +259,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                   [entries_of, entry_name, entry_value](context & c, std::span<value> a) {
                       const value out = c.make_array();
                       if (auto * list = entries_of(c)) {
-                          const std::string name = arg_string(c, a, 0);
+                          const std::string name = to_usv_string(arg_string(c, a, 0));
                           for (const value & pair : list->items) {
                               if (entry_name(c, pair) == name) {
                                   static_cast<script::array_object *>(out.as_heap())
@@ -268,7 +271,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                   });
         fd_method("has", 1, [entries_of, entry_name](context & c, std::span<value> a) {
             if (auto * list = entries_of(c)) {
-                const std::string name = arg_string(c, a, 0);
+                const std::string name = to_usv_string(arg_string(c, a, 0));
                 for (const value & pair : list->items) {
                     if (entry_name(c, pair) == name) { return value::boolean(true); }
                 }
@@ -282,7 +285,7 @@ void dom_bindings::install_control_form_data(context & cx) {
             }
             auto * list = entries_of(c);
             if (list == nullptr) { return value::undefined(); }
-            const std::string name = c.to_string(a[0]);
+            const std::string name = to_usv_string(c.to_string(a[0]));
             const value fresh = make_entry(c, name, a[1]);
             bool replaced = false;
             std::vector<value> kept;
