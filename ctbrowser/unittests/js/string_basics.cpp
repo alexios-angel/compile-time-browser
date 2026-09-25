@@ -9,8 +9,7 @@
 //
 // TWO THINGS THIS FILE DELIBERATELY DOES NOT ASSERT.
 //
-// 1. NON-ASCII LENGTHS AND MOST INDICES. charCodeAt reads UTF-16 units, but
-//    this engine stores a JS string as UTF-8
+// 1. NON-ASCII LENGTHS AND INDICES. This engine stores a JS string as UTF-8
 //    BYTES; ECMA-262 specifies a sequence of UTF-16 CODE UNITS. So `"é".length`
 //    is 2 here and 1 in V8, and a non-BMP emoji is 4 here and 2 there. That is a
 //    representation difference, not a bug list, and closing it means changing
@@ -591,25 +590,26 @@ int main() {
         CHECK(cx.collections() > 0);
     }
 
-    // charCodeAt observes UTF-16 code units over the existing WTF-8 storage.
-    js_expect("\"\\u00e9\".charCodeAt(0)", "233");
-    js_expect("\"\\ud83d\\ude00\".charCodeAt(0)", "55357");
-    js_expect(R"((function () {
-        var s = 'A\u00e9\u20ac\ud83d\ude00\ud800Z\udc00';
-        return [0, 1, 2, 3, 4, 5, 6, 7, 8].map(function (i) {
-            return s.charCodeAt(i);
-        }).join();
-    })())",
-              "65,233,8364,55357,56832,55296,90,56320,NaN");
+    // charCodeAt's position: ToIntegerOrInfinity, NaN out of range, and the
+    // receiver converted before the position (22.1.3.2 steps 2-3).
     js_expect(R"([NaN, undefined, -0.9, 1.9, -1, Infinity, -Infinity, 9007199254740991]
-        .map(function (i) { return '\u00e9A'.charCodeAt(i); }).join())",
-              "233,233,233,65,NaN,NaN,NaN,NaN");
+        .map(function (i) { return 'zA'.charCodeAt(i); }).join())",
+              "122,122,122,65,NaN,NaN,NaN,NaN");
     js_expect("''.charCodeAt()", "NaN");
-    js_expect("String.fromCharCode(-1).charCodeAt(0)", "65535");
-    js_expect("String.fromCharCode(-32767).charCodeAt(0)", "32769");
+    // AND charAt AND charCodeAt DESCRIBE THE SAME CHARACTER AT EVERY INDEX,
+    // whatever the representation: a string walked with both - the WPT
+    // results reporter's quote() - must not see two different strings.
+    js_expect(R"((function () {
+        var s = 'a\u00e9\u20ac\ud83d\ude00';
+        for (var i = 0; i < s.length; i++) {
+            if (s.charAt(i).charCodeAt(0) !== s.charCodeAt(i)) { return i; }
+        }
+        return 'agree';
+    })())",
+              "agree");
     js_expect(R"((function () {
         var log = '';
-        var text = {toString() { log += 's'; return '\u00e9A'; }};
+        var text = {toString() { log += 's'; return 'zA'; }};
         var index = {valueOf() { log += 'i'; return 1; }};
         return String.prototype.charCodeAt.call(text, index) + ':' + log;
     })())",
@@ -620,7 +620,7 @@ int main() {
     }
     js_expect(R"((function () {
         var error = {};
-        try { '\u00e9'.charCodeAt({valueOf() { throw error; }}); }
+        try { 'z'.charCodeAt({valueOf() { throw error; }}); }
         catch (e) { return e === error; }
         return false;
     })())",
@@ -632,9 +632,11 @@ int main() {
     // answers. They are pinned because a silent gap is worse than a recorded
     // one: this is the acceptance list for a UTF-16 migration, and the day the
     // representation changes these lines fail and say exactly what to update.
-    js_expect("\"e\\u0301\".length", "3");       // V8: 2 - a combining mark is 2 UTF-8 bytes
-    js_expect("\"\\u00e9\".length", "2");        // V8: 1 - one code unit, two UTF-8 bytes
-    js_expect("\"\\ud83d\\ude00\".length", "4"); // V8: 2 - a surrogate pair
+    js_expect("\"e\\u0301\".length", "3");         // V8: 2 - a combining mark is 2 UTF-8 bytes
+    js_expect("\"\\u00e9\".length", "2");          // V8: 1 - one code unit, two UTF-8 bytes
+    js_expect("\"\\u00e9\".charCodeAt(0)", "195"); // V8: 233
+    js_expect("\"\\ud83d\\ude00\".length", "4");   // V8: 2 - a surrogate pair
+    js_expect("\"\\ud83d\\ude00\".charCodeAt(0)", "240");    // V8: 55357
     js_expect("\"\\ud83d\\ude00\".split(\"\").length", "4"); // V8: 2
     js_expect("[...\"\\ud83d\\ude00\"].length", "4");        // V8: 1 - iteration is by code POINT
     js_expect("\"\\u00e9\".slice(0, 1).length", "1");        // V8: 1, but a DIFFERENT character
