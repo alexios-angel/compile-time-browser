@@ -429,9 +429,11 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
             // staying put - its parent's content box - and NOT the nearest
             // positioned ancestor, which is the absolute rule.
             const float relative_basis = horizontal ? at.basis : at.basis_height;
-            // Both sides given: CSS 9.4.3 ignores one of them, so this is
-            // over-constrained and the computed value is the answer.
-            if (!start_auto && !end_auto) { return computed_length(text); }
+            // A side that is given is its own used value, against that
+            // containing block - both sides given included: CSSOM's
+            // over-constrained special case is about an absolutely positioned
+            // box's size, and getComputedStyle-insets-relative absolutizes all
+            // four of a relative box's insets.
             if (!mine.is_auto()) { return px_text(mine.resolve(relative_basis, at.font_size)); }
             // `auto` against a given opposite side is its negation: the box
             // moved, and this side records the move from the other end.
