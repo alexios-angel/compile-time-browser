@@ -242,7 +242,9 @@ void control_helpers::uncheck_radio_group(const read_txn & txn, dom_bindings * b
     }
     helpers.walk_tree(txn, helpers.tree_top(txn, b, id), [&](node_id other) {
         if (other != id && helpers.in_radio_group(txn, b, id, other)) {
-            b->forms_->state_of(txn, *b->atoms_, other).checked = false;
+            control_state & held = b->forms_->state_of(txn, *b->atoms_, other);
+            held.checked = false;
+            held.checked_edited = true;
         }
     });
 }

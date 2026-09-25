@@ -438,7 +438,9 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                     "checked", [this, id](context &, std::span<value> a) {
                         const auto read = doc_->read();
                         const bool on = !a.empty() && context::truthy(a[0]);
-                        forms_->state_of(read, *atoms_, id).checked = on;
+                        control_state & held = forms_->state_of(read, *atoms_, id);
+                        held.checked = on;
+                        held.checked_edited = true;
                         if (on) { control_helpers{this}.uncheck_radio_group(read, this, id); }
                         wrote_to_control_ = true;
                         mutated();

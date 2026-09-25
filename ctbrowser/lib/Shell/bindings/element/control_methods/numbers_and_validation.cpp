@@ -169,7 +169,9 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
             {
                 const auto txn = b->doc_->read();
                 const bool on = context::truthy(arg(a, 0));
-                b->forms_->state_of(txn, *b->atoms_, id).checked = on;
+                control_state & held = b->forms_->state_of(txn, *b->atoms_, id);
+                held.checked = on;
+                held.checked_edited = true;
                 if (on) { helpers.uncheck_radio_group(txn, b, id); }
             }
             b->wrote_to_control_ = true;

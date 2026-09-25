@@ -37,7 +37,9 @@ void dom_bindings::install_control_focus_canvas(context & cx) {
         const node_id id = receiver(c);
         if (!id) { return value::undefined(); }
         const auto txn = doc_->read();
-        forms_->state_of(txn, *atoms_, id).checked = context::truthy(arg(args, 0));
+        control_state & held = forms_->state_of(txn, *atoms_, id);
+        held.checked = context::truthy(arg(args, 0));
+        held.checked_edited = true;
         mutated();
         return value::undefined();
     });

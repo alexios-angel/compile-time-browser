@@ -110,6 +110,11 @@ control_state & form_store::state_of(const read_txn & txn, atom_table & atoms, n
         // THE DEFAULT MODES ARE THE ATTRIBUTE, dirty or not (a submit button's
         // `.value = x` writes the attribute); "on" for a checkbox or radio
         // with none (the default/on mode's answer).
+        // CHECKEDNESS FOLLOWS THE `checked` ATTRIBUTE until something - a
+        // click, the `checked` setter, the group rule - makes it dirty
+        // (4.10.5.4: adding or removing the attribute sets a clean control's
+        // checkedness), so `defaultChecked = false` after a reset unchecks.
+        if (!held.checked_edited) { held.checked = txn.has_attribute(id, atoms.intern("checked")); }
         const std::string_view mode = input_types::value_mode_of(type);
         if (mode == "default" || mode == "default/on") {
             if (held.pending_attribute) {
@@ -303,6 +308,8 @@ bool form_store::delete_selection(control_state & control) {
 
 void form_store::toggle(const read_txn & txn, atom_table & atoms, node_id id, control_kind kind) {
     control_state & control = state_of(txn, atoms, id);
+    // A click DIRTIES the checkedness - the attribute stops being the answer.
+    control.checked_edited = true;
     if (kind == control_kind::checkbox) {
         control.checked = !control.checked;
         return;
@@ -310,15 +317,19 @@ void form_store::toggle(const read_txn & txn, atom_table & atoms, node_id id, co
     if (kind != control_kind::radio) { return; }
     const atom name_attr = atoms.intern("name");
     const std::string_view group = txn.attribute_value(id, name_attr);
+    // The group is in the radio's OWN TREE - a detached subtree or a shadow
+    // root is a tree of its own - not the document's.
     const auto walk = [&](auto && self, node_id at) -> void {
-        if (txn.attribute_value(at, name_attr) == group && at != id) {
-            const std::string_view type = txn.attribute_value(at, atoms.intern("type"));
-            if (type == "radio") { state_of(txn, atoms, at).checked = false; }
+        if (at != id && txn.attribute_value(at, name_attr) == group &&
+            type_of(txn, atoms, at) == "radio") {
+            control_state & other = state_of(txn, atoms, at);
+            other.checked = false;
+            other.checked_edited = true;
         }
         for (const node_id child : txn.children(at)) { self(self, child); }
     };
     // An unnamed radio is its own group, per spec - so do not clear anything.
-    if (!group.empty()) { walk(walk, txn.root()); }
+    if (!group.empty()) { walk(walk, txn.root_of_tree(id, false)); }
     control.checked = true;
 }
 
