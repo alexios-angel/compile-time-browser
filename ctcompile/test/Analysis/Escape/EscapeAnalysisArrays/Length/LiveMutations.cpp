@@ -105,7 +105,7 @@ void LengthCases::liveMutations() {
         literal.setValueAttr(ctjs::StringAttr::get(&context, "1"));
         inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::StringAttr::get(&context, "01"));
-        inspect(ArrayContentsFailure::UnknownIndex);
+        inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::StringAttr::get(&context, "2"));
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::StringAttr::get(&context, "0"));
@@ -119,7 +119,7 @@ void LengthCases::liveMutations() {
         literal.setValueAttr(ctjs::StringAttr::get(&context, "1"));
         inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::StringAttr::get(&context, "01"));
-        inspect(ArrayContentsFailure::UnknownIndex);
+        inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606873776128ULL));
         inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606875873280ULL));
@@ -216,7 +216,7 @@ void LengthCases::liveMutations() {
                     ? ArrayContentsFailure::None
                     : ArrayContentsFailure::MissingElement);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL));
-        inspect(ArrayContentsFailure::UnknownIndex);
+        inspect(shift ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 13830554455654793216ULL));
         // A negative Sub offset, including saved Add, proves growth, never holes or release.
         // A nonzero negative divisor keeps these zero results exact.
@@ -236,12 +236,12 @@ void LengthCases::liveMutations() {
                     : ArrayContentsFailure::UnknownIndex,
                 negatedUnit);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 9221120237041090560ULL));
-        inspect(ArrayContentsFailure::UnknownIndex);
+        inspect(shift ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::StringAttr::get(&context, binary ? "0.5" : "0"));
         inspect(unary || shift ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
         if (unary || shift) {
             literal.setValueAttr(ctjs::StringAttr::get(&context, "00"));
-            inspect(ArrayContentsFailure::UnknownIndex);
+            inspect(ArrayContentsFailure::None);
         }
         literal.setValueAttr(ctjs::BigIntAttr::get(&context, "0"));
         inspect(ArrayContentsFailure::UnknownIndex);

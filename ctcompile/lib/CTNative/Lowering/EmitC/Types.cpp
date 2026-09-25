@@ -27,6 +27,9 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (nativeMapAction(call).empty()) { return; }
         auto map = llvm::dyn_cast_or_null<MapType>(typeOf(call.getReceiver()));
         if (map) { mapSchemas[call] = map; }
+        if (auto payload = nativeMapRecordPayload(call.getReceiver())) {
+            recordMapPointers[call] = spelling(shapeAt(payload)) + " *";
+        }
     });
     const auto retypeValue = [&](mlir::Value v) {
         if (v.getDefiningOp<ctjs::CreateObjectOp>() && carrierOf(typeOf(v)) == carrier::json) {
@@ -52,10 +55,19 @@ void lowering::retype(ctjs::FuncOp fn) {
             return;
         }
         if (auto call = domCalls.find(v.getDefiningOp());
+            call != domCalls.end() &&
+            call->second.kind == HostDOMMethod::documentQuerySelectorAll) {
+            // The local snapshot owns typed views. Existing proved indexed
+            // uses extract a raw element only where it is consumed.
+            v.setType(ec::OpaqueType::get(context, kDOMElementViewVectorType));
+            return;
+        }
+        if (auto call = domCalls.find(v.getDefiningOp());
             call != domCalls.end() && !call->second.returnsBoolean() &&
             !call->second.returnsElement() && !call->second.returnsNumber() &&
-            !call->second.returnsString() && !call->second.returnsJSON() &&
-            !call->second.returnsStringVector()) {
+            !call->second.returnsSymbol() && !call->second.returnsString() &&
+            !call->second.returnsJSON() && !call->second.returnsStringVector() &&
+            !call->second.returnsElementVector()) {
             // The effect is emitted as a void call. Any live JavaScript
             // undefined consumer is replaced separately during emission.
             v.setType(mlir::Float64Type::get(context));
@@ -68,6 +80,13 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
         needsObjectValue |= carrierOf(typeOf(v)) == carrier::objectValue;
         if (!llvm::isa<ctjs::ValueType>(v.getType())) { return; }
+        if (auto payload = nativeMapRecordPayload(v)) {
+            const auto pointer = spelling(shapeAt(payload)) + " *";
+            recordMapPointers[v.getDefiningOp()] = pointer;
+            v.setType(ec::OpaqueType::get(
+                context, "std::shared_ptr<ctnative::map_storage<std::string, " + pointer + ">>"));
+            return;
+        }
         if (auto found = ownedObjectTypes.find(v); found != ownedObjectTypes.end()) {
             v.setType(found->second);
             return;
@@ -228,6 +247,11 @@ void lowering::retype(ctjs::FuncOp fn) {
         mlir::Value parameter = fn.getBody().front().getArgument(static_cast<unsigned>(index));
         parameter.setType(receiverType(shapeAt(parameter)));
     }
+    fn.getBody().walk([&](ctjs::CallOp call) {
+        if (nativeMapRecordOrigin(call.getResult())) {
+            mlir::Value(call.getResult()).setType(receiverType(shapeAt(call.getResult())));
+        }
+    });
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

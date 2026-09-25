@@ -27,6 +27,13 @@ inline constexpr llvm::StringLiteral kNativeMapWriteType = "ctnative.map_write_t
 inline constexpr llvm::StringLiteral kNativeMapKeyType = "ctnative.map_key_type";
 inline constexpr llvm::StringLiteral kNativeMapSnapshotCopy = "ctnative.map_snapshot_copy";
 inline constexpr llvm::StringLiteral kNativeMapSnapshotBuiltin = "ctnative.map_snapshot_builtin";
+inline constexpr llvm::StringLiteral kNativeMapRecords = "ctnative.map_records";
+
+/// Confined entry-frame record storage, rederived with the standard Map proof.
+/// The payload names a schema representative; an origin names the exact saved object.
+mlir::Value nativeMapRecordPayload(mlir::Value map);
+mlir::Value nativeMapRecordOrigin(mlir::Value read);
+bool isNativeMapRecordStore(mlir::OpOperand & use);
 
 /// Annotate only after proving both the standard constructor/method identity
 /// and every instance use. No runtime assumption or boxed fallback is added.
@@ -34,6 +41,9 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals =
 
 /// The operation performed by a proved call or size read, or empty.
 llvm::StringRef nativeMapAction(mlir::Operation * op);
+
+/// Names an action taking a key; this lexical check supplies no call proof.
+bool nativeMapKeyAction(llvm::StringRef action);
 
 /// A proved keys/values snapshot or its confined standard Array.from copy.
 bool isNativeMapSnapshot(mlir::Operation * op);

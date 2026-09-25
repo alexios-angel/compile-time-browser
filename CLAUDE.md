@@ -24,13 +24,20 @@ a `}` inside one desynchronised the rest of the file. The submodule is still
 checked out because `ctbrowser/benchmarks/bench_style.cpp` measures against it as a second
 implementation; retiring it is a rung in `docs/plans/bootstrap.md`.
 
+Before editing, read the `PROTOCOL` records, current claims and recent journal
+in `~/Downloads/claude/AGENT-SYNC.jsonl`. Append records with
+`python3 ~/Downloads/claude/agent-sync.py` and its `claim`, `release` or `journal`
+command. The helper takes the synchronization lock internally; the protocol
+records document the arguments and how to resolve active claims.
+
 ## Build & test
 
 ### Codex ctcompile validation — user override, 2026-09-17
 
 Use focused validation for ctcompile work. Full suites run only when the user
 explicitly requests them. This supersedes older full-gate instructions in the
-plan, handoffs and `../AGENT-SYNC.md`, including interrupted work and refactors.
+plan, handoffs and `~/Downloads/claude/AGENT-SYNC.jsonl`, including interrupted
+work and refactors.
 Passing the relevant focused checks is sufficient to commit and land a change.
 
 - Build affected targets on the devbox with `tools/remote-build.sh <target>...`;

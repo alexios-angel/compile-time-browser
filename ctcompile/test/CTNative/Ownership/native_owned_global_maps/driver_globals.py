@@ -332,6 +332,13 @@ def check_scalar_global_emission(args, ir, name):
             re.findall(r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1])
         )
         values, actual, calls, binaries = {}, [], 0, 0
+        numbers = set()
+        strings = set(re.findall(r"ctnative::js_string(?: const)? (\w+)", entry[1]))
+        strings.update(
+            re.findall(
+                r'CTCOMPILE_PIN\((\w+), "[^"\n]*", ctnative::js_string(?: const)?\)', entry[1]
+            )
+        )
         for line in entry[1].splitlines():
             assignment = re.search(r"\b(\w+)\s*=\s*(.*);$", line)
             result, expression = assignment.groups() if assignment else (None, "")
@@ -357,7 +364,22 @@ def check_scalar_global_emission(args, ir, name):
                 if expression != "g_host" and result not in observed:
                     actual.append(("load", expression[2:]))
             elif match := re.fullmatch(
-                r"ctnative::(?:to_number|to_nullable|to_nullable_string|string_text|scalar_truthy)\((\w+)\)",
+                r"ctnative::(?:to_number|global_number)\((\w+)\)",
+                expression,
+            ):
+                numbers.add(result)
+                values[result] = values.get(match[1], "unknown")
+            elif match := re.fullmatch(r"\(ctnative::js_num\) (\w+)", expression):
+                numbers.add(result)
+                values[result] = values.get(match[1], "unknown")
+            elif match := re.fullmatch(r"\(ctnative::js_string\) (\w+)", expression):
+                strings.add(result)
+                values[result] = values.get(match[1], "unknown")
+            elif match := re.fullmatch(r"(\w+)\.value\(\)", expression):
+                if match[1] in numbers or match[1] in strings:
+                    values[result] = values.get(match[1], "unknown")
+            elif match := re.fullmatch(
+                r"ctnative::(?:to_nullable|to_nullable_string|string_text|scalar_truthy)\((\w+)\)",
                 expression,
             ):
                 values[result] = values.get(match[1], "unknown")
@@ -368,9 +390,14 @@ def check_scalar_global_emission(args, ir, name):
                 literal = scalar_string_literal(match[1])
                 if match[2] and len(literal.encode("utf-8", "surrogatepass")) != int(match[2]):
                     raise RuntimeError(f"{name}/{mode}: emitted String lost its exact byte length")
+                strings.add(result)
                 values[result] = ("string", literal)
             elif expression in {"true", "false"}:
                 values[result] = ("boolean", expression)
+            elif match := re.fullmatch(r"ctnative::js_boolean_t\{(true|false)\}", expression):
+                values[result] = ("boolean", match[1])
+            elif match := re.fullmatch(r"\((?:ctnative::js_boolean_t|bool)\) (\w+)", expression):
+                values[result] = values.get(match[1], "unknown")
             elif re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", expression):
                 values[result] = float(expression)
             elif match := re.fullmatch(r"(\w+) ([+*/-]) (\w+)", expression):

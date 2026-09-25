@@ -241,13 +241,17 @@ def client(name, entry, owned):
             else "atom_table atoms; document doc{atoms};"
         ),
         "CALL": "session.invoke(value)" if owned else entry + "(value)",
-        "TYPE": "bool" if boolean else "std::string",
-        "EXPECTED": "(sample.input && *sample.input == sample.text)" if boolean else "sample.text",
+        "TYPE": "ctnative::js_boolean_t" if boolean else "ctnative::js_string",
+        "EXPECTED": (
+            "ctnative::js_boolean_t{sample.input && *sample.input == sample.text}"
+            if boolean
+            else "ctnative::js_string{sample.text}"
+        ),
         "WRITES": writes,
         "OBSERVE": (
             'std::cout << (result ? "true\\n" : "false\\n");'
             if boolean
-            else "observe(result); survivor = result;"
+            else "observe(result.value()); survivor = result.value();"
         ),
         "LIFETIME": "" if boolean else 'assert(survivor == "NaN");',
     }

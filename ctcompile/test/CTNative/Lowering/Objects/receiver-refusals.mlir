@@ -142,14 +142,14 @@
 // prove a Boolean return; the global boundary preserves that tag when printing.
 // BOOLFIELD-NOT: ctnative.not_native
 // BOOLFIELD: emitc.class @ctn_flag
-// BOOLFIELD-NEXT: emitc.field @flag : i1
+// BOOLFIELD-NEXT: emitc.field @flag : !emitc.opaque<"ctnative::js_boolean_t">
 // BOOLFIELD-NEXT: }
 // BOOLFIELD: emitc.global static @g_shown : !emitc.opaque<"ctnative::nullable_scalar">
 // BOOLFIELD: call_opaque "ctnative::global_boolean"
-// BOOLFIELD-SAME: -> i1
+// BOOLFIELD-SAME: -> !emitc.opaque<"ctnative::js_boolean_t">
 // BOOLFIELD: call_opaque "printf"
-// BOOLFIELD: emitc.func @look_1() -> i1
-// BOOLFIELD: emitc.func @fn_2(%arg0: !emitc.ptr<!emitc.opaque<"ctn_flag">>) -> i1
+// BOOLFIELD: emitc.func @look_1() -> !emitc.opaque<"ctnative::js_boolean_t">
+// BOOLFIELD: emitc.func @fn_2(%arg0: !emitc.ptr<!emitc.opaque<"ctn_flag">>) -> !emitc.opaque<"ctnative::js_boolean_t">
 // BOOLFIELD-NOT: ctnative.not_native
 
 // --- A `this.other()` WHOSE CALLEE WAS REFUSED ------------------------------

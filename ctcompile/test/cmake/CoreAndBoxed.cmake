@@ -50,13 +50,20 @@ set_tests_properties(ctcompile_usage PROPERTIES WILL_FAIL TRUE)
 # list with no verb in it.
 add_test(NAME ctcompile_help COMMAND ctcompile-tool --help)
 set_tests_properties(ctcompile_help PROPERTIES
-  PASS_REGULAR_EXPRESSION "usage: ctcompile \\[options\\] <application-directory>")
+  PASS_REGULAR_EXPRESSION "USAGE: ctcompile \\[options\\] <application-directory>")
 
 # An unknown option is a USAGE error, not a crash and not a silent success.
-# This is the half of the command line Boost.Program_options owns, and the
-# reason the catch block names it separately.
+# LLVM's command-line parser reports it before any application work begins.
 add_test(NAME ctcompile_rejects_nonsense COMMAND ctcompile-tool --not-an-option)
 set_tests_properties(ctcompile_rejects_nonsense PROPERTIES WILL_FAIL TRUE)
+
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME ctcompile_cli
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/test/Packaging/cli.py"
+      "$<TARGET_FILE:ctcompile-tool>" "$<TARGET_FILE:ctcompile-tool-ctbaseline>"
+      "$<TARGET_FILE:ctcompile-tool-ctpageload>")
+endif()
 
 # DOES THE ABI TABLE POINT AT CODE THAT EXISTS? Core/def-citations.test, over
 # Core/source-citations.py, which says what it can and cannot catch.

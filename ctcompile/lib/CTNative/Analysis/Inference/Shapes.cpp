@@ -118,7 +118,8 @@ bool passesAReceiver(mlir::OpOperand & use) {
 } // namespace
 
 bool TypeInference::hasClosedShape(mlir::Value object) {
-    if (!object.getDefiningOp<ctjs::CreateObjectOp>() && !namesAnObjectParameter(object)) {
+    if (!object.getDefiningOp<ctjs::CreateObjectOp>() && !namesAnObjectParameter(object) &&
+        !nativeMapRecordOrigin(object)) {
         return false;
     }
     for (mlir::OpOperand & use : object.getUses()) {
@@ -137,7 +138,7 @@ bool TypeInference::hasClosedShape(mlir::Value object) {
                 constantKey(set.getKey()) == "__proto__") {
                 return false;
             }
-        } else if (!passesAReceiver(use)) {
+        } else if (!passesAReceiver(use) && !isNativeMapRecordStore(use)) {
             return false;
         }
     }
@@ -186,6 +187,16 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
                 classes.unionSets(call->getOperand(static_cast<unsigned>(index)),
                                   entry.getArgument(static_cast<unsigned>(index)));
             }
+        }
+    });
+
+    top->walk([&](ctjs::CallOp call) {
+        const auto payload = nativeMapRecordPayload(call.getReceiver());
+        if (!payload) { return; }
+        if (nativeMapAction(call) == "set") {
+            classes.unionSets(payload, call.getArgs()[1]);
+        } else if (nativeMapAction(call) == "get") {
+            classes.unionSets(payload, call.getResult());
         }
     });
 

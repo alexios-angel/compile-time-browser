@@ -28,21 +28,21 @@
 // ROUNDTRIP: ctjs.return [[RESULT]]
 
 // TYPES-LABEL: emitc.func @joined_1(
-// TYPES-SAME: : i1) -> f64
-// TYPES: [[RESULT_SLOT:%[a-zA-Z0-9_]+]] = "emitc.variable"() {{.*}} : () -> !emitc.lvalue<f64>
-// TYPES: [[STATE_SLOT:%[a-zA-Z0-9_]+]] = "emitc.variable"() {{.*}} : () -> !emitc.lvalue<f64>
+// TYPES-SAME: : !emitc.opaque<"ctnative::js_boolean_t">) -> !emitc.opaque<"ctnative::js_num">
+// TYPES: [[RESULT_SLOT:%[a-zA-Z0-9_]+]] = "emitc.variable"() {{.*}} : () -> !emitc.lvalue<!emitc.opaque<"ctnative::js_num">>
+// TYPES: [[STATE_SLOT:%[a-zA-Z0-9_]+]] = "emitc.variable"() {{.*}} : () -> !emitc.lvalue<!emitc.opaque<"ctnative::js_num">>
 // TYPES: ctnative.cpp_try {
-// TYPES: [[VALUES:%[a-zA-Z0-9_]+]]:2 = scf.if {{.*}} -> (f64, f64) {
-// TYPES: scf.yield {{.*}} : f64, f64
+// TYPES: [[VALUES:%[a-zA-Z0-9_]+]]:2 = scf.if {{.*}} -> (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) {
+// TYPES: scf.yield {{.*}} : !emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">
 // TYPES: } else {
-// TYPES: scf.yield {{.*}} : f64, f64
-// TYPES: assign [[VALUES]]#1 : f64 to [[STATE_SLOT]] : <f64>
-// TYPES: ctnative.cpp_throw [[VALUES]]#0 : f64
+// TYPES: scf.yield {{.*}} : !emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">
+// TYPES: assign [[VALUES]]#1 : !emitc.opaque<"ctnative::js_num"> to [[STATE_SLOT]] : <!emitc.opaque<"ctnative::js_num">>
+// TYPES: ctnative.cpp_throw [[VALUES]]#0 : !emitc.opaque<"ctnative::js_num">
 // TYPES: } catch {
-// TYPES: ^bb0([[PAYLOAD:%[a-zA-Z0-9_]+]]: f64):
-// TYPES: [[STATE:%[a-zA-Z0-9_]+]] = emitc.load [[STATE_SLOT]] : <f64>
-// TYPES: [[SUM:%[a-zA-Z0-9_]+]] = emitc.add [[PAYLOAD]], [[STATE]] : (f64, f64) -> f64
-// TYPES: emitc.assign [[SUM]] : f64 to [[RESULT_SLOT]] : <f64>
+// TYPES: ^bb0([[PAYLOAD:%[a-zA-Z0-9_]+]]: !emitc.opaque<"ctnative::js_num">):
+// TYPES: [[STATE:%[a-zA-Z0-9_]+]] = emitc.load [[STATE_SLOT]] : <!emitc.opaque<"ctnative::js_num">>
+// TYPES: [[SUM:%[a-zA-Z0-9_]+]] = emitc.add [[PAYLOAD]], [[STATE]] : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
+// TYPES: emitc.assign [[SUM]] : !emitc.opaque<"ctnative::js_num"> to [[RESULT_SLOT]] : <!emitc.opaque<"ctnative::js_num">>
 
 // EMPTY: error: 'ctjs.try' op requires a nonempty block in each try and catch region
 // BAD-STATE: error: 'ctjs.try_exit' op must carry the payload and every catch state value

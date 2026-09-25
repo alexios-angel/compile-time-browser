@@ -67,7 +67,7 @@ struct CTNativePrintDeducedPass : impl::CTNativePrintDeducedBase<CTNativePrintDe
         mlir::ModuleOp module = getOperation();
         mlir::MLIRContext * ctx = &getContext();
         unsigned deduced = 0;
-        unsigned doubles = 0;
+        unsigned numbers = 0;
         bool mutated = false;
         module.walk([&](ec::FuncOp fn) {
             fn.getBody().walk([&](mlir::Operation * o) {
@@ -81,8 +81,10 @@ struct CTNativePrintDeducedPass : impl::CTNativePrintDeducedBase<CTNativePrintDe
                 if (o->getParentOfType<ec::ExpressionOp>()) { return; } // inline, never declared
                 o->setAttr("ctnative.deduced", mlir::UnitAttr::get(ctx));
                 ++deduced;
-                if (llvm::isa<mlir::Float64Type>(o->getResult(0).getType()) &&
-                    ++doubles == mutate) {
+                const auto type = o->getResult(0).getType();
+                const auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
+                if ((type.isF64() || (opaque && opaque.getValue() == "ctnative::js_num")) &&
+                    ++numbers == mutate) {
                     o->setAttr("ctnative.pinned",
                                mlir::TypeAttr::get(mlir::IntegerType::get(ctx, 32)));
                     mutated = true;
@@ -94,7 +96,7 @@ struct CTNativePrintDeducedPass : impl::CTNativePrintDeducedBase<CTNativePrintDe
         if (mutate != 0 && !mutated) {
             module.emitError("--ctnative-print-deduced mutate=")
                 << static_cast<unsigned>(mutate)
-                << " names no deduced double declaration; the module has " << doubles;
+                << " names no deduced number declaration; the module has " << numbers;
             return signalPassFailure();
         }
         module->setAttr("ctnative.deduced_count",

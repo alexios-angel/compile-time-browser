@@ -1,0 +1,58 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name cached-loaded-length-guard
+// RUN: FileCheck %s < %t/escape-claims-cached-loaded-length-guard.claims
+
+// A loaded array and its cached length keep their independent read snapshots.
+// Returning a saved child or changing the bound/receiver retains the escape.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function cachedLoadedLengthCleared() {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded = holder[0], length = loaded.length;
+    for (var i = 0; i < length; i++) loaded[i] = 0;
+    return array;
+}
+function cachedLoadedLengthRetained() {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded = holder[0], length = loaded.length, saved = loaded[0];
+    for (var i = 0; i < length; i++) loaded[i] = 0;
+    return saved;
+}
+function cachedLoadedLengthChanged() {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded = holder[0], length = loaded.length;
+    for (var i = 0; i < length; i++) {
+        loaded[i] = 0;
+        length = 1;
+    }
+    return array;
+}
+function cachedLoadedLengthHolderChanged() {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded = holder[0], length = loaded.length;
+    holder[0] = [0];
+    for (var i = 0; i < length; i++) loaded[i] = 0;
+    return array;
+}
+function cachedLoadedLengthResized() {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded = holder[0], length = loaded.length;
+    loaded.length = 2;
+    for (var i = 0; i < length; i++) loaded[i] = 0;
+    return array;
+}
+function cachedLoadedLengthReceiverChanged() {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded = holder[0], length = loaded.length;
+    loaded = [0, 0, 0];
+    for (var i = 0; i < length; i++) loaded[i] = 0;
+    return array;
+}
+cachedLoadedLengthCleared(); cachedLoadedLengthRetained(); cachedLoadedLengthChanged();
+cachedLoadedLengthHolderChanged(); cachedLoadedLengthResized(); cachedLoadedLengthReceiverChanged();

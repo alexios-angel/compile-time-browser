@@ -294,28 +294,28 @@ void dom_bindings::install_element_child_views(context & cx, script::object_obje
         const auto has = [](const std::vector<std::string> & tokens, const std::string & token) {
             return std::find(tokens.begin(), tokens.end(), token) != tokens.end();
         };
-        set_method(cx, *list, "add",
-                   [tokens_now, update, valid_tokens, has](context & c, std::span<value> args) {
-                       std::vector<std::string> given;
-                       if (!valid_tokens(c, args, given)) { return value::undefined(); }
-                       std::vector<std::string> tokens = tokens_now();
-                       for (const std::string & token : given) {
-                           if (!has(tokens, token)) { tokens.push_back(token); }
-                       }
-                       update(tokens);
-                       return value::undefined();
-                   });
-        set_method(cx, *list, "remove",
-                   [tokens_now, update, valid_tokens](context & c, std::span<value> args) {
-                       std::vector<std::string> given;
-                       if (!valid_tokens(c, args, given)) { return value::undefined(); }
-                       std::vector<std::string> tokens = tokens_now();
-                       for (const std::string & token : given) { std::erase(tokens, token); }
-                       update(tokens);
-                       return value::undefined();
-                   });
-        set_method(cx, *list, "contains", [tokens_now, has](context & c, std::span<value> args) {
-            return value::boolean(has(tokens_now(), arg_string(c, args, 0)));
+        const auto change_tokens = [this, id, attribute_name, report_token_error](
+                                       context & c, std::span<value> args, bool add) {
+            std::vector<std::string> given;
+            for (const value & v : args) { given.push_back(c.to_string(v)); }
+            const auto result = (add ? add_tokens : remove_tokens)(
+                *doc_, id, atoms_->intern(attribute_name), given);
+            if (!result) {
+                report_token_error(c, given[result.error().index], result.error().error);
+                return value::undefined();
+            }
+            if (!*result || **result) { mutated(); }
+            return value::undefined();
+        };
+        set_method(cx, *list, "add", [change_tokens](context & c, std::span<value> args) {
+            return change_tokens(c, args, true);
+        });
+        set_method(cx, *list, "remove", [change_tokens](context & c, std::span<value> args) {
+            return change_tokens(c, args, false);
+        });
+        set_method(cx, *list, "contains", [attribute_now](context & c, std::span<value> args) {
+            // Preserve the existing snapshot/coercion argument evaluation order.
+            return value::boolean(contains_token(attribute_now(), arg_string(c, args, 0)));
         });
         // `toggle(token, force)`, DOM 7.1 - and a no-op runs NO update steps:
         // `toggle("c", false)` on `class="a a"` leaves the duplicate in place.

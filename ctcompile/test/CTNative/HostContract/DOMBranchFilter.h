@@ -159,6 +159,28 @@ module {
                   "each nested call retains its own saved input through both exception paths");
         }
     }
+    for (const auto & omitted :
+         {replaced(source, "ctjs.call %helper(%u, %text)", "ctjs.call %helper(%u)"),
+          replaced(varying, "ctjs.call %helper(%u, %element)", "ctjs.call %helper(%u)")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(omitted, &context);
+        check(static_cast<bool>(input), "omitted helper argument fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(!error, "omitted helper arguments expand without specializing other calls");
+        if (error) {
+            llvm::consumeError(std::move(error));
+            continue;
+        }
+        unsigned missing = 0;
+        input->walk([&](ctjs::InvokeOp invoke) {
+            auto fallback =
+                llvm::cast<ctjs::InvokeYieldOp>(invoke.getUnwindBody().front().getTerminator());
+            auto constant = fallback.getValues().front().getDefiningOp<ctjs::ConstantOp>();
+            missing += constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
+        });
+        check(missing == 2 && mlir::succeeded(mlir::verify(*input)),
+              "both exception continuations retain the omitted argument as undefined");
+    }
     auto lateCapture = replaced(captured, "    ctjs.cell_set %cell, %text\n", "");
     lateCapture = replaced(lateCapture, "    ctjs.return %answer",
                            "    ctjs.cell_set %cell, %text\n    ctjs.return %answer");
@@ -179,7 +201,8 @@ module {
           replaced(captured, "    %answer = scf.if",
                    "    ctjs.cell_set %cell, %u\n    %answer = scf.if"),
           replaced(source, "ctjs.call %helper(%u, %text)", "ctjs.call %helper(%element, %text)"),
-          replaced(source, "ctjs.call %helper(%u, %text)", "ctjs.call %helper(%u)"),
+          replaced(source, "ctjs.call %helper(%u, %text)",
+                   "ctjs.call %helper(%u, %text, %element)"),
           replaced(source, "    %answer = scf.if",
                    "    ctjs.store_global \"saved\", %helper\n    %answer = scf.if")}) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
@@ -205,6 +228,255 @@ module {
               "every incomplete nested ordering and cloning budget fails closed");
     }
     check(completed, "bounded nested helper expansion reaches completion");
+
+    const std::string throwingHelper = R"MLIR(
+module {
+  ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %flag: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %saved = ctjs.constant #ctjs.string<"saved">
+    %helper = ctjs.create_closure %callee[1] this %u
+    %result = ctjs.call %helper(%u, %flag, %saved)
+    ctjs.return %result
+  }
+  ctjs.func private @throwing$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %flag: !ctjs.value, %payload: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %frame = ctjs.frame_enter 2
+    %condition = ctjs.truthy %flag
+    %inactive = ctjs.constant #ctjs.undefined
+    %result = scf.if %condition -> (!ctjs.value) {
+      scf.execute_region {
+        ctjs.throw %payload
+      } {no_inline}
+      scf.yield %inactive : !ctjs.value
+    } else {
+      ctjs.frame_exit %frame
+      scf.yield %payload : !ctjs.value
+    }
+    ctjs.return %result
+  }
+}
+)MLIR";
+    const std::string throwOnly = R"MLIR(      scf.execute_region {
+        ctjs.throw %payload
+      } {no_inline}
+)MLIR";
+    const auto throwOnElse = replaced(
+        replaced(throwingHelper, throwOnly + "      scf.yield %inactive : !ctjs.value",
+                 "      ctjs.frame_exit %frame\n      scf.yield %payload : !ctjs.value"),
+        "    } else {\n      ctjs.frame_exit %frame\n      scf.yield %payload : !ctjs.value",
+        "    } else {\n" + throwOnly + "      scf.yield %inactive : !ctjs.value");
+    const auto nestedThrow = replaced(throwingHelper, throwOnly,
+                                      "      scf.if %condition {\n" + throwOnly +
+                                          "        scf.yield\n"
+                                          "      } else {\n" +
+                                          throwOnly + "        scf.yield\n      }\n");
+    for (const auto & valid : {throwingHelper, throwOnElse, nestedThrow}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
+        check(static_cast<bool>(input), "saved helper throw fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(!error, "only the returning sibling supplies the helper shadow frame join");
+        if (error) {
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(error)).c_str());
+            continue;
+        }
+        unsigned throws = 0, frames = 0, calls = 0;
+        input->walk([&](ctjs::ThrowOp thrown) {
+            ++throws;
+            check(ctjs::constantKey(thrown.getValue()) == "saved",
+                  "inlined throw preserves its invocation's saved payload");
+        });
+        input->walk([&](ctjs::FrameEnterOp) { ++frames; });
+        input->walk([&](ctjs::CallOp) { ++calls; });
+        check(throws == (valid == nestedThrow ? 2U : 1U) && frames == 0 && calls == 0 &&
+                  !input->lookupSymbol<ctjs::FuncOp>("throwing$1") &&
+                  mlir::succeeded(mlir::verify(*input)),
+              "helper expansion retains every throw and retires the proved call and frame");
+    }
+    for (const auto & invalid : {replaced(throwingHelper, " {no_inline}", ""),
+                                 replaced(throwingHelper, "        ctjs.throw %payload",
+                                          "        ctjs.store_global \"effect\", %payload\n"
+                                          "        ctjs.throw %payload"),
+                                 replaced(throwingHelper, "      scf.yield %inactive",
+                                          "      ctjs.store_global \"effect\", %payload\n"
+                                          "      scf.yield %inactive"),
+                                 replaced(throwingHelper, "      ctjs.frame_exit %frame\n", ""),
+                                 replaced(throwingHelper, throwOnly, ""),
+                                 replaced(nestedThrow, "      scf.yield %inactive",
+                                          "      ctjs.store_global \"effect\", %payload\n"
+                                          "      scf.yield %inactive")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unproved helper abrupt branch fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(static_cast<bool>(error),
+              "unproved regions, dead effects and live or mismatched normal frames refuse");
+        if (error) { llvm::consumeError(std::move(error)); }
+    }
+    for (unsigned budget : {0U, 64U, 128U}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(throwingHelper, &context);
+        auto error = expandDOMHelpers(*input, "entry$0", budget);
+        check(llvm::toString(std::move(error)).find("budget") != std::string::npos,
+              "incomplete saved-throw helper proof cannot publish an expansion");
+    }
+
+    const std::string mixedThrow = R"MLIR(
+module {
+  ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %normal = ctjs.constant #ctjs.number<0>
+    %equal = ctjs.compare strict_eq %element, %element
+    %condition = ctjs.truthy %equal
+    %helper = ctjs.create_closure %callee[1] this %u
+    %answer = scf.if %condition -> (!ctjs.value) {
+      %result = ctjs.call %helper(%u, %element)
+      scf.execute_region {
+        ctjs.throw %result
+      } {no_inline}
+      scf.yield %normal : !ctjs.value
+    } else {
+      scf.yield %normal : !ctjs.value
+    }
+    ctjs.return %answer
+  }
+  ctjs.func private @mixed$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %frame = ctjs.frame_enter 4
+    %hasName = ctjs.constant #ctjs.string<"hasAttribute">
+    %getName = ctjs.constant #ctjs.string<"getAttribute">
+    %setName = ctjs.constant #ctjs.string<"setAttribute">
+    %key = ctjs.constant #ctjs.string<"data-payload">
+    %suffixKey = ctjs.constant #ctjs.string<"data-suffix">
+    %text = ctjs.constant #ctjs.string<"written">
+    %has = ctjs.get_property %element[%hasName]
+    %get = ctjs.get_property %element[%getName]
+    %set = ctjs.get_property %element[%setName]
+    %flag = ctjs.call %has(%element, %key)
+    %condition = ctjs.truthy %flag
+    %joined = scf.if %condition -> (!ctjs.value) {
+      %payload = ctjs.call %get(%element, %key)
+      scf.yield %payload : !ctjs.value
+    } else {
+      %written = ctjs.call %set(%element, %suffixKey, %text)
+      %boolean = ctjs.constant #ctjs.boolean<false>
+      scf.yield %boolean : !ctjs.value
+    }
+    %ignored = ctjs.constant #ctjs.undefined
+    ctjs.frame_exit %frame
+    ctjs.return %joined
+  }
+}
+)MLIR";
+    const std::string stringArm = R"MLIR(      %payload = ctjs.call %get(%element, %key)
+      scf.yield %payload : !ctjs.value)MLIR";
+    const std::string booleanArm =
+        R"MLIR(      %written = ctjs.call %set(%element, %suffixKey, %text)
+      %boolean = ctjs.constant #ctjs.boolean<false>
+      scf.yield %boolean : !ctjs.value)MLIR";
+    const auto reversedThrow =
+        replaced(replaced(replaced(mixedThrow, stringArm, "STRING_ARM"), booleanArm, stringArm),
+                 "STRING_ARM", booleanArm);
+    const auto nestedMixedThrow =
+        replaced(mixedThrow, stringArm, R"MLIR(      %payload = ctjs.call %get(%element, %key)
+      %nested = scf.if %condition -> (!ctjs.value) {
+        scf.yield %payload : !ctjs.value
+      } else {
+        %other = ctjs.constant #ctjs.string<"fallback">
+        scf.yield %other : !ctjs.value
+      }
+      scf.yield %nested : !ctjs.value)MLIR");
+    for (const auto & valid : {mixedThrow, reversedThrow, nestedMixedThrow}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
+        check(static_cast<bool>(input), "heterogeneous saved helper throw fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(!error, "an immediate saved throw needs no heterogeneous helper result join");
+        if (error) {
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(error)).c_str());
+            continue;
+        }
+        unsigned throws = 0, reads = 0, writes = 0, booleans = 0, strings = 0;
+        input->walk([&](ctjs::CallOp call) {
+            auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            reads += method && ctjs::constantKey(method.getKey()) == "getAttribute";
+            writes += method && ctjs::constantKey(method.getKey()) == "setAttribute";
+        });
+        input->walk([&](ctjs::ThrowOp thrown) {
+            ++throws;
+            if (auto constant = thrown.getValue().getDefiningOp<ctjs::ConstantOp>()) {
+                booleans += llvm::isa<ctjs::BooleanAttr>(constant.getValue());
+                strings += llvm::isa<ctjs::StringAttr>(constant.getValue());
+            }
+            auto region = llvm::cast<mlir::scf::ExecuteRegionOp>(thrown->getParentOp());
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(region->getParentOp());
+            check(branch && !branch.getNumResults() && region.getNoInline(),
+                  "every projected payload is thrown inside its original no-result arm");
+            if (auto producer = thrown.getValue().getDefiningOp<ctjs::CallOp>()) {
+                check(producer->getBlock() == region->getBlock() ||
+                          producer->getBlock() == branch->getBlock(),
+                      "optional String throw retains its branch-local read");
+            }
+            for (ctjs::CallOp call : region->getBlock()->getOps<ctjs::CallOp>()) {
+                check(call->isBeforeInBlock(region),
+                      "selected-arm reads and writes precede their projected throw");
+            }
+        });
+        check(throws == (valid == nestedMixedThrow ? 3U : 2U) && reads == 1 && writes == 1 &&
+                  booleans == 1 && strings == (valid == nestedMixedThrow ? 1U : 0U) &&
+                  !input->lookupSymbol<ctjs::FuncOp>("mixed$1") &&
+                  mlir::succeeded(mlir::verify(*input)),
+              "projection preserves every distinct payload and each read/write exactly once");
+        HostContract bound;
+        bound.entry = "entry$0";
+        bound.elementParameters = {0};
+        bound.moduleSha256 = hostContractFingerprint(*input);
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            bound.provider = provider;
+            DOMEntryAnalysis proof(*input, bound);
+            check(proof.proved() && proof.savedThrows().size() == throws,
+                  "projected mixed payloads retain complete typed DOM proof");
+            if (!proof.proved()) {
+                std::fprintf(stderr, "%s\n", proof.reason().str().c_str());
+                continue;
+            }
+            check(DOMEntryAnalysis(*input, bound, proof.steps()).proved(),
+                  "projected throws reproduce their exact typed proof budget");
+            const DOMEntryAnalysis incomplete(*input, bound, proof.steps() - 1);
+            check(!incomplete.proved() && incomplete.exhausted() &&
+                      incomplete.savedThrows().empty() && !incomplete.entry(),
+                  "incomplete projected throw proof publishes no evidence");
+        }
+    }
+    for (const auto & invalid :
+         {replaced(mixedThrow,
+                   "    %ignored =", "    %observed = ctjs.truthy %joined\n    %ignored ="),
+          replaced(mixedThrow, "    %ignored =",
+                   "    %suffix = ctjs.call %set(%element, %suffixKey, %text)\n    %ignored =")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "observed and effectful throw joins parse");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(!error, "unprojected helper retains its observer or effectful suffix");
+        if (error) {
+            llvm::consumeError(std::move(error));
+            continue;
+        }
+        HostContract bound;
+        bound.entry = "entry$0";
+        bound.elementParameters = {0};
+        bound.moduleSha256 = hostContractFingerprint(*input);
+        bound.provider = HostContract::Provider::ctbrowserDOM;
+        const DOMEntryAnalysis proof(*input, bound);
+        check(!proof.proved() && proof.reason().contains("incompatible scalar alternatives") &&
+                  proof.savedThrows().empty() && !proof.entry() &&
+                  mlir::succeeded(mlir::verify(*input)),
+              "extra observers and suffix effects retain the ordinary typed join refusal");
+    }
+    for (unsigned budget : {0U, 64U, 128U}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(nestedMixedThrow, &context);
+        auto error = expandDOMHelpers(*input, "entry$0", budget);
+        check(llvm::toString(std::move(error)).find("budget") != std::string::npos,
+              "incomplete mixed throw projection refuses within its existing budget");
+    }
 }
 
 inline void checkDOMDataSource(mlir::MLIRContext & context) {

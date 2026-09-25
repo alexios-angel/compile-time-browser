@@ -7,15 +7,50 @@ contract for one synchronous function. Its explicit parameters are borrowed
 the call. Identity compares both fields, including across documents; detaching
 a node does not destroy it.
 
-Entries using `matches` or `closest` also take the caller's live
-`ctbrowser::style::engine &` for each element parameter used as a selector
-receiver, appended after the element parameters in source parameter order.
+Entries using `matches`, `closest`, `querySelector` or `querySelectorAll` also take
+the caller's live `ctbrowser::style::engine &` for each element parameter used as
+a selector receiver, appended after the element parameters in source parameter order.
 For example, `closest(element, expected)` takes `(element_ref, element_ref,
 style::engine &)`, and two queried elements take two engine references. The
 caller supplies the engine associated with each document, so hover/focus state
 matches the page. Every element and engine atom-table association is checked
 before source effects. The engine, document and their atom table must remain
 alive throughout the synchronous call.
+
+Generated selector calls use typed C++ prototype members. `matches` carries its
+proved Style association in a borrowed `js_element_t` from `Runtime/Browser.hpp`:
+
+```cpp
+auto receiver = ctnative::js_element_t{element, styles};
+auto matched = ctnative::Element.prototype.matches.call(receiver, ctnative::js_string{"button"});
+auto button = ctnative::Element.prototype.querySelector.call(element, styles, "button");
+auto buttons = ctnative::Element.prototype.querySelectorAll.call(element, styles, "button");
+```
+
+`closest` uses the same explicit Style form as the query methods.
+`Element` is an `inline constexpr element_constructor` containing an
+`element_prototype` with the existing four stateless method objects. Their
+`const` members call public Style with explicit borrowed inputs. The flat
+`ctnative::querySelector`, `querySelectorAll`, `matches` and `closest` names remain
+constant references to those same members for existing C++ callers.
+
+Both direct and original JavaScript prototype selector calls emit this form.
+Source identity, receiver, mutation and lifetime proofs still apply; the C++
+`Element` spelling supplies no JavaScript proof on its own. This composition
+introduces no callable table, allocation or virtual dispatch.
+
+`Runtime/Browser.hpp` also exposes `js_document_t{document, styles}` with
+`documentElement()`, `querySelector()` and `querySelectorAll()`. Both views borrow
+stable, live resources; they never own or extend their lifetime. Element views
+support all four selectors through instance methods or receiver-only prototype
+calls. Nullable results use `std::optional<js_element_t>` for DOM null, while
+query-all returns an owning `std::vector` snapshot of borrowed elements. Checked
+`.value()` extraction returns the underlying public `element_ref`.
+
+The [typed JavaScript interface plan](plans/native-js-types.md) tracks the remaining
+emitter migration and Object/Array interfaces. Source `document` access now uses
+the explicit host binding below; the C++ view alone supplies no source authority.
+Bootstrap's default-root helpers and an application driver remain unfinished.
 
 This is an action entry, not native Bootstrap initialization. For example:
 
@@ -48,6 +83,135 @@ are not accepted. Pass the JSON path as `host-manifest` to
 translation. The existing host-contract and prefix analyses for
 `closed-source-v1` remain separate. The DOM provider uses the native lowering
 entry and a fresh live source proof, never printed proof attributes.
+
+## Explicit source document binding
+
+Both `ctbrowser-dom-v1` and `ctbrowser-dom-session-v1` accept the optional field
+`"current_document_parameter": 0`. Its value must name a declared element input.
+The source `document` is that input's owning document, even when the input node is
+detached. An absent field grants no document binding; other providers reject it.
+This contract promises the original document binding, `documentElement` accessor,
+`querySelector`/`querySelectorAll` methods and their lookup chains. The complete
+source proof rejects binding replacement, accessor/method/prototype mutation,
+unknown calls and escapes.
+A saved document alias retains the same authority; a saved query method must still
+be called with its exact original receiver.
+
+Source `document.documentElement` and `document.querySelector(String)` emit ordinary
+`ctnative::document` accessor/method calls over that input's owner and live Style engine.
+The anchor's engine reference is appended in parameter order, including for root-only
+entries. All input handles and engine atom-table associations are checked before
+source effects. The caller owns these stable resources for the call; an owned
+session provides its nonmovable document and engine.
+
+The global `ctnative::document` object is declared alongside `Element` in
+`Runtime/ctnative.hpp`. `Runtime/Browser.hpp` supplies its methods and a
+noncopyable, nonmovable `document_scope` that borrows a `js_document_t` view:
+
+```cpp
+const ctnative::document_scope scope{page, styles};
+auto button = ctnative::document.querySelector(ctnative::js_string{"button"});
+```
+
+Generated entries establish one lexical scope after validating all inputs.
+It saves and restores the previous thread-local binding on return or exception;
+nested invocations for another document therefore restore their caller's document.
+Access without a scope throws `std::logic_error`. Binding validates Style before
+changing the active view. Existing explicit document/element views and saved
+snapshots keep their own document association when the global binding changes.
+The owner and Style engine must outlive the scope and every borrowed view.
+Scopes support synchronous calls on one thread; they must not span coroutine
+suspension or interleaved asynchronous tasks. Separate threads have independent
+bindings. No document singleton, VM context or new source admission is introduced.
+
+The global-object integration passes the two focused document lit cases in
+**128.07 s**: root/query **48 native executions, 82 refusals**, query-all
+**32 executions, 84 refusals**. The clients verify that an independent outer
+document is restored after successful calls, selector exceptions, invalid inputs
+and rejected session calls. Exact native-runtime/host-contract CTests pass
+**2/2, 0.58 s total**; runtime checks also cover failed binding, saved views and
+thread isolation. These measurements use public DOM/Core/Style, with no full-suite
+or new Node/VM differential claim. Earlier measurements below retain their scope.
+
+The root is reread at each source access. Document queries use public Style with
+document scope, including the root element, and preserve live interactive state.
+Both return `std::optional<js_element_t>` internally. The emitted
+`ctnative::element_or_null` bridge checks an engaged view and converts it to the
+existing nullable `element_ref` carrier; absence is canonical DOM null, never
+undefined. A truthiness or `!`/`!!` guard permits dereferencing that exact result
+only in the present arm. A guard of the bound `document.documentElement` also
+proves subsequent root reads present in that arm: the complete supported effect
+set cannot replace the root or reenter script. This fact is restored on branch
+exit and does not follow a guard of an unrelated selector result.
+Unguarded use, borrowed returns/storage, branch/loop transport and explicit
+source null comparisons remain refused. Invalid selector
+syntax keeps the existing C++ exception and preceding source effects.
+
+Source `document.querySelectorAll(String)` uses the same explicit binding and
+proof of the original method and receiver. It retains `std::vector<ctnative::js_element_t>`
+locally: the vector owns snapshot membership, and its views borrow the anchor's
+document and live Style. Proved `.length` reads and bounded indexed loops reuse
+the element-snapshot proof below. Each indexed use emits `.at(index).value()`
+to pass a checked raw element to existing operations; the whole vector is never
+converted to a second raw-element vector. Document scope includes a matching root,
+preserves tree order and deduplication, and excludes shadow descendants. Empty or
+removed roots yield empty snapshots. Attribute/class writes preserve saved
+membership, while later queries see the changes. Returns, storage, joins,
+callback retention and unproved indices remain refused; dataset-enabled mutation
+loops still require a separate backedge alias proof.
+
+The original Bootstrap `R.find` default now works under that source root guard,
+with either an omitted receiver or explicit `undefined`. Local callable slots
+may be read inside source `if` arms when initialized unconditionally beforehand;
+conditional/late writes, replacement and wrong receivers remain refused.
+Missing helper arguments become exact `undefined`, while excess arity remains
+unsupported. The existing initial `undefined` binding and live entry proof
+authorize selecting the original default arm. Spread/concat requires its complete
+confined length and indexed-consumer proof; no default expression or source
+effect is replaced with a handwritten helper.
+
+This does not establish a root for an unguarded caller. Canonical indexed and
+`for…of` loops over `R.find` members are supported as described below. General
+borrowed transport, initialization and the application driver remain unfinished.
+
+The focused `CTNative/Browser/native-dom-document-default.test` passes **32 native
+executions and 92 refusals, 86.49 s**, with the unchanged vendor-pinned `R.find`
+body, both providers, GCC/Clang, printing layouts and optimization policies.
+It covers omitted/explicit-undefined calls, both document anchor positions,
+empty/replaced roots, matching-root exclusion, detached anchors, live hover,
+selector exception order, rejected inputs and outer-document restoration.
+The existing spread-length regression passes **32 executions and 52 refusals,
+84.42 s**. Exact host-contract CTest passes **1/1, 0.57 s total**, including
+guard mutation, missing/excess arguments, callable initialization order and
+budget controls. These are focused public DOM/Style measurements.
+
+Admitted element `closest` and `querySelector` calls now use the same typed
+`js_element_t` receiver and optional-result bridge as document queries. Guarded
+chains retain their live Style association. The selected query/prototype-query
+regressions pass **2/2, 168.70 s**: respectively **16 native executions/14 refusals**
+and **64/100**. Source admission and browser behavior are unchanged by this
+carrier migration.
+
+The focused `CTNative/Browser/native-dom-document.test` passes **48 native
+executions and 82 refusals** across borrowed/owned providers, both compilers,
+printing layouts and optimization policies. Public DOM/Style clients cover both
+anchor positions, empty/replaced roots, detached anchors, root inclusion, live hover,
+cross-document identity, invalid input/Style rejection before effects, selector
+failure order and absence of Script symbols. The focused host-contract CTest passes
+**1/1** with schema and programmatic-provider controls; these are not full-suite or
+Node/VM differential results.
+
+The focused `CTNative/Browser/native-dom-document-all.test` passes **32 native
+executions and 84 refusals** in **87.38s**, across borrowed/owned providers,
+GCC/Clang, both printing layouts and optimization policies. It covers both anchor
+positions, typed snapshot storage, current-root selection, ordered writes,
+duplicate matches, live hover, invalid inputs/Style and selector failure order.
+The selected document and Element query-all regressions also pass **2/2** in
+**122.39s**: **48/82** and **16/44** native executions/refusals respectively.
+The exact host-contract CTest passes **1/1** in **0.56s** total, including live IR
+mutations, forged printed evidence and insufficient budgets for this query-all
+path. These are focused public DOM/Style checks; no new Node/VM differential or
+full-suite pass is claimed.
 
 ## Dataset key snapshots
 
@@ -213,22 +377,360 @@ unknown receivers, unproved loops and unstructured control flow refuse.
 Current operations are
 strict element identity, Boolean/Number negation, and Number/Boolean/String/undefined
 constants and returns,
-`classList.toggle(token[, force])`, `toggleAttribute(name[, force])`,
+`classList.toggle(token[, force])`, `classList.contains(token)`,
+`classList.add(...tokens)`, `classList.remove(...tokens)`, `toggleAttribute(name[, force])`,
 `getAttribute(name)`, `hasAttribute(name)`, `removeAttribute(name)` and
 `setAttribute(name, String-or-Boolean)`. Tokens and names come from definite source strings, including String + String expressions;
 force is a proved Boolean (including an earlier DOM result) or explicit undefined.
-`contains(otherElement)`, `matches(selector)` and `closest(selector)` also
-use proved parameter receivers. Selectors are source strings, parsed by the
+Class-list add/remove accept zero or more definite String arguments and return
+undefined (C++ `void`). Saved local class lists read the element's current
+attribute. All mutation arguments are validated before any token is changed;
+the first invalid argument throws `std::bad_expected_access<ctbrowser::token_argument_error>`
+with its index and token error. Empty calls normalize an existing attribute,
+including same-value writes, but leave an absent attribute absent. Membership
+does not write and preserves the current browser behavior for empty or
+whitespace-containing tokens: false. Add/remove invalidate saved dataset
+presence proofs, including calls with no arguments; contains preserves them.
+`contains(otherElement)`, `matches(selector)`, `closest(selector)`,
+`querySelector(selector)` and `querySelectorAll(selector)` also use proved element
+receivers. Selectors are source strings, parsed by the
 existing Style parser at the source call; invalid syntax throws
 `std::invalid_argument` after any preceding source effects. `contains` preserves
 document identity before calling `read_txn::is_ancestor_of`. Selector calls use
-`engine::element_matches` and `engine::closest`, the same cores as the bindings.
+`engine::element_matches`, `engine::closest` and `engine::select`, the same cores
+as the bindings. Element `querySelector` returns the first descendant in current
+tree order, excludes the receiver itself, binds `:scope` to that receiver and
+preserves the platform's shadow boundaries. It also works in detached subtrees.
+Document `querySelector` uses the explicit binding above and includes the root.
 
-A `closest` result is a local borrowed identity, with a canonical empty
-`element_ref{}` for no match. Its only supported observation is strict equality
-with another result or an element parameter, so misses compare equal even across
-documents. Dereferencing, retaining or returning that result, passing it to
-`contains`, and comparing it with an explicit source `null` still refuse.
+Bootstrap's original prototype selector spelling is supported for an explicit
+element and a proved String:
+
+```javascript
+const select = Element.prototype.querySelector;
+const button = select.call(element, 'button');
+const buttons = Element.prototype.querySelectorAll.call(element, '.selected');
+```
+
+The manifest must supply `"initial_intrinsics": ["Element", "Function"]`.
+Element promises its original global binding, own `prototype` and original
+`querySelector`/`querySelectorAll` methods. Function promises those methods'
+original prototype chains and `Function.prototype.call`, without own `call`
+shadows or accessors. These are embedding guarantees, not runtime checks.
+The complete source proof rejects replacement, mutation, callable/prototype
+escape and reentry, and requires `.call` to retain the exact selector function
+as its receiver. Its two arguments must be a proved nonnull element and String;
+guarded query results and checked snapshot members can supply that element.
+Saved constructor, prototype and method aliases preserve the same identities.
+
+The compiler erases the proved global/prototype/method reads and emits the
+existing typed selector call, using argument zero's document and live Style
+engine. Missing guarantees, detached `.call`, `.apply`/`.bind`, coercible
+selectors and unguarded nullable receivers refuse. An explicitly bound, guarded
+`document.documentElement` can supply an element. The original `R.find` default
+uses that guard and its complete helper proof.
+
+Element `querySelectorAll(String)` calls public `engine::select` with
+`first_only=false` and returns a local `std::vector<ctnative::js_element_t>`. The vector owns its
+slots; each typed view borrows the caller/session document and live Style engine.
+Indexed uses extract checked elements through `.at(index).value()` for the existing
+DOM operations. The shared selector engine
+provides tree order, deduplication, root exclusion, `:scope`, detached-subtree
+queries and shadow boundaries. Attribute/class changes leave saved membership
+unchanged; a later query sees current membership.
+
+Snapshot `.length` and exact indexed loops are supported:
+
+```javascript
+const buttons = element.querySelectorAll('.selected');
+for (let i = 0; i < buttons.length; i++) {
+  buttons[i].classList.remove('selected');
+}
+return buttons.length;
+```
+
+The index must start at zero, advance by one on every backedge, and be guarded
+by `index < snapshot.length` for that same snapshot. Both structured loop forms
+are proved: a guarded body before `scf.condition`, or an after body entered on
+its true edge. Indexed elements retain their document and live Style engine,
+so existing DOM/selector operations are ordinary public C++ calls. Attribute
+and class writes are allowed when the contract has no dataset parameters;
+dataset-enabled loops still need a separate backedge alias proof. No supported
+operation can reclaim a selected node or reenter script.
+
+Snapshot writes, out-of-bounds or unproved indices, identity observation,
+borrowed returns, retained callbacks, NodeList `forEach` and custom NodeList
+iterator hooks remain refused.
+
+`for…of` over proved element snapshots and confined `R.find` copies uses the
+existing native loop lowering over `std::vector<js_element_t>`:
+
+```javascript
+for (const group of element.querySelectorAll('.group')) {
+  for (const button of group.querySelectorAll('.selected')) {
+    button.classList.remove('selected');
+  }
+}
+```
+
+The manifest must additionally promise original `Array`, `Element`,
+`__ctbrowser_for_of_open`, `__ctbrowser_iter_next` and `__ctbrowser_iter_close`
+identities. The compiler provisionally selects exact importer materialization
+arms in a private candidate, then proves every surviving input producer and the
+complete entry. Original loop bodies, backedges and document-root guards stay in
+place. Nested queries therefore see DOM writes from earlier iterations and retain
+their outer element's owner and live Style. After inserting the NodeList cap,
+the complete entry is proved again before publication. Emission uses ordinary C++
+indexed loops and checked vector access; it does not yet print range-for syntax.
+There is no VM iterator or generic runtime value.
+
+Unchanged Bootstrap `R.find` may be called inside either loop. Its immutable
+helper holder permits repeated reads across structured loops; callable slots
+still require unique unconditional initialization, preceding each read. Slot
+replacement, conditional initialization and holder escape remain refused.
+An exact bounded member cannot equal `undefined`, so the helper's default arm
+is removed privately. The mapped member must still receive complete typed index
+evidence. Nullable selector results receive no such fact.
+
+Direct NodeList iteration and spread/concat both preserve the VM’s 2^24 proxy
+materialization cap. Separate observations of the original NodeList remain
+uncapped. The vector owns membership; each member borrows its document and live
+Style. Each materialized index must use that materialization's own length guard;
+the original NodeList's uncapped length cannot authorize the read. A separate
+spread of the same NodeList retains its own confined-copy proof. Supported DOM
+writes do not change saved membership. Sequential, conditional and nested opens
+are supported with invariant scalar loop state. Custom hooks, snapshot mutation
+or escape, missing intrinsic guarantees and unguarded default roots remain
+diagnostics. A later constant fold that would erase an already recorded input
+also refuses, keeping operation identities valid until reproof.
+
+One root-local custom iterable may instead be a fresh, confined object with
+its own ordinary `[Symbol.iterator]() { return this; }`, `next` and optional
+`return` methods. For example:
+
+```javascript
+const values = {
+  [Symbol.iterator]() { return this; },
+  next() {
+    const done = anchor.hasAttribute('data-yielded');
+    anchor.setAttribute('data-yielded', 'yes');
+    return {done: done, value: anchor};
+  },
+  return() { anchor.setAttribute('data-closed', 'yes'); return {}; }
+};
+for (const element of values) {
+  element.setAttribute('data-visited', 'yes');
+  if (anchor.hasAttribute('stop')) break;
+}
+```
+
+This path requires original `Object`, `Symbol` and the three importer helper
+identities. The identity method must be closed, non-arrow and effect-free.
+`next` and `return` may use proved immutable captures and direct reads/writes of
+own Number state initialized by unique Number literals on the holder. Each state
+key is a constant ordinary String; accesses may occur in the method's root block
+or nested `if` arms and `while` regions.
+The state methods must be ordinary functions with one confined closure identity;
+arrow functions retain lexical `this` and are refused. Unknown fields, receiver escapes
+and external holder observations remain unproved.
+`next` returns a fresh record with exactly own `done` and `value` fields; `return`,
+when present, returns an empty fresh object. Complete helper and DOM proofs still
+check every field producer, scalar recurrence, effect and borrowed element
+lifetime.
+
+Mutable lexical Number cells may also supply iterator state. Each root-local
+cell has a literal Number initializer, either directly or through one assignment
+before every capturing method and read. Confined `next` and `return` methods
+may capture it, along with the local scalar helpers described below. Forwarded
+captures remain refused. The enclosing entry may read and update cells mutated by those methods before,
+during and after iteration. Entry verification and initialization dominance cover
+structured branches, loops and importer completion selections. Loads and stores
+may occur in each method's root block or nested `if` arms and `while` regions,
+and mutable capture methods must be leaves. The proof
+follows cell identity across different capture orders, removes only those slots and
+reindexes remaining immutable captures. General helper capture admission still requires
+immutability.
+
+A unique local sibling closure may read and update those state cells through
+ordinary or direct calls in the enclosing entry or another confined sibling.
+Explicit arguments must match the helper's verified parameter count. Captures
+identify proved iterator state or single-initialized local cells holding other
+helpers. The complete callable-cell and call census discovers the whole family,
+including helpers that capture only another callable or receive one explicitly.
+Callable arguments bind separately at each invocation, so one parameter may
+receive different proved immutable helpers at different calls. A helper's single
+root return carries that invocation's proved identities through further helper
+results and invocations. Complete `if` arms may select among those identities;
+every possible target must satisfy the call proof. The bounded call-tree proof
+checks direct targets before rewriting; aggregate identities serve only the
+complete observer census. Every
+callable observer and invocation is checked, including alternate callers with unknown
+actuals and entry calls through unproved helper results. Exact closure, call,
+symbolic-use and acyclic call-tree checks precede rewriting. Helper bodies allow
+scalar operations and proved sibling calls; nested closure creation stays refused. An arrow's lexical receiver may be retained only when its body does
+not observe it. Capture slots become temporary cell parameters for the existing
+helper inliner, following that call's already-evaluated explicit arguments.
+Argument values keep their own snapshots even when a later argument or the
+helper writes the captured state. The inliner inserts reads and writes at their
+source positions;
+the entry rewrite then carries their scalar state through branches and loops.
+The ordinary result keeps its own observation point even when later writes
+change the shared state. Repeated calls see the latest values, including
+`return` updates on close. Complete DOM reproof checks every scalar producer.
+Retired helpers leave no closure or cell storage in native output. Helper-local
+breaks reuse the method completion proof before scalar body validation, retaining
+argument snapshots, ordered state writes and the ordinary return value. Escaping,
+recursive, mutable-callable and loop-carried callable results remain refused.
+Branch selection retains a private scalar discriminator until each invocation
+expands into ordinary branches with inlined bodies. Selection and argument
+evaluation keep their original positions; no callable object or lookup table
+survives. Unknown or noncallable arms and scalar observations of a callable refuse.
+Returned-callable producers expand before their consumers;
+source-order scheduling keeps charged work independent of SSA hash order.
+A shared callee is expanded at each invocation with that call's current cells and already
+evaluated scalar arguments. Unknown or coercing arguments still require complete
+DOM proof; arity alone authorizes no value facts.
+Fully defined JavaScript branch results join their ordered scalar state before
+one common continuation, including a helper conditional after its local loop.
+The existing importer also normalizes early helper returns into this form.
+Completion tags, switches and inactive poison slots retain the bounded path
+proof; they cannot authorize an ordinary join.
+
+Private normalization selects the custom protocol before source completion
+expansion, substitutes ordinary method calls and carries scalar done, receiver
+and captured state. Reads become explicit scalar arguments, writes update the
+current scalar, and fresh private result fields carry the latest values back.
+Conditional arms retain their original results and effects, then yield the
+updated scalar tuple. An unwritten arm yields its incoming state; later reads
+use the selected tuple. Method loops append state to their initial values,
+both region argument lists and condition/yield edges, preserving original result
+positions. The final condition supplies exit state even when the body runs zero
+times. Nested branches and close-hook loops use the same transport; complete
+region, type, dominance and effect proofs precede publication. Method-local break
+dispatch uses the existing complete continuation proof before state access checks.
+Pure exit selections may have no result values; exact tags and the full observer
+census still apply. The same tuple cleanup removes unused method completion tags
+without erasing their producers or changing ordered effects and live state.
+Existing helper expansion removes those result records. State
+resets for every iterator allocation; a close hook receives the latest values
+after `next`, including on a break. Numeric comparisons require independent
+Number evidence. The close branch returns its updated state to the entry;
+exhaustion retains the final `next` state. Ordered post-loop reads and writes
+therefore observe the same cells without retaining cell storage.
+The item must only be observed after a fresh false done test; done itself has
+truth-only observations. Exhaustion stops further next calls and skips return.
+A proved source `break` calls return once when it exists. Multiple live
+accumulators can cross the importer's pure break/exhaustion exit selection:
+each exact exit tag selects their defined values into distinct, type-compatible
+loop slots. The entire selected tuple is read before any destination changes,
+preserving crossed and repeated selections. Other observers, productive backedges,
+unknown tags and effectful selections cannot authorize replacing inactive slots.
+Other ordinarily carried counters may remain live.
+Generated C++ uses the existing scalar loop lowering and public DOM calls,
+with no iterator runtime,
+boxed result record or new runtime type. Nested custom opens, escaping or
+replaced hooks, separate iterator factories and generators remain refused.
+Source body returns, throws and handlers need a separate abrupt-close proof;
+the current importer does not close custom iterators on body return/throw.
+
+A confined spread into an empty concat receiver supports `.length` and canonical
+indexed element loops:
+
+```javascript
+const R = {
+  find: (t, e = document.documentElement) => [].concat(...Element.prototype.querySelectorAll.call(e, t))
+};
+const nodes = R.find('.selected', element);
+for (let i = 0; i < nodes.length; i++) {
+  nodes[i].classList.remove('selected');
+}
+return nodes.length;
+```
+
+This preserves the original Bootstrap helper. Its holder, property read and call
+must satisfy the local callable-holder proof above, including unconditional
+initialization before branch-local reads. The supplied element makes
+its default arm unreachable: exact declared element identities compare false to
+`undefined` under strict equality in either operand order. This fact does not
+propagate through unproved cells, joins or nullable query results. Omitted or
+explicit-undefined receivers instead select the unchanged default arm under a
+source guard of the bound document root.
+
+The manifest supplies `"initial_intrinsics": ["Array", "Element", "Function"]`.
+Array additionally promises original `Array.prototype.concat`, default
+constructor/species and no spreadability hooks on the fresh receiver. Element
+promises no `Symbol.isConcatSpreadable` hooks on result wrappers or their complete
+prototype chains. The complete source proof rejects operations that invalidate
+these guarantees, including unknown calls, mutation and escaping identities.
+
+The compiler proves the imported zero-based spread loop, its sole append, fresh
+empty receiver and arguments array, and confined result observations. It keeps
+the public selector call and replaces concat length by
+`min(snapshot.length, 16777216)`, using ordinary scalar C++ control flow. That
+limit preserves the current VM's proxy materialization cap; direct NodeList length
+is uncapped. Indexed copies must use their own `index < copied.length` loop
+condition, with zero-based unit progression. This is checked before rebinding
+the copied slots to the original snapshot; the uncapped original NodeList length
+cannot authorize a copied index. Complete live DOM proof then checks the exact
+minimum, member bounds, effects and borrowing. Saved membership and ordinary
+element identity survive supported attribute/class writes. No JavaScript array,
+iterator, callable table or runtime value is emitted. Work-budget exhaustion or a
+stale fingerprint leaves the original source unchanged, and the resulting private
+candidate must pass the complete DOM proof before publication.
+
+Nonempty receivers, additional arguments/spreads, detached concat, replaced methods,
+unproved indices, array identity, escape or mutation remain refused. Unguarded
+default document roots also refuse. The source proof tests
+check the exact cap and selected arms;
+standalone native tests cover empty/scoped/detached results, saved counts across DOM
+writes, invalid-selector effect order and borrowed/owned document validation.
+
+Shell's collection numeric reads now check canonical index parsing, overflow and
+actual membership, matching `length` and `item`; the former 1,000,000 numeric read cap
+is removed from `bindings/document/collections.cpp`. Reading an existing vector
+member does not allocate by index, and the old guard ran after collection refresh.
+The focused `dom_nodes_wpt` check passes with huge absent, overflowing and
+noncanonical index reads; no collection with over one million members was executed.
+The separate `ownKeys` enumeration limit of 1,000,000 and proxy-spread limit of
+2^24 are unchanged. The confined indexed concat proof above does not admit general
+JavaScript Array behavior or custom NodeList iterator protocols.
+
+The focused `native-dom-find-elements.test` passes **48 native executions and
+114 refusals** with the unchanged vendor-pinned helper, explicit receiver and
+guarded omitted/undefined defaults. Both providers, GCC/Clang, printing layouts
+and optimization policies cover ordered element writes, identity, live hover,
+saved membership after class mutation, document-root replacement, selector failure
+order and outer-document restoration. Existing element query-all **16/44** and
+spread-length **32/52** pass alongside it: **3/3 selected lit cases, 141.75 s**.
+Exact host-contract CTest passes **1/1, 0.66 s total**. Source controls preserve
+the uncapped original NodeList alias, reject copied indices guarded by that alias,
+and withhold evidence after cap/arm mutation or incomplete budgets. The cap is
+checked structurally; no above-cap collection or new Node/VM differential run is
+claimed. Full suites were skipped.
+
+A `closest`, `querySelector` or document-root result is a local borrowed identity,
+with a canonical empty `element_ref{}` for no match. Strict equality compares it
+with another result or an element parameter, so misses compare equal even across documents. A truthiness
+or `!`/`!!` guard permits existing DOM operations on that exact result inside the
+present branch:
+
+```javascript
+const button = element.closest('[data-bs-toggle="button"]');
+if (button) {
+  const active = button.classList.toggle('active');
+  button.setAttribute('aria-pressed', active);
+}
+```
+
+Guarded results may also be passed to `contains` or call `matches`, `closest`,
+`querySelector` and `querySelectorAll`. Selector chains retain the original input's
+live Style engine; each new `closest` or `querySelector` result requires its
+own guard.
+The absent branch, another result and uses after the guard acquire no
+dereference permission. Borrowed returns, property storage,
+branch/loop transport, dataset access on derived elements and explicit source
+`null` comparisons still refuse. The caller's document remains the sole owner;
+the admitted synchronous operations neither destroy nodes nor reenter script.
 Unsupported coercions and observed set/remove results refuse.
 
 A `getAttribute` result is an owning `std::optional<std::string>`: absent is
@@ -515,6 +1017,9 @@ constant before reproof and C++ type selection. Forced no-ops preserve attribute
 bytes and mutation behavior; invalid toggle names still throw before a no-op.
 
 Generated calls use the public `dom/element.hpp` and `dom/token_list.hpp` APIs.
+Class-list membership and mutations share `contains_token`, `add_tokens` and
+`remove_tokens` with the Shell adapters; the native wrappers only assemble typed
+arguments and propagate the shared API's errors.
 Attribute toggling shares `toggle_element_attribute` with the VM adapter;
 presence and removal call the existing document API and shared name folding.
 `validate_element` checks every incoming handle before effects. Token validation
@@ -523,7 +1028,7 @@ VM adapters use the same platform implementation and retain their own value
 conversion, JavaScript exceptions and Shell notifications. This entry does not
 deliver Shell mutation observers, custom-element callbacks, events or rendering.
 
-The registered `ctcompile_native_dom_entry` CTest compiles and executes real
+The focused `CTNative/Browser/native-dom.test` lit case compiles and executes real
 DOM clients with GCC and the configured C++23 Clang, both printing layouts and
 optimization policies. It checks document domains, detached subtree lifetime,
 ordered mutations, String/Boolean conversion, validation failures, refusal
@@ -532,6 +1037,11 @@ other actions keep DOM/Core-only linkage. Query checks cover live interactive
 state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
+`native-dom-class-list.test` additionally checks variadic and zero-argument
+mutations, validation atomicity, saved aliases, HTML/SVG, guarded selector
+receivers, void results, and mutation-epoch refusal controls under both DOM
+providers. The browser's `dom_token_list`, `dom_mutation` and `element_attrs`
+CTests cover the shared core and Shell adapter behavior.
 
 The `ctcompile_native_dom_strings` CTest compares **783** copied-value, Boolean
 and numeric-prefix observations with Node and the ctbrowser VM, then executes
@@ -550,9 +1060,9 @@ symbols or generic nullable value helpers in generated code.
 Select `ctbrowser-dom-session-v1` with the same fingerprint, entry and
 `element_parameters` fields to emit an additional `<entry_symbol>_session` class.
 It owns an atom table, then its document, then a selector engine when the source
-uses selectors. The class cannot be copied or moved. `document()` provides the
-document for building the page; `selectors()` exposes the owned engine's live
-interactive state when present. `invoke(element_ref, ...)` calls the same proved
+uses selectors or the explicit document binding. The class cannot be copied or
+moved. `document()` provides the document for building the page; `selectors()`
+exposes the owned engine's live interactive state when present. `invoke(element_ref, ...)` calls the same proved
 source function with the session's selector engine.
 
 Every supplied element must belong to this session. All document-pointer
@@ -570,11 +1080,12 @@ checks for teardown and dangling foreign pointers. This provider still refuses
 handle returns, retention in Data or properties, and browser callbacks. It does
 not reinterpret source-created ordinary objects as DOM elements.
 
-## Data input provenance
+## Owned Data sessions
 
-`ctbrowser-dom-data-session-v1` is currently an **analysis-only** contract. It uses
-the closed-source contract fields (`roots`, `observations`, initial bindings and
-intrinsics) plus the same ordered, nonempty `element_parameters` declaration.
+`ctbrowser-dom-data-session-v1` emits a nonmovable session owning its document
+and private Data storage. It uses the closed-source contract fields (`roots`,
+`observations`, initial bindings and intrinsics) plus the same ordered, nonempty
+`element_parameters` declaration.
 `--ctnative-host-contract` checks the actual input arguments across the complete
 Data method family. The entry must be unreferenced by source code, uncaptured,
 and declare every explicit parameter as an original JavaScript value.
@@ -595,23 +1106,38 @@ aliases, arbitrary properties and extracted callables refuse. Reports expose
 Entry-order Map facts preserve these exact input origins without inventing fresh
 objects. A set followed by a get with the same input retains its scalar value;
 using a different input retains the possibility of either a match or a miss.
-This is provenance evidence, not proof of a document domain or a retained lifetime.
-Native lowering and `OwnedGlobalRoots` still refuse with
-`DOM Data requires storage confined to its document owner`; source-prefix
-specialization also refuses this provider.
+`OwnedGlobalRoots` revalidates the complete source/input family before native
+typing and emission. Preparation uses a fingerprinted private clone and removes
+only the proved inert declaration. Source-prefix specialization still refuses
+this provider.
 
-Next, attach private Data storage to the nonmovable DOM owner. It must destroy
-Data before the document, then the borrowed atom table. The current shared
-table/global carriers and `capture_map()` accessor do not establish that lifetime.
-Revalidate the complete input family before typing/emission, preserve document plus
-node identity, and check every document domain before dereferencing any input or
-performing effects. Gate a source without Map snapshots too: its associative Map
-needs an element-key comparator, whereas Data's child snapshot selects ordered
-storage and hides that path. Preserve source allocation timing: the imported
-`dataEntry` fixture constructs a new root, Map and method table on every invocation.
-Reusing that Map across invocations would change its observable behavior; a separate
-initialization/action split needs its own source proof. Retained native DOM keys
-remain unimplemented.
+Source functions, roots, tables, Maps and observations become private session
+members. Tables and roots use private borrowed pointers; no callable or
+DOM-bearing table escapes. Member order destroys Data before the document and
+the document before its atom table. `document()` exposes the owned document,
+`invoke(element_ref, ...)` checks every document domain before validating any
+node or performing source effects, and `observe_*()` returns scalar copies.
+Map keys preserve document plus complete node identity without dereferencing an
+owner. Detached nodes retain that identity.
 
-Original Button/BaseComponent construction, prototype/static getters, disposal,
-retained callbacks and the native application driver follow this ownership step.
+Source allocation timing is preserved: the `dataEntry` fixture creates a new
+root, Map and method table on every invocation, so the generated code resets
+their storage at those source operations. A persistent initialization/action
+split still requires its own source proof. The focused
+`native-dom-data-session.test` retains both `has` and `get` cases, including
+associative storage without snapshots; its separate snapshot source still
+refuses for lack of a complete getter proof.
+
+Historical validation on 2026-09-14 (`523e631d`) compiled the pinned **3,218-byte
+Bootstrap Data program** with only its three synthetic probe keys adapted to
+DOM inputs: **7/7 functions, 23 direct Data calls and 19 observations** agreed
+with Node and the interpreter across **five alias partitions**. The
+`native-bootstrap-dom-data-session.test` gate covers both optimization policies,
+printing layouts and GCC/Clang, plus isolation, repeated invocation, detached
+keys, invalid/foreign handles, private-access and missing-reset controls, and
+generated-client ASan/UBSan. These are prior measurements, not a fresh replay.
+
+Original Button/BaseComponent constructor publication through Data, retained
+DOM/config payloads, disposal, retained callbacks and the native application
+driver remain separate work; the Data session does not establish full native
+Bootstrap initialization.

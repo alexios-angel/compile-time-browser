@@ -215,9 +215,12 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
               "ctjs.load_global \"unknown\""}) {
             const auto operand =
                 replaced(program, sum, "    %operand = " + std::string(definition) + "\n" + sum);
+            const bool boolean = llvm::StringRef(definition) == "ctjs.constant #ctjs.boolean<true>";
             variant(replaced(operand, "ctjs.binary add %putResult, %secondResult",
                              "ctjs.binary add %putResult, %operand"),
-                    false, "non-Number conversion cannot borrow a numeric method-result category");
+                    boolean,
+                    boolean ? "Boolean arithmetic proves a Number result for the method argument"
+                            : "unproved conversion cannot borrow a numeric method-result category");
         }
         variant(replaced(saved, "    %savedSum =",
                          "    ctjs.store_global \"savedSum\", %actual\n"

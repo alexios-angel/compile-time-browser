@@ -28,6 +28,25 @@ llvm::Error normalizeStructuredExits(ctjs::FuncOp function, unsigned & remaining
 llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contract,
                             unsigned maxSteps = 100000, llvm::StringRef function = {});
 
+// On the private DOM candidate only: consume explicit throws inside their
+// original catch, or project a proved nonthrowing call completion. Entry parameter
+// indices come from its fingerprinted contract;
+// helpers have no such authority. Final DOM proof still validates all values and
+// catch effects; no borrowed C++ exception or native payload authority is added.
+llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned maxSteps,
+                                             llvm::ArrayRef<unsigned> elementParameters = {});
+
+// Finish a retained source catch after helper expansion. The independent
+// protected-effect proof must succeed before selecting any completion.
+llvm::Error normalizeDOMRecoveredCatch(ctjs::FuncOp function, unsigned maxSteps,
+                                       llvm::ArrayRef<unsigned> elementParameters);
+
+// After helper binding, select normal only for independently nonthrowing Element
+// attribute calls. Preserve their complete inert tuples; final DOM proof remains
+// mandatory. The caller owns a disposable candidate on failure.
+llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned maxSteps,
+                                             llvm::ArrayRef<unsigned> elementParameters);
+
 struct ExceptionRecoveryResult {
     bool recovered = false;
     std::string refusal;

@@ -16,8 +16,11 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         // ND-1: the engine's String length counts its stored UTF-8 bytes.
         auto size = callWithConstValueOperands(
             b, where, mlir::TypeRange{ec::OpaqueType::get(context, "std::size_t")},
-            b.getStringAttr("std::size"), mlir::ValueRange{read.getObject()});
-        swap(ec::CastOp::create(b, where, b.getF64Type(), size.getResult(0)));
+            b.getStringAttr("std::size"),
+            mlir::ValueRange{convertScalar(b, where, read.getObject(),
+                                           ec::OpaqueType::get(context, kRawStringType))});
+        auto count = ec::CastOp::create(b, where, b.getF64Type(), size.getResult(0));
+        swap(convertScalar(b, where, count, carrierType(context, carrier::number)));
         return true;
     }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op);
@@ -25,42 +28,81 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         (binary.getKind() == ctjs::BinaryKind::Add ||
          binary.getKind() == ctjs::BinaryKind::Concat) &&
         binary.getResult().getType() == string) {
-        swap(callWithConstValueOperands(
-                 b, where, mlir::TypeRange{string}, b.getStringAttr("ctnative::string_concat"),
-                 mlir::ValueRange{convertScalar(b, where, binary.getLhs(), string),
-                                  convertScalar(b, where, binary.getRhs(), string)})
+        const auto operand = [&](mlir::Value value) {
+            // Exact primitives select their typed addition overload. Tagged
+            // scalar/optional String concatenation first materializes its text.
+            return isNumberCarrier(value.getType()) || isBooleanCarrier(value.getType())
+                       ? value
+                       : convertScalar(b, where, value, string);
+        };
+        swap(ec::AddOp::create(b, where, string, operand(binary.getLhs()),
+                               operand(binary.getRhs())));
+        return true;
+    }
+    if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op);
+        binary && binary.getKind() == ctjs::BinaryKind::Add &&
+        isNumberStringCarrier(binary.getResult().getType())) {
+        swap(callWithConstValueOperands(b, where, mlir::TypeRange{binary.getResult().getType()},
+                                        b.getStringAttr("ctnative::add"),
+                                        mlir::ValueRange{binary.getLhs(), binary.getRhs()})
                  .getResult(0));
         return true;
+    }
+    if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op);
+        unary && unary.getKind() == ctjs::UnaryKind::TypeOf) {
+        static const llvm::StringMap<llvm::StringRef> helpers{
+            {kNullableStringType, "ctnative::string_typeof"},
+            {kBooleanStringType, "ctnative::boolean_string_typeof"},
+            {kNullableBooleanStringType, "ctnative::nullable_boolean_string_typeof"},
+            {kNumberStringType, "ctnative::number_string_typeof"},
+            {kNullableNumberStringType, "ctnative::nullable_number_string_typeof"}};
+        mlir::Type type = unary.getOperand().getType();
+        if (auto lvalue = llvm::dyn_cast<ec::LValueType>(type)) { type = lvalue.getValueType(); }
+        auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
+        if (auto helper = opaque ? helpers.find(opaque.getValue()) : helpers.end();
+            helper != helpers.end()) {
+            auto result =
+                callWithConstValueOperands(
+                    b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
+                    b.getStringAttr(helper->second), mlir::ValueRange{unary.getOperand()})
+                    .getResult(0);
+            swap(convertScalar(b, where, result, op->getResult(0).getType()));
+            return true;
+        }
     }
     llvm::StringRef helper;
     llvm::SmallVector<mlir::Value> operands;
     mlir::Type result;
-    if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op);
-        unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
-        isNullableStringCarrier(unary.getOperand().getType())) {
-        helper = "ctnative::string_typeof";
-        operands.push_back(unary.getOperand());
-        result = string;
-    } else if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);
-               compare &&
-               (compare.getKind() == ctjs::CompareKind::Eq ||
-                compare.getKind() == ctjs::CompareKind::StrictEq) &&
-               ((isNullableStringCarrier(compare.getLhs().getType()) ||
-                 isNullableStringCarrier(compare.getRhs().getType())) ||
-                (compare.getLhs().getType() == string &&
-                 isNullableCarrier(compare.getRhs().getType())) ||
-                (compare.getRhs().getType() == string &&
-                 isNullableCarrier(compare.getLhs().getType())))) {
-        helper = compare.getKind() == ctjs::CompareKind::Eq ? "ctnative::string_equal"
-                                                            : "ctnative::string_strict_equal";
+    const auto hasStringAlternative = [](mlir::Type type) {
+        if (auto lvalue = llvm::dyn_cast<ec::LValueType>(type)) { type = lvalue.getValueType(); }
+        const auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
+        static const llvm::StringSet<> carriers{kStringType,        kNullableStringType,
+                                                kBooleanStringType, kNullableBooleanStringType,
+                                                kNumberStringType,  kNullableNumberStringType};
+        return opaque && carriers.contains(opaque.getValue());
+    };
+    if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);
+        compare &&
+        (compare.getKind() == ctjs::CompareKind::Eq ||
+         compare.getKind() == ctjs::CompareKind::StrictEq) &&
+        (hasStringAlternative(compare.getLhs().getType()) ||
+         hasStringAlternative(compare.getRhs().getType()))) {
+        // Exact String pairs keep their direct C++ comparison. Every mixed or
+        // optional pair retains its original tags until the selected JS rule.
+        if (compare.getLhs().getType() == string && compare.getRhs().getType() == string) {
+            return false;
+        }
+        helper = compare.getKind() == ctjs::CompareKind::Eq ? "ctnative::primitive_equal"
+                                                            : "ctnative::primitive_strict_equal";
         operands = {compare.getLhs(), compare.getRhs()};
-        result = mlir::IntegerType::get(context, 1);
+        result = carrierType(context, carrier::boolean);
     } else {
         return false;
     }
-    swap(callWithConstValueOperands(b, where, mlir::TypeRange{result}, b.getStringAttr(helper),
-                                    operands)
-             .getResult(0));
+    auto value = callWithConstValueOperands(b, where, mlir::TypeRange{result},
+                                            b.getStringAttr(helper), operands)
+                     .getResult(0);
+    swap(convertScalar(b, where, value, op->getResult(0).getType()));
     return true;
 }
 

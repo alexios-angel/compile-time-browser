@@ -581,8 +581,8 @@ value dom_bindings::make_live_collection(context & cx,
                      refresh(c);
                      const std::string key = c.to_string(args[1]);
                      if (const std::optional<std::size_t> at = whole_index(key)) {
-                         constexpr std::size_t max_index = 1000000;
-                         if (*at > max_index) { return value::undefined(); }
+                         // Reading an existing member does not allocate by index.
+                         // Its supported indices are exactly 0..length-1, as for item().
                          return *at < held->members.size() ? member(c, held->members[*at])
                                                            : value::undefined();
                      }

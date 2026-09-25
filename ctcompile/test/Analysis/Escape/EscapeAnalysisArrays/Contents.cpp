@@ -394,6 +394,69 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string array = values + "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
     const std::string read = "  %read = ctjs.get_property %a[%zero]\n";
     const std::string done = "  ctjs.return %zero\n";
+    const std::string captureStart = values +
+                                     "  %a = ctjs.create_array [%zero] {storage_test_id = \"a\"}\n"
+                                     "  %flag = ctjs.truthy %p\n"
+                                     "  scf.if %flag {\n";
+    const std::string captureWrite = "    ctjs.set_property %a[%zero], %x\n";
+    const std::string captureEnd = "  }\n  ctjs.set_property %a[%zero], %zero\n";
+    const std::string capturedStore = captureStart + captureWrite + "  }\n";
+    const std::string clearedCapture = captureStart + captureWrite + captureEnd;
+    const std::string receiverStart = "  %zero = ctjs.constant #ctjs.number<0>\n"
+                                      "  %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
+                                      "  %a = ctjs.create_array [%zero] {storage_test_id = \"a\"}\n"
+                                      "  %flag = ctjs.truthy %p\n"
+                                      "  scf.if %flag {\n";
+    const std::string receiverWrite = "    ctjs.set_property %a[%zero], %one\n";
+    const std::string receiverRead = "    %read = ctjs.get_property %a[%zero]\n";
+    const retention_row nestedOrigins{
+        .what = "single-instance nested origins and their private receiver refine together",
+        .body =
+            receiverStart + "    %fresh = ctjs.create_array []\n" + receiverWrite + "  }\n" + done,
+        .confinedReceivers = "a",
+        .confinedNested = "ctjs.create_array"};
+    const std::string localStart = "  %zero = ctjs.constant #ctjs.number<0>\n"
+                                   "  %flag = ctjs.truthy %p\n";
+    const std::string localArray =
+        "    %fresh = ctjs.create_array [%zero] {storage_test_id = \"fresh\"}\n";
+    const std::string localObject =
+        "    %child = ctjs.create_object {storage_test_id = \"child\"}\n";
+    const std::string selectedArrays =
+        localStart + "  %selected = scf.if %flag -> (!ctjs.value) {\n" + localArray +
+        "    scf.yield %fresh : !ctjs.value\n"
+        "  } else {\n"
+        "    %other = ctjs.create_array [%zero] {storage_test_id = \"other\"}\n"
+        "    scf.yield %other : !ctjs.value\n"
+        "  }\n";
+    const std::string nestedStore =
+        receiverStart + localArray + "    ctjs.set_property %a[%zero], %fresh\n  }\n";
+    const std::string transportedSelection = selectedArrays +
+                                             "  cf.br ^next(%selected : !ctjs.value)\n"
+                                             "^next(%base: !ctjs.value):\n";
+    const std::string transportedStore =
+        nestedStore + "  cf.br ^next(%a : !ctjs.value)\n^next(%base: !ctjs.value):\n";
+    const std::string repeatedSelection =
+        localStart +
+        "  %initial = ctjs.create_array []\n"
+        "  cf.br ^loop(%initial : !ctjs.value)\n"
+        "^loop(%previous: !ctjs.value):\n"
+        "  %selected = scf.if %flag -> (!ctjs.value) {\n" +
+        localArray +
+        "    scf.yield %fresh : !ctjs.value\n"
+        "  } else {\n    scf.yield %previous : !ctjs.value\n  }\n";
+    const std::string countedStart = "  %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
+                                     "  %name = ctjs.constant #ctjs.string<\"length\">\n"
+                                     "  %guard = ctjs.create_array [%zero, %zero]\n"
+                                     "  cf.br ^header(%zero : !ctjs.value)\n"
+                                     "^header(%index: !ctjs.value):\n"
+                                     "  %length = ctjs.get_property %guard[%name]\n"
+                                     "  %test = ctjs.compare lt %index, %length\n"
+                                     "  %continue = ctjs.truthy %test\n"
+                                     "  cf.cond_br %continue, ^body(%index : !ctjs.value), ^exit\n"
+                                     "^body(%i: !ctjs.value):\n";
+    const std::string countedEnd = "  %step = ctjs.binary add %i, %one\n"
+                                   "  cf.br ^header(%step : !ctjs.value)\n^exit:\n" +
+                                   done;
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -480,6 +543,221 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = array + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "an overwritten implicit Stored capture becomes confined",
+         .body = clearedCapture + "  ctjs.return %a\n",
+         .discharged = "x"},
+        {.what = "an uncleared structured arm keeps the child's original capture witness",
+         .body = capturedStore + "  ctjs.return %a\n"},
+        {.what = "a separately returned captured child keeps its original witness",
+         .body = clearedCapture + "  ctjs.return %x\n"},
+        {.what = "a later yielded capture keeps the child on every retaining return path",
+         .body = clearedCapture + "  %saved = scf.if %flag -> (!ctjs.value) {\n"
+                                  "    scf.yield %x : !ctjs.value\n"
+                                  "  } else {\n"
+                                  "    scf.yield %zero : !ctjs.value\n"
+                                  "  }\n"
+                                  "  ctjs.return %saved\n"},
+        {.what = "late publication prevents refinement of an earlier Stored capture",
+         .body = clearedCapture + "  ctjs.store_global \"held\", %x\n" + done,
+         .complete = false},
+        {.what = "later implicit publication cannot hide behind the first Stored capture",
+         .body = captureStart + captureWrite + "    ctjs.store_global \"held\", %x\n" + captureEnd +
+                 done,
+         .complete = false},
+        {.what = "a transient structured cycle keeps even an overwritten child refused",
+         .body = captureStart + "    ctjs.set_property %a[%zero], %a\n" + captureWrite +
+                 captureEnd + done,
+         .complete = false},
+        {.what = "an earlier non-storage capture cannot borrow a later Stored role",
+         .body = captureStart + "    %used = ctjs.truthy %x\n" + captureWrite + captureEnd + done,
+         .confinedReceivers = "a"},
+        {.what = "an earlier global capture cannot borrow a later Stored role",
+         .body = captureStart + "    ctjs.store_global \"held\", %x\n" + captureWrite + captureEnd +
+                 done,
+         .complete = false},
+        {.what = "captured storage and a single-instance nested origin refine together",
+         .body = captureStart + "    %fresh = ctjs.create_array []\n" + captureWrite + captureEnd +
+                 done,
+         .discharged = "x",
+         .confinedNested = "ctjs.create_array"},
+        {.what = "an exact nested own-element write confines its private array receiver",
+         .body = receiverStart + receiverWrite + "  }\n" + done,
+         .confinedReceivers = "a"},
+        {.what = "an exact nested own-element read confines its private array receiver",
+         .body = receiverStart + receiverRead + "  }\n" + done,
+         .confinedReceivers = "a"},
+        {.what = "a directly returned nested receiver retains its original capture witness",
+         .body = receiverStart + receiverWrite + "  }\n  ctjs.return %a\n",
+         .confinedReceivers = ""},
+        {.what = "a later returned selection retains the captured receiver on either path",
+         .body = receiverStart + receiverRead +
+                 "  }\n"
+                 "  %saved = scf.if %flag -> (!ctjs.value) {\n"
+                 "    scf.yield %a : !ctjs.value\n"
+                 "  } else {\n"
+                 "    scf.yield %zero : !ctjs.value\n"
+                 "  }\n"
+                 "  ctjs.return %saved\n",
+         .confinedReceivers = ""},
+        {.what = "late implicit publication cannot hide behind an own receiver access",
+         .body = receiverStart + receiverRead + "    ctjs.store_global \"held\", %a\n  }\n" + done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "a nested array receiver still requires an existing own write slot",
+         .body = receiverStart + "    ctjs.set_property %a[%one], %zero\n  }\n" + done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "a nested array receiver still requires an exact own read index",
+         .body = receiverStart + "    %read = ctjs.get_property %a[%p]\n  }\n" + done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "an earlier nonreceiver capture cannot borrow a later receiver role",
+         .body = receiverStart + "    %used = ctjs.truthy %a\n" + receiverRead + "  }\n" + done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "a captured array key cannot borrow the receiver operand's role",
+         .body = receiverStart + "    %read = ctjs.get_property %p[%a]\n  }\n" + done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "a captured append receiver remains outside Get/Set refinement",
+         .body = receiverStart + "    ctjs.append %one to %a\n  }\n" + done,
+         .complete = false,
+         .confinedReceivers = ""},
+        {.what = "a private receiver with an overwritten structured cycle remains refused",
+         .body = receiverStart + "    ctjs.set_property %a[%zero], %a\n" + receiverWrite + "  }\n" +
+                 done,
+         .complete = false,
+         .confinedReceivers = ""},
+        nestedOrigins,
+        {.what = "nested objects have one frame-local instance through two conditional ancestors",
+         .body = localStart + "  scf.if %flag {\n    scf.if %flag {\n" + localObject +
+                 "    }\n  }\n" + done,
+         .confinedNested = "child"},
+        {.what = "conditional array identities survive region exit and a selected own read",
+         .body = selectedArrays + "  %read = ctjs.get_property %selected[%zero]\n"
+                                  "  ctjs.return %read\n",
+         .confinedNested = "fresh,other"},
+        {.what = "returning a selected conditional instance retains both allocation origins",
+         .body = selectedArrays + "  ctjs.return %selected\n"},
+        {.what = "a returned outer container retains its selected conditional child",
+         .body = selectedArrays + "  %outer = ctjs.create_array [%selected]\n"
+                                  "  ctjs.return %outer\n"},
+        {.what = "an overwritten conditional child is confined to the containing frame",
+         .body = nestedStore + "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved read retains its conditional child after the container is cleared",
+         .body = nestedStore + "  %saved = ctjs.get_property %a[%zero]\n"
+                               "  ctjs.set_property %a[%zero], %zero\n"
+                               "  ctjs.return %saved\n",
+         .confinedReceivers = "a"},
+        {.what = "publication after a conditional yield refuses every nested refinement",
+         .body = selectedArrays + "  ctjs.store_global \"held\", %selected\n" + done,
+         .complete = false},
+        {.what = "an earlier local access does not hide later nested publication",
+         .body = localStart + "  scf.if %flag {\n" + localArray +
+                 "    %read = ctjs.get_property %fresh[%zero]\n"
+                 "    ctjs.store_global \"held\", %fresh\n  }\n" +
+                 done,
+         .complete = false},
+        {.what = "a transient conditional cycle refuses all instance refinements",
+         .body = localStart + "  scf.if %flag {\n" + localArray +
+                 "    ctjs.set_property %fresh[%zero], %fresh\n"
+                 "    ctjs.set_property %fresh[%zero], %zero\n  }\n" +
+                 done,
+         .complete = false},
+        {.what = "a conditional nested allocation still requires current solver lattices",
+         .body = localStart + "  scf.if %flag {\n" + localArray + "  }\n" + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "a dead conditional allocation cannot borrow a live instance lattice",
+         .body = "  %zero = ctjs.constant #ctjs.number<0>\n  %no = arith.constant false\n"
+                 "  scf.if %no {\n" +
+                 localArray + "  }\n" + done,
+         .complete = false},
+        {.what = "conditional instances in a repeated structured loop remain unsupported",
+         .body = localStart +
+                 "  scf.while : () -> () {\n    scf.condition(%flag)\n"
+                 "  } do {\n    scf.if %flag {\n" +
+                 localArray + "    }\n    scf.yield\n  }\n" + done,
+         .complete = false},
+        {.what = "conditional instances across root CFG blocks reuse complete path nonrepetition",
+         .body =
+             localStart + "  cf.br ^next\n^next:\n  scf.if %flag {\n" + localArray + "  }\n" + done,
+         .confinedNested = "fresh"},
+        {.what = "a shared diamond join creates at most one conditional instance per call",
+         .body = localStart +
+                 "  cf.cond_br %flag, ^left, ^right\n"
+                 "^left:\n  cf.br ^join\n^right:\n  cf.br ^join\n"
+                 "^join:\n  scf.if %flag {\n" +
+                 localArray + "  }\n" + done,
+         .confinedNested = "fresh"},
+        {.what = "successor own reads preserve selected conditional identities",
+         .body = transportedSelection + "  %read = ctjs.get_property %base[%zero]\n"
+                                        "  ctjs.return %read\n",
+         .confinedNested = "fresh,other"},
+        {.what = "a successor return retains both selected conditional origins",
+         .body = transportedSelection + "  ctjs.return %base\n"},
+        {.what = "every duplicate successor edge retains its own selected operand",
+         .body = selectedArrays + "  cf.cond_br %flag, ^next(%zero : !ctjs.value), "
+                                  "^next(%selected : !ctjs.value)\n"
+                                  "^next(%saved: !ctjs.value):\n  ctjs.return %saved\n"},
+        {.what = "one retaining exit prevents confinement despite an earlier primitive exit",
+         .body = selectedArrays + "  cf.cond_br %flag, ^plain, ^retain\n"
+                                  "^plain:\n  ctjs.return %zero\n"
+                                  "^retain:\n  ctjs.return %selected\n"},
+        {.what = "successor replacement releases the conditional child from a returned holder",
+         .body = transportedStore + "  ctjs.set_property %base[%zero], %zero\n"
+                                    "  ctjs.return %base\n",
+         .confinedNested = "fresh"},
+        {.what = "successor saved reads retain the child after its holder is cleared",
+         .body = transportedStore + "  %saved = ctjs.get_property %base[%zero]\n"
+                                    "  ctjs.set_property %base[%zero], %zero\n"
+                                    "  ctjs.return %saved\n",
+         .confinedReceivers = "a"},
+        {.what = "successor publication refuses all conditional origin refinements",
+         .body = transportedSelection + "  ctjs.store_global \"held\", %base\n" + done,
+         .complete = false},
+        {.what = "transient successor cycles cannot borrow acyclic CFG authority",
+         .body = transportedSelection +
+                 "  ctjs.set_property %base[%zero], %base\n"
+                 "  ctjs.set_property %base[%zero], %zero\n" +
+                 done,
+         .complete = false},
+        {.what = "backedges cannot conflate the saved and current conditional instances",
+         .body = repeatedSelection + "  cf.cond_br %flag, ^loop(%selected : !ctjs.value), "
+                                     "^exit(%previous : !ctjs.value)\n"
+                                     "^exit(%saved: !ctjs.value):\n  ctjs.return %saved\n",
+         .complete = false},
+        {.what = "a solver-dead backedge still cannot grant conditional instance authority",
+         .body = repeatedSelection + "  %no = arith.constant false\n"
+                                     "  cf.cond_br %no, ^loop(%selected : !ctjs.value), "
+                                     "^exit(%previous : !ctjs.value)\n"
+                                     "^exit(%saved: !ctjs.value):\n  ctjs.return %saved\n",
+         .complete = false},
+        {.what = "a separate counted loop cannot repeat preheader conditional allocations",
+         .body = selectedArrays + countedStart + countedEnd,
+         .confinedNested = "fresh,other"},
+        {.what = "the counted CFG exception still rejects conditional allocations in its body",
+         .body =
+             localStart + countedStart + "  scf.if %flag {\n" + localArray + "  }\n" + countedEnd,
+         .complete = false},
+        {.what = "conditional origins cannot bypass raw-frame suspension refusal",
+         .body = localStart + "  scf.if %flag {\n" + localArray +
+                 "  }\n  %paused = ctjs.suspend await %p\n" + done,
+         .complete = false},
+        {.what = "conditional origins cannot bypass late raw arguments retention",
+         .body = localStart + "  scf.if %flag {\n" + localArray +
+                 "  }\n  %args = ctjs.make_arguments\n" + done,
+         .complete = false},
+        {.what = "an unsupported region cannot borrow conditional instance authority",
+         .body =
+             localStart + "  scf.execute_region {\n" + localArray + "    scf.yield\n  }\n" + done,
+         .complete = false},
+        {.what = "a nested receiver without solver lattices retains its gap refusal",
+         .body = receiverStart + receiverWrite + "  }\n" + done,
+         .complete = false,
+         .withAnalysis = false,
+         .confinedReceivers = ""},
     };
     std::size_t budgets = 0;
     for (const retention_row & r : rows) {
@@ -491,6 +769,34 @@ void checkArrayRetention(mlir::MLIRContext & context) {
             continue;
         }
         budgets += checkArrayRetention(*module, r);
+        if (r.body == nestedOrigins.body) {
+            ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+            mlir::Operation * nested = nullptr;
+            function.walk([&](ctjs::CreateArrayOp site) {
+                if (site->getParentRegion() != &function.getBody()) { nested = site; }
+            });
+            const row inventory{.what = r.what, .body = r.body, .expected = ""};
+            const ArrayContentsEvidence contents = computeArrayContents(function);
+            if (!contents.complete || contents.arrays.size() != 2 ||
+                !llvm::is_contained(contents.arrays, nested)) {
+                fail(inventory, "complete contents lost the nested allocation origin");
+            }
+            mlir::DataFlowSolver solver;
+            solver.load<mlir::dataflow::DeadCodeAnalysis>();
+            solver.load<mlir::dataflow::SparseConstantPropagation>();
+            solver.load<EscapeAnalysis>();
+            if (failed(solver.initializeAndRun(*module))) {
+                fail(inventory, "the nested inventory solver did not converge");
+                continue;
+            }
+            const EscapeVerdicts original = computeVerdicts(solver, function, 0);
+            const auto found = original.sites.find(nested);
+            if (original.sites.size() != 2 || found == original.sites.end() ||
+                found->second.reason != EscapeReason::UnknownOp || found->second.by ||
+                original.directStorage.complete) {
+                fail(inventory, "unrefined nested inventory must retain its null-witness refusal");
+            }
+        }
     }
 
     retention_row mutation{

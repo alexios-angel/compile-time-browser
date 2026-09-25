@@ -67,16 +67,16 @@ var m1 = mixed();
 // double storage for both. The erased method adds no runtime member.
 // CHECK:      emitc.class @ctn_x
 // CHECK-SAME: (2 sites)
-// CHECK-NEXT:   emitc.field @x : f64
+// CHECK-NEXT:   emitc.field @x : !emitc.opaque<"ctnative::js_num">
 // CHECK-NEXT: }
 // CHECK:      emitc.class @ctn_a
-// CHECK-NEXT:   emitc.field @a : f64
+// CHECK-NEXT:   emitc.field @a : !emitc.opaque<"ctnative::js_num">
 // CHECK-NEXT: }
 // CHECK:      emitc.class @ctn_b
-// CHECK-NEXT:   emitc.field @b : f64
+// CHECK-NEXT:   emitc.field @b : !emitc.opaque<"ctnative::js_num">
 // CHECK-NEXT: }
 // CHECK:      emitc.class @ctn_k
-// CHECK-NEXT:   emitc.field @k : f64
+// CHECK-NEXT:   emitc.field @k : !emitc.opaque<"ctnative::js_num">
 // CHECK-NEXT: }
 
 // --- THE ADDRESS AT THE CALL SITE, AND THE SIGNATURE IT FEEDS ---------------
@@ -89,7 +89,7 @@ var m1 = mixed();
 // ONE OBJECT PARAMETER, ALONE: `double fn_2(ctn_x *)`.
 // CHECK:      emitc.func @passed_1
 // CHECK:        address_of %{{[0-9]+}} : !emitc.lvalue<!emitc.opaque<"ctn_x">>
-// CHECK:      emitc.func @fn_2(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>) -> f64
+// CHECK:      emitc.func @fn_2(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>) -> !emitc.opaque<"ctnative::js_num">
 // CHECK:        emitc.member_of_ptr
 
 // --- THE RECEIVER AND AN ARGUMENT, ON ONE LITERAL ---------------------------
@@ -104,8 +104,8 @@ var m1 = mixed();
 // CHECK:      emitc.func @both_3
 // CHECK:        address_of %[[OBJ:[0-9]+]] : !emitc.lvalue<!emitc.opaque<"ctn_x">>
 // CHECK:        address_of %[[OBJ]] : !emitc.lvalue<!emitc.opaque<"ctn_x">>
-// CHECK:      emitc.func @fn_4(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>, %arg1: f64) -> f64
-// CHECK:      emitc.func @fn_5(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>) -> f64
+// CHECK:      emitc.func @fn_4(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>, %arg1: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
+// CHECK:      emitc.func @fn_5(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>) -> !emitc.opaque<"ctnative::js_num">
 
 // --- TWO OBJECT PARAMETERS OF TWO SHAPES ------------------------------------
 //
@@ -116,7 +116,7 @@ var m1 = mixed();
 // CHECK:      emitc.func @two_arguments_6
 // CHECK:        address_of %{{[0-9]+}} : !emitc.lvalue<!emitc.opaque<"ctn_a">>
 // CHECK:        address_of %{{[0-9]+}} : !emitc.lvalue<!emitc.opaque<"ctn_b">>
-// CHECK:      emitc.func @fn_7(%arg0: !emitc.ptr<!emitc.opaque<"ctn_a">>, %arg1: !emitc.ptr<!emitc.opaque<"ctn_b">>) -> f64
+// CHECK:      emitc.func @fn_7(%arg0: !emitc.ptr<!emitc.opaque<"ctn_a">>, %arg1: !emitc.ptr<!emitc.opaque<"ctn_b">>) -> !emitc.opaque<"ctnative::js_num">
 
 // --- AND AN OBJECT THAT IS NOT THE FIRST ARGUMENT ---------------------------
 //
@@ -125,7 +125,7 @@ var m1 = mixed();
 //
 // CHECK:      emitc.func @mixed_8
 // CHECK:        address_of %{{[0-9]+}} : !emitc.lvalue<!emitc.opaque<"ctn_k">>
-// CHECK:      emitc.func @fn_9(%arg0: f64, %arg1: !emitc.ptr<!emitc.opaque<"ctn_k">>) -> f64
+// CHECK:      emitc.func @fn_9(%arg0: !emitc.opaque<"ctnative::js_num">, %arg1: !emitc.ptr<!emitc.opaque<"ctn_k">>) -> !emitc.opaque<"ctnative::js_num">
 
 // --- THE COUNTS -------------------------------------------------------------
 //

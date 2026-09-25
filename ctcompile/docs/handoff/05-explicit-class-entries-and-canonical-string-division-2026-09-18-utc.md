@@ -2,7 +2,7 @@
 
 ## Explicit class entries and canonical String division, 2026-09-18 UTC
 
-Continued clean **18cc8b1b** after the **11:14:38 AGENT-SYNC journal** closed
+Continued clean **18cc8b1b** after the **11:14:38 AGENT-SYNC.jsonl journal** closed
 its predecessor. Resumed the explicit class-entry boundary recorded in HANDOFF;
 September 7 WIP was absent. Independent agents implemented the escape slice,
 reviewed the proof, and drafted native tests. Root recovered the test draft after
@@ -75,7 +75,7 @@ measurements remain historical.
 
 ## Shared DOM preparation and canonical String products, 2026-09-18 UTC
 
-Started at clean **a4a35dcc**. The **10:57:53 AGENT-SYNC journal** explicitly
+Started at clean **a4a35dcc**. The **10:57:53 AGENT-SYNC.jsonl journal** explicitly
 closed the previous interruption; September 7 WIP was absent. Resumed its
 recorded class/DOM composition boundary. Three agents investigated native tests,
 proof composition and escape analysis; the two native agents reached service
@@ -150,7 +150,7 @@ Escape String Div/Mod and additional unary/shift conversions are still unproved.
 
 ## Native global helpers and canonical String unary snapshots, 2026-09-18 UTC
 
-Started at clean **c32fee6a**. The **10:33:17 AGENT-SYNC journal** closed the
+Started at clean **c32fee6a**. The **10:33:17 AGENT-SYNC.jsonl journal** closed the
 previous interruption, and September 7 WIP was already merged. Continued its
 exact prepared-global-holder boundary. Independent agents drafted tests and
 escape work and reviewed the native proof; root completed both drafts after
@@ -225,7 +225,7 @@ application driver. Whole-Bootstrap/Button/Data numbers remain historical.
 ## Recovered global holders and String-left subtraction, 2026-09-18 UTC
 
 Resumed **0d85f2d9** with five uncommitted predecessor files. The
-**10:13:29 AGENT-SYNC journal** marked that iteration abandoned; its claims and
+**10:13:29 AGENT-SYNC.jsonl journal** marked that iteration abandoned; its claims and
 `git diff` identified global-holder tests and the String-left escape draft.
 No September 7 WIP remained unmerged. Independent agents recovered both test
 areas and reviewed the proof; root finished integration after service limits.
@@ -301,7 +301,7 @@ Button and Data counts remain historical.
 
 ## Local callable holders and signed String subtraction, 2026-09-18 UTC
 
-Started at clean **46e8ae18**. Its **09:50:04 AGENT-SYNC journal** explicitly
+Started at clean **46e8ae18**. Its **09:50:04 AGENT-SYNC.jsonl journal** explicitly
 closed the preceding interruption; September 7 WIP was absent. Continued the
 recorded Config/H boundary with independent escape implementation and native
 proof review. The Config audit agent hit a service limit before editing; root
@@ -373,7 +373,7 @@ remain open. Whole-Bootstrap/Button/Data counts remain historical.
 
 ## Original class-method r and signed unary literals, 2026-09-18 UTC
 
-Started at clean **07764b25**. Its **09:33:03 AGENT-SYNC journal** closed
+Started at clean **07764b25**. Its **09:33:03 AGENT-SYNC.jsonl journal** closed
 the preceding interruption; no September 7 WIP remained unmerged. Continued the
 recorded original class-method **r** boundary. Independent agents investigated
 escape precision, Config/H composition and prototype soundness; two hit service
@@ -458,7 +458,7 @@ counts remain historical; no broad measurement was repeated.
 ## Closed scalar guards and original Bootstrap helpers, 2026-09-18 UTC
 
 Started at clean **66174a17**. The interrupted declaration-borrow/bounded-power
-thread was already closed in that commit and AGENT-SYNC's **08:54:45** journal;
+thread was already closed in that commit and AGENT-SYNC.jsonl's **08:54:45** journal;
 no September 7 WIP remained unmerged. Continued the recorded original **r/H**
 boundary, with independent escape implementation and caller-proof review.
 
@@ -535,7 +535,7 @@ Button and Data coverage counts remain historical.
 ## Recovered declaration borrows and bounded powers, 2026-09-18 UTC
 
 Resumed the eleven dirty compiler paths at `c675f002`, first recorded in
-AGENT-SYNC at **05:02:53 / 05:20:56** and most recently abandoned at **08:07:19**.
+AGENT-SYNC.jsonl at **05:02:53 / 05:20:56** and most recently abandoned at **08:07:19**.
 Both interrupted drafts are now committed; no September 7 WIP remains unmerged.
 
 **`fe2f5b7f`** extends the existing object-borrow census to unique closed hoisted
@@ -595,7 +595,7 @@ Button and Data coverage counts remain historical.
 ## Local helper proofs and power identities, 2026-09-18 UTC
 
 Started from clean `a0f1b0f7`: its interrupted Error/getter work was already
-closed in the latest commits and AGENT-SYNC's **04:00** entry. Continued the
+closed in the latest commits and AGENT-SYNC.jsonl's **04:00** entry. Continued the
 recorded **`r` / `_mergeConfigObj`** boundary, without reopening that recovery.
 
 **`27cb4729`** proves exact parameterized local helpers during class preparation.
@@ -720,7 +720,7 @@ AGENT-SYNC. No source draft from this session remains uncommitted.
 ## Recovered Error getters and signed bitwise snapshots, 2026-09-18 UTC
 
 **`5927fdb6`** finishes the four dirty Error/getter paths found at `2904c366`:
-AGENT-SYNC's **03:10:19** class-only gate and **03:21:38** recovery were
+AGENT-SYNC.jsonl's **03:10:19** class-only gate and **03:21:38** recovery were
 abandoned at **03:12:41 / 03:22:56**. The September 7 WIP is already integrated.
 
 A separately declared standard `Error` identity permits only exact construction
@@ -774,7 +774,7 @@ chains; a focused follow-up is in progress, alongside signed right-shift snapsho
 ## Recovered literal throws and signed BitNot, 2026-09-18 UTC
 
 Resumed the seven dirty ctcompile paths at `b71d8034` from the **02:14:59 /
-02:21:33 AGENT-SYNC drafts**, abandoned at **02:18:10 / 02:23:31**. Finished
+02:21:33 AGENT-SYNC.jsonl drafts**, abandoned at **02:18:10 / 02:23:31**. Finished
 both before taking new implementation work. September 7 WIP is already an
 ancestor. The ctjs checkout matches the merged `d2664e9` gitlink.
 

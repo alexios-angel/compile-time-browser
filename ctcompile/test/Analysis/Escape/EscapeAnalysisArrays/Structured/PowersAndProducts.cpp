@@ -149,8 +149,12 @@ void StructuredCases::powersAndProducts() {
          .arrays = "a:[x,y]",
          .reads = "a[0]=x",
          .exit = "x -> {x}"});
-    reject("structured products require canonical negative String spelling",
-           replace(carriedProduct, "unary neg %magnitude", "constant #ctjs.string<\"-02\">"));
+    rows.push_back(
+        {.what = "bounded decimal conversion preserves original reads and retained children",
+         .body = replace(carriedProduct, "unary neg %magnitude", "constant #ctjs.string<\"-02\">"),
+         .arrays = "a:[x,y]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"});
     reject("structured multiplication must prove every predecessor's signed Number",
            replace(carriedProduct, "  %negative = ctjs.unary neg %magnitude\n",
                    "  %negative = scf.if %flag -> (!ctjs.value) {\n"

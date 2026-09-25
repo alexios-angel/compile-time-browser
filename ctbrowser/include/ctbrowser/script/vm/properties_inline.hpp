@@ -1,21 +1,18 @@
 #pragma once
 
 #include "../vm.hpp"
+#include "ctbrowser/core/number.hpp"
 
 namespace ctbrowser::script {
 
 // ECMA-262 ToInt32 / ToUint32: NaN and the infinities are 0, everything
 // else truncates toward zero and wraps modulo 2^32.
 [[nodiscard]] inline auto context::to_int32(value v) -> std::int32_t {
-    return static_cast<std::int32_t>(to_uint32(v));
+    return ctbrowser::number_to_int32(to_number(v));
 }
 
 [[nodiscard]] inline auto context::to_uint32(value v) -> std::uint32_t {
-    const double n = to_number(v);
-    if (!std::isfinite(n)) { return 0; }
-    const double truncated = std::trunc(n);
-    return static_cast<std::uint32_t>(
-        static_cast<std::int64_t>(std::fmod(truncated, 4294967296.0)));
+    return ctbrowser::number_to_uint32(to_number(v));
 }
 
 // THE [[Prototype]] KIND OF A FUNCTION VALUE by its shape: the three above

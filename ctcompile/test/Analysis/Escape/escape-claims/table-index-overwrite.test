@@ -1,0 +1,1774 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name table-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-table-index-overwrite.claims
+// RUN: FileCheck %s --check-prefix=RECORD < %t/escape-claims-table-index-overwrite.rec
+
+// Varying reads need an invariant independent table. Replay keeps actual writes,
+// saved identities and untouched children; mutation and overlapping receiver reads refuse.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+
+// Canonical String table keys retain property spelling and primitive identity.
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj escapes:stored
+
+// Explicit unary conversions retain original table values and prior String operations.
+// CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj escapes:stored
+
+// Numeric binary conversions preserve primitive identity without broadening Add.
+// CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 34 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 35 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 36 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 37 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 38 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 39 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 41 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 42 {{[0-9]+}} obj escapes:stored
+
+// BigInt keys convert only at property boundaries, preserving retained children.
+// CHECK: escape {{[0-9a-f]+}} 43 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 44 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 45 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 46 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 47 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 48 {{[0-9]+}} obj escapes:stored
+
+// Bounded decimal conversion keeps spelling separate from numeric facts.
+// CHECK: escape {{[0-9a-f]+}} 49 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 50 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 51 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 52 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 53 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 54 {{[0-9]+}} obj escapes:stored
+
+// Unsigned radix conversion preserves String spelling and exact table writes.
+// CHECK: escape {{[0-9a-f]+}} 55 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 56 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 57 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 58 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 59 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 60 {{[0-9]+}} obj escapes:stored
+
+// Decimal points and exponents convert only to bounded integral Number facts.
+// CHECK: escape {{[0-9a-f]+}} 61 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 62 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 63 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 64 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 65 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 66 {{[0-9]+}} obj escapes:stored
+
+// Fractional Strings truncate only at bitwise operations, preserving original keys.
+// CHECK: escape {{[0-9a-f]+}} 67 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 68 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 69 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 70 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 71 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 72 {{[0-9]+}} obj escapes:stored
+
+// Bounded original Number fractions truncate only for bitwise consumers.
+// CHECK: escape {{[0-9a-f]+}} 73 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 74 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 75 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 76 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 77 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 78 {{[0-9]+}} obj escapes:stored
+
+
+// Finite original Number bitwise conversion wraps without changing source values.
+// CHECK: escape {{[0-9a-f]+}} 79 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 80 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 81 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 82 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 83 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 84 {{[0-9]+}} obj escapes:stored
+
+// Nonfinite original Numbers convert only at bitwise consumers.
+// CHECK: escape {{[0-9a-f]+}} 85 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 86 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 87 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 88 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 89 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 90 {{[0-9]+}} obj escapes:stored
+
+// Validated decimal overflow Strings convert only at bitwise consumers.
+// CHECK: escape {{[0-9a-f]+}} 91 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 92 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 93 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 94 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 95 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 96 {{[0-9]+}} obj escapes:stored
+
+// Exact nonfinite String tokens convert only at bitwise consumers.
+// CHECK: escape {{[0-9a-f]+}} 97 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 98 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 99 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 100 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 101 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 102 {{[0-9]+}} obj escapes:stored
+
+// Wide finite String conversion preserves the source and retained children.
+// CHECK: escape {{[0-9a-f]+}} 103 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 104 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 105 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 106 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 107 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 108 {{[0-9]+}} obj escapes:stored
+
+// One source Number Plus retains exact bitwise results and child observers.
+// CHECK: escape {{[0-9a-f]+}} 109 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 110 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 111 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 112 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 113 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 114 {{[0-9]+}} obj escapes:stored
+
+// Each new child site must be observed, including retained-child controls.
+
+// Two source Number unary operations preserve sign parity and original identities.
+// CHECK: escape {{[0-9a-f]+}} 115 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 116 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 117 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 118 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 119 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 120 {{[0-9]+}} obj escapes:stored
+
+
+// Bounded literal unary chains preserve source identities and retained-child controls.
+// CHECK: escape {{[0-9a-f]+}} 121 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 122 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 123 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 124 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 125 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 126 {{[0-9]+}} obj escapes:stored
+
+
+// Original String unary Number conversion keeps bitwise and retention proofs separate.
+// CHECK: escape {{[0-9a-f]+}} 127 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 128 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 129 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 130 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 131 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 132 {{[0-9]+}} obj escapes:stored
+
+
+// Original Undefined becomes Number NaN only through its proved unary conversion.
+// CHECK: escape {{[0-9a-f]+}} 133 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 134 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 135 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 136 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 137 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 138 {{[0-9]+}} obj escapes:stored
+
+
+// Local Undefined literals can prove unary Number conversion; global reads above cannot.
+// CHECK: escape {{[0-9a-f]+}} 139 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 140 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 141 {{[0-9]+}} obj confined
+
+
+// Unary conversion after a table read preserves read-time bits, not property keys.
+// CHECK: escape {{[0-9a-f]+}} 142 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 143 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 144 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 145 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 146 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 147 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 148 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 149 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 150 {{[0-9]+}} obj confined
+
+// Computed subtraction keeps binary64 snapshots independent of property keys.
+// CHECK: escape {{[0-9a-f]+}} 151 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 152 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 153 {{[0-9]+}} obj escapes:stored
+
+// Add consumes independent binary64 results without widening property-key proof.
+// CHECK: escape {{[0-9a-f]+}} 154 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 155 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 156 {{[0-9]+}} obj escapes:stored
+
+// Multiplication retains independent Number results and original child identities.
+// CHECK: escape {{[0-9a-f]+}} 157 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 158 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 159 {{[0-9]+}} obj escapes:stored
+
+// Division retains independent Number results and original child identities.
+// CHECK: escape {{[0-9a-f]+}} 160 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 161 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 162 {{[0-9]+}} obj escapes:stored
+
+// Remainder retains binary64 results without changing property-key authority.
+// CHECK: escape {{[0-9a-f]+}} 163 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 164 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 165 {{[0-9]+}} obj escapes:stored
+
+// Unit power preserves independent Number snapshots through remainder.
+// CHECK: escape {{[0-9a-f]+}} 166 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 167 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 168 {{[0-9]+}} obj escapes:stored
+
+// Computed Number zero powers overwrite index one, preserving saved aliases.
+// CHECK: escape {{[0-9a-f]+}} 169 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 170 {{[0-9]+}} obj escapes:stored
+
+// Unit bases require finite computed Number exponents and retain saved aliases.
+// CHECK: escape {{[0-9a-f]+}} 171 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 172 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 173 {{[0-9]+}} obj escapes:stored
+
+// Independent arithmetic tables preserve child identity and reject stale snapshots.
+// CHECK: escape {{[0-9a-f]+}} 174 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 175 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 176 {{[0-9]+}} obj escapes:stored
+
+// Unary signs keep independent computed Number evidence through later arithmetic.
+// CHECK: escape {{[0-9a-f]+}} 177 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 178 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 179 {{[0-9]+}} obj escapes:stored
+
+// Computed negative-unit powers keep exact integer parity and retained aliases.
+// CHECK: escape {{[0-9a-f]+}} 180 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 181 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 182 {{[0-9]+}} obj escapes:stored
+
+// Exact integral Number results supply own indices without bitwise truncation.
+// CHECK: escape {{[0-9a-f]+}} 183 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 184 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 185 {{[0-9]+}} obj escapes:stored
+
+// Unary signs retain independent exact Number evidence for certified loop keys.
+// CHECK: escape {{[0-9a-f]+}} 186 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 187 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 188 {{[0-9]+}} obj escapes:stored
+
+// RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 50 entries 1 params 0 frame {{[0-9]+}} name signedDecimalTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 51 entries 1 params 0 frame {{[0-9]+}} name spacedDecimalTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 52 entries 1 params 0 frame {{[0-9]+}} name malformedDecimalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 53 entries 1 params 0 frame {{[0-9]+}} name unconvertedDecimalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 54 entries 1 params 0 frame {{[0-9]+}} name mutatedDecimalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 55 entries 1 params 0 frame {{[0-9]+}} name hexConvertedTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 56 entries 1 params 0 frame {{[0-9]+}} name binaryConvertedTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 57 entries 1 params 0 frame {{[0-9]+}} name spacedOctalTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 58 entries 1 params 0 frame {{[0-9]+}} name malformedRadixTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 59 entries 1 params 0 frame {{[0-9]+}} name unconvertedRadixTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 60 entries 1 params 0 frame {{[0-9]+}} name mutatedRadixTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 61 entries 1 params 0 frame {{[0-9]+}} name decimalPointTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 62 entries 1 params 0 frame {{[0-9]+}} name exponentTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 63 entries 1 params 0 frame {{[0-9]+}} name signedExponentTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 64 entries 1 params 0 frame {{[0-9]+}} name malformedExponentTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 65 entries 1 params 0 frame {{[0-9]+}} name unconvertedExponentTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 66 entries 1 params 0 frame {{[0-9]+}} name mutatedExponentTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 67 entries 1 params 0 frame {{[0-9]+}} name fractionalBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 68 entries 1 params 0 frame {{[0-9]+}} name fractionalComplementTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 69 entries 1 params 0 frame {{[0-9]+}} name fractionalShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 70 entries 1 params 0 frame {{[0-9]+}} name unconvertedFractionalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 71 entries 1 params 0 frame {{[0-9]+}} name arithmeticFractionalTableKey
+// The VM currently truncates numeric fractional array keys in store_index.
+// Node retains the child; the compiler's Stored control above stays conservative.
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 72 entries 1 params 0 frame {{[0-9]+}} name mutatedFractionalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 73 entries 1 params 0 frame {{[0-9]+}} name numberFractionalBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 74 entries 1 params 0 frame {{[0-9]+}} name numberFractionalComplementTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 75 entries 1 params 0 frame {{[0-9]+}} name numberFractionalShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 76 entries 1 params 0 frame {{[0-9]+}} name savedNumberFractionalTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 77 entries 1 params 0 frame {{[0-9]+}} name mutatedNumberFractionalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 78 entries 1 params 0 frame {{[0-9]+}} name wideNumberFractionalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 79 entries 1 params 0 frame {{[0-9]+}} name wideNumberBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 80 entries 1 params 0 frame {{[0-9]+}} name wideNumberComplementTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 81 entries 1 params 0 frame {{[0-9]+}} name wideNumberShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 82 entries 1 params 0 frame {{[0-9]+}} name savedWideNumberTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 83 entries 1 params 0 frame {{[0-9]+}} name mutatedWideNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 84 entries 1 params 0 frame {{[0-9]+}} name nonfiniteWideNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 85 entries 1 params 0 frame {{[0-9]+}} name nonfiniteNumberBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 86 entries 1 params 0 frame {{[0-9]+}} name negatedNonfiniteNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 87 entries 1 params 0 frame {{[0-9]+}} name nonfiniteNumberShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 88 entries 1 params 0 frame {{[0-9]+}} name savedNonfiniteNumberTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 89 entries 1 params 0 frame {{[0-9]+}} name mutatedNonfiniteNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 90 entries 1 params 0 frame {{[0-9]+}} name unconvertedNonfiniteNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 91 entries 1 params 0 frame {{[0-9]+}} name overflowStringBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 92 entries 1 params 0 frame {{[0-9]+}} name negativeOverflowStringTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 93 entries 1 params 0 frame {{[0-9]+}} name overflowStringShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 94 entries 1 params 0 frame {{[0-9]+}} name savedOverflowStringTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 95 entries 1 params 0 frame {{[0-9]+}} name mutatedOverflowStringTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 96 entries 1 params 0 frame {{[0-9]+}} name unconvertedOverflowStringTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 97 entries 1 params 0 frame {{[0-9]+}} name infinityStringBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 98 entries 1 params 0 frame {{[0-9]+}} name negativeInfinityStringTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 99 entries 1 params 0 frame {{[0-9]+}} name nanStringShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 100 entries 1 params 0 frame {{[0-9]+}} name savedInfinityStringTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 101 entries 1 params 0 frame {{[0-9]+}} name mutatedInfinityStringTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 102 entries 1 params 0 frame {{[0-9]+}} name unconvertedInfinityStringTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 103 entries 1 params 0 frame {{[0-9]+}} name wideStringBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 104 entries 1 params 0 frame {{[0-9]+}} name wideStringComplementTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 105 entries 1 params 0 frame {{[0-9]+}} name wideStringShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 106 entries 1 params 0 frame {{[0-9]+}} name savedWideStringTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 107 entries 1 params 0 frame {{[0-9]+}} name mutatedWideStringTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 108 entries 1 params 0 frame {{[0-9]+}} name unconvertedWideStringTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 109 entries 1 params 0 frame {{[0-9]+}} name unaryPlusNumberBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 110 entries 1 params 0 frame {{[0-9]+}} name unaryPlusNonfiniteBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 111 entries 1 params 0 frame {{[0-9]+}} name unaryPlusNumberShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 112 entries 1 params 0 frame {{[0-9]+}} name savedUnaryPlusNumberTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 113 entries 1 params 0 frame {{[0-9]+}} name mutatedUnaryPlusNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 114 entries 1 params 0 frame {{[0-9]+}} name retainedUnaryPlusNumberTableChild
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 115 entries 1 params 0 frame {{[0-9]+}} name nestedUnaryNumberBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 116 entries 1 params 0 frame {{[0-9]+}} name nestedUnaryNumberComplementTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 117 entries 1 params 0 frame {{[0-9]+}} name nestedUnaryNumberShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 118 entries 1 params 0 frame {{[0-9]+}} name savedNestedUnaryNumberTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 119 entries 1 params 0 frame {{[0-9]+}} name mutatedNestedUnaryNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 120 entries 1 params 0 frame {{[0-9]+}} name retainedNestedUnaryNumberTableChild
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 121 entries 1 params 0 frame {{[0-9]+}} name longUnaryNumberBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 122 entries 1 params 0 frame {{[0-9]+}} name longUnaryNumberComplementTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 123 entries 1 params 0 frame {{[0-9]+}} name longUnaryNumberShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 124 entries 1 params 0 frame {{[0-9]+}} name savedLongUnaryNumberTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 125 entries 1 params 0 frame {{[0-9]+}} name mutatedLongUnaryNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 126 entries 1 params 0 frame {{[0-9]+}} name retainedLongUnaryNumberTableChild
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+
+// RECORD-LABEL: fn 127 entries 1 params 0 frame {{[0-9]+}} name unaryStringNumberBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 128 entries 1 params 0 frame {{[0-9]+}} name unaryStringNumberComplementTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 129 entries 1 params 0 frame {{[0-9]+}} name unaryStringNumberShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 130 entries 1 params 0 frame {{[0-9]+}} name savedUnaryStringNumberTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 131 entries 1 params 0 frame {{[0-9]+}} name mutatedUnaryStringNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 132 entries 1 params 0 frame {{[0-9]+}} name retainedUnaryStringNumberTableChild
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+
+// RECORD-LABEL: fn 133 entries 1 params 0 frame {{[0-9]+}} name unaryUndefinedNumberBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 134 entries 1 params 0 frame {{[0-9]+}} name negatedUndefinedNumberBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 135 entries 1 params 0 frame {{[0-9]+}} name unaryUndefinedNumberShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 136 entries 1 params 0 frame {{[0-9]+}} name savedUnaryUndefinedNumberTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 137 entries 1 params 0 frame {{[0-9]+}} name mutatedUnaryUndefinedNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 138 entries 1 params 0 frame {{[0-9]+}} name retainedUnaryUndefinedNumberTableChild
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 139 entries 1 params 0 frame {{[0-9]+}} name localUnaryUndefinedNumberBitwiseTableKey
+// RECORD: site 5 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 140 entries 1 params 0 frame {{[0-9]+}} name localNegatedUndefinedNumberBitwiseTableKey
+// RECORD: site 5 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 141 entries 1 params 0 frame {{[0-9]+}} name localUnaryUndefinedNumberShiftTableKey
+// RECORD: site 5 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+
+// RECORD-LABEL: fn 142 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberPlus
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 143 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberNeg
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 144 entries 1 params 0 frame {{[0-9]+}} name afterReadStringPlus
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 145 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberCount
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 146 entries 1 params 0 frame {{[0-9]+}} name savedAfterReadPlus
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 147 entries 1 params 0 frame {{[0-9]+}} name mutatedAfterReadPlus
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 148 entries 1 params 0 frame {{[0-9]+}} name originalPropertyAfterReadPlus
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 149 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberSubZero
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+
+// RECORD-LABEL: fn 150 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberSubHalf
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 151 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberSubQuarters
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 152 entries 1 params 0 frame {{[0-9]+}} name savedAfterReadSubQuarters
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 153 entries 1 params 0 frame {{[0-9]+}} name mutatedAfterReadSubQuarters
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 157 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberSubAddMul
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 158 entries 1 params 0 frame {{[0-9]+}} name savedAfterReadSubAddMul
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 159 entries 1 params 0 frame {{[0-9]+}} name mutatedAfterReadSubAddMul
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 160 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberSubAddDiv
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 161 entries 1 params 0 frame {{[0-9]+}} name savedAfterReadSubAddDiv
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 162 entries 1 params 0 frame {{[0-9]+}} name mutatedAfterReadSubAddDiv
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 163 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberSubAddMod
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 164 entries 1 params 0 frame {{[0-9]+}} name savedAfterReadSubAddMod
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 165 entries 1 params 0 frame {{[0-9]+}} name mutatedAfterReadSubAddMod
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 166 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberSubAddModPow
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 167 entries 1 params 0 frame {{[0-9]+}} name savedAfterReadSubAddModPow
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 168 entries 1 params 0 frame {{[0-9]+}} name mutatedAfterReadSubAddModPow
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 169 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberZeroPower
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 170 entries 1 params 0 frame {{[0-9]+}} name savedAfterReadZeroPower
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 171 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberUnitBase
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 172 entries 1 params 0 frame {{[0-9]+}} name savedAfterReadUnitBase
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 173 entries 1 params 0 frame {{[0-9]+}} name mutatedAfterReadUnitBase
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 183 entries 1 params 0 frame {{[0-9]+}} name arithmeticOwnIndex
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 184 entries 1 params 0 frame {{[0-9]+}} name savedArithmeticOwnIndex
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 185 entries 1 params 0 frame {{[0-9]+}} name mutatedArithmeticOwnIndex
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 186 entries 1 params 0 frame {{[0-9]+}} name unaryArithmeticOwnIndex
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 187 entries 1 params 0 frame {{[0-9]+}} name savedUnaryArithmeticOwnIndex
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 188 entries 1 params 0 frame {{[0-9]+}} name mutatedUnaryArithmeticOwnIndex
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+//--- source.js
+function varyingTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0, 2];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function reversedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [2, 0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function selectedTableKey() {
+    var child = {}, keys = [0, 2], a = [child, keys, child];
+    for (var i = 0; i < a.length; i++) a[a[1][i % 2]] = 0;
+    return a;
+}
+function retainedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0, 0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function savedTableChild() {
+    var child = {}, a = [child, 0, child], keys = [0, 2], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return [saved, a];
+}
+function mutatedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0, 2];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0;
+        a[keys[i % 2]] = 0;
+    }
+    return a;
+}
+function mutatedTableAlias() {
+    var child = {}, a = [child, 0, child], keys = [0, 2], alias = keys;
+    for (var i = 0; i < a.length; i++) {
+        alias[1] = 0;
+        a[keys[i % 2]] = 0;
+    }
+    return a;
+}
+function resizedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0, 2];
+    for (var i = 0; i < a.length; i++) {
+        keys.length = 1;
+        a[keys[i % 2]] = 0;
+    }
+    return a;
+}
+function guardTableKey() {
+    var child = {}, a = [0, child, 2];
+    for (var i = 0; i < a.length; i++) a[a[i % 2]] = 0;
+    return a;
+}
+function overwrittenTableReceiver() {
+    var child = {}, keys = [0, 1], a = [child, keys, child];
+    for (var i = 0; i < a.length; i++) a[a[1][i % 2]] = 0;
+    return a;
+}
+afterReadNumberSubQuarters();
+savedAfterReadSubQuarters();
+mutatedAfterReadSubQuarters();
+afterReadNumberSubAdd(); savedAfterReadSubAdd(); mutatedAfterReadSubAdd();
+afterReadNumberSubAddMul(); savedAfterReadSubAddMul(); mutatedAfterReadSubAddMul();
+afterReadNumberSubAddDiv(); savedAfterReadSubAddDiv(); mutatedAfterReadSubAddDiv();
+afterReadNumberSubAddMod(); savedAfterReadSubAddMod(); mutatedAfterReadSubAddMod();
+afterReadNumberSubAddModPow(); savedAfterReadSubAddModPow(); mutatedAfterReadSubAddModPow();
+afterReadNumberZeroPower(); savedAfterReadZeroPower();
+afterReadNumberUnitBase(); savedAfterReadUnitBase(); mutatedAfterReadUnitBase();
+pairedTableIndex(); savedPairedTableIndex(); mutatedPairedTableIndex();
+arithmeticUnaryTableIndex(); savedArithmeticUnaryTableIndex(); mutatedArithmeticUnaryTableIndex();
+negativeUnitPowerTableIndex(); savedNegativeUnitPowerTableIndex(); mutatedNegativeUnitPowerTableIndex();
+arithmeticOwnIndex(); savedArithmeticOwnIndex(); mutatedArithmeticOwnIndex();
+unaryArithmeticOwnIndex(); savedUnaryArithmeticOwnIndex(); mutatedUnaryArithmeticOwnIndex();
+afterReadNumberSubHalf();
+afterReadNumberSubZero();
+afterReadNumberPlus();
+afterReadNumberNeg();
+afterReadStringPlus();
+afterReadNumberCount();
+savedAfterReadPlus();
+mutatedAfterReadPlus();
+originalPropertyAfterReadPlus();
+
+varyingTableKey(); reversedTableKey(); selectedTableKey(); retainedTableKey();
+savedTableChild(); mutatedTableKey(); mutatedTableAlias(); resizedTableKey();
+guardTableKey(); overwrittenTableReceiver();
+
+function stringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function mixedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0, '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function selectedStringTableKey() {
+    var child = {}, keys = ['0', '2'], a = [child, keys, child];
+    for (var i = 0; i < a.length; i++) a[a[1][i % 2]] = 0;
+    return a;
+}
+function nestedStringTableKey() {
+    var child = {}, a = [child, 0, child], picks = ['0', '1'], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[picks[i % 2]]] = 0;
+    return a;
+}
+function retainedStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '0'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function savedStringTableChild() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return [saved, a];
+}
+function noncanonicalStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['00', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function concatenatedStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] + 0] = 0;
+    return a;
+}
+function mutatedStringTableAlias() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'], alias = keys;
+    for (var i = 0; i < a.length; i++) {
+        alias[1] = '0';
+        a[keys[i % 2]] = 0;
+    }
+    return a;
+}
+function overwrittenStringTableReceiver() {
+    var child = {}, keys = ['0', '1'], a = [child, keys, child];
+    for (var i = 0; i < a.length; i++) a[a[1][i % 2]] = 0;
+    return a;
+}
+stringTableKey(); mixedTableKey(); selectedStringTableKey(); nestedStringTableKey();
+retainedStringTableKey(); savedStringTableChild(); noncanonicalStringTableKey();
+concatenatedStringTableKey(); mutatedStringTableAlias(); overwrittenStringTableReceiver();
+
+function convertedStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function negatedStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '-2'];
+    for (var i = 0; i < a.length; i++) a[-keys[i % 2]] = 0;
+    return a;
+}
+function complementedStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['-1', '-3'];
+    for (var i = 0; i < a.length; i++) a[~keys[i % 2]] = 0;
+    return a;
+}
+function selectedConvertedTableKey() {
+    var child = {}, keys = ['0', '2'], a = [child, keys, child];
+    for (var i = 0; i < a.length; i++) a[+a[1][i % 2]] = 0;
+    return a;
+}
+function mixedConvertedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [null, '2'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function retainedConvertedTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '0'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function savedConvertedTableChild() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return [saved, a];
+}
+function noncanonicalConvertedTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['00', '2'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function concatenatedConvertedTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) a[+(keys[i % 2] + 0)] = 0;
+    return a;
+}
+function mutatedConvertedTableAlias() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'], alias = keys;
+    for (var i = 0; i < a.length; i++) {
+        alias[1] = '0';
+        a[+keys[i % 2]] = 0;
+    }
+    return a;
+}
+function overwrittenConvertedTableReceiver() {
+    var child = {}, keys = ['0', '1'], a = [child, keys, child];
+    for (var i = 0; i < a.length; i++) a[+a[1][i % 2]] = 0;
+    return a;
+}
+function unconvertedSignedTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '-2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+convertedStringTableKey(); negatedStringTableKey(); complementedStringTableKey();
+selectedConvertedTableKey(); mixedConvertedTableKey(); retainedConvertedTableKey();
+savedConvertedTableChild(); noncanonicalConvertedTableKey(); concatenatedConvertedTableKey();
+mutatedConvertedTableAlias(); overwrittenConvertedTableReceiver(); unconvertedSignedTableKey();
+
+function subtractedTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] - 0] = 0;
+    return a;
+}
+function multipliedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [null, '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] * 1] = 0;
+    return a;
+}
+function dividedTableKey() {
+    var child = {}, a = [0, child, child], keys = ['1', '2'];
+    for (var i = 0; i < a.length; i++) a[2 / keys[i % 2]] = 0;
+    return a;
+}
+function shiftedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [false, '1'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] << 1] = 0;
+    return a;
+}
+function poweredTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] ** 1] = 0;
+    return a;
+}
+function savedBinaryTableChild() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] - 0] = 0;
+    return saved;
+}
+function concatenatedBinaryTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '0'];
+    for (var i = 0; i < a.length; i++) a[+(keys[i % 2] + 0)] = 0;
+    return a;
+}
+function noncanonicalBinaryTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['00', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] * 1] = 0;
+    return a;
+}
+function mutatedBinaryTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) {
+        a[keys[i % 2] - 0] = 0;
+        keys[1] = '0';
+    }
+    return a;
+}
+function overlappingBinaryTableReceiver() {
+    var child = {}, keys = ['0', '1'], a = [child, keys, child];
+    for (var i = 0; i < a.length; i++) a[a[1][i % 2] * 1] = 0;
+    return a;
+}
+subtractedTableKey(); multipliedTableKey(); dividedTableKey(); shiftedTableKey(); poweredTableKey();
+savedBinaryTableChild(); concatenatedBinaryTableKey(); noncanonicalBinaryTableKey();
+mutatedBinaryTableKey(); overlappingBinaryTableReceiver();
+function bigintTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0n, 2n];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function mixedBigintTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0n, '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function nestedBigintTableKey() {
+    var child = {}, a = [child, 0, child], picks = [0n, 1n], keys = [0n, 2n];
+    for (var i = 0; i < a.length; i++) a[keys[picks[i % 2]]] = 0;
+    return a;
+}
+function savedBigintTableChild() {
+    var child = {}, a = [child, 0, child], keys = [0n, 2n], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return [saved, a];
+}
+function mutatedBigintTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0n, 2n];
+    for (var i = 0; i < a.length; i++) {
+        a[keys[i % 2]] = 0;
+        keys[1] = 0n;
+    }
+    return a;
+}
+function mixedBigintArithmeticTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0n, 2n];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] + 0] = 0;
+    return a;
+}
+// Run all numeric conversion cases before the intentional mixed-BigInt TypeError below.
+decimalConvertedTableKey(); signedDecimalTableKey(); spacedDecimalTableKey();
+malformedDecimalTableKey(); unconvertedDecimalTableKey(); mutatedDecimalTableKey();
+hexConvertedTableKey(); binaryConvertedTableKey(); spacedOctalTableKey();
+malformedRadixTableKey(); unconvertedRadixTableKey(); mutatedRadixTableKey();
+decimalPointTableKey(); exponentTableKey(); signedExponentTableKey();
+malformedExponentTableKey(); unconvertedExponentTableKey(); mutatedExponentTableKey();
+fractionalBitwiseTableKey(); fractionalComplementTableKey(); fractionalShiftTableKey();
+unconvertedFractionalTableKey(); arithmeticFractionalTableKey(); mutatedFractionalTableKey();
+numberFractionalBitwiseTableKey(); numberFractionalComplementTableKey(); numberFractionalShiftTableKey();
+savedNumberFractionalTableChild(); mutatedNumberFractionalTableKey(); wideNumberFractionalTableKey();
+wideNumberBitwiseTableKey(); wideNumberComplementTableKey(); wideNumberShiftTableKey();
+savedWideNumberTableChild(); mutatedWideNumberTableKey(); nonfiniteWideNumberTableKey();
+nonfiniteNumberBitwiseTableKey(); negatedNonfiniteNumberTableKey(); nonfiniteNumberShiftTableKey();
+savedNonfiniteNumberTableChild(); mutatedNonfiniteNumberTableKey(); unconvertedNonfiniteNumberTableKey();
+overflowStringBitwiseTableKey(); negativeOverflowStringTableKey(); overflowStringShiftTableKey();
+savedOverflowStringTableChild(); mutatedOverflowStringTableKey(); unconvertedOverflowStringTableKey();
+infinityStringBitwiseTableKey();
+negativeInfinityStringTableKey();
+nanStringShiftTableKey();
+savedInfinityStringTableChild();
+mutatedInfinityStringTableKey();
+unconvertedInfinityStringTableKey();
+wideStringBitwiseTableKey();
+wideStringComplementTableKey();
+wideStringShiftTableKey();
+savedWideStringTableChild();
+mutatedWideStringTableKey();
+unconvertedWideStringTableKey();
+unaryPlusNumberBitwiseTableKey();
+unaryPlusNonfiniteBitwiseTableKey();
+unaryPlusNumberShiftTableKey();
+savedUnaryPlusNumberTableChild();
+mutatedUnaryPlusNumberTableKey();
+retainedUnaryPlusNumberTableChild();
+nestedUnaryNumberBitwiseTableKey();
+nestedUnaryNumberComplementTableKey();
+nestedUnaryNumberShiftTableKey();
+savedNestedUnaryNumberTableChild();
+mutatedNestedUnaryNumberTableKey();
+retainedNestedUnaryNumberTableChild();
+longUnaryNumberBitwiseTableKey();
+longUnaryNumberComplementTableKey();
+longUnaryNumberShiftTableKey();
+savedLongUnaryNumberTableChild();
+mutatedLongUnaryNumberTableKey();
+retainedLongUnaryNumberTableChild();
+unaryStringNumberBitwiseTableKey();
+unaryStringNumberComplementTableKey();
+unaryStringNumberShiftTableKey();
+savedUnaryStringNumberTableChild();
+mutatedUnaryStringNumberTableKey();
+retainedUnaryStringNumberTableChild();
+unaryUndefinedNumberBitwiseTableKey();
+negatedUndefinedNumberBitwiseTableKey();
+unaryUndefinedNumberShiftTableKey();
+savedUnaryUndefinedNumberTableChild();
+mutatedUnaryUndefinedNumberTableKey();
+retainedUnaryUndefinedNumberTableChild();
+localUnaryUndefinedNumberBitwiseTableKey();
+localNegatedUndefinedNumberBitwiseTableKey();
+localUnaryUndefinedNumberShiftTableKey();
+bigintTableKey(); mixedBigintTableKey(); nestedBigintTableKey();
+savedBigintTableChild(); mutatedBigintTableKey(); mixedBigintArithmeticTableKey();
+
+function decimalConvertedTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['00', '+02'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function signedDecimalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['-00', '-02'];
+    for (var i = 0; i < a.length; i++) a[-keys[i % 2]] = 0;
+    return a;
+}
+function spacedDecimalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['', ' +02 '];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] * 1] = 0;
+    return a;
+}
+function malformedDecimalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['00', '--2'];
+    for (var i = 0; i < a.length; i++) a[-keys[i % 2]] = 0;
+    return a;
+}
+function unconvertedDecimalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['00', '+02'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function mutatedDecimalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['00', '+02'];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = '00';
+        a[+keys[i % 2]] = 0;
+    }
+    return a;
+}
+
+function hexConvertedTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0x0', '0X2'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function binaryConvertedTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0B0', '0b10'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] * 1] = 0;
+    return a;
+}
+function spacedOctalTableKey() {
+    var child = {}, a = [child, 0, child], keys = [' 0o0 ', '0O2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] - 0] = 0;
+    return a;
+}
+function malformedRadixTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0x0', '+0x2'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function unconvertedRadixTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0x0', '0X2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function mutatedRadixTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0x0', '0X2'];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = '0x0';
+        a[+keys[i % 2]] = 0;
+    }
+    return a;
+}
+
+function decimalPointTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.0', '2.'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function exponentTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0e0', '20e-1'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] * 1] = 0;
+    return a;
+}
+function signedExponentTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['-.0', '-2.e+0'];
+    for (var i = 0; i < a.length; i++) a[-keys[i % 2]] = 0;
+    return a;
+}
+function malformedExponentTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0e0', '2e0junk'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function unconvertedExponentTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.0', '2e0'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function mutatedExponentTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.0', '2e0'];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = '0.0';
+        a[+keys[i % 2]] = 0;
+    }
+    return a;
+}
+
+function fractionalBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.9', '2.9'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function fractionalComplementTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['-1.9', '-3.9'];
+    for (var i = 0; i < a.length; i++) a[~keys[i % 2]] = 0;
+    return a;
+}
+function fractionalShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = ['.5', '1.9'];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function unconvertedFractionalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.9', '2.9'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function arithmeticFractionalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.9', '2.9'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function mutatedFractionalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.9', '2.9'];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = '.5';
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+
+function numberFractionalBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function numberFractionalComplementTableKey() {
+    var child = {}, a = [child, 0, child], keys = [-1.9, -3.9];
+    for (var i = 0; i < a.length; i++) a[~keys[i % 2]] = 0;
+    return a;
+}
+function numberFractionalShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = [0.5, 1.9];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedNumberFractionalTableChild() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedNumberFractionalTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.5;
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function wideNumberFractionalTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 4294967296.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+
+function wideNumberBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [4294967296.9, 4294967298.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function wideNumberComplementTableKey() {
+    var child = {}, a = [child, 0, child], keys = [-4294967297.9, -4294967299.9];
+    for (var i = 0; i < a.length; i++) a[~keys[i % 2]] = 0;
+    return a;
+}
+function wideNumberShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = [4294967296.5, 4294967297.9];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedWideNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [4294967296.9, 4294967298.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedWideNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [4294967296.9, 4294967298.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 4294967296.5;
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function nonfiniteWideNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [4294967296.9, 1e999];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+
+function nonfiniteNumberBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [1e999, 2.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function negatedNonfiniteNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [-1e999, 2.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] >>> 0] = 0;
+    return a;
+}
+function nonfiniteNumberShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = [1e999, 1.9];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedNonfiniteNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [1e999, 2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedNonfiniteNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [1e999, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 1e999;
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function unconvertedNonfiniteNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [1e999, 2];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+
+function overflowStringBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["1e999", "2.9"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function negativeOverflowStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["-1e999", "2.9"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] >>> 0] = 0;
+    return a;
+}
+function overflowStringShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = ["1e999", "1.9"];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedOverflowStringTableChild() {
+    var child = {}, a = [child, 0, child], keys = ["1e999", "2.9"];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedOverflowStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["1e999", "2.9"];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = "1e999";
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function unconvertedOverflowStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["1e999", "2"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+
+function infinityStringBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["Infinity", "2.9"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function negativeInfinityStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["-Infinity", "2.9"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] >>> 0] = 0;
+    return a;
+}
+function nanStringShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = ["NaN", "1.9"];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedInfinityStringTableChild() {
+    var child = {}, a = [child, 0, child], keys = ["Infinity", "2.9"];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedInfinityStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["Infinity", "2.9"];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = "Infinity";
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function unconvertedInfinityStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["Infinity", "2"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+
+function wideStringBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["4294967296.9", "4294967298.9"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function wideStringComplementTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["-4294967297.9", "-4294967299.9"];
+    for (var i = 0; i < a.length; i++) a[~keys[i % 2]] = 0;
+    return a;
+}
+function wideStringShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = ["4294967296.5", "4294967297.9"];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedWideStringTableChild() {
+    var child = {}, a = [child, 0, child], keys = ["4294967296.9", "4294967298.9"];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedWideStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["4294967296.9", "4294967298.9"];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = "4294967296.5";
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function unconvertedWideStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["4294967296.9", "4294967298.9"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+
+function unaryPlusNumberBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+0.9, +2.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function unaryPlusNonfiniteBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+1e999, +2.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function unaryPlusNumberShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = [+0.5, +1.9];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedUnaryPlusNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [+0.9, +2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedUnaryPlusNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+0.9, +2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = +0.5;
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function retainedUnaryPlusNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [+0.9, +0.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+
+function nestedUnaryNumberBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+(+0.9), -(-2.9)];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function nestedUnaryNumberComplementTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+(-1.9), -(+3.9)];
+    for (var i = 0; i < a.length; i++) a[~keys[i % 2]] = 0;
+    return a;
+}
+function nestedUnaryNumberShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = [-(-0.5), +(+1.9)];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedNestedUnaryNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [+(+0.9), -(-2.9)];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedNestedUnaryNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+(+0.9), -(-2.9)];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = +(+0.5);
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function retainedNestedUnaryNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [+(+0.9), -(-0.9)];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+
+function longUnaryNumberBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [-(-(+(+(-(-(+(+(0.9)))))))), +(-(-(+(-(-(+(2.9)))))))];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function longUnaryNumberComplementTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+(+(-(+(+(1.9))))), +(+(-(-(+(-(3.9))))))];
+    for (var i = 0; i < a.length; i++) a[~keys[i % 2]] = 0;
+    return a;
+}
+function longUnaryNumberShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = [+(+(+(+(+(+(+(+(0.5)))))))), -(-(-(-(-(-(1.9))))))];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedLongUnaryNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [-(-(+(+(-(-(+(+(0.9)))))))), +(-(-(+(-(-(+(2.9)))))))];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedLongUnaryNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [-(-(+(+(-(-(+(+(0.9)))))))), +(-(-(+(-(-(+(2.9)))))))];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = +(+(+(+(+(+(+(+(0.5))))))));
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function retainedLongUnaryNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [-(-(+(+(-(-(+(+(0.9)))))))), +(-(-(+(-(-(+(0.9)))))))];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+
+function unaryStringNumberBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+"0.9", -"-2.9"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function unaryStringNumberComplementTableKey() {
+    var child = {}, a = [child, 0, child], keys = [-"1.9", +"-3.9"];
+    for (var i = 0; i < a.length; i++) a[~keys[i % 2]] = 0;
+    return a;
+}
+function unaryStringNumberShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = [+"Infinity", +"1.9"];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedUnaryStringNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [+"0.9", -"-2.9"];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedUnaryStringNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+"0.9", -"-2.9"];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = +"0.5";
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function retainedUnaryStringNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [+"0.9", -"-0.9"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+
+function unaryUndefinedNumberBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+undefined, 2];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function negatedUndefinedNumberBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [-undefined, 2];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] ^ 0] = 0;
+    return a;
+}
+function unaryUndefinedNumberShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = [+(+undefined), 1];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedUnaryUndefinedNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [+undefined, 2];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedUnaryUndefinedNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+undefined, 2];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = -undefined;
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function retainedUnaryUndefinedNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [+undefined, -undefined];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+
+function localUnaryUndefinedNumberBitwiseTableKey() {
+    var undefined;
+    var child = {}, a = [child, 0, child], keys = [+undefined, 2];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function localNegatedUndefinedNumberBitwiseTableKey() {
+    var undefined;
+    var child = {}, a = [child, 0, child], keys = [-undefined, 2];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] ^ 0] = 0;
+    return a;
+}
+function localUnaryUndefinedNumberShiftTableKey() {
+    var undefined;
+    var child = {}, a = [0, child, child], keys = [+(+undefined), 1];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+
+function afterReadNumberPlus() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[(+keys[i % 2]) | 0] = 0;
+    return a;
+}
+function afterReadNumberNeg() {
+    var child = {}, a = [child, 0, child], keys = [-0.9, -2.9];
+    for (var i = 0; i < a.length; i++) a[(-keys[i % 2]) | 0] = 0;
+    return a;
+}
+function afterReadStringPlus() {
+    var child = {}, a = [child, 0, child], keys = ['0.9', '2.9'];
+    for (var i = 0; i < a.length; i++) a[(+keys[i % 2]) | 0] = 0;
+    return a;
+}
+function afterReadNumberCount() {
+    var child = {}, a = [0, child, child], keys = [0.5, 1.9];
+    for (var i = 0; i < a.length; i++) a[1 << (+keys[i % 2])] = 0;
+    return a;
+}
+function savedAfterReadPlus() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(+keys[i % 2]) | 0] = 0;
+    return saved;
+}
+function mutatedAfterReadPlus() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.5;
+        a[(+keys[i % 2]) | 0] = 0;
+    }
+    return a;
+}
+function originalPropertyAfterReadPlus() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+
+function afterReadNumberSubZero() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[(keys[i % 2] - 0) | 0] = 0;
+    return a;
+}
+
+function afterReadNumberSubHalf() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[(keys[i % 2] - 0.5) | 0] = 0;
+    return a;
+}
+
+function afterReadNumberSubQuarters() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[(keys[i % 2] - 0.25 - 0.25) | 0] = 0;
+    return a;
+}
+function savedAfterReadSubQuarters() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(keys[i % 2] - 0.25 - 0.25) | 0] = 0;
+    return saved;
+}
+function mutatedAfterReadSubQuarters() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.9;
+        a[(keys[i % 2] - 0.25 - 0.25) | 0] = 0;
+    }
+    return a;
+}
+
+function afterReadNumberSubAdd() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[(keys[i % 2] - 0.25 + 0.25) | 0] = 0;
+    return a;
+}
+function savedAfterReadSubAdd() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(keys[i % 2] - 0.25 + 0.25) | 0] = 0;
+    return saved;
+}
+function mutatedAfterReadSubAdd() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.9;
+        a[(keys[i % 2] - 0.25 + 0.25) | 0] = 0;
+    }
+    return a;
+}
+
+function afterReadNumberSubAddMul() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[((keys[i % 2] - 0.25 + 0.25) * 1) | 0] = 0;
+    return a;
+}
+function savedAfterReadSubAddMul() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[((keys[i % 2] - 0.25 + 0.25) * 1) | 0] = 0;
+    return saved;
+}
+function mutatedAfterReadSubAddMul() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.9;
+        a[((keys[i % 2] - 0.25 + 0.25) * 1) | 0] = 0;
+    }
+    return a;
+}
+
+function afterReadNumberSubAddDiv() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[((keys[i % 2] - 0.25 + 0.25) / 1) | 0] = 0;
+    return a;
+}
+function savedAfterReadSubAddDiv() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[((keys[i % 2] - 0.25 + 0.25) / 1) | 0] = 0;
+    return saved;
+}
+function mutatedAfterReadSubAddDiv() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.9;
+        a[((keys[i % 2] - 0.25 + 0.25) / 1) | 0] = 0;
+    }
+    return a;
+}
+
+function afterReadNumberSubAddMod() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[((keys[i % 2] - 0.25 + 0.25) % 3) | 0] = 0;
+    return a;
+}
+function savedAfterReadSubAddMod() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[((keys[i % 2] - 0.25 + 0.25) % 3) | 0] = 0;
+    return saved;
+}
+function mutatedAfterReadSubAddMod() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.9;
+        a[((keys[i % 2] - 0.25 + 0.25) % 3) | 0] = 0;
+    }
+    return a;
+}
+
+function afterReadNumberSubAddModPow() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[(((keys[i % 2] - 0.25 + 0.25) % 3) ** 1) | 0] = 0;
+    return a;
+}
+function savedAfterReadSubAddModPow() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(((keys[i % 2] - 0.25 + 0.25) % 3) ** 1) | 0] = 0;
+    return saved;
+}
+function mutatedAfterReadSubAddModPow() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.9;
+        a[(((keys[i % 2] - 0.25 + 0.25) % 3) ** 1) | 0] = 0;
+    }
+    return a;
+}
+
+function afterReadNumberZeroPower() {
+    var child = {}, a = [0, child, 0], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[(((keys[i % 2] - 0.25 + 0.25) % 3) ** 0) | 0] = 0;
+    return a;
+}
+function savedAfterReadZeroPower() {
+    var child = {}, a = [0, child, 0], keys = [0.9, 2.9];
+    var saved = a[1];
+    for (var i = 0; i < a.length; i++) a[(((keys[i % 2] - 0.25 + 0.25) % 3) ** 0) | 0] = 0;
+    return saved;
+}
+
+function afterReadNumberUnitBase() {
+    var child = {}, a = [0, child, 0], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[(1 ** ((keys[i % 2] - 0.25 + 0.25) % 3)) | 0] = 0;
+    return a;
+}
+function savedAfterReadUnitBase() {
+    var child = {}, a = [0, child, 0], keys = [0.9, 2.9];
+    var saved = a[1];
+    for (var i = 0; i < a.length; i++) a[(1 ** ((keys[i % 2] - 0.25 + 0.25) % 3)) | 0] = 0;
+    return saved;
+}
+function mutatedAfterReadUnitBase() {
+    var child = {}, a = [0, child, 0], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[i % 2] = 1 / 0;
+        a[(1 ** ((keys[i % 2] - 0.25 + 0.25) % 3)) | 0] = 0;
+    }
+    return a;
+}
+
+function pairedTableIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9], offsets = [0.25, 0.5];
+    for (var i = 0; i < a.length; i++) a[(keys[i % 2] - offsets[i % 2]) | 0] = 0;
+    return a;
+}
+function savedPairedTableIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9], offsets = [0.25, 0.5];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(keys[i % 2] - offsets[i % 2]) | 0] = 0;
+    return saved;
+}
+function mutatedPairedTableIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9], offsets = [0.25, 0.5];
+    for (var i = 0; i < a.length; i++) {
+        offsets[1] = 4;
+        a[(keys[i % 2] - offsets[i % 2]) | 0] = 0;
+    }
+    return a;
+}
+
+function arithmeticUnaryTableIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[(-(keys[i % 2] - 0.25) + 3) | 0] = 0;
+    return a;
+}
+function savedArithmeticUnaryTableIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(-(keys[i % 2] - 0.25) + 3) | 0] = 0;
+    return saved;
+}
+function mutatedArithmeticUnaryTableIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.9;
+        a[(-(keys[i % 2] - 0.25) + 3) | 0] = 0;
+    }
+    return a;
+}
+
+function negativeUnitPowerTableIndex() {
+    var child = {}, a = [child, 0, child], keys = [1.25, 2.25];
+    for (var i = 0; i < a.length; i++) a[(((-1) ** (keys[i % 2] - 0.25)) + 1) | 0] = 0;
+    return a;
+}
+
+function savedNegativeUnitPowerTableIndex() {
+    var child = {}, a = [child, 0, child], keys = [1.25, 2.25];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(((-1) ** (keys[i % 2] - 0.25)) + 1) | 0] = 0;
+    return saved;
+}
+
+function mutatedNegativeUnitPowerTableIndex() {
+    var child = {}, a = [child, 0, child], keys = [1.25, 2.25];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 1.25;
+        a[(((-1) ** (keys[i % 2] - 0.25)) + 1) | 0] = 0;
+    }
+    return a;
+}
+
+function arithmeticOwnIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.25, 2.25];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] - 0.25] = 0;
+    return a;
+}
+
+function savedArithmeticOwnIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.25, 2.25];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] - 0.25] = 0;
+    return saved;
+}
+
+function mutatedArithmeticOwnIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.25, 2.25];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.25;
+        a[keys[i % 2] - 0.25] = 0;
+    }
+    return a;
+}
+
+function unaryArithmeticOwnIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.25, -1.75];
+    for (var i = 0; i < a.length; i++) a[-(keys[i % 2] - 0.25)] = 0;
+    return a;
+}
+
+function savedUnaryArithmeticOwnIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.25, -1.75];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[-(keys[i % 2] - 0.25)] = 0;
+    return saved;
+}
+
+function mutatedUnaryArithmeticOwnIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.25, -1.75];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.25;
+        a[-(keys[i % 2] - 0.25)] = 0;
+    }
+    return a;
+}

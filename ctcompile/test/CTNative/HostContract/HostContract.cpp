@@ -8,19 +8,105 @@
 
 #include "ClassIntrinsics.h"
 #include "DOMBranchFilter.h"
+#include "DOMCustomIteration.h"
 #include "DOMDataset.h"
 #include "DOMIteration.h"
+#include "DOMIteratorClose.h"
 #include "DOMJSON.h"
 #include "DOMNullable.h"
 #include "DOMNumbers.h"
+#include "DOMPrototypeQuery.h"
+#include "DOMSnapshotLengths.h"
 #include "DOMURI.h"
 #include "Fingerprint.h"
+#include "llvm/ADT/StringSet.h"
 
 #include "check.hpp"
 
 using namespace ctcompile::test::host_contract;
 
 namespace {
+
+void checkIntrinsicParameters(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    constexpr const char * source = R"MLIR(
+module {
+  ctjs.func @entry$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %key: !ctjs.value, %text: !ctjs.value, %number: !ctjs.value, %flag: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    ctjs.return %key
+  }
+})MLIR";
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+    check(static_cast<bool>(module), "intrinsic parameter fixture parses");
+    if (!module) { return; }
+    const std::string json = "{\"version\":1,\"provider\":\"ctbrowser-intrinsics-v1\","
+                             "\"module_sha256\":\"" +
+                             hostContractFingerprint(*module) +
+                             "\",\"entry\":\"entry$1\",\"initial_intrinsics\":[\"Symbol\"],"
+                             "\"parameter_types\":[\"symbol\",\"string\",\"number\",\"boolean\"]}";
+    auto parsed = parseHostContract(json);
+    check(parsed && parsed->intrinsicParameters == std::vector{HostIntrinsicParameter::symbol,
+                                                               HostIntrinsicParameter::string,
+                                                               HostIntrinsicParameter::number,
+                                                               HostIntrinsicParameter::boolean},
+          "intrinsic parameter categories retain their exact source order");
+    if (!parsed) {
+        llvm::consumeError(parsed.takeError());
+        return;
+    }
+    auto function = module->lookupSymbol<ctjs::FuncOp>("entry$1");
+    const auto key = function.getBody().front().getArgument(ctjs::implicit_arguments);
+    const DOMEntryAnalysis proved(*module, *parsed);
+    check(proved.proved() && proved.intrinsicParameter(key) == HostIntrinsicParameter::symbol &&
+              !proved.intrinsicParameter(function.getBody().front().getArgument(0)) &&
+              proved.parameters().empty(),
+          "live intrinsic proof exposes only explicit category facts, without DOM handles");
+    auto strings = parseHostContract(replaced(json, "[\"Symbol\"]", "[\"String\",\"Symbol\"]"));
+    check(strings && DOMEntryAnalysis(*module, *strings).proved(),
+          "intrinsic String assumptions are explicit and order independent");
+    if (!strings) { llvm::consumeError(strings.takeError()); }
+    auto document = parseHostContract(replaced(
+        json, "\"parameter_types\"", "\"current_document_parameter\":0,\"parameter_types\""));
+    check(!document, "intrinsic schema cannot declare a current document");
+    if (!document) { llvm::consumeError(document.takeError()); }
+    auto mixedDocument = *parsed;
+    mixedDocument.currentDocumentParameter = 0;
+    check(!DOMEntryAnalysis(*module, mixedDocument).proved(),
+          "programmatic intrinsic contracts cannot declare a current document");
+    for (const auto & identities : std::vector<std::vector<std::string>>{
+             {"String"}, {"Symbol", "String", "String"}, {"Symbol", "Number"}}) {
+        auto forged = *parsed;
+        forged.initialIntrinsics = identities;
+        check(!DOMEntryAnalysis(*module, forged).proved(),
+              "programmatic intrinsic contracts reject missing, duplicate and foreign identities");
+    }
+    for (llvm::StringRef field : {"null", "{}", "\"symbol\"", "[null]", "[0]", "[\"Symbol\"]",
+                                  "[\"object\"]", "[\"undefined\"]", "[[\"symbol\",\"string\"]]"}) {
+        auto invalid = parseHostContract(
+            replaced(json, "[\"symbol\",\"string\",\"number\",\"boolean\"]", field));
+        check(!invalid, "intrinsic schema rejects non-array, unknown and union categories");
+        if (!invalid) { llvm::consumeError(invalid.takeError()); }
+    }
+    for (llvm::StringRef field : {"[]", "[\"symbol\",\"symbol\"]"}) {
+        auto valid = parseHostContract(
+            replaced(json, "[\"symbol\",\"string\",\"number\",\"boolean\"]", field));
+        check(static_cast<bool>(valid), "intrinsic schema permits empty and repeated categories");
+        if (!valid) {
+            llvm::consumeError(valid.takeError());
+            continue;
+        }
+        const DOMEntryAnalysis wrongArity(*module, *valid);
+        check(!wrongArity.proved() && !wrongArity.intrinsicParameter(key),
+              "incorrect explicit arity withholds every parameter fact");
+    }
+    auto invalid = *parsed;
+    invalid.intrinsicParameters[0] = static_cast<HostIntrinsicParameter>(99);
+    const DOMEntryAnalysis unknown(*module, invalid);
+    check(!unknown.proved() && !unknown.intrinsicParameter(key),
+          "programmatic contracts cannot bypass parameter category validation");
+    const DOMEntryAnalysis exhausted(*module, *parsed, 0);
+    check(!exhausted.proved() && exhausted.exhausted() && !exhausted.intrinsicParameter(key),
+          "budget exhaustion withholds intrinsic parameter authority");
+}
 
 void checkSessionProvider(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
@@ -50,6 +136,24 @@ void checkSessionProvider(mlir::MLIRContext & context) {
               HostContractAnalysis(*module, *ordinary).proved(),
           "ordinary closed-source declarations retain their owning-callable contract");
     if (!ordinary) { llvm::consumeError(ordinary.takeError()); }
+    for (llvm::StringRef provider :
+         {"closed-source-v1", "closed-source-session-v1", "ctbrowser-dom-data-session-v1"}) {
+        auto base = replaced(json, "closed-source-session-v1", provider);
+        if (provider == "ctbrowser-dom-data-session-v1") {
+            base = replaced(base, "\"roots\"", "\"element_parameters\":[0],\"roots\"");
+        }
+        auto accepted = parseHostContract(base);
+        check(static_cast<bool>(accepted), "non-DOM-entry schema control parses");
+        if (!accepted) { llvm::consumeError(accepted.takeError()); }
+        auto document = parseHostContract(
+            replaced(base, "\"roots\"", "\"current_document_parameter\":0,\"roots\""));
+        check(!document, "current document binding is confined to DOM entry/session providers");
+        if (!document) { llvm::consumeError(document.takeError()); }
+    }
+    auto document = *parsed;
+    document.currentDocumentParameter = 0;
+    check(!HostContractAnalysis(*module, document).proved(),
+          "programmatic closed-source contracts cannot declare a current document");
     for (llvm::StringRef extra : {"\"element_parameters\":[0]", "\"cpp_type\":\"element_ref\"",
                                   "\"owning_callables\":false"}) {
         auto invalid = parseHostContract(replaced(json, "\"roots\"", (extra + ",\"roots\"").str()));
@@ -110,10 +214,34 @@ module {
                              "\",\"entry\":\"toggle$1\",\"element_parameters\":[0]}";
     auto parsed = parseHostContract(json);
     check(parsed && parsed->provider == HostContract::Provider::ctbrowserDOM &&
-              parsed->elementParameters == contract.elementParameters && parsed->roots.empty(),
+              parsed->elementParameters == contract.elementParameters && parsed->roots.empty() &&
+              !parsed->currentDocumentParameter,
           "DOM manifest declares only the selected function and its typed parameter positions");
     if (!parsed) { llvm::consumeError(parsed.takeError()); }
     for (const auto provider : {"ctbrowser-dom-v1", "ctbrowser-dom-session-v1"}) {
+        const auto document =
+            replaced(replaced(json, "ctbrowser-dom-v1", provider), "\"element_parameters\"",
+                     "\"current_document_parameter\":0,\"element_parameters\"");
+        auto current = parseHostContract(document);
+        check(current && current->currentDocumentParameter == 0 &&
+                  DOMEntryAnalysis(*module, *current).proved(),
+              "current document binding names an existing DOM input in either provider");
+        if (!current) { llvm::consumeError(current.takeError()); }
+        auto second =
+            parseHostContract(replaced(replaced(document, "\"current_document_parameter\":0",
+                                                "\"current_document_parameter\":1"),
+                                       "[0]", "[0,1]"));
+        check(second && second->currentDocumentParameter == 1,
+              "current document binding retains the selected element input index");
+        if (!second) { llvm::consumeError(second.takeError()); }
+        for (llvm::StringRef index : {"null", "true", "false", "\"0\"", "[]", "{}", "0.5", "-1",
+                                      "1", "4294967296", "18446744073709551616"}) {
+            auto invalid =
+                parseHostContract(replaced(document, "\"current_document_parameter\":0",
+                                           ("\"current_document_parameter\":" + index).str()));
+            check(!invalid, "current document schema requires an in-range element index");
+            if (!invalid) { llvm::consumeError(invalid.takeError()); }
+        }
         for (const auto identities :
              {"[\"__ctbrowser_class_defined\"]", "[\"__ctbrowser_class_defined\",\"Error\"]",
               "[\"Error\",\"__ctbrowser_class_defined\"]", "[\"Error\"]",
@@ -126,15 +254,12 @@ module {
                 replaced(json, "ctbrowser-dom-v1", provider), "\"element_parameters\"",
                 (std::string("\"initial_intrinsics\":") + identities + ",\"element_parameters\""));
             auto classes = parseHostContract(request);
-            const bool allowed =
-                std::string_view(identities) == "[\"__ctbrowser_class_defined\"]" ||
-                std::string_view(identities) == "[\"__ctbrowser_class_defined\",\"Error\"]" ||
-                std::string_view(identities) == "[\"Error\",\"__ctbrowser_class_defined\"]" ||
-                std::string_view(identities) ==
-                    "[\"__ctbrowser_class_defined\",\"Error\",\"Object\"]" ||
-                std::string_view(identities) ==
-                    "[\"Number\",\"__ctbrowser_class_defined\",\"String\"]";
-            check(static_cast<bool>(classes) == allowed,
+            static const llvm::StringSet<> allowed{
+                "[\"__ctbrowser_class_defined\"]", "[\"__ctbrowser_class_defined\",\"Error\"]",
+                "[\"Error\",\"__ctbrowser_class_defined\"]",
+                "[\"__ctbrowser_class_defined\",\"Error\",\"Object\"]",
+                "[\"Number\",\"__ctbrowser_class_defined\",\"String\"]"};
+            check(static_cast<bool>(classes) == allowed.contains(identities),
                   "DOM class declarations compose unique existing intrinsic identities");
             if (classes) {
                 check(!DOMEntryAnalysis(*module, *classes).proved(),
@@ -197,6 +322,10 @@ module {
     mixed.elementParameters = {1};
     check(!DOMEntryAnalysis(*module, mixed).proved(),
           "typed C++ input cannot bypass the complete ordered parameter census");
+    mixed = contract;
+    mixed.currentDocumentParameter = 1;
+    check(!DOMEntryAnalysis(*module, mixed).proved(),
+          "typed C++ input cannot bypass the current document input bound");
     if (proof.proved()) {
         check(DOMEntryAnalysis(*module, contract, proof.steps()).proved(),
               "the exact completed DOM discovery budget succeeds");
@@ -852,6 +981,11 @@ int main() {
     HostContractAnalysis invalidProvider(*module, invalidIntrinsic);
     check(!invalidProvider.proved() && !invalidProvider.property(read),
           "typed API cannot bypass supported initial intrinsic identities");
+    auto invalidParameters = contractFor(*module);
+    invalidParameters.intrinsicParameters = {ctcompile::ctnative::HostIntrinsicParameter::symbol};
+    check(!HostContractAnalysis(*module, invalidParameters).proved() &&
+              !ctcompile::ctnative::DOMEntryAnalysis(*module, invalidParameters).proved(),
+          "typed API cannot add intrinsic parameters to a closed-source provider");
     auto invalidRealm = contractFor(*module);
     invalidRealm.realmOwnDataProperties = {"slot"};
     HostContractAnalysis orphanRealmSlots(*module, invalidRealm);
@@ -881,10 +1015,15 @@ int main() {
     checkDOMStringPrefix(context);
     checkDOMBranchFilter(context);
     checkDOMIteration(context);
+    checkDOMCustomIteration(context);
+    checkDOMIteratorClose(context);
     checkDOMURI(context);
     checkDOMJSON(context);
     checkDOMNullable(context);
+    checkDOMPrototypeQuery(context);
+    checkDOMSnapshotLengths(context);
     checkSessionProvider(context);
+    checkIntrinsicParameters(context);
     if (ctbrowser_test_failures == 0) { std::puts("host contract live proof queries passed"); }
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

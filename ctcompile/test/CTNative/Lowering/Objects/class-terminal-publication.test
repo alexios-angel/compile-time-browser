@@ -1,0 +1,3 @@
+// RUN: cat %S/Inputs/class-initialization/*.mlir > %t.sources
+// RUN: split-file %t.sources %t
+// RUN: python3 %S/class_terminal_publication.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --fixtures %t --work %t.controls

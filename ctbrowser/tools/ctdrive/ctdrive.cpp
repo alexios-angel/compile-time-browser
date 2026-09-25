@@ -237,7 +237,9 @@ private:
         }
     }
 
-    [[nodiscard]] static json::value ok() { return json::value{{"ok", true}}; }
+    [[nodiscard]] static json::value ok() {
+        return json::value{{"ok", true}};
+    }
     [[nodiscard]] static json::value fail(std::string_view why) {
         return json::value{{"ok", false}, {"error", std::string{why}}};
     }

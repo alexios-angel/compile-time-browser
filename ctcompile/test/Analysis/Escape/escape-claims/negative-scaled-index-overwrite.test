@@ -1,0 +1,149 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name negative-scaled-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-negative-scaled-index-overwrite.claims
+
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function unit() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + i * -1] = 0;
+    return a;
+}
+function commuted() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + -1 * i] = 0;
+    return a;
+}
+function signedZero() {
+    var child = {}, a = [child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i * -2] = 0;
+    return a;
+}
+function nonunitQuotient() {
+    var child = {}, a = [0, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[3 + (i / 2) * -2] = 0;
+    return a;
+}
+function signedIntermediate() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(i - 1) * -1] = 0;
+    return a;
+}
+function doubleNegative() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(i * -1) * -1] = 0;
+    return a;
+}
+function reloadedFactor() {
+    var child = {}, a = [0, child, -1, child];
+    for (var i = 0; i < a.length; i += 2) a[3 + i * a[2]] = 0;
+    return a;
+}
+function quotientAfterNegative() {
+    var child = {}, a = [child, child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(4 + i * -1) / 2] = 0;
+    return a;
+}
+function saved() {
+    var child = {}, a = [0, child, 0, child], saved = a[1];
+    for (var i = 0; i < a.length; i += 2) a[3 + i * -1] = 0;
+    return saved;
+}
+function remaining() {
+    var child = {}, a = [child, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[3 + i * -1] = 0;
+    return a;
+}
+function zeroTrip() {
+    var child = {}, a = [child];
+    for (var i = 1; i < a.length; i++) a[i * -1] = 0;
+    return a;
+}
+function overlappingReload() {
+    var child = {}, a = [0, child, 0, -1];
+    for (var i = 0; i < a.length; i += 2) a[3 + i * a[3]] = 0;
+    return a;
+}
+function laterOverlap() {
+    var child = {}, a = [0, child, -1, child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[3 + i * a[2]] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function negativePosition() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i * -1] = 0;
+    return a;
+}
+function growth() {
+    var child = {}, a = [child, 0];
+    for (var i = 1; i < a.length; i += 3) a[1 - i * -1] = 0;
+    return a;
+}
+function fractionalFactor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + i * -0.5] = 0;
+    return a;
+}
+function unboundedFactor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + i * -9007199254740992] = 0;
+    return a;
+}
+function stringFactor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + i * "-1"] = 0;
+    return a;
+}
+function twoVaryingOperands() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + i * (i - 1)] = 0;
+    return a;
+}
+function cycle() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) {
+        a[1 + i * -1] = a;
+        a[1 + i * -1] = 0;
+    }
+    return a;
+}
+function fractionalIntermediate() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[2 + (i / 2) * -2] = 0;
+    return a;
+}
+function zeroFactor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + i * -0] = 0;
+    return a;
+}
+unit(); commuted(); signedZero(); nonunitQuotient(); signedIntermediate();
+doubleNegative(); reloadedFactor(); quotientAfterNegative(); saved(); remaining();
+zeroTrip(); overlappingReload(); laterOverlap(); negativePosition(); growth();
+fractionalFactor(); unboundedFactor(); stringFactor(); twoVaryingOperands(); cycle();
+fractionalIntermediate(); zeroFactor();

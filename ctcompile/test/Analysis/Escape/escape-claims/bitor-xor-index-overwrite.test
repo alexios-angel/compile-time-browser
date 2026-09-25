@@ -1,0 +1,1298 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name bitor-xor-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-bitor-xor-index-overwrite.claims
+
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 34 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 35 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 36 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 37 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 38 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 39 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 41 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 42 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 43 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 44 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 45 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 46 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 47 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 48 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 49 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 50 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 51 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 52 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 53 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 54 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 55 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 56 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 57 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 58 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 59 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 60 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 61 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 62 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 63 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 64 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 65 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 66 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 67 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 68 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 69 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 70 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 71 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 72 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 73 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 74 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 75 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 76 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 77 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 78 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 79 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 80 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 81 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 82 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 83 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 84 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 85 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 86 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 87 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 88 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 89 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 90 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 91 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 92 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 93 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 94 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 95 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 96 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 97 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 98 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 99 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 100 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 101 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 102 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 103 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 104 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 105 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 106 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 107 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 108 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 109 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 110 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 111 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 112 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 113 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 114 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 115 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 116 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 117 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 118 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 119 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 120 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 121 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 122 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 123 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 124 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 125 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 126 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 127 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 128 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 129 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 130 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 131 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 132 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 133 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 134 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 135 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 136 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 137 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 138 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 139 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 140 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 141 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 142 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 143 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 144 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 145 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 146 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 147 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 148 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 149 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 150 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 151 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 152 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 153 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 154 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 155 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 156 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 157 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 158 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 159 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 160 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 161 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 162 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 163 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 164 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 165 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 166 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 167 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 168 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 169 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 170 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 171 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 172 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 173 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 174 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 175 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 176 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 177 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 178 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 179 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 180 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 181 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 182 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 183 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 184 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 185 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 186 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 187 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 188 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 189 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function orWrites() {
+    var child = {}, a = [0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[i | 1] = 0;
+    return a;
+}
+function orCommuted() {
+    var child = {}, a = [0, child];
+    for (var i = 0; i < a.length; i++) a[1 | i] = 0;
+    return a;
+}
+function xorWrites() {
+    var child = {}, a = [child, child, child, child];
+    for (var i = 0; i < a.length; i++) a[i ^ 1] = 0;
+    return a;
+}
+function xorCommuted() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 ^ i] = 0;
+    return a;
+}
+function orReload() {
+    var child = {}, a = [1, child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[i | a[0]] = 0;
+    return a;
+}
+function xorReload() {
+    var child = {}, a = [child, child, 1, 0];
+    for (var i = 0; i < a.length; i++) a[(i & 1) ^ a[2]] = 0;
+    return a;
+}
+function savedChild() {
+    var child = {}, a = [child, child], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i ^ 1] = 0;
+    return saved;
+}
+function remainingGap() {
+    var child = {}, a = [child, child, child, child];
+    for (var i = 0; i < a.length; i++) a[i | 1] = 0;
+    return a;
+}
+function highSignedBand() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(2147483646 + i) ^ 2147483647] = 0;
+    return a;
+}
+function unsignedBand() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(2147483648 + i) ^ 2147483648] = 0;
+    return a;
+}
+function negativeMask() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i | -1] = 0;
+    return a;
+}
+function fractionalMask() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ^ 1.5] = 0;
+    return a;
+}
+function overwrittenReload() {
+    var child = {}, a = [1, child, 0, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[i | a[0]] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function varyingMask() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ^ i] = 0;
+    return a;
+}
+function negativeXor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(~i) ^ -1] = 0;
+    return a;
+}
+function negativeXorCommuted() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[-1 ^ (~i)] = 0;
+    return a;
+}
+function negativeLowBand() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(-4294967294 + i) ^ 2] = 0;
+    return a;
+}
+function signedOrOutput() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(i | -2147483648) + 2147483648] = 0;
+    return a;
+}
+function unsignedMaskOrOutput() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(2147483648 | i) + 2147483648] = 0;
+    return a;
+}
+function unsignedInputOrOutput() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((2147483648 + i) | 0) + 2147483648] = 0;
+    return a;
+}
+function signedOrReload() {
+    var child = {}, a = [-2147483647, child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i | a[0]) + 2147483648] = 0;
+    return a;
+}
+function savedSignedChild() {
+    var child = {}, a = [child, child], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(~i) ^ -1] = 0;
+    return saved;
+}
+function signedRemainingGap() {
+    var child = {}, a = [child, child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i | -2147483647) + 2147483648] = 0;
+    return a;
+}
+function signedCrossZero() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | 0) + 1] = 0;
+    return a;
+}
+function upperInputCrossing() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((2147483647 + i) ^ 2147483647) & 1] = 0;
+    return a;
+}
+function lowerInputCrossing() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((-2147483648 - i) ^ 2147483647) & 1] = 0;
+    return a;
+}
+function overwrittenSignedReload() {
+    var child = {}, a = [-2147483647, child, 0, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[(i | a[0]) + 2147483648] = 0;
+        a[0] = -2147483648;
+    }
+    return a;
+}
+function highPrefixInteriorExtrema() {
+    var child = {}, a = [child, child, child, child];
+    for (var i = 0; i < a.length; i++) a[(2147483644 + i) ^ 2147483645] = 0;
+    return a;
+}
+orWrites(); orCommuted(); xorWrites(); xorCommuted(); orReload(); xorReload(); savedChild();
+remainingGap(); highSignedBand(); unsignedBand(); negativeMask(); fractionalMask();
+overwrittenReload(); varyingMask();
+negativeXor(); negativeXorCommuted(); negativeLowBand(); signedOrOutput();
+unsignedMaskOrOutput(); unsignedInputOrOutput(); signedOrReload(); savedSignedChild();
+signedRemainingGap(); signedCrossZero(); upperInputCrossing(); lowerInputCrossing();
+overwrittenSignedReload(); highPrefixInteriorExtrema();
+function orStrideReload() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i += 2) a[i | a[2]] = 0;
+    return a;
+}
+function xorStrideReloadCommuted() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i += 2) a[a[2] ^ i] = 0;
+    return a;
+}
+function orOddStridePhase() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 1; i < a.length; i += 2) a[(i | a[1]) - 1] = 0;
+    return a;
+}
+function xorOddStridePhase() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 1; i < a.length; i += 2) a[i ^ a[1]] = 0;
+    return a;
+}
+function xorNegativeStrideReload() {
+    var child = {}, a = [child, -1, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(~i) ^ a[1]] = 0;
+    return a;
+}
+function orSignedStrideReload() {
+    var child = {}, a = [child, -2147483648, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i | a[1]) + 2147483648] = 0;
+    return a;
+}
+function xorSixStrideReload() {
+    var child = {}, a = [child, 0, 0, 0, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 6) a[i ^ a[1]] = 0;
+    return a;
+}
+function xorFourStrideReload() {
+    var child = {}, a = [child, 0, 0, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 4) a[i ^ a[2]] = 0;
+    return a;
+}
+function savedStrideChild() {
+    var child = {}, a = [0, child, 1, child], saved = a[1];
+    for (var i = 0; i < a.length; i += 2) a[i | a[2]] = 0;
+    return saved;
+}
+function xorStrideRemainingGap() {
+    var child = {}, a = [0, child, 1, child, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i ^ a[2]] = 0;
+    return a;
+}
+function xorStrideOverlappingReload() {
+    var child = {}, a = [0, child, 0, 1];
+    for (var i = 0; i < a.length; i += 2) a[i ^ a[3]] = 0;
+    return a;
+}
+function orStrideLaterOverwrite() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i | a[2]] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+orStrideReload(); xorStrideReloadCommuted(); orOddStridePhase(); xorOddStridePhase();
+xorNegativeStrideReload(); orSignedStrideReload(); xorSixStrideReload(); xorFourStrideReload();
+savedStrideChild(); xorStrideRemainingGap(); xorStrideOverlappingReload(); orStrideLaterOverwrite();
+function orMaskUnitStrideReload() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i++) a[i | a[2]] = 0;
+    return a;
+}
+function orMaskCommutedReload() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i++) a[a[2] | i] = 0;
+    return a;
+}
+function orMaskOddStrideReload() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i += 3) a[i | a[2]] = 0;
+    return a;
+}
+function orMaskThreeReload() {
+    var child = {}, a = [0, 0, 0, child, 3, 0, 0, child];
+    for (var i = 0; i < a.length; i++) a[i | a[4]] = 0;
+    return a;
+}
+function orMaskSignedReload() {
+    var child = {}, a = [0, child, -2147483647, child];
+    for (var i = 0; i < a.length; i++) a[(i | a[2]) + 2147483648] = 0;
+    return a;
+}
+function orMaskAllOnes() {
+    var child = {}, a = [child, -1];
+    for (var i = 0; i < a.length; i++) a[(i | a[1]) + 1] = 0;
+    return a;
+}
+function orMaskRemainingChild() {
+    var child = {}, a = [child, child, 1, child];
+    for (var i = 0; i < a.length; i++) a[i | a[2]] = 0;
+    return a;
+}
+function orMaskOverlappingReload() {
+    var child = {}, a = [0, 1, 0, child];
+    for (var i = 0; i < a.length; i++) a[i | a[1]] = 0;
+    return a;
+}
+function orMaskLaterOverwrite() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i++) {
+        a[i | a[2]] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function orMaskCombinedPeriodsOverlap() {
+    var child = {}, a = [0, child, 0, 0, 0, 1, 0, 0];
+    for (var i = 0; i < a.length; i += 4) a[a[5] | i] = 0;
+    return a;
+}
+orMaskUnitStrideReload(); orMaskCommutedReload(); orMaskOddStrideReload(); orMaskThreeReload();
+orMaskSignedReload(); orMaskAllOnes(); orMaskRemainingChild(); orMaskOverlappingReload();
+orMaskLaterOverwrite(); orMaskCombinedPeriodsOverlap();
+function allOneCrossZero() {
+    var child = {}, a = [child, -1];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[1]) + 1] = 0;
+    return a;
+}
+function allOneUpperCrossing() {
+    var child = {}, a = [child, -1];
+    for (var i = 0; i < a.length; i++) a[((2147483647 + i) | a[1]) + 1] = 0;
+    return a;
+}
+function allOneLowerCrossing() {
+    var child = {}, a = [child, -1];
+    for (var i = 0; i < a.length; i++) a[((-2147483648 - i) | a[1]) + 1] = 0;
+    return a;
+}
+function allOneUnsignedCommuted() {
+    var child = {}, a = [child, 4294967295];
+    for (var i = 0; i < a.length; i++) a[(a[1] | (i - 1)) + 1] = 0;
+    return a;
+}
+function allOneRemainingChild() {
+    var child = {}, a = [child, -1, child];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[1]) + 1] = 0;
+    return a;
+}
+function allOneSavedChild() {
+    var child = {}, a = [child, -1], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[1]) + 1] = 0;
+    return saved;
+}
+function allOneOverlappingReload() {
+    var child = {}, a = [-1, child];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[0]) + 1] = 0;
+    return a;
+}
+function allOneLaterOverwrite() {
+    var child = {}, a = [child, -1];
+    for (var i = 0; i < a.length; i++) {
+        a[((i - 1) | a[1]) + 1] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+allOneCrossZero(); allOneUpperCrossing(); allOneLowerCrossing(); allOneUnsignedCommuted();
+allOneRemainingChild(); allOneSavedChild(); allOneOverlappingReload(); allOneLaterOverwrite();
+function signSettingCrossZero() {
+    var child = {}, a = [child, child, -2, 0];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[2]) + 2] = 0;
+    return a;
+}
+function signSettingUpperCrossing() {
+    var child = {}, a = [child, child, -2, 0];
+    for (var i = 0; i < a.length; i++) a[((2147483647 + i) | a[2]) + 2] = 0;
+    return a;
+}
+function signSettingLowerCrossing() {
+    var child = {}, a = [child, child, -2, 0];
+    for (var i = 0; i < a.length; i++) a[((-2147483648 - i) | a[2]) + 2] = 0;
+    return a;
+}
+function signSettingUnsignedCommuted() {
+    var child = {}, a = [child, child, 4294967294, 0];
+    for (var i = 0; i < a.length; i++) a[(a[2] | (i - 1)) + 2] = 0;
+    return a;
+}
+function signSettingMaskGap() {
+    var child = {}, a = [child, -3, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[1]) + 3] = 0;
+    return a;
+}
+function signSettingInputGap() {
+    var child = {}, a = [0, child, -4, child];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) | a[2]) + 4] = 0;
+    return a;
+}
+function signSettingRemainingChild() {
+    var child = {}, a = [child, -3, child, child];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[1]) + 3] = 0;
+    return a;
+}
+function signSettingSavedChild() {
+    var child = {}, a = [child, child, -2, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[2]) + 2] = 0;
+    return saved;
+}
+function signSettingOverlappingReload() {
+    var child = {}, a = [child, -2, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[1]) + 2] = -1;
+    return a;
+}
+function signSettingLaterOverwrite() {
+    var child = {}, a = [child, child, -2, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[((i - 1) | a[2]) + 2] = 0;
+        a[2] = -1;
+    }
+    return a;
+}
+function signSettingInputOverlap() {
+    var child = {}, a = [0, -4, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) | a[1]) + 4] = 0;
+    return a;
+}
+signSettingCrossZero(); signSettingUpperCrossing(); signSettingLowerCrossing();
+signSettingUnsignedCommuted(); signSettingMaskGap(); signSettingInputGap();
+signSettingRemainingChild(); signSettingSavedChild(); signSettingOverlappingReload();
+signSettingLaterOverwrite(); signSettingInputOverlap();
+function identityOrStride() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[i | a[1]] = 0;
+    return a;
+}
+function identityXorStride() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[a[1] ^ i] = 0;
+    return a;
+}
+function identityAndStride() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[i & a[1]] = 0;
+    return a;
+}
+function identityUnsignedAndStride() {
+    var child = {}, a = [child, 4294967295, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[a[1] & i] = 0;
+    return a;
+}
+function identityCrossZero() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((i - 1) ^ a[1]) + 1] = 0;
+    return a;
+}
+function identityHighBand() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((2147483648 + i) & a[1]) + 2147483648] = 0;
+    return a;
+}
+function identityLowBand() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((-4294967294 + i) | a[1]) - 2] = 0;
+    return a;
+}
+function identityNonzeroPhase() {
+    var child = {}, a = [0, child, -1, 0, child];
+    for (var i = 1; i < a.length; i += 3) a[i & a[2]] = 0;
+    return a;
+}
+function identityRemainingChild() {
+    var child = {}, a = [child, 0, child, child];
+    for (var i = 0; i < a.length; i += 3) a[i | a[1]] = 0;
+    return a;
+}
+function identitySavedChild() {
+    var child = {}, a = [child, 0, 0, child], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[i ^ a[1]] = 0;
+    return saved;
+}
+function identityOverlappingReload() {
+    var child = {}, a = [0, child, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[i | a[0]] = 0;
+    return a;
+}
+function identityLaterOverwrite() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) {
+        a[i ^ a[1]] = 0;
+        a[1] = 1;
+    }
+    return a;
+}
+function nearIdentityMask() {
+    var child = {}, a = [child, -3, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[i & a[1]] = 0;
+    return a;
+}
+function identityCrossUpper() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((2147483647 + i) | a[1]) & 1] = 0;
+    return a;
+}
+function identityCrossLower() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((-2147483648 - i) ^ a[1]) & 1] = 0;
+    return a;
+}
+identityOrStride(); identityXorStride(); identityAndStride(); identityUnsignedAndStride();
+identityCrossZero(); identityHighBand(); identityLowBand(); identityNonzeroPhase();
+identityRemainingChild(); identitySavedChild(); identityOverlappingReload(); identityLaterOverwrite();
+nearIdentityMask(); identityCrossUpper(); identityCrossLower();
+function complementXorStride() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) + 4] = 0;
+    return a;
+}
+function complementXorCommuted() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(a[1] ^ i) + 4] = 0;
+    return a;
+}
+function complementXorUnsignedMask() {
+    var child = {}, a = [child, 4294967295, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) + 4] = 0;
+    return a;
+}
+function complementXorCrossZero() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((i - 1) ^ a[1]) + 3] = 0;
+    return a;
+}
+function complementXorHighBand() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((2147483648 + i) ^ a[1]) - 2147483644] = 0;
+    return a;
+}
+function complementXorLowBand() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((-4294967294 + i) ^ a[1]) + 6] = 0;
+    return a;
+}
+function complementXorRemainingChild() {
+    var child = {}, a = [child, -1, child, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) + 4] = 0;
+    return a;
+}
+function complementXorSavedChild() {
+    var child = {}, a = [child, -1, 0, child], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) + 4] = 0;
+    return saved;
+}
+function complementXorOverlappingReload() {
+    var child = {}, a = [-1, child, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[0]) + 4] = 0;
+    return a;
+}
+function complementXorLaterOverwrite() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) {
+        a[(i ^ a[1]) + 4] = 0;
+        a[1] = -2;
+    }
+    return a;
+}
+function complementXorCrossUpper() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((2147483647 + i) ^ a[1]) & 1] = 0;
+    return a;
+}
+function complementXorCrossLower() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((-2147483648 - i) ^ a[1]) & 1] = 0;
+    return a;
+}
+complementXorStride(); complementXorCommuted(); complementXorUnsignedMask();
+complementXorCrossZero(); complementXorHighBand(); complementXorLowBand();
+complementXorRemainingChild(); complementXorSavedChild(); complementXorOverlappingReload();
+complementXorLaterOverwrite(); complementXorCrossUpper(); complementXorCrossLower();
+function fixedOrStride() {
+    var child = {}, a = [child, 8, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i | a[1]) - 8] = 0;
+    return a;
+}
+function fixedXorStride() {
+    var child = {}, a = [child, 8, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) - 8] = 0;
+    return a;
+}
+function fixedOrCommuted() {
+    var child = {}, a = [child, 8, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(a[1] | i) - 8] = 0;
+    return a;
+}
+function fixedXorNegative() {
+    var child = {}, a = [child, 8, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((i - 16) ^ a[1]) + 8] = 0;
+    return a;
+}
+function fixedOrHighBand() {
+    var child = {}, a = [child, 8, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((2147483648 + i) | a[1]) + 2147483640] = 0;
+    return a;
+}
+function fixedXorLowBand() {
+    var child = {}, a = [child, 8, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((-4294967280 + i) ^ a[1]) - 24] = 0;
+    return a;
+}
+function fixedXorSignBit() {
+    var child = {}, a = [child, 2147483656, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) + 2147483640] = 0;
+    return a;
+}
+function fixedOrRemainingChild() {
+    var child = {}, a = [child, 8, child, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i | a[1]) - 8] = 0;
+    return a;
+}
+function fixedXorOverlappingReload() {
+    var child = {}, a = [child, 0, 0, 8, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[3]) - 8] = 0;
+    return a;
+}
+function fixedOrLaterOverwrite() {
+    var child = {}, a = [child, 8, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) {
+        a[(i | a[1]) - 8] = 0;
+        a[1] = 9;
+    }
+    return a;
+}
+function fixedXorNearMask() {
+    var child = {}, a = [child, 9, 0, child, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) - 8] = 0;
+    return a;
+}
+function fixedOrConversionCrossing() {
+    var child = {}, a = [child, 8, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((2147483647 + i) | a[1]) & 1] = 0;
+    return a;
+}
+fixedOrStride(); fixedXorStride(); fixedOrCommuted();
+fixedXorNegative(); fixedOrHighBand(); fixedXorLowBand();
+fixedXorSignBit(); fixedOrRemainingChild(); fixedXorOverlappingReload();
+fixedOrLaterOverwrite(); fixedXorNearMask(); fixedOrConversionCrossing();
+function varyingXorStride() {
+    var child = {}, a = [child, 7, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) - 1] = 0;
+    return a;
+}
+function varyingXorCommuted() {
+    var child = {}, a = [child, 7, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(a[1] ^ i) - 1] = 0;
+    return a;
+}
+function varyingXorNegative() {
+    var child = {}, a = [child, 7, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((i - 8) ^ a[1]) + 7] = 0;
+    return a;
+}
+function varyingXorHighBand() {
+    var child = {}, a = [child, 7, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((2147483648 + i) ^ a[1]) + 2147483647] = 0;
+    return a;
+}
+function varyingXorLowBand() {
+    var child = {}, a = [child, 7, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((-4294967288 + i) ^ a[1]) - 9] = 0;
+    return a;
+}
+function varyingXorSignMask() {
+    var child = {}, a = [child, 2147483655, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) + 2147483647] = 0;
+    return a;
+}
+function varyingXorLowBits() {
+    var child = {}, a = [child, 0, 6, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 6) a[i ^ a[2]] = 0;
+    return a;
+}
+function varyingXorZeroCross() {
+    var child = {}, a = [child, 0, -2, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 6) a[((i - 3) ^ a[2]) + 3] = 0;
+    return a;
+}
+function varyingXorRemainingChild() {
+    var child = {}, a = [child, 7, child, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) - 1] = 0;
+    return a;
+}
+function varyingXorSavedChild() {
+    var child = {}, a = [child, 7, 0, child, 0, 0, child], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) - 1] = 0;
+    return saved;
+}
+function varyingXorOverlappingReload() {
+    var child = {}, a = [child, 0, 0, 7, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[3]) - 1] = 0;
+    return a;
+}
+function varyingXorLaterOverwrite() {
+    var child = {}, a = [child, 7, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) {
+        a[(i ^ a[1]) - 1] = 0;
+        a[1] = 3;
+    }
+    return a;
+}
+function varyingXorNearMask() {
+    var child = {}, a = [child, 0, 0, 0, 0, 6, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[i ^ a[5]] = 0;
+    return a;
+}
+function varyingXorCrossUpper() {
+    var child = {}, a = [child, 0, -2, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 6) a[((2147483647 + i) ^ a[2]) & 1] = 0;
+    return a;
+}
+function varyingXorCrossLower() {
+    var child = {}, a = [child, 0, -2, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 6) a[((-2147483648 - i) ^ a[2]) & 1] = 0;
+    return a;
+}
+varyingXorStride(); varyingXorCommuted(); varyingXorNegative();
+varyingXorHighBand(); varyingXorLowBand(); varyingXorSignMask();
+varyingXorLowBits(); varyingXorZeroCross(); varyingXorRemainingChild();
+varyingXorSavedChild(); varyingXorOverlappingReload(); varyingXorLaterOverwrite();
+varyingXorNearMask(); varyingXorCrossUpper(); varyingXorCrossLower();
+function combinedOrStride() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i | a[4]] = 0;
+    return a;
+}
+function combinedOrCommuted() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[a[4] | i] = 0;
+    return a;
+}
+function combinedOrSixStride() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 6) a[i | a[4]] = 0;
+    return a;
+}
+function combinedOrNegative() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 8) | a[4]) + 8] = 0;
+    return a;
+}
+function combinedOrSignedBand() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 2147483648) | a[4]) + 2147483648] = 0;
+    return a;
+}
+function combinedOrPhase() {
+    var child = {}, a = [0, 0, 0, child, 0, 2, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[(i + 1) | a[5]] = 0;
+    return a;
+}
+function combinedOrRemainingChild() {
+    var child = {}, a = [child, 0, child, 0, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i | a[4]] = 0;
+    return a;
+}
+function combinedOrSavedChild() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, child, 0], saved = a[2];
+    for (var i = 0; i < a.length; i += 2) a[i | a[4]] = 0;
+    return saved;
+}
+function combinedOrOverlappingReload() {
+    var child = {}, a = [0, 0, child, 0, 0, 0, 2, 0];
+    for (var i = 0; i < a.length; i += 2) a[i | a[6]] = 0;
+    return a;
+}
+function combinedOrLaterOverwrite() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i | a[4]] = 0;
+        a[4] = 0;
+    }
+    return a;
+}
+function combinedOrUnitStride() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 1) a[i | a[4]] = 0;
+    return a;
+}
+function combinedOrNearMask() {
+    var child = {}, a = [0, 0, child, 0, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i | a[4]] = 0;
+    return a;
+}
+function combinedOrCrossUpper() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483647 + i) | a[4]) & 1] = 0;
+    return a;
+}
+function combinedOrCrossLower() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((-2147483648 - i) | a[4]) & 1] = 0;
+    return a;
+}
+combinedOrStride();
+combinedOrCommuted();
+combinedOrSixStride();
+combinedOrNegative();
+combinedOrSignedBand();
+combinedOrPhase();
+combinedOrRemainingChild();
+combinedOrSavedChild();
+combinedOrOverlappingReload();
+combinedOrLaterOverwrite();
+combinedOrUnitStride();
+combinedOrNearMask();
+combinedOrCrossUpper();
+combinedOrCrossLower();
+function roundedOr() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[i | a[0]] = 0;
+    return a;
+}
+function roundedOrCommuted() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[a[0] | i] = 0;
+    return a;
+}
+function roundedOrCrossZero() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i - 2) | a[0]) + 2] = 0;
+    return a;
+}
+function roundedOrHighBand() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((2147483648 + i) | a[0]) + 2147483648] = 0;
+    return a;
+}
+function roundedOrLowBand() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((-4294967294 + i) | a[0]) - 2] = 0;
+    return a;
+}
+function roundedOrRemainingChild() {
+    var child = {}, a = [1, child, child, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[i | a[0]] = 0;
+    return a;
+}
+function roundedOrSavedChild() {
+    var child = {}, a = [1, child, 0, child, 0, child], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[i | a[0]] = 0;
+    return saved;
+}
+function roundedOrOverlappingReload() {
+    var child = {}, a = [0, child, 0, 1, 0, child];
+    for (var i = 0; i < a.length; i++) a[i | a[3]] = 0;
+    return a;
+}
+function roundedOrLaterOverwrite() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) {
+        a[i | a[0]] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function roundedOrOddStride() {
+    var child = {}, a = [0, child, 0, 1, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[i | a[3]] = 0;
+    return a;
+}
+function roundedOrNearMask() {
+    var child = {}, a = [2, child, 0, 0, child];
+    for (var i = 1; i < a.length; i++) a[(i | a[0]) - 2] = 0;
+    return a;
+}
+function roundedOrHighCrossing() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((2147483647 + i) | a[0]) & 1] = 0;
+    return a;
+}
+function roundedOrLowCrossing() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i - 2147483649) | a[0]) & 1] = 0;
+    return a;
+}
+roundedOr();
+roundedOrCommuted();
+roundedOrCrossZero();
+roundedOrHighBand();
+roundedOrLowBand();
+roundedOrRemainingChild();
+roundedOrSavedChild();
+roundedOrOverlappingReload();
+roundedOrLaterOverwrite();
+roundedOrOddStride();
+roundedOrNearMask();
+roundedOrHighCrossing();
+roundedOrLowCrossing();
+function fixedRoundedOr() {
+    var child = {}, a = [9, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i + 8) | a[0]) - 8] = 0;
+    return a;
+}
+function fixedRoundedOrCommuted() {
+    var child = {}, a = [9, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[(a[0] | (i + 8)) - 8] = 0;
+    return a;
+}
+function fixedRoundedOrNegative() {
+    var child = {}, a = [9, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i - 8) | a[0]) + 8] = 0;
+    return a;
+}
+function fixedRoundedOrRemainingChild() {
+    var child = {}, a = [9, child, child, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i + 8) | a[0]) - 8] = 0;
+    return a;
+}
+function fixedRoundedOrLowStride() {
+    var child = {}, a = [2, 0, child, 0, 0, 0, child, 0, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i | a[0]] = 0;
+    return a;
+}
+function fixedRoundedOrOverlappingReload() {
+    var child = {}, a = [0, child, 0, 9, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i + 8) | a[3]) - 8] = 0;
+    return a;
+}
+function fixedRoundedOrLaterOverwrite() {
+    var child = {}, a = [9, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) {
+        a[((i + 8) | a[0]) - 8] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function fixedRoundedOrUnitStride() {
+    var child = {}, a = [2, 0, child, 0, 0, 0, child, 0, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i++) a[i | a[0]] = 0;
+    return a;
+}
+function fixedRoundedOrNearMask() {
+    var child = {}, a = [10, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i + 8) | a[0]) - 8] = 0;
+    return a;
+}
+fixedRoundedOr();
+fixedRoundedOrCommuted();
+fixedRoundedOrNegative();
+fixedRoundedOrRemainingChild();
+fixedRoundedOrLowStride();
+fixedRoundedOrOverlappingReload();
+fixedRoundedOrLaterOverwrite();
+fixedRoundedOrUnitStride();
+fixedRoundedOrNearMask();
+function twoPointOr() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[i | a[4]] = 0;
+    return a;
+}
+function twoPointOrCommuted() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[a[4] | i] = 0;
+    return a;
+}
+function twoPointOrNegative() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[((i - 8) | a[4]) + 8] = 0;
+    return a;
+}
+function twoPointOrRemainingChild() {
+    var child = {}, a = [0, child, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[i | a[4]] = 0;
+    return a;
+}
+function twoPointOrSavedChild() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child], saved = a[2];
+    for (var i = 0; i < a.length; i += 5) a[i | a[4]] = 0;
+    return saved;
+}
+function twoPointOrHighCrossing() {
+    var child = {}, a = [0, 0, 0, child, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 5) a[((i + 2147483646) | a[4]) & 7] = 0;
+    return a;
+}
+function twoPointOrLowCrossing() {
+    var child = {}, a = [0, 0, 0, 0, 2, 0, child, child];
+    for (var i = 0; i < a.length; i += 5) a[((i - 2147483649) | a[4]) & 7] = 0;
+    return a;
+}
+function twoPointOrOverlappingReload() {
+    var child = {}, a = [0, 0, 2, 0, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[i | a[2]] = 0;
+    return a;
+}
+function twoPointOrLaterOverwrite() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) {
+        a[i | a[4]] = 0;
+        a[4] = 0;
+    }
+    return a;
+}
+function twoPointOrInteriorWrite() {
+    var child = {}, a = [0, 0, child, 2, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[i | a[3]] = 0;
+    return a;
+}
+function twoPointXor() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[i ^ a[4]] = 0;
+    return a;
+}
+function twoPointXorCommuted() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[a[4] ^ i] = 0;
+    return a;
+}
+function twoPointXorNegative() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[((i - 8) ^ a[4]) + 8] = 0;
+    return a;
+}
+function twoPointXorRemainingChild() {
+    var child = {}, a = [0, child, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[i ^ a[4]] = 0;
+    return a;
+}
+function twoPointXorSavedChild() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child], saved = a[2];
+    for (var i = 0; i < a.length; i += 5) a[i ^ a[4]] = 0;
+    return saved;
+}
+function twoPointXorHighCrossing() {
+    var child = {}, a = [0, child, 2, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[((i + 2147483646) ^ a[2]) & 7] = 0;
+    return a;
+}
+function twoPointXorLowCrossing() {
+    var child = {}, a = [0, 0, 0, 0, 2, child, child, 0];
+    for (var i = 0; i < a.length; i += 5) a[((i - 2147483649) ^ a[4]) & 7] = 0;
+    return a;
+}
+function twoPointXorOverlappingReload() {
+    var child = {}, a = [0, 0, 2, 0, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[i ^ a[2]] = 0;
+    return a;
+}
+function twoPointXorLaterOverwrite() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) {
+        a[i ^ a[4]] = 0;
+        a[4] = 0;
+    }
+    return a;
+}
+function twoPointXorInteriorWrite() {
+    var child = {}, a = [0, 2, child, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i ^ a[1]] = 0;
+    return a;
+}
+twoPointOr();
+twoPointOrCommuted();
+twoPointOrNegative();
+twoPointOrRemainingChild();
+twoPointOrSavedChild();
+twoPointOrHighCrossing();
+twoPointOrLowCrossing();
+twoPointOrOverlappingReload();
+twoPointOrLaterOverwrite();
+twoPointOrInteriorWrite();
+twoPointXor();
+twoPointXorCommuted();
+twoPointXorNegative();
+twoPointXorRemainingChild();
+twoPointXorSavedChild();
+twoPointXorHighCrossing();
+twoPointXorLowCrossing();
+twoPointXorOverlappingReload();
+twoPointXorLaterOverwrite();
+twoPointXorInteriorWrite();
+function primitiveOrString() {
+    var child = {}, a = [0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[i | "1"] = 0;
+    return a;
+}
+function primitiveXorStringCommuted() {
+    var child = {}, a = [child, child, child, child];
+    for (var i = 0; i < a.length; i++) a["1" ^ i] = 0;
+    return a;
+}
+function primitiveOrNull() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i | null] = 0;
+    return a;
+}
+function primitiveXorBoolean() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ^ true] = 0;
+    return a;
+}
+function primitiveXorNegative() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(~i) ^ "-1"] = 0;
+    return a;
+}
+function primitiveOrReload() {
+    var child = {}, a = [0, child, "1", child];
+    for (var i = 0; i < a.length; i += 2) a[a[2] | i] = 0;
+    return a;
+}
+function primitiveXorReload() {
+    var child = {}, a = [0, child, "1", child];
+    for (var i = 0; i < a.length; i += 2) a[i ^ a[2]] = 0;
+    return a;
+}
+function primitiveOrSavedChild() {
+    var child = {}, a = [0, child, "1", child], saved = a[1];
+    for (var i = 0; i < a.length; i += 2) a[i | a[2]] = 0;
+    return saved;
+}
+function primitiveXorOverlappingReload() {
+    var child = {}, a = [0, "1", child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i ^ a[1]] = 0;
+    return a;
+}
+function primitiveOrLaterOverwrite() {
+    var child = {}, a = [0, child, "1", child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i | a[2]] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+primitiveOrString();
+primitiveXorStringCommuted();
+primitiveOrNull();
+primitiveXorBoolean();
+primitiveXorNegative();
+primitiveOrReload();
+primitiveXorReload();
+primitiveOrSavedChild();
+primitiveXorOverlappingReload();
+primitiveOrLaterOverwrite();

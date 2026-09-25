@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -604,6 +605,7 @@ public:
         std::vector<std::size_t> breaks;
         std::vector<std::size_t> continues;
         std::size_t handler_depth = 0; // try blocks open when the loop started
+        std::optional<std::uint16_t> iterator_record = std::nullopt;
     };
 
     // AN OPEN `finally`, AND WHY THE COMPILER HAS TO KNOW ABOUT ONE.
@@ -635,6 +637,7 @@ public:
             bool is_continue = false;
         };
         std::vector<exit> exits;
+        std::size_t handler_depth = 0; // outside this finally's own guard
     };
 
     // The finallys between here and the top of the function, innermost last. A
@@ -646,6 +649,8 @@ public:
     // Where a `return` goes when a finally is open: into the innermost one.
     // Returns false when there is none and the caller should just emit `ret`.
     [[nodiscard]] bool route_return_through_finally(std::uint16_t value_reg);
+    // Close iterators exited before the nearest handler, then throw the saved value.
+    void emit_rethrow(std::uint16_t value_reg);
     // The same for a loop exit. `loop` must be one of loops_.
     [[nodiscard]] bool route_exit_through_finally(std::size_t loop_index, bool is_continue);
     // The tail of a finally: run the completion it was handed.

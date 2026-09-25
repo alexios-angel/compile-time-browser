@@ -10,6 +10,8 @@ class OwnedGlobalRoots;
 namespace ctcompile::ctnative::lowering_detail {
 
 inline constexpr llvm::StringLiteral kDOMOptionalStringType = "std::optional<std::string>";
+inline constexpr llvm::StringLiteral kDOMElementViewVectorType =
+    "std::vector<ctnative::js_element_t>";
 
 // Only for the compiler-owned helper ABIs below: non-lvalue operands are
 // accepted by value or const reference. Mutable binding arguments (vec_push's
@@ -54,13 +56,19 @@ struct lowering {
     // Frozen emission plans copied only after complete live DOM admission.
     llvm::DenseMap<mlir::Operation *, HostDOMCall> domCalls;
     llvm::DenseSet<mlir::Operation *> domReads;
+    mlir::BlockArgument domDocumentParameter;
+    llvm::DenseSet<mlir::Operation *> domDocumentRoots;
+    llvm::DenseMap<mlir::Operation *, llvm::StringRef> domSymbols;
+    llvm::DenseSet<mlir::Operation *> domSymbolDescriptions;
     llvm::DenseSet<mlir::Value> domDatasetParameters;
     llvm::DenseSet<mlir::Operation *> domInvocations;
+    llvm::DenseSet<mlir::Operation *> domThrows;
     llvm::DenseSet<mlir::Value> domUnusedPayloads;
     llvm::DenseSet<mlir::Operation *> domNulls;
     llvm::DenseSet<mlir::Value> domOptionalStrings;
     llvm::DenseSet<mlir::Value> domStringResults;
     llvm::DenseSet<mlir::Operation *> domStringVectorIndices;
+    llvm::DenseSet<mlir::Operation *> domElementVectorIndices;
     llvm::DenseSet<mlir::Operation *> domSnapshotAssignments;
     llvm::DenseMap<mlir::Operation *, mlir::Value> domDatasetValues;
     std::vector<HostDOMStringRefinement> domStringRefinements;
@@ -68,7 +76,12 @@ struct lowering {
     llvm::DenseSet<mlir::Value> domParameters;
     llvm::SmallVector<mlir::BlockArgument> domStyleParameters;
     llvm::DenseMap<mlir::Value, mlir::Value> domStyles;
+    llvm::SmallVector<mlir::Value> domStyleValues;
+    llvm::DenseMap<mlir::Value, mlir::Value> domStylePointers;
+    void prepareDOMStyles(ec::FuncOp function);
     bool needsDOM = false;
+    // A proved library entry keeps its typed return even without browser inputs.
+    bool hasHostEntry = false;
     std::string domSessionDefinition;
     std::string domDataSession;
     std::string domDataEntry;
@@ -159,6 +172,7 @@ struct lowering {
     llvm::DenseSet<mlir::Value> receiverArgs;
     llvm::DenseMap<mlir::Value, mlir::Value> receiverLocal;
     llvm::DenseMap<mlir::Operation *, MapType> mapSchemas;
+    llvm::DenseMap<mlir::Operation *, std::string> recordMapPointers;
     // THE RUNTIME IS ONE HEADER (Runtime/ctnative.hpp), so the only things a
     // program still decides are its two defines - ordered Map storage and
     // the DOM section - and whether it spells an identity_object at all.
@@ -228,7 +242,7 @@ struct lowering {
 
     [[nodiscard]] mlir::Type typeOf(mlir::Value v) const;
 
-    mlir::Value f64Constant(mlir::OpBuilder & b, mlir::Location where, double d);
+    mlir::Value numberConstant(mlir::OpBuilder & b, mlir::Location where, double d);
 
     mlir::Value boolConstant(mlir::OpBuilder & b, mlir::Location where, bool v);
     mlir::Value absentConstant(mlir::OpBuilder & b, mlir::Location where, bool isNull = false);

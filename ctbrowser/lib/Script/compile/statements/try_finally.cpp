@@ -95,7 +95,8 @@ void compiler_impl::compile_try_with_finally(const vp::node & n) {
         emit_const(kind_reg, value::number(static_cast<double>(k)));
     };
 
-    finallies_.push_back(finally_context{kind_reg, value_reg, loops_.size(), {}, {}});
+    finallies_.push_back(
+        finally_context{kind_reg, value_reg, loops_.size(), {}, {}, handler_depth_});
 
     // THE TRY BODY, protected. The handler lands with the thrown value in
     // `caught_reg`, which is also the catch parameter's register.
@@ -182,7 +183,7 @@ void compiler_impl::emit_finally_dispatch(const finally_context & open) {
     // 1 - rethrow.
     {
         const std::size_t skip = branch_if_kind(1);
-        proto().emit(instruction{op::throw_value, open.value_reg});
+        emit_rethrow(open.value_reg);
         patch_here(skip);
     }
     // 2 - return. `wrap_promise` is re-applied here for the same reason the
@@ -191,10 +192,14 @@ void compiler_impl::emit_finally_dispatch(const finally_context & open) {
     {
         const std::size_t skip = branch_if_kind(2);
         if (!route_return_through_finally(open.value_reg)) {
-            if (fn().is_async && !fn().is_generator) {
-                proto().emit(instruction{op::wrap_promise, open.value_reg});
+            if (!fn().derived_flag.empty()) {
+                emit_derived_return(open.value_reg);
+            } else {
+                if (fn().is_async && !fn().is_generator) {
+                    proto().emit(instruction{op::wrap_promise, open.value_reg});
+                }
+                proto().emit(instruction{op::ret, open.value_reg});
             }
-            proto().emit(instruction{op::ret, open.value_reg});
         }
         patch_here(skip);
     }
@@ -215,9 +220,83 @@ void compiler_impl::emit_finally_dispatch(const finally_context & open) {
     // 0 - fall through, which is the whole of the normal path.
 }
 
+void compiler_impl::emit_rethrow(std::uint16_t value_reg) {
+    // A catch/finally inside the iterator gets the exception before the iterator
+    // closes. Its eventual rethrow comes back here at the surrounding depth.
+    const std::uint32_t mark = reg_mark();
+    for (auto loop = loops_.rbegin(); loop != loops_.rend(); ++loop) {
+        if (loop->handler_depth != handler_depth_) { break; }
+        if (!loop->iterator_record) { continue; }
+        const std::uint16_t ignored = alloc_reg();
+        const std::uint16_t scratch = alloc_reg();
+        // The original exception wins even if getting iterator.return throws.
+        const std::size_t guard = proto().emit(instruction{op::push_handler, ignored});
+        emit_iterator_native(iterator_close_name, scratch, *loop->iterator_record, 1);
+        proto().emit(instruction{op::pop_handler});
+        const std::size_t closed = proto().emit(instruction{op::jump});
+        patch_here(guard);
+        // A catch landing must not also be reachable from the normal path.
+        const std::size_t suppressed = proto().emit(instruction{op::jump});
+        patch_here(closed);
+        patch_here(suppressed);
+        release_to(mark);
+    }
+    proto().emit(instruction{op::throw_value, value_reg});
+}
+
 bool compiler_impl::route_return_through_finally(std::uint16_t value_reg) {
+    // The return expression is already evaluated. Close only scopes crossed
+    // before the next finally, which may replace this return with a continue.
+    const std::size_t first = finallies_.empty() ? 0 : finallies_.back().loops_open;
+    std::size_t depth = handler_depth_;
+    const auto pop_to = [&](std::size_t target) {
+        while (depth > target) {
+            proto().emit(instruction{op::pop_handler});
+            --depth;
+        }
+    };
+    const std::uint32_t mark = reg_mark();
+    for (std::size_t end = loops_.size(); end > first;) {
+        const auto & loop = loops_[--end];
+        if (!loop.iterator_record) { continue; }
+        // Catches inside an exited iterator cannot catch its close error.
+        // A catch between iterators must run before any outer iterator closes.
+        pop_to(loop.handler_depth);
+        std::vector<std::uint16_t> records{*loop.iterator_record};
+        while (end > first && loops_[end - 1].handler_depth == loop.handler_depth) {
+            if (auto record = loops_[--end].iterator_record) { records.push_back(*record); }
+        }
+        const std::uint16_t scratch = alloc_reg();
+        if (records.size() == 1) {
+            emit_iterator_native(iterator_close_name, scratch, records.front(), 0);
+            release_to(mark);
+            continue;
+        }
+        // One guard for the close sequence, not the loop body. On failure the
+        // runtime's done flag skips already closed records; remaining closes
+        // cannot replace the first error, even when their return getter throws.
+        const std::uint16_t caught = alloc_reg();
+        const std::uint16_t ignored = alloc_reg();
+        const std::size_t guard = proto().emit(instruction{op::push_handler, caught});
+        for (auto record : records) {
+            emit_iterator_native(iterator_close_name, scratch, record, 0);
+        }
+        proto().emit(instruction{op::pop_handler});
+        const std::size_t done = proto().emit(instruction{op::jump});
+        patch_here(guard);
+        for (auto record : records) {
+            const std::size_t suppress = proto().emit(instruction{op::push_handler, ignored});
+            emit_iterator_native(iterator_close_name, scratch, record, 1);
+            proto().emit(instruction{op::pop_handler});
+            patch_here(suppress);
+        }
+        proto().emit(instruction{op::throw_value, caught});
+        patch_here(done);
+        release_to(mark);
+    }
     if (finallies_.empty()) { return false; }
     finally_context & open = finallies_.back();
+    pop_to(open.handler_depth);
     proto().emit(instruction{op::move, open.value_reg, value_reg});
     emit_const(open.kind_reg, value::number(2.0));
     open.arrivals.push_back(proto().emit(instruction{op::jump}));
@@ -244,6 +323,9 @@ bool compiler_impl::route_exit_through_finally(std::size_t loop_index, bool is_c
     if (!found) {
         which = open.exits.size();
         open.exits.push_back(finally_context::exit{loop_index, is_continue});
+    }
+    for (std::size_t depth = handler_depth_; depth > open.handler_depth; --depth) {
+        proto().emit(instruction{op::pop_handler});
     }
     emit_const(open.kind_reg, value::number(static_cast<double>(3 + which)));
     open.arrivals.push_back(proto().emit(instruction{op::jump}));

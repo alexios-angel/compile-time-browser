@@ -17,7 +17,7 @@
 // SAVED-DAG: nullable_string field)
 // SAVED-DAG: call_opaque "ctnative::object_get_field_76616c7565"
 // SAVED-DAG: call_opaque "ctnative::object_set_field_76616c7565"
-// SAVED-DAG: emitc.func @saved_1({{.*}}) -> !emitc.opaque<"std::string">
+// SAVED-DAG: emitc.func @saved_1({{.*}}) -> !emitc.opaque<"ctnative::js_string">
 // NULLABLE-DAG: nullable_string field_76616c7565;
 // NULLABLE-DAG: nullable_scalar field_636f756e74;
 // NULLABLE-DAG: emitc.func @nullable_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_string">
@@ -26,7 +26,7 @@
 // MISSING-DAG: nullable_string field_76616c7565;
 // MISSING-DAG: emitc.func @missing_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_string">
 // COMPATIBLE-DAG: nullable_string field_76616c7565;
-// COMPATIBLE-DAG: emitc.func @text_1({{.*}}) -> !emitc.opaque<"std::string">
+// COMPATIBLE-DAG: emitc.func @text_1({{.*}}) -> !emitc.opaque<"ctnative::js_string">
 // COMPATIBLE-DAG: emitc.func @empty_2(
 // ABSENT: nullable_string field_76616c7565;
 // ABSENT-LABEL: emitc.func @nullField_2(
@@ -43,7 +43,8 @@
 // Both objects enter the same Map field group, so this source's final read
 // already contains both types. The separate function cases isolate the later
 // emitted-member census with independently narrow Number and String results.
-// READ-UNION: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>> from `ctjs.call_direct`"
+// READ-UNION: ctjs.func private @distinct$1
+// READ-UNION-SAME: ctnative.not_native = "an owning field read has an unsupported scalar schema"
 
 //--- saved.js
 function saved() {

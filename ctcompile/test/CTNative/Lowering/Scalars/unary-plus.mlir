@@ -7,8 +7,8 @@
 //
 //   IT FIRES. `ctjs.unary plus` is gone and its operand flows straight into
 //   the addition - pinned with CHECK-NEXT, so there is nothing between the
-//   two constants and the add for it to have become. A driver reports nothing
-//   on a non-match, so if the pattern stopped matching the pass would abort in
+//   Number constructions and the add for it to have become. A driver reports
+//   nothing on a non-match, so if the pattern stopped matching the pass would abort in
 //   replace()'s Plus arm rather than miscompile; a test that only proved it
 //   does not crash would prove nothing about the rewrite.
 //
@@ -17,10 +17,8 @@
 //   emit no `unary_minus` at all. If this file ever stops showing
 //   `unary_minus`, the constraint has gone silent.
 //
-// The importer has no CTJS operation for op::to_number, so `+x` never reaches
-// this pass from real JavaScript yet - test/linkable.js says so at the other
-// end of the pipeline. Hand-written IR is the only way to exercise it, exactly
-// as test/Lowering/EmitC/operators.mlir does for the boxed tier.
+// The importer maps op::to_number to unary plus. string-coercions.test covers
+// source String conversion; this IR fixture isolates the numeric identity rule.
 //
 // THE `$0` AND `$1` ARE NOT DECORATION. cIdentifier() maps `$` to `_`, and
 // without the suffix the emitted `emitc.func` takes the SAME symbol name as
@@ -35,8 +33,10 @@
 // --- `+2 + 3` ---------------------------------------------------------------
 //
 // CHECK-LABEL: emitc.func @plus_is_identity_0
-// CHECK-NEXT: %[[TWO:.*]] = "emitc.constant"() <{value = 2.000000e+00 : f64}>
-// CHECK-NEXT: %[[THREE:.*]] = "emitc.constant"() <{value = 3.000000e+00 : f64}>
+// CHECK-NEXT: %[[TWO_RAW:.*]] = "emitc.constant"() <{value = 2.000000e+00 : f64}>
+// CHECK-NEXT: %[[TWO:.*]] = cast %[[TWO_RAW]] : f64 to !emitc.opaque<"ctnative::js_num">
+// CHECK-NEXT: %[[THREE_RAW:.*]] = "emitc.constant"() <{value = 3.000000e+00 : f64}>
+// CHECK-NEXT: %[[THREE:.*]] = cast %[[THREE_RAW]] : f64 to !emitc.opaque<"ctnative::js_num">
 // CHECK-NEXT: %[[SUM:.*]] = add %[[TWO]], %[[THREE]]
 // CHECK-NEXT: return %[[SUM]]
 ctjs.func @plus_is_identity$0(%receiver: !ctjs.value, %new_target: !ctjs.value,
@@ -54,7 +54,8 @@ ctjs.func @plus_is_identity$0(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // --- `-2`, WHICH THE SAME PATTERN MUST NOT TOUCH ----------------------------
 //
 // CHECK-LABEL: emitc.func @neg_is_not_identity_1
-// CHECK-NEXT: %[[TWO:.*]] = "emitc.constant"() <{value = 2.000000e+00 : f64}>
+// CHECK-NEXT: %[[TWO_RAW:.*]] = "emitc.constant"() <{value = 2.000000e+00 : f64}>
+// CHECK-NEXT: %[[TWO:.*]] = cast %[[TWO_RAW]] : f64 to !emitc.opaque<"ctnative::js_num">
 // CHECK-NEXT: %[[NEG:.*]] = unary_minus %[[TWO]]
 // CHECK-NEXT: return %[[NEG]]
 ctjs.func @neg_is_not_identity$1(%receiver: !ctjs.value, %new_target: !ctjs.value,

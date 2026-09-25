@@ -68,8 +68,8 @@ int main() {
     auto table = owner->slot;
     auto setter = table->m_set;
     auto size = table->m_size;
-    static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
-    static_assert(std::is_same_v<decltype(setter), std::function<js_num(CTN_PARAMS)>>);
+    static_assert(std::is_same_v<decltype(size), std::function<ctnative::js_num()>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(CTN_PARAMS)>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset();
@@ -80,7 +80,7 @@ int main() {
     for (int call = 0; call < 128; ++call) {
         auto caller = original;
         const auto before = ctn_test_objects.size();
-        if (setter(caller CTN_FLAG) != 1 || size() != (reseeded ? 2 : 0) ||
+        if (setter(ctnative::js_string{caller} CTN_FLAG).value() != 1 || size().value() != (reseeded ? 2 : 0) ||
             ctn_test_objects.size() != before + 1) { return 142; }
         caller.assign(original.size(), 'q');
         for (std::size_t index = 1; index < before; ++index) {
@@ -96,7 +96,7 @@ int main() {
     }
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock() ||
-        size() != (reseeded ? 2 : 0) || g_host->slot->m_size() != (reseeded ? 1 : 0)) { return 146; }
+        size().value() != (reseeded ? 2 : 0) || g_host->slot->m_size().value() != (reseeded ? 1 : 0)) { return 146; }
     setter = {};
     if (ctn_test_maps[0].expired()) { return 147; }
     size = {};
@@ -114,8 +114,11 @@ int main() {
 """
     return (
         changed.replace("CTN_RESEEDED", "true" if reseeded else "false")
-        .replace("CTN_PARAMS", "std::string" if reseeded else "std::string, bool")
-        .replace("CTN_FLAG", "" if reseeded else ", call % 2 != 0")
+        .replace(
+            "CTN_PARAMS",
+            "ctnative::js_string" if reseeded else "ctnative::js_string, ctnative::js_boolean_t",
+        )
+        .replace("CTN_FLAG", "" if reseeded else ", ctnative::js_boolean_t{call % 2 != 0}")
     )
 
 
@@ -159,11 +162,15 @@ def leaf_absence_lifetime(args, cpp, name, mode, compiler):
 def check_leaf_absence_calls(cpp, name, mode):
     source = {**leaf_absence_sources(), **leaf_clear_sources()}[name][0]
     params = (
-        "std::string, bool"
+        "ctnative::js_string, ctnative::js_boolean_t"
         if "set(key, flag)" in source
-        else "std::string, std::string" if "set(key, other)" in source else "std::string"
+        else (
+            "ctnative::js_string, ctnative::js_string"
+            if "set(key, other)" in source
+            else "ctnative::js_string"
+        )
     )
-    if f"std::function<js_num({params})>" not in cpp:
+    if f"std::function<ctnative::js_num({params})>" not in cpp:
         raise RuntimeError(f"{name}/{mode}: absence changed the numeric published ABI")
     allocations = source.count("{value:") + source.count("const item = {};")
     if cpp.count("std::make_shared<ctnative::identity_object>()") != allocations or (
@@ -224,10 +231,10 @@ int main() {
     const auto set = g_host->slot->m_set;
     const auto size = g_host->slot->m_size;
     using text = ctnative::nullable_string;
-    if (get().tag != text::kind::undefined || size() != 1 ||
-        set(text{std::string{}}) != 2 || set(text{}) != 2 ||
-        set(text{std::string{"future-key"}}) != 3 ||
-        get().tag != text::kind::undefined || size() != 2) { return 161; }
+    if (get().tag != text::kind::undefined || size().value() != 1 ||
+        set(text{std::string{}}).value() != 2 || set(text{}).value() != 2 ||
+        set(text{std::string{"future-key"}}).value() != 3 ||
+        get().tag != text::kind::undefined || size().value() != 2) { return 161; }
     return 0;
 }
 """
@@ -311,8 +318,8 @@ int main() {
     auto table = owner->slot;
     auto setter = table->m_set;
     auto size = table->m_size;
-    static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
-    static_assert(std::is_same_v<decltype(setter), std::function<js_num(CTN_PARAMS)>>);
+    static_assert(std::is_same_v<decltype(size), std::function<ctnative::js_num()>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(CTN_PARAMS)>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset();
@@ -325,7 +332,7 @@ int main() {
         auto caller = original;
         if (call % 2) { caller += 'r'; }
         const auto before = ctn_test_objects.size();
-        if (setter(caller CTN_FLAG) != 1 || size() != (reseeded ? 1 : 0) ||
+        if (setter(ctnative::js_string{caller} CTN_FLAG).value() != 1 || size().value() != (reseeded ? 1 : 0) ||
             ctn_test_objects.size() != before + 1) { return 162; }
         caller.assign(original.size(), 'q');
         for (std::size_t index = 0; index < before; ++index) {
@@ -340,7 +347,7 @@ int main() {
     const auto retained_index = ctn_test_objects.size() - 1;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock() ||
-        size() != (reseeded ? 1 : 0) || g_host->slot->m_size() != (reseeded ? 1 : 0)) { return 165; }
+        size().value() != (reseeded ? 1 : 0) || g_host->slot->m_size().value() != (reseeded ? 1 : 0)) { return 165; }
     setter = {};
     if (ctn_test_maps[0].expired()) { return 166; }
     size = {};
@@ -363,8 +370,11 @@ int main() {
 """
     return (
         changed.replace("CTN_RESEEDED", "true" if reseeded else "false")
-        .replace("CTN_PARAMS", "std::string, bool" if branch else "std::string")
-        .replace("CTN_FLAG", ", call % 2 != 0" if branch else "")
+        .replace(
+            "CTN_PARAMS",
+            "ctnative::js_string, ctnative::js_boolean_t" if branch else "ctnative::js_string",
+        )
+        .replace("CTN_FLAG", ", ctnative::js_boolean_t{call % 2 != 0}" if branch else "")
     )
 
 
@@ -387,13 +397,13 @@ def check_numeric_entry_calls(cpp, name, mode):
     if not entry:
         raise RuntimeError(f"{name}/{mode}: missing numeric entry")
     params = (
-        "std::string, js_num, bool"
+        "ctnative::js_string, ctnative::js_num, ctnative::js_boolean_t"
         if "set(key, value, flag)" in source
         else (
-            "std::string, js_num"
+            "ctnative::js_string, ctnative::js_num"
             if "set(key, value)" in source
             else (
-                "js_num"
+                "ctnative::js_num"
                 if name
                 in {
                     "local_add_result_key",
@@ -403,11 +413,13 @@ def check_numeric_entry_calls(cpp, name, mode):
                     "local_clear_zero_size_key",
                     "scalar_result_key",
                 }
-                else "std::string"
+                else "ctnative::js_string"
             )
         )
     )
-    result = "bool" if name == "constant_boolean_saved_result" else "js_num"
+    result = (
+        "ctnative::js_boolean_t" if name == "constant_boolean_saved_result" else "ctnative::js_num"
+    )
     if f"std::function<{result}({params})>" not in cpp:
         raise RuntimeError(
             f"{name}/{mode}: arithmetic changed the independently typed callable ABI"
@@ -529,8 +541,8 @@ int main() {
     auto table = owner->slot;
     auto setter = table->m_set;
     auto size = table->m_size;
-    static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
-    static_assert(std::is_same_v<decltype(setter), std::function<js_num(CTN_PARAMS)>>);
+    static_assert(std::is_same_v<decltype(size), std::function<ctnative::js_num()>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(CTN_PARAMS)>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset();
@@ -545,9 +557,9 @@ int main() {
         if (call % 2) { caller += 'r'; }
         const auto before = ctn_test_objects.size();
         const js_num value = static_cast<js_num>(call - 64) / 4;
-        saved.push_back(setter(caller, value CTN_FLAG));
+        saved.push_back(setter(ctnative::js_string{caller}, ctnative::js_num{value} CTN_FLAG).value());
         caller.assign(original.size(), 'q');
-        if (saved.back() != value || size() != 0 || ctn_test_objects.size() != before + 1) {
+        if (saved.back() != value || size().value() != 0 || ctn_test_objects.size() != before + 1) {
             return 183;
         }
         for (std::size_t index = 0; index < before; ++index) {
@@ -562,7 +574,7 @@ int main() {
     const auto retained_index = ctn_test_objects.size() - 1;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock() ||
-        size() != 0 || g_host->slot->m_size() != 0) { return 186; }
+        size().value() != 0 || g_host->slot->m_size().value() != 0) { return 186; }
     setter = {};
     if (ctn_test_maps[0].expired()) { return 187; }
     size = {};
@@ -596,12 +608,12 @@ int main() {
         changed = changed.replace(
             "    auto owner = g_host;",
             """
-    const auto first_snapshot = ctnative::global_number(g_first);
-    const auto second_snapshot = ctnative::global_number(g_second);
-    const auto third_snapshot = ctnative::global_number(g_third);
+    const auto first_snapshot = ctnative::global_number(g_first).value();
+    const auto second_snapshot = ctnative::global_number(g_second).value();
+    const auto third_snapshot = ctnative::global_number(g_third).value();
     static_assert(std::is_same_v<decltype(first_snapshot), const js_num>);
     if (first_snapshot != 2 || second_snapshot != 3 || third_snapshot != 4 ||
-        ctnative::global_number(g_trace) != first_snapshot + second_snapshot * third_snapshot) {
+        ctnative::global_number(g_trace).value() != first_snapshot + second_snapshot * third_snapshot) {
         return 194;
     }
     auto owner = g_host;""",
@@ -610,10 +622,10 @@ int main() {
             "    ctn_test_retained.reset();",
             """
     if (first_snapshot != 2 || second_snapshot != 3 || third_snapshot != 4 ||
-        ctnative::global_number(g_first) != first_snapshot ||
-        ctnative::global_number(g_second) != second_snapshot ||
-        ctnative::global_number(g_third) != third_snapshot ||
-        ctnative::global_number(g_trace) != first_snapshot + second_snapshot * third_snapshot) {
+        ctnative::global_number(g_first).value() != first_snapshot ||
+        ctnative::global_number(g_second).value() != second_snapshot ||
+        ctnative::global_number(g_third).value() != third_snapshot ||
+        ctnative::global_number(g_trace).value() != first_snapshot + second_snapshot * third_snapshot) {
         return 195;
     }
     {
@@ -621,7 +633,7 @@ int main() {
             std::static_pointer_cast<const ctnative::identity_object>(ctn_test_retained));
         leaf->field_76616c7565.value = 99;
         if (saved.back() != 15.75 || first_snapshot != 2 || second_snapshot != 3 ||
-            third_snapshot != 4 || ctnative::global_number(g_first) != 2) { return 196; }
+            third_snapshot != 4 || ctnative::global_number(g_first).value() != 2) { return 196; }
     }
     ctn_test_retained.reset();""",
         )
@@ -634,9 +646,9 @@ int main() {
         changed = changed.replace(
             "    auto owner = g_host;",
             """
-    const auto left_snapshot = ctnative::global_number(g_left);
-    const auto middle_snapshot = ctnative::global_number(g_middle);
-    const auto right_snapshot = ctnative::global_number(g_right);
+    const auto left_snapshot = ctnative::global_number(g_left).value();
+    const auto middle_snapshot = ctnative::global_number(g_middle).value();
+    const auto right_snapshot = ctnative::global_number(g_right).value();
     static_assert(std::is_same_v<decltype(left_snapshot), const js_num>);
     if (left_snapshot != first_snapshot || middle_snapshot != second_snapshot ||
         right_snapshot != third_snapshot) { return 197; }
@@ -645,10 +657,10 @@ int main() {
         changed = changed.replace(
             "    ctn_test_keep_leaf = false;",
             """
-    if (ctnative::global_number(g_left) != left_snapshot ||
-        ctnative::global_number(g_middle) != middle_snapshot ||
-        ctnative::global_number(g_right) != right_snapshot ||
-        ctnative::global_number(g_trace) != left_snapshot + middle_snapshot * right_snapshot) {
+    if (ctnative::global_number(g_left).value() != left_snapshot ||
+        ctnative::global_number(g_middle).value() != middle_snapshot ||
+        ctnative::global_number(g_right).value() != right_snapshot ||
+        ctnative::global_number(g_trace).value() != left_snapshot + middle_snapshot * right_snapshot) {
         return 199;
     }
     ctn_test_keep_leaf = false;""",
@@ -657,10 +669,10 @@ int main() {
             "    ctn_test_retained.reset();",
             """
     if (left_snapshot != 2 || middle_snapshot != 3 || right_snapshot != 4 ||
-        ctnative::global_number(g_left) != left_snapshot ||
-        ctnative::global_number(g_middle) != middle_snapshot ||
-        ctnative::global_number(g_right) != right_snapshot ||
-        ctnative::global_number(g_trace) != left_snapshot + middle_snapshot * right_snapshot) {
+        ctnative::global_number(g_left).value() != left_snapshot ||
+        ctnative::global_number(g_middle).value() != middle_snapshot ||
+        ctnative::global_number(g_right).value() != right_snapshot ||
+        ctnative::global_number(g_trace).value() != left_snapshot + middle_snapshot * right_snapshot) {
         return 198;
     }
     ctn_test_retained.reset();""",
@@ -673,9 +685,9 @@ int main() {
         changed = changed.replace(
             "    auto owner = g_host;",
             """
-    const auto fixed_snapshot = ctnative::global_number(g_fixed);
-    const auto offset_snapshot = ctnative::global_number(g_offset);
-    const auto copy_snapshot = ctnative::global_number(g_copy);
+    const auto fixed_snapshot = ctnative::global_number(g_fixed).value();
+    const auto offset_snapshot = ctnative::global_number(g_offset).value();
+    const auto copy_snapshot = ctnative::global_number(g_copy).value();
     static_assert(std::is_same_v<decltype(copy_snapshot), const js_num>);
     if (fixed_snapshot != 7 || offset_snapshot != fixed_snapshot || copy_snapshot != offset_snapshot) {
         return 200;
@@ -684,10 +696,10 @@ int main() {
         )
         checks = """
     if (fixed_snapshot != 7 || offset_snapshot != 7 || copy_snapshot != 7 ||
-        ctnative::global_number(g_fixed) != fixed_snapshot ||
-        ctnative::global_number(g_offset) != offset_snapshot ||
-        ctnative::global_number(g_copy) != copy_snapshot ||
-        ctnative::global_number(g_trace) != left_snapshot + middle_snapshot * right_snapshot +
+        ctnative::global_number(g_fixed).value() != fixed_snapshot ||
+        ctnative::global_number(g_offset).value() != offset_snapshot ||
+        ctnative::global_number(g_copy).value() != copy_snapshot ||
+        ctnative::global_number(g_trace).value() != left_snapshot + middle_snapshot * right_snapshot +
                                            copy_snapshot - fixed_snapshot) {
         return 201;
     }
@@ -708,7 +720,7 @@ int main() {
     const auto enabled_snapshot = ctnative::global_boolean(g_enabled);
     const auto copy_flag_snapshot = ctnative::global_boolean(g_copy_flag);
     const auto active_snapshot = ctnative::global_boolean(g_active);
-    static_assert(std::is_same_v<decltype(copy_flag_snapshot), const bool>);
+    static_assert(std::is_same_v<decltype(copy_flag_snapshot), const ctnative::js_boolean_t>);
     if (fixed_flag_snapshot || !enabled_snapshot || copy_flag_snapshot || !active_snapshot) {
         return 202;
     }
@@ -769,8 +781,13 @@ int main() {
         assert changed.count(released) == 1
         changed = changed.replace(released, released + checks)
     return changed.replace(
-        "CTN_PARAMS", "std::string, js_num, bool" if branch else "std::string, js_num"
-    ).replace("CTN_FLAG", ", call % 2 != 0" if branch else "")
+        "CTN_PARAMS",
+        (
+            "ctnative::js_string, ctnative::js_num, ctnative::js_boolean_t"
+            if branch
+            else "ctnative::js_string, ctnative::js_num"
+        ),
+    ).replace("CTN_FLAG", ", ctnative::js_boolean_t{call % 2 != 0}" if branch else "")
 
 
 def numeric_entry_lifetime(args, cpp, name, mode, compiler):

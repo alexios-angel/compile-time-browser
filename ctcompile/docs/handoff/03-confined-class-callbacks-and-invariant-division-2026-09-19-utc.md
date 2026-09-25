@@ -2,7 +2,7 @@
 
 ## Confined class callbacks and invariant division, 2026-09-19 UTC
 
-Resumed clean **768a71c5** from the **03:18:30 AGENT-SYNC closure**. Both agents'
+Resumed clean **768a71c5** from the **03:18:30 AGENT-SYNC.jsonl closure**. Both agents'
 commits and unmerged branches were reviewed; the September 7 WIP is already an
 ancestor and the interrupted UTF-16 extraction was already landed. Three agents
 supplied casing/alias analysis, fixture recommendations and a partial escape draft
@@ -101,7 +101,7 @@ Exact validation and limits:
 
 Resumed clean **fb55eb20** and its original H Unicode boundary. The branch census
 also found **ecca5b66**, a public UTF-16 extraction committed and gated on September
-18 but never merged (AGENT-SYNC 02:05:29/02:11:42). **0eadd9a0** finishes that
+18 but never merged (AGENT-SYNC.jsonl 02:05:29/02:11:42). **0eadd9a0** finishes that
 interrupted thread by atomic merge from an isolated current-tip worktree. Existing
 CharacterData conversion bodies now live in public Core; the binding calls those
 same functions. Browser behavior and Script implementation are unchanged.
@@ -191,7 +191,7 @@ Exact validation and limits:
 
 ## Dataset loops beside native class construction, 2026-09-19 UTC
 
-Resumed clean **4167e94c** from the **19:35:36 AGENT-SYNC closure** and its
+Resumed clean **4167e94c** from the **19:35:36 AGENT-SYNC.jsonl closure** and its
 original H dynamic-key thread. Both agents' logs and unmerged branches were
 reviewed; the September 7 WIP is already an ancestor. No predecessor edits
 remained. Two parallel agents supplied native recommendations before service
@@ -299,7 +299,7 @@ Exact validation and limits:
 
 ## Combined helper captures and literal BitNot latches, 2026-09-18 UTC
 
-Resumed clean **2c17b381** from the **19:20:02 AGENT-SYNC closure** and
+Resumed clean **2c17b381** from the **19:20:02 AGENT-SYNC.jsonl closure** and
 HANDOFF's combined M/filter-callee thread. Both agents' logs and unmerged branches
 were reviewed; the September 7 WIP is already an ancestor. No predecessor edits
 remained. A parallel agent audited the native proof; root completed fixture
@@ -366,7 +366,7 @@ a direct function passed to `filter_strings`; Script and dynamic-dispatch gates 
 
 ## Captured H objects and literal unary latches, 2026-09-18 UTC
 
-Continued clean **ce4c9628** from the **18:59:17 AGENT-SYNC closure** and its
+Continued clean **ce4c9628** from the **18:59:17 AGENT-SYNC.jsonl closure** and its
 unfinished class-method H-object capture thread. The September 7 WIP is already
 an ancestor. **ed69f95a** proves fixed local holder captures and aliases in DOM
 class methods. Shared holder analysis checks every original use and slot; all
@@ -444,7 +444,7 @@ unproved callee uses. Existing DOMSource callback transport remains the seam.
 
 ## Captured local H helpers and Boolean Add latches, 2026-09-18 UTC
 
-Continued clean **9b9ca236**, following the **18:35:50 AGENT-SYNC closure** and
+Continued clean **9b9ca236**, following the **18:35:50 AGENT-SYNC.jsonl closure** and
 its unfinished full-H capture thread. Both agents' logs and unmerged branches
 were reviewed; the September 7 WIP exists and is already an ancestor. No dirty
 predecessor work remained. Parallel agents supplied a frozen escape draft and
@@ -527,7 +527,7 @@ Bootstrap and the overall plan remain unfinished.
 
 ## Local callable holders and negative String latches, 2026-09-18 UTC
 
-Continued clean **414d395e**, following the **18:13:26 AGENT-SYNC closure** and
+Continued clean **414d395e**, following the **18:13:26 AGENT-SYNC.jsonl closure** and
 its unfinished full-H holder proof. No predecessor edits remained. Both agents'
 commits and unmerged branches were reviewed; the September 7 WIP branch exists
 and is already an ancestor. Parallel agents supplied holder/fixture/induction
@@ -607,7 +607,7 @@ unfinished.
 
 ## Captured dataset-filter callbacks and negative Strings, 2026-09-18 UTC
 
-**aef32da5** resumes the full-H thread found in the **17:40:39 AGENT-SYNC journal**
+**aef32da5** resumes the full-H thread found in the **17:40:39 AGENT-SYNC.jsonl journal**
 and claims abandoned by the **17:42:18 loop failure**, starting clean at
 **40db7482**. Both agents' recent commits and unmerged branches were reviewed;
 the old September 7 WIP branch is absent. Parallel agents audited the proof,
@@ -768,7 +768,7 @@ the application driver and native Bootstrap remain unfinished.
 ## Captured sibling Bootstrap M, 2026-09-18 UTC
 
 **1b27ab4b** finishes the interrupted helper-capture thread at **2d72d9b0**.
-The **16:35:25 AGENT-SYNC entry** and two dirty class-DOM fixture files identified
+The **16:35:25 AGENT-SYNC.jsonl entry** and two dirty class-DOM fixture files identified
 the work; the **16:37:28 loop failure** abandoned it before production changes.
 September 7 WIP was verified as an ancestor; both agents' recent commits and
 historical unmerged branches were reviewed. Parallel agents recovered fixtures

@@ -1,0 +1,67 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name cached-joined-length
+// RUN: FileCheck %s < %t/escape-claims-cached-joined-length.claims
+
+// Cached receiver provenance comes from each independent structural path.
+// Saved children, changed bounds and different receivers retain their escapes.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function cachedJoinedLengthCleared(flag) {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded;
+    if (flag) loaded = holder[0];
+    else loaded = array;
+    var length = loaded.length;
+    for (var i = 0; i < length; i++) loaded[i] = 0;
+    return array;
+}
+function cachedJoinedLengthSaved(flag) {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded;
+    if (flag) loaded = holder[0];
+    else loaded = array;
+    var length = loaded.length, saved = loaded[0];
+    for (var i = 0; i < length; i++) loaded[i] = 0;
+    return saved;
+}
+function cachedJoinedLengthChanged(flag) {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded;
+    if (flag) loaded = holder[0];
+    else loaded = array;
+    var length = loaded.length;
+    for (var i = 0; i < length; i++) {
+        loaded[i] = 0;
+        length = 1;
+    }
+    return array;
+}
+function cachedJoinedLengthReceiverChanged(flag) {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded;
+    if (flag) loaded = holder[0];
+    else loaded = array;
+    var length = loaded.length;
+    loaded = [0, 0, 0];
+    for (var i = 0; i < length; i++) loaded[i] = 0;
+    return array;
+}
+function cachedJoinedLengthDifferent(flag) {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded;
+    if (flag) loaded = holder[0];
+    else loaded = [0, 0, 0];
+    var length = loaded.length;
+    for (var i = 0; i < length; i++) loaded[i] = 0;
+    return array;
+}
+cachedJoinedLengthCleared(false); cachedJoinedLengthCleared(true);
+cachedJoinedLengthSaved(false); cachedJoinedLengthSaved(true);
+cachedJoinedLengthChanged(false); cachedJoinedLengthChanged(true);
+cachedJoinedLengthReceiverChanged(false); cachedJoinedLengthReceiverChanged(true);
+cachedJoinedLengthDifferent(false); cachedJoinedLengthDifferent(true);

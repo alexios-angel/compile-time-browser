@@ -474,10 +474,16 @@ void LengthCases::arithmetic() {
               "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined"}) {
             for (const std::string operands : {"%input, %zero", "%zero, %input"}) {
                 const bool exactZero =
-                    literal == "#ctjs.string<\"0\">" || literal == "#ctjs.boolean<false>" ||
-                    literal == "#ctjs.null" ||
+                    literal == "#ctjs.number<4602678819172646912>" ||
+                    literal == "#ctjs.number<4751297606875873280>" ||
+                    literal == "#ctjs.number<13974669643730649088>" ||
+                    literal == "#ctjs.number<9218868437227405312>" ||
+                    literal == "#ctjs.number<9221120237041090560>" ||
+                    literal == "#ctjs.string<\"0\">" || literal == "#ctjs.string<\"00\">" ||
+                    literal == "#ctjs.boolean<false>" || literal == "#ctjs.null" ||
                     ((literal == "#ctjs.number<13830554455654793216>" ||
-                      literal == "#ctjs.string<\"-1\">") &&
+                      literal == "#ctjs.string<\"-1\">" || literal == "#ctjs.string<\"1.0\">" ||
+                      literal == "#ctjs.string<\"4294967295\">") &&
                      (kind == "bitand" || ((kind == "shl" || kind == "shr" || kind == "ushr") &&
                                            operands == "%zero, %input")));
                 run({.what = "only independently bounded bitwise inputs supply an exact index",
@@ -485,7 +491,9 @@ void LengthCases::arithmetic() {
                              "\n  %index = ctjs.binary_static " + kind + " " + operands + "\n" +
                              indexed,
                      .failure = exactZero ? ArrayContentsFailure::None
-                                          : ArrayContentsFailure::UnknownIndex,
+                                : literal == "#ctjs.string<\"1.0\">"
+                                    ? ArrayContentsFailure::MissingElement
+                                    : ArrayContentsFailure::UnknownIndex,
                      .arrays = exactZero ? "a:[zero]" : "",
                      .exit = exactZero ? "a -> {a}" : ""});
             }

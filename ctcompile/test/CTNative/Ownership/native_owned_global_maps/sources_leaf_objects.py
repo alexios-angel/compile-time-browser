@@ -68,7 +68,7 @@ def leaf_object_sources():
 
 
 LEAF_OBJECT_CALLS = {
-    name: 9 if name == "leaf_object_lifetime" else 5 if name == "leaf_object_identity_repair" else 7
+    name: {"leaf_object_lifetime": 9, "leaf_object_identity_repair": 5}.get(name, 7)
     for name in leaf_object_sources()
 }
 LEAF_OBJECT_FUNCTIONS = {

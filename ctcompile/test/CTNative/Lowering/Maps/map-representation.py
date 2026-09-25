@@ -49,7 +49,7 @@ template <class K> bool check_zero_keys(K negative) {
 int main() {
     if (ctnative_test_entry() != 0) { return 90; }
     if (!check_zero_keys(js_num{-0.0})) { return 91; }
-    if (!check_zero_keys(std::variant<bool, js_num>{-0.0})) { return 92; }
+    if (!check_zero_keys(std::variant<ctnative::js_boolean_t, js_num>{-0.0})) { return 92; }
     return 0;
 }
 """
@@ -163,16 +163,19 @@ def main():
                 assert "std::map<" not in cpp
             if fixture == "payloads":
                 assert (
-                    "ctnative::make_map<double, bool>()" in cpp
-                    or "ctnative::make_map<js_num, bool>()" in cpp
+                    "ctnative::make_map<double, ctnative::js_boolean_t>()" in cpp
+                    or "ctnative::make_map<js_num, ctnative::js_boolean_t>()" in cpp
                 )
                 assert "ctnative::make_map<std::string, std::string>()" in cpp
-                assert "ctnative::make_map<bool, std::string>()" in cpp
+                assert "ctnative::make_map<ctnative::js_boolean_t, std::string>()" in cpp
                 # The String payload read is the runtime header's; the program
                 # spells its owning carrier, not the helper's definition.
                 assert "ctnative::nullable_string" in cpp
             if fixture == "mixed-values":
-                assert "ctnative::make_map<double, std::variant<bool, std::string>>()" in cpp
+                assert (
+                    "ctnative::make_map<double, std::variant<ctnative::js_boolean_t, std::string>>()"
+                    in cpp
+                )
                 assert len(re.findall(r"\bctnative::map_set\(", cpp)) == 2
                 assert "ctnative::map_size(" in cpp
             if fixture == "string-values":

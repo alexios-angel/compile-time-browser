@@ -8,9 +8,9 @@ namespace {
 // soundness lives, not in the match: `+x` in general is ToNumber, which can
 // re-enter user code through valueOf and can produce a different value ("1"
 // becomes 1). It is the identity only on a value already proved numeric, which
-// admission::op()'s Plus arm establishes for every function lowering::lower()
-// is called on - applyDeclarativeRules() seeds the driver with exactly those
-// unaries. The rewrite is type-preserving (`!ctjs.value` for `!ctjs.value`),
+// applyDeclarativeRules() checks the operand's NumType before seeding the
+// driver. Admitted Boolean, nullable and String operands retain their explicit
+// conversions. The rewrite is type-preserving (`!ctjs.value` for `!ctjs.value`),
 // which is why it must run before retype(). If it ever stops firing,
 // replace()'s Plus arm reports a fatal error naming it.
 struct UnaryPlusIsIdentity : mlir::OpRewritePattern<ctjs::UnaryOp> {
@@ -44,6 +44,7 @@ mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternati
 carrier carrierOf(mlir::Type type) {
     if (type == nullptr) { return carrier::none; }
     if (llvm::isa<BoolType>(type)) { return carrier::boolean; }
+    if (llvm::isa<SymbolType>(type)) { return carrier::symbol; }
     if (llvm::isa<DOMElementType>(type)) { return carrier::domElement; }
     if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
@@ -56,6 +57,12 @@ carrier carrierOf(mlir::Type type) {
         return carrier::string;
     }
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
+        if (carrierOf(opt.getElementType()) == carrier::booleanString) {
+            return carrier::nullableBooleanString;
+        }
+        if (carrierOf(opt.getElementType()) == carrier::numberString) {
+            return carrier::nullableNumberString;
+        }
         if (carrierOf(opt.getElementType()) == carrier::string) { return carrier::nullableString; }
         if (llvm::isa<BottomType>(opt.getElementType()) ||
             isScalarCarrier(carrierOf(opt.getElementType()))) {
@@ -76,6 +83,14 @@ carrier carrierOf(mlir::Type type) {
             })) {
             return carrier::booleanString;
         }
+        if (variant.getAlternatives().size() == 2 &&
+            llvm::any_of(variant.getAlternatives(),
+                         [](mlir::Type alternative) { return llvm::isa<NumType>(alternative); }) &&
+            llvm::any_of(variant.getAlternatives(), [](mlir::Type alternative) {
+                return carrierOf(alternative) == carrier::string;
+            })) {
+            return carrier::numberString;
+        }
         if (llvm::all_of(variant.getAlternatives(), [](mlir::Type alternative) {
                 return llvm::isa<NumType, BoolType>(alternative);
             })) {
@@ -88,6 +103,7 @@ carrier carrierOf(mlir::Type type) {
         const bool supportedKey =
             llvm::isa<BottomType, NumType, BoolType, ObjectIdentityType, DOMElementType>(key) ||
             (string && string.getEncoding() == StrEncoding::UTF8) ||
+            (llvm::isa<OptType>(key) && carrierOf(key) == carrier::nullable) ||
             !mixedMapKeySpelling(key).empty() || !nullableMapSpelling(key).empty();
         const auto value = map.getValueType();
         const bool ownedValue =
@@ -98,15 +114,12 @@ carrier carrierOf(mlir::Type type) {
             (llvm::isa<MapType>(value) && carrierOf(value) == carrier::map);
         return supportedKey && ownedValue ? carrier::map : carrier::none;
     }
-    // PHASE 57A: A DENSE ARRAY IS A `std::vector<double>` AND NOTHING ELSE
-    // YET. The element carrier decides: `vector<bool>` is a bit-packed
-    // specialisation whose `operator[]` returns a proxy that aliases the
-    // container and converts differently from `bool` (part 24 Stage 57A says
-    // so by name), and a vector of anything with no carrier has none either.
-    // So only a numeric element has a representation here, and the refusal
-    // for the rest is named at the literal.
+    // Generic mutable arrays retain their numeric content proof. Proved
+    // String and borrowed Element snapshots have
+    // distinct carriers and their own access/ownership admission.
     if (auto elements = llvm::dyn_cast<VecType>(type)) {
         auto element = elements.getElementType();
+        if (llvm::isa<DOMElementType>(element)) { return carrier::domElementVector; }
         if (carrierOf(element) == carrier::string) { return carrier::stringVector; }
         if (auto opt = llvm::dyn_cast<OptType>(element)) { element = opt.getElementType(); }
         return llvm::isa<BottomType, NumType>(element) ? carrier::vector : carrier::none;
@@ -118,11 +131,41 @@ bool isScalarCarrier(carrier value) {
     return value == carrier::number || value == carrier::boolean || value == carrier::nullable;
 }
 
+bool isStringUnionCarrier(carrier value) {
+    switch (value) {
+    case carrier::booleanString:
+    case carrier::nullableBooleanString:
+    case carrier::numberString:
+    case carrier::nullableNumberString: return true;
+    default: return false;
+    }
+}
+
+bool isPrimitiveCarrier(carrier value) {
+    return isScalarCarrier(value) || isStringCarrier(value) || isStringUnionCarrier(value);
+}
+
 bool isNullableCarrier(mlir::Type type) {
     if (!type) { return false; }
     if (auto value = llvm::dyn_cast<ec::LValueType>(type)) { type = value.getValueType(); }
     auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
     return opaque && opaque.getValue() == kNullableType;
+}
+
+bool isNumberCarrier(mlir::Type type) {
+    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
+        type = value.getValueType();
+    }
+    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
+    return opaque && opaque.getValue() == kNumberType;
+}
+
+bool isBooleanCarrier(mlir::Type type) {
+    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
+        type = value.getValueType();
+    }
+    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
+    return opaque && opaque.getValue() == kBooleanType;
 }
 
 bool isBooleanStringCarrier(mlir::Type type) {
@@ -131,6 +174,30 @@ bool isBooleanStringCarrier(mlir::Type type) {
     }
     auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
     return opaque && opaque.getValue() == kBooleanStringType;
+}
+
+bool isNumberStringCarrier(mlir::Type type) {
+    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
+        type = value.getValueType();
+    }
+    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
+    return opaque && opaque.getValue() == kNumberStringType;
+}
+
+bool isNullableBooleanStringCarrier(mlir::Type type) {
+    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
+        type = value.getValueType();
+    }
+    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
+    return opaque && opaque.getValue() == kNullableBooleanStringType;
+}
+
+bool isNullableNumberStringCarrier(mlir::Type type) {
+    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
+        type = value.getValueType();
+    }
+    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
+    return opaque && opaque.getValue() == kNullableNumberStringType;
 }
 
 // The one C++ type a dense array lowers to. Spelled once: the emitted
@@ -151,8 +218,8 @@ llvm::StringRef mixedMapSpelling(mlir::Type type) {
         number |= llvm::isa<NumType>(alternative);
         string |= carrierOf(alternative) == carrier::string;
     }
-    if (boolean && number) { return "std::variant<bool, double>"; }
-    if (boolean && string) { return "std::variant<bool, std::string>"; }
+    if (boolean && number) { return "std::variant<ctnative::js_boolean_t, double>"; }
+    if (boolean && string) { return kBooleanStringMapType; }
     return {};
 }
 
@@ -170,23 +237,25 @@ llvm::StringRef mixedMapKeySpelling(mlir::Type type) {
                             : llvm::StringRef{};
 }
 
-// Closed owning storage for nullable String, optionally composed with Bool.
-// This does not add a general optional-union scalar/signature or snapshot.
+// Closed tagged storage for optional scalars and owning nullable Strings.
+// Map storage remains independent of scalar/signature and snapshot carriers.
 llvm::StringRef nullableMapSpelling(mlir::Type type) {
     auto optional = llvm::dyn_cast<OptType>(type);
     if (!optional) { return {}; }
+    if (carrierOf(type) == carrier::nullable) { return kNullableType; }
     if (carrierOf(optional.getElementType()) == carrier::string) { return kNullableStringType; }
-    if (mixedMapSpelling(optional.getElementType()) == kBooleanStringType) {
-        return "std::variant<bool, ctnative::nullable_string>";
+    if (mixedMapSpelling(optional.getElementType()) == kBooleanStringMapType) {
+        return "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>";
     }
     return {};
 }
 
 llvm::StringRef mapKeySpelling(mlir::Type type) {
+    if (llvm::isa<OptType>(type) && carrierOf(type) == carrier::nullable) { return kNullableType; }
     if (auto nullable = nullableMapSpelling(type); !nullable.empty()) { return nullable; }
     if (auto mixed = mixedMapKeySpelling(type); !mixed.empty()) { return mixed; }
     if (llvm::isa<BottomType, NumType>(type)) { return "double"; }
-    if (llvm::isa<BoolType>(type)) { return "bool"; }
+    if (llvm::isa<BoolType>(type)) { return kBooleanType; }
     if (llvm::isa<StrType>(type)) { return "std::string"; }
     if (llvm::isa<ObjectIdentityType>(type)) { return kObjectIdentityType; }
     if (llvm::isa<DOMElementType>(type)) { return kDOMElementType; }
@@ -198,7 +267,7 @@ std::string mapValueSpelling(mlir::Type type) {
     if (auto mixed = mixedMapSpelling(type); !mixed.empty()) { return mixed.str(); }
     if (isObjectValueType(type)) { return kObjectValueType.str(); }
     if (llvm::isa<BottomType, NumType>(type)) { return "double"; }
-    if (llvm::isa<BoolType>(type)) { return "bool"; }
+    if (llvm::isa<BoolType>(type)) { return kBooleanType.str(); }
     if (carrierOf(type) == carrier::string) { return "std::string"; }
     if (auto map = llvm::dyn_cast<MapType>(type)) {
         return llvm::cast<ec::OpaqueType>(mapCarrierType(map)).getValue().str();
@@ -258,18 +327,22 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // that is worth far more than a double that happens to verify.
     switch (which) {
     case carrier::domElement: return ec::OpaqueType::get(c, kDOMElementType);
+    case carrier::domElementVector: return ec::OpaqueType::get(c, kDOMElementVectorType);
     case carrier::json: return ec::OpaqueType::get(c, kDOMJSONType);
     case carrier::nullable: return ec::OpaqueType::get(c, kNullableType);
     case carrier::booleanString: return ec::OpaqueType::get(c, kBooleanStringType);
+    case carrier::nullableBooleanString: return ec::OpaqueType::get(c, kNullableBooleanStringType);
+    case carrier::numberString: return ec::OpaqueType::get(c, kNumberStringType);
+    case carrier::nullableNumberString: return ec::OpaqueType::get(c, kNullableNumberStringType);
     case carrier::nullableString: return ec::OpaqueType::get(c, kNullableStringType);
     case carrier::objectValue: return ec::OpaqueType::get(c, kObjectValueType);
     case carrier::objectIdentity: return ec::OpaqueType::get(c, kObjectIdentityType);
     case carrier::methodTable:
         llvm::report_fatal_error("method table carrier needs its proved schema");
-    case carrier::boolean: return mlir::IntegerType::get(c, 1);
-    case carrier::number: return mlir::Float64Type::get(c);
-    case carrier::string:
-        return ec::OpaqueType::get(c, StrType::get(c, StrEncoding::UTF8).cppCarrier());
+    case carrier::boolean: return ec::OpaqueType::get(c, kBooleanType);
+    case carrier::symbol: return ec::OpaqueType::get(c, kSymbolType);
+    case carrier::number: return ec::OpaqueType::get(c, kNumberType);
+    case carrier::string: return ec::OpaqueType::get(c, kStringType);
     case carrier::structure:
     case carrier::closure:
     case carrier::map:

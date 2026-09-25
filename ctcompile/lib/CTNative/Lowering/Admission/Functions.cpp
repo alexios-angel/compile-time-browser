@@ -6,8 +6,15 @@
 namespace ctcompile::ctnative::lowering_detail {
 
 bool admission::function(ctjs::FuncOp fn) {
+    if (auto why = fn->getAttrOfType<mlir::StringAttr>("ctnative.structure_refusal")) {
+        return refuse(why.getValue().str());
+    }
     mlir::Block & entry = fn.getBody().front();
     const auto unsupported = [&](mlir::Value value) {
+        if (nativeMapRecordPayload(value) ||
+            (nativeMapRecordOrigin(value) && isClosedObject(value))) {
+            return false;
+        }
         const auto storage = carrierOf(typeOf(value));
         // JsonType also describes widened lattice facts. Only the complete DOM
         // proof establishes a parsed tree with owning, identity-free contents.
@@ -96,10 +103,6 @@ bool admission::function(ctjs::FuncOp fn) {
                                  : isCellArg(fn.getOperation(), i) ? "shared capture "
                                                                    : "capture ";
         const std::string which = kind + std::to_string(isCapture ? i - 3 : i - 3 - captures);
-        if (carrierOf(t) == carrier::booleanString) {
-            return refuse(which +
-                          " needs a supported concrete signature, not a Bool/String temporary");
-        }
         if (unsupported(entry.getArgument(i))) {
             // Distinguish an unknown parameter from a proved type this
             // tier cannot represent, such as an optional string. The
@@ -143,7 +146,8 @@ bool admission::function(ctjs::FuncOp fn) {
             return;
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);
-            load && domEntry && domEntry->isInitialIntrinsic(load)) {
+            load && domEntry &&
+            (domEntry->isInitialIntrinsic(load) || domEntry->isCurrentDocument(load))) {
             return;
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(o);
@@ -152,8 +156,8 @@ bool admission::function(ctjs::FuncOp fn) {
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o);
             read && domEntry &&
-            (domEntry->method(read) || domEntry->isTokenList(read.getResult()) ||
-             domEntry->isDataset(read.getResult()))) {
+            (domEntry->method(read) || domEntry->isElementPrototype(read) ||
+             domEntry->isTokenList(read.getResult()) || domEntry->isDataset(read.getResult()))) {
             return;
         }
         if (o->getName().getStringRef() == "ub.poison") { return; }
@@ -180,8 +184,9 @@ bool admission::function(ctjs::FuncOp fn) {
                 for (mlir::BlockArgument a : block.getArguments()) {
                     if (auto invoke = llvm::dyn_cast<ctjs::InvokeOp>(o);
                         invoke && domEntry && domEntry->invocation(invoke) &&
-                        &region == &invoke.getUnwindBody() && a.getArgNumber() == 0 &&
-                        a.use_empty()) {
+                        (&region == &invoke.getUnwindBody() ||
+                         (invoke.getNumResults() == 0 && &region == &invoke.getNormalBody())) &&
+                        a.getArgNumber() == 0 && a.use_empty()) {
                         continue; // No native value represents the unobserved semantic payload.
                     }
                     if (llvm::isa<ctjs::ValueType>(a.getType()) && unsupported(a)) {

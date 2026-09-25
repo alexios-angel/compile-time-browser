@@ -24,6 +24,7 @@
 
 #include <cstdio>
 #include <string_view>
+#include <unordered_set>
 
 #include "check.hpp"
 
@@ -73,8 +74,9 @@ bool known_kind(std::string_view k) {
     // names and the program's function list. They were two until the rows were
     // checked against the handlers; anything generating a bounds check from
     // these columns has to know which table it is checking.
-    return k == "reg" || k == "kidx" || k == "sidx" || k == "nidx" || k == "fidx" || k == "jump" ||
-           k == "count" || k == "bx_hi" || k == "unused";
+    static const std::unordered_set<std::string_view> kinds{
+        "reg", "kidx", "sidx", "nidx", "fidx", "jump", "count", "bx_hi", "unused"};
+    return kinds.contains(k);
 }
 
 } // namespace
@@ -150,9 +152,10 @@ int main() {
         // bx_hi is the HIGH HALF of the preceding field, so it can only follow
         // an operand that is read through bx(): an index or a jump.
         if (r.c_kind == "bx_hi") {
-            check(r.b_kind == "kidx" || r.b_kind == "sidx" || r.b_kind == "nidx" ||
-                      r.b_kind == "fidx" || r.b_kind == "jump",
-                  "c is bx_hi but b is not an index or a jump", r.name);
+            static const std::unordered_set<std::string_view> wideKinds{"kidx", "sidx", "nidx",
+                                                                        "fidx", "jump"};
+            check(wideKinds.contains(r.b_kind), "c is bx_hi but b is not an index or a jump",
+                  r.name);
         }
         check(r.b_kind != "bx_hi", "b cannot be a bx high half - a is not read through bx()",
               r.name);

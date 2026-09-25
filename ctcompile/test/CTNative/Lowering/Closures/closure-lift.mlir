@@ -57,9 +57,9 @@ var c = line(4, 2);
 // `apply` is written with an empty parameter list and reads `k` out of its
 // closure. Lifted, it takes `k` and reads nothing.
 //
-// CHECK: emitc.func @scaled_1(%arg0: f64) -> f64
+// CHECK: emitc.func @scaled_1(%arg0: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // CHECK: call @apply_2(%arg0)
-// CHECK: emitc.func @apply_2(%arg0: f64) -> f64
+// CHECK: emitc.func @apply_2(%arg0: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // CHECK: mul %arg0
 
 // --- NO CAPTURE AT ALL ------------------------------------------------------
@@ -69,9 +69,9 @@ var c = line(4, 2);
 // into a ctjs.call_direct the closed world can type - which is what makes this
 // the commonest shape the slice claims in real code.
 //
-// CHECK: emitc.func @plain_3(%arg0: f64) -> f64
+// CHECK: emitc.func @plain_3(%arg0: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // CHECK: call @twice_4(%arg0)
-// CHECK: emitc.func @twice_4(%arg0: f64) -> f64
+// CHECK: emitc.func @twice_4(%arg0: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 
 // --- TWO CAPTURES AND A PARAMETER, AND THE CAPTURES LEAD --------------------
 //
@@ -79,10 +79,10 @@ var c = line(4, 2);
 // values with a different `x`, and the closure is built once and never
 // allocated.
 //
-// CHECK: emitc.func @line_5(%arg0: f64, %arg1: f64) -> f64
-// CHECK: call @at_6(%arg0, %arg1, %{{.*}}) : (f64, f64, f64) -> f64
-// CHECK: call @at_6(%arg0, %arg1, %{{.*}}) : (f64, f64, f64) -> f64
-// CHECK: emitc.func @at_6(%arg0: f64, %arg1: f64, %arg2: f64) -> f64
+// CHECK: emitc.func @line_5(%arg0: !emitc.opaque<"ctnative::js_num">, %arg1: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
+// CHECK: call @at_6(%arg0, %arg1, %{{.*}}) : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
+// CHECK: call @at_6(%arg0, %arg1, %{{.*}}) : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
+// CHECK: emitc.func @at_6(%arg0: !emitc.opaque<"ctnative::js_num">, %arg1: !emitc.opaque<"ctnative::js_num">, %arg2: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 
 // --- AND THE COUNTS, BECAUSE PASS STATISTICS ARE INERT HERE -----------------
 //

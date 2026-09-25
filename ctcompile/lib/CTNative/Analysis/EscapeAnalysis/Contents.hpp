@@ -48,6 +48,12 @@ struct ContentsValue {
     std::optional<std::size_t> negativeIntegerNumber = std::nullopt;
     // An indexed ASCII String read keeps its character and its own SSA identity.
     std::optional<unsigned char> asciiCharacter = std::nullopt;
+    // Result-only ToUint32 snapshot; never an arithmetic value or property key.
+    std::optional<std::uint32_t> convertedBits = std::nullopt;
+    unsigned unaryDepth = 0;
+    // Independent binary64 arithmetic result, never reconstructed from converted bits.
+    std::optional<double> arithmeticNumber = std::nullopt;
+    unsigned arithmeticDepth = 0;
 
     mlir::Value origin() const { return kind == ContentsKind::Opaque ? mlir::Value{} : original; }
     bool nonBigInt() const {
@@ -74,7 +80,8 @@ struct State {
     llvm::DenseMap<mlir::Value, ContentsValue> values;
     llvm::MapVector<mlir::Operation *, llvm::SmallVector<ContentsValue, 4>> arrays;
     llvm::MapVector<mlir::Operation *, HeldProperties> objects;
-    llvm::SmallPtrSet<mlir::Block *, 8> visited;
+    // First incoming edge on this exact path; ordinary CFG revisits refuse.
+    llvm::DenseMap<mlir::Block *, mlir::Block *> predecessors;
     ctjs::FrameEnterOp frame;
     bool frameExited = false;
     mlir::Operation * current = nullptr;
@@ -86,9 +93,14 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value);
 mlir::StringAttr ownObjectKey(mlir::StringAttr key);
 mlir::StringAttr ownObjectKey(mlir::Value value);
 std::optional<std::size_t> ownArrayIndex(const ContentsValue & key);
+// Independent binary64 snapshots used only by certified loop keys and replay.
+// This grants no general Number, array-length or String conversion authority.
+std::optional<std::size_t> arithmeticArrayIndex(const ContentsValue & key);
 std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
                                                const ContentsValue & key, mlir::Value result);
 std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, bool negate = false);
+std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input);
+void boundedNumberUnary(const ContentsValue & input, bool negate, ContentsValue & result);
 void boundedNumberComplement(const ContentsValue & input, ContentsValue & result);
 void boundedNumberBitwise(const ContentsValue & left, const ContentsValue & right,
                           ctjs::BinaryKind kind, ContentsValue & result);

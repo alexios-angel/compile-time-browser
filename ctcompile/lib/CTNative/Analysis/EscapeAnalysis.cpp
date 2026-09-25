@@ -301,26 +301,97 @@ mlir::Value storageTargetValue(const Verdict & verdict) {
     return {};
 }
 
-void refineArrayRetention(EscapeVerdicts & verdicts, ctjs::FuncOp function, std::size_t workLimit) {
-    const auto candidate = [](mlir::Operation * site, const Verdict & verdict) {
-        return verdict.reason == EscapeReason::Stored ||
-               (llvm::isa<ctjs::CreateArrayOp>(site) && verdict.reason == EscapeReason::Passed &&
+bool structuredRetentionInputs(const mlir::DataFlowSolver & solver, ctjs::FuncOp function,
+                               std::size_t & work, std::size_t workLimit) {
+    const auto spend = [&]() {
+        if (work == workLimit) { return false; }
+        ++work;
+        return true;
+    };
+    const auto initialized = [&](mlir::Value value) {
+        if (!spend() || !value) { return false; }
+        if (!isValueTyped(value)) { return true; }
+        const AliasLattice * lattice = solver.lookupState<AliasLattice>(value);
+        return lattice != nullptr && !lattice->getValue().isUninitialized();
+    };
+    const auto conditionalAncestors = [&](mlir::Operation * site) {
+        // The complete contents query below rejects repeated root CFG blocks;
+        // its counted-loop exception excludes allocations and regions. Only
+        // conditional ancestors can therefore keep one instance per call.
+        for (mlir::Operation * parent = site->getParentOp(); parent != function.getOperation();
+             parent = parent->getParentOp()) {
+            if (!spend() || !llvm::isa<mlir::scf::IfOp>(parent)) { return false; }
+        }
+        return true;
+    };
+    // The legacy census deliberately models only top-level CFG operations.
+    // Check every nested operand/result against the current solver instead of
+    // presenting that partial census as complete. SCF supplies the region
+    // branch alias transport; this walk supplies no new alias or contents fact.
+    // A nested site needs this ancestry check and the complete contents proof.
+    return !function.getBody()
+                .walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
+                    if (!spend() ||
+                        (operation->getNumRegions() != 0 &&
+                         !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) ||
+                        (isTrackedSite(operation) &&
+                         operation->getParentRegion() != &function.getBody() &&
+                         !conditionalAncestors(operation)) ||
+                        !llvm::all_of(operation->getOperands(), initialized) ||
+                        !llvm::all_of(operation->getResults(), initialized)) {
+                        return mlir::WalkResult::interrupt();
+                    }
+                    for (unsigned index = 0; index < operation->getNumOperands(); ++index) {
+                        const RoleOf role = operandRole(operation, index);
+                        if (role.role == OperandRole::Sink && role.reason == EscapeReason::Stored &&
+                            !initialized(storageTargetValue({role.reason, operation, index}))) {
+                            return mlir::WalkResult::interrupt();
+                        }
+                    }
+                    return mlir::WalkResult::advance();
+                })
+                .wasInterrupted();
+}
+
+void refineArrayRetention(EscapeVerdicts & verdicts, const mlir::DataFlowSolver & solver,
+                          ctjs::FuncOp function, std::size_t workLimit) {
+    const auto retentionReason = [&](const Verdict & verdict) {
+        if (verdict.reason != EscapeReason::UnknownOp || verdict.by == nullptr ||
+            verdict.by->getParentRegion() == &function.getBody()) {
+            return verdict.reason;
+        }
+        // The legacy region census marks implicit captures UnknownOp even
+        // for known sinks. Reuse only this exact operand's current role; the
+        // candidate filter still limits Passed to array Get/Set receivers.
+        const RoleOf role = operandRole(verdict.by, verdict.position);
+        return role.role == OperandRole::Sink ? role.reason : verdict.reason;
+    };
+    const auto candidate = [&](mlir::Operation * site, const Verdict & verdict) {
+        const EscapeReason reason = retentionReason(verdict);
+        return (reason == EscapeReason::UnknownOp && verdict.by == nullptr &&
+                site->getParentRegion() != &function.getBody()) ||
+               reason == EscapeReason::Stored ||
+               (llvm::isa<ctjs::CreateArrayOp>(site) && reason == EscapeReason::Passed &&
                 verdict.position == 0 &&
                 llvm::isa_and_nonnull<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(verdict.by));
     };
     if (workLimit == 0 || verdicts.unvisitedSites != 0 || verdicts.unvisitedOperands != 0 ||
-        verdicts.wholeFunction || !verdicts.directStorage.complete ||
-        !verdicts.directLoads.complete || !llvm::any_of(verdicts.sites, [&](const auto & entry) {
+        verdicts.wholeFunction || !llvm::any_of(verdicts.sites, [&](const auto & entry) {
             return candidate(entry.first, entry.second);
         })) {
+        return;
+    }
+    if ((!verdicts.directStorage.complete || !verdicts.directLoads.complete) &&
+        !structuredRetentionInputs(solver, function, verdicts.arrayRetentionWork, workLimit)) {
         return;
     }
 
     // Candidate alias closure cannot discharge a sink. The independent query
     // must prove every operation in the CURRENT function, including effects
     // after the last read and the exact origin of a saved, later-returned read.
-    const ArrayContentsEvidence contents = computeArrayContents(function, workLimit);
-    verdicts.arrayRetentionWork = contents.work;
+    const ArrayContentsEvidence contents =
+        computeArrayContents(function, workLimit - verdicts.arrayRetentionWork);
+    verdicts.arrayRetentionWork += contents.work;
     if (!contents.complete) { return; }
     const auto spend = [&]() {
         if (verdicts.arrayRetentionWork == workLimit) { return false; }
@@ -395,12 +466,16 @@ void refineArrayRetention(EscapeVerdicts & verdicts, ctjs::FuncOp function, std:
         }
     }
     // Transactional commit: not even the first candidate changes before the
-    // final graph/verdict visit. Reachable children keep their Stored witnesses,
+    // final graph/verdict visit. Reachable children keep their original witnesses,
     // because returning a container does not give each child a unique owner.
-    // Array receivers lose Passed only after the complete current query proved
+    // Array receivers lose their witness only after the complete current query proved
     // every access own and excluded all other exposure, including later effects.
+    // Single-instance nested origins are confined to the FRAME, not their region:
+    // yielded aliases may still be observed after that region has ended.
     for (mlir::Operation * site : confined) {
-        if (verdicts.sites[site].reason == EscapeReason::Stored) { ++verdicts.confinedStoredSites; }
+        if (retentionReason(verdicts.sites[site]) == EscapeReason::Stored) {
+            ++verdicts.confinedStoredSites;
+        }
         verdicts.sites[site] = Verdict{};
     }
     verdicts.arrayRetentionComplete = true;
@@ -425,11 +500,10 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
         return executable != nullptr && executable->isLive();
     };
 
-    // PASS 1: the sites, the arguments builders, the suspension points -
-    // live blocks only. ctcompile/test/Analysis/Types/Claims.cpp's split applied
-    // to sites: a site in a
-    // block DeadCodeAnalysis proved dead never executes and is dropped; a
-    // site in a live block with no lattice is a gap and is counted.
+    // PASS 1: inventory every site under live top-level blocks. Nested regions
+    // have no instance/control-flow proof here, so even their dead arms remain
+    // inventoried. A dead top-level block drops all its descendant sites; a
+    // top-level site in a live block with no lattice is a counted gap.
     llvm::SmallVector<mlir::Operation *, 2> argumentsBuilders;
     mlir::Operation * suspension = nullptr;
     llvm::SmallVector<mlir::Block *, 8> live;
@@ -437,7 +511,9 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
         ++out.blocks;
         if (!blockIsLive(block)) {
             for (mlir::Operation & op : block) {
-                if (isTrackedSite(&op)) { ++out.deadSites; }
+                op.walk([&](mlir::Operation * nested) {
+                    if (isTrackedSite(nested)) { ++out.deadSites; }
+                });
             }
             continue;
         }
@@ -448,19 +524,21 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             // cannot model. Keep the records from this CFG, but never present
             // them as complete. The capture refusal below is still separate.
             if (op.getNumRegions() != 0) { out.directStorage.complete = false; }
-            if (isTrackedSite(&op)) {
-                Verdict verdict;
-                const AliasLattice * lattice = solver.lookupState<AliasLattice>(op.getResult(0));
-                if (lattice == nullptr || lattice->getValue().isUninitialized()) {
-                    verdict = Verdict{EscapeReason::Unvisited, &op, 0};
-                    ++out.unvisitedSites;
+            op.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * nested) {
+                if (isTrackedSite(nested)) {
+                    Verdict verdict;
+                    if (nested == &op) {
+                        const AliasLattice * lattice =
+                            solver.lookupState<AliasLattice>(nested->getResult(0));
+                        if (lattice == nullptr || lattice->getValue().isUninitialized()) {
+                            verdict = Verdict{EscapeReason::Unvisited, nested, 0};
+                            ++out.unvisitedSites;
+                        }
+                    }
+                    out.sites.insert({nested, verdict});
                 }
-                out.sites.insert({&op, verdict});
-            }
-            // These operations retain raw frame registers, including values
-            // with no explicit SSA use. Nesting cannot hide their refusal,
-            // even though region-local allocation verdicts are out of scope.
-            op.walk([&](mlir::Operation * nested) {
+                // These operations retain raw frame registers, including values
+                // with no explicit SSA use. Nesting cannot hide their refusal.
                 if (llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(nested)) {
                     argumentsBuilders.push_back(nested);
                     out.capturesAllArguments = true;
@@ -511,6 +589,9 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             }
             for (auto & siteEntry : out.sites) {
                 mlir::Operation * site = siteEntry.first;
+                while (site->getParentRegion() != &function.getBody()) {
+                    site = site->getParentOp();
+                }
                 if (site->getBlock() == &entry && !builder->isBeforeInBlock(site)) {
                     late = builder;
                     break;
@@ -519,6 +600,15 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             if (late != nullptr) { break; }
         }
         if (late != nullptr) { refuseWholeFunction(EscapeReason::ArgumentsLate, late); }
+    }
+
+    // ponytail: nested sites need an instance/control-flow proof before any
+    // confinement claim. Keep raw-frame refusals first; otherwise there is no
+    // sinking operand witness for this inventory-only UnknownOp verdict.
+    for (const auto & [site, verdict] : out.sites) {
+        if (site->getParentRegion() != &function.getBody()) {
+            mark(site, EscapeReason::UnknownOp, nullptr, 0);
+        }
     }
 
     // PASS 2: THE SINKS, over every operand of every operation in every live
@@ -611,7 +701,7 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             out.directLoads.reads.push_back(std::move(read));
         }
     }
-    refineArrayRetention(out, function, arrayRetentionWorkLimit);
+    refineArrayRetention(out, solver, function, arrayRetentionWorkLimit);
     return out;
 }
 

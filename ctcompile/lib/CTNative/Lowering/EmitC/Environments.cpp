@@ -39,9 +39,9 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                 const auto type = typeOf(captured);
                 switch (carrierOf(type)) {
                 case carrier::nullable: definition += kNullableType; break;
-                case carrier::number: definition += "js_num"; break;
-                case carrier::boolean: definition += "bool"; break;
-                case carrier::string: definition += "std::string"; break;
+                case carrier::number: definition += "ctnative::js_num"; break;
+                case carrier::boolean: definition += kBooleanType; break;
+                case carrier::string: definition += "ctnative::js_string"; break;
                 case carrier::objectValue:
                     needsObjectValue = true;
                     definition += kObjectValueType;

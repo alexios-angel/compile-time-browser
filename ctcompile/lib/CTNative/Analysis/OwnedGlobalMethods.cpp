@@ -5,6 +5,7 @@
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
 
 namespace ctcompile::ctnative {
 void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContract & contract,
@@ -322,8 +323,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 return;
             }
             const auto action = ctjs::constantKey(read.getKey());
-            const unsigned arity =
-                action == "set" ? 2u : (action == "clear" || action == "keys" ? 0u : 1u);
+            static const llvm::StringMap<unsigned> arities{{"set", 2}, {"clear", 0}, {"keys", 0}};
+            const auto method = action.size() <= 5 ? arities.find(action) : arities.end();
+            const unsigned arity = method != arities.end() ? method->second : 1U;
             if ((action != "set" && action != "get" && action != "has" && action != "delete" &&
                  action != "clear" && action != "keys") ||
                 call.getArgs().size() != arity) {
@@ -529,6 +531,35 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             }
         }
     }
+    // The fresh complete host proof also closes entry-local records and Maps.
+    // Keep their exact source identities separate from the published family;
+    // an unknown field store may be harmless to provider observations but is
+    // insufficient for native primitive storage, even if never read again.
+    llvm::DenseSet<mlir::Operation *> localConstructors, localOperations;
+    const auto & local = host.localRecords();
+    for (ctjs::FuncOp function : local.constructors) {
+        if (!spend()) { return; }
+        if (!local.primitiveFields || function == entry || function == factory ||
+            function == wrapper || methodFunctions.contains(function) ||
+            callbackFunctions.contains(function) || !localConstructors.insert(function).second) {
+            reject("owned local records lack distinct constructors and primitive fields");
+            return;
+        }
+    }
+    for (mlir::Operation * operation : local.operations) {
+        if (!spend()) { return; }
+        localOperations.insert(operation);
+        auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+        if (!read || read->getParentOfType<ctjs::FuncOp>() != entry) { continue; }
+        for (auto * parent = read->getParentOp(); parent != entry; parent = parent->getParentOp()) {
+            if (!spend()) { return; }
+            if (!llvm::isa<mlir::scf::IfOp>(parent)) {
+                reject("owned local record read has unsupported control");
+                return;
+            }
+            observations.insert(parent);
+        }
+    }
     llvm::SmallVector<mlir::Operation *> operations;
     unsigned functions = 0;
     module.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
@@ -544,7 +575,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (auto function = llvm::dyn_cast<ctjs::FuncOp>(operation)) {
             ++functions;
             if ((function != entry && function != factory && !methodFunctions.contains(function) &&
-                 function != wrapper && !callbackFunctions.contains(function)) ||
+                 function != wrapper && !callbackFunctions.contains(function) &&
+                 !localConstructors.contains(function)) ||
                 function->getParentOp() != module || !llvm::hasSingleElement(function.getBody()) ||
                 function->hasAttr("ctjs.skipped")) {
                 reject("owned global method table requires its exact straight-line source "
@@ -568,6 +600,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 operation->getParentOfType<ctjs::FuncOp>() == entry &&
                 llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::TruthyOp, ctjs::CompareOp,
                           ctjs::UnaryOp, mlir::scf::IfOp, mlir::scf::YieldOp>(operation);
+            scalarObservation |= operation->getParentOfType<ctjs::FuncOp>() == entry &&
+                                 localOperations.contains(operation) &&
+                                 llvm::isa<ctjs::BinaryOp>(operation);
             if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
                 scalarObservation &= compare.getKind() == ctjs::CompareKind::StrictEq;
             }
@@ -585,7 +620,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                     llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::TruthyOp, mlir::scf::YieldOp>(
                         operation);
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-                    observation |= llvm::is_contained(capture->leafReads, read);
+                    observation |= (capture && llvm::is_contained(capture->leafReads, read)) ||
+                                   localOperations.contains(read);
                 }
                 if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
                     observation |= compare.getKind() == ctjs::CompareKind::StrictEq;
@@ -605,7 +641,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         return refusal.empty() ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
     });
     if (!refusal.empty()) { return; }
-    if (functions != methods.size() + callbackFunctions.size() + (wrapper ? 3u : 2u)) {
+    if (functions != methods.size() + callbackFunctions.size() + localConstructors.size() +
+                         (wrapper ? 3u : 2u)) {
         reject("owned global method table requires its exact source function chain");
         return;
     }
@@ -619,11 +656,13 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (!spend()) { return; }
         if (callbackOperations.contains(operation)) { continue; }
         if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(operation);
-            made && (!capture || (made != capture->allocation && !childMaps.contains(made)))) {
+            made && !localOperations.contains(made) &&
+            (!capture || (made != capture->allocation && !childMaps.contains(made)))) {
             reject("owned global method table has another constructor");
         }
         if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
             if (made != owner && made != table && !argumentObjects.contains(made) &&
+                !localOperations.contains(made) &&
                 (!capture || !llvm::is_contained(capture->leafObjects, made))) {
                 reject("owned global method table has another allocation");
             }
@@ -645,12 +684,14 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         }
         if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
             if (write != field && !methodInitializations.contains(write) &&
+                !localOperations.contains(write) &&
                 (!capture || !llvm::is_contained(capture->leafWrites, write))) {
                 reject("owned global method fields cannot be replaced or extended");
             }
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
             if (!llvm::is_contained(slot.reads, read) && !methodReads.contains(read) &&
+                !localOperations.contains(read) &&
                 (!capture || (!llvm::is_contained(capture->reads, read) &&
                               !llvm::is_contained(capture->leafReads, read) &&
                               !llvm::is_contained(capture->snapshotOperations, operation)))) {
@@ -667,6 +708,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         }
         if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(operation) && operation != factoryCall &&
             operation != wrapperCall.getOperation() && !methodCalls.contains(operation) &&
+            !localOperations.contains(operation) &&
             (!capture ||
              (!llvm::is_contained(capture->calls, llvm::dyn_cast<ctjs::CallOp>(operation)) &&
               !llvm::is_contained(capture->snapshotOperations, operation)))) {
@@ -798,11 +840,17 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             reject("saved scalar read disagrees with the complete host proof");
             return;
         }
-        // Constant-only scalar origins need no method result. Any results
-        // they do use must belong to this complete live owning family.
+        // Scalar dependencies must belong to this complete live owning family.
+        // A saved field value keeps its original read, not a later field load.
         for (mlir::Value dependency : edge.dependencies) {
             if (!spend()) { return; }
-            if (!methodCalls.contains(dependency.getDefiningOp())) {
+            auto fieldRead = dependency.getDefiningOp<ctjs::GetPropertyOp>();
+            auto leaf = fieldRead ? fieldRead.getObject().getDefiningOp<ctjs::CreateObjectOp>()
+                                  : ctjs::CreateObjectOp{};
+            const bool ownedField = capture && leaf &&
+                                    llvm::is_contained(capture->leafObjects, leaf) &&
+                                    llvm::is_contained(capture->leafReads, fieldRead);
+            if (!methodCalls.contains(dependency.getDefiningOp()) && !ownedField) {
                 reject("saved scalar result is outside the complete owned method family");
                 return;
             }

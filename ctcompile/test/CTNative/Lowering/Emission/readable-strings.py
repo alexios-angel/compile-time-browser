@@ -19,13 +19,13 @@ def main():
     # Input bytes and selected human-readable spellings are independent of the
     # runtime oracle, which uses unsigned numeric byte arrays below.
     cases = [
-        (b"price", 'std::string("price", 5)'),
-        (b'a"b\\c', 'std::string(R"(a"b\\c)", 5)'),
-        (b"a\x007F", 'std::string("a\\0007F", 4)'),
-        (b'a)"b', 'std::string("a)\\"b", 4)'),
-        (b"end\\", 'std::string(R"(end\\)", 4)'),
-        (b"\x01Af", 'std::string("\\001Af", 3)'),
-        (b"", 'std::string("", 0)'),
+        (b"price", 'ctnative::js_string("price", 5)'),
+        (b'a"b\\c', 'ctnative::js_string(R"(a"b\\c)", 5)'),
+        (b"a\x007F", 'ctnative::js_string("a\\0007F", 4)'),
+        (b'a)"b', 'ctnative::js_string("a)\\"b", 4)'),
+        (b"end\\", 'ctnative::js_string(R"(end\\)", 4)'),
+        (b"\x01Af", 'ctnative::js_string("\\001Af", 3)'),
+        (b"", 'ctnative::js_string("", 0)'),
         ("caf\u00e9 \U0001f642".encode(), None),
         (b"\xed\xa0\x80", None),  # A lone surrogate's WTF-8 bytes.
         (b"??= ??/ ??' ??( ??) ??! ??< ??> ??-", None),
@@ -54,7 +54,9 @@ ctjs.func @literal${index}(%receiver: !ctjs.value, %new_target: !ctjs.value,
     checks = []
     for index, (value, _) in enumerate(cases):
         array = ", ".join(str(byte) for byte in value)
-        checks.append(f"  if (!same_bytes(literal_{index}(), {{{array}}})) return {index + 1};")
+        checks.append(
+            f"  if (!same_bytes(literal_{index}().value(), {{{array}}})) return {index + 1};"
+        )
     cpp += """
 #include <initializer_list>
 bool same_bytes(const std::string& actual, std::initializer_list<unsigned char> expected) {

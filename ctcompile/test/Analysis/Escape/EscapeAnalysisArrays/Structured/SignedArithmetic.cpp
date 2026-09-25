@@ -52,8 +52,12 @@ void StructuredCases::signedArithmetic() {
                     .arrays = "a:[x,y] | a:[x,y]",
                     .reads = "a[0]=x; a[0]=x",
                     .exit = "zero -> {}; zero -> {}"});
-    reject("BitNot cannot borrow a canonical String from another structured predecessor",
-           replace(stringComplement, "#ctjs.string<\"1\">", "#ctjs.string<\"01\">"));
+    rows.push_back(
+        {.what = "bounded decimal conversion preserves original reads and retained children",
+         .body = replace(stringComplement, "#ctjs.string<\"1\">", "#ctjs.string<\"01\">"),
+         .arrays = "a:[x,y] | a:[x,y]",
+         .reads = "a[0]=x; a[0]=x",
+         .exit = "x -> {x}; x -> {x}"});
     reject("a String BitNot snapshot cannot change across structured yields",
            replace(stringComplement, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
     const auto primitiveComplement =
@@ -117,8 +121,12 @@ void StructuredCases::signedArithmetic() {
                         .arrays = "a:[x,y] | a:[x,y]",
                         .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
                         .exit = "y -> {y}; y -> {y}"});
-        reject("a noncanonical String cannot borrow another structured predecessor's Number",
-               replace(stringPredecessor, "#ctjs.string<\"-1\">", "#ctjs.string<\"-01\">"));
+        rows.push_back(
+            {.what = "bounded decimal conversion preserves original reads and retained children",
+             .body = replace(stringPredecessor, "#ctjs.string<\"-1\">", "#ctjs.string<\"-01\">"),
+             .arrays = "a:[x,y] | a:[x,y]",
+             .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+             .exit = "y -> {y}; y -> {y}"});
     }
     const std::string primitiveBits = "  %operand = scf.if %flag -> (!ctjs.value) {\n"
                                       "    %truth = ctjs.constant #ctjs.boolean<true>\n"
@@ -190,8 +198,12 @@ void StructuredCases::signedArithmetic() {
                     .arrays = "a:[x,y]; seed:[]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "zero -> {}"});
-    reject("structured String shifts cannot borrow noncanonical counts",
-           replace(stringCount, "#ctjs.string<\"31\">", "#ctjs.string<\"031\">"));
+    rows.push_back(
+        {.what = "bounded decimal conversion preserves original reads and retained children",
+         .body = replace(stringCount, "#ctjs.string<\"31\">", "#ctjs.string<\"031\">"),
+         .arrays = "a:[x,y]; seed:[]",
+         .reads = "a[0]=x; a[1]=y",
+         .exit = "y -> {y}"});
     const auto subSnapshot =
         replace(savedNegative, "unary neg %magnitude", "binary sub %zero, %magnitude");
     rows.push_back(
@@ -312,10 +324,14 @@ void StructuredCases::signedArithmetic() {
                     .arrays = "a:[x,y] | a:[x,y]",
                     .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
                     .exit = "y -> {y}; y -> {y}"});
-    reject("left subtraction cannot borrow another predecessor's canonical String",
-           replace(leftPredecessors, "scf.yield %one : !ctjs.value",
-                   "%bad = ctjs.constant #ctjs.string<\"01\">\n"
-                   "    scf.yield %bad : !ctjs.value"));
+    rows.push_back(
+        {.what = "bounded decimal conversion preserves original reads and retained children",
+         .body = replace(leftPredecessors, "scf.yield %one : !ctjs.value",
+                         "%bad = ctjs.constant #ctjs.string<\"01\">\n"
+                         "    scf.yield %bad : !ctjs.value"),
+         .arrays = "a:[x,y] | a:[x,y]",
+         .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+         .exit = "y -> {y}; y -> {y}"});
     const auto savedStringSub = replace(subSnapshot, "  %unit = ctjs.binary sub %zero, %magnitude",
                                         "  %offset = ctjs.constant #ctjs.string<\"2\">\n"
                                         "  %unit = ctjs.binary sub %magnitude, %offset");
@@ -331,14 +347,18 @@ void StructuredCases::signedArithmetic() {
                     .exit = "zero -> {}"});
     reject("a String-offset snapshot cannot change across structured yields",
            replace(stringSub, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
-    reject("a canonical String offset cannot authorize a noncanonical predecessor",
-           replace(stringSub, "  %magnitude = ctjs.constant #ctjs.string<\"2\">\n",
-                   "  %magnitude = scf.if %flag -> (!ctjs.value) {\n"
-                   "    %good = ctjs.constant #ctjs.string<\"2\">\n"
-                   "    scf.yield %good : !ctjs.value\n"
-                   "  } else {\n"
-                   "    %bad = ctjs.constant #ctjs.string<\"02\">\n"
-                   "    scf.yield %bad : !ctjs.value\n  }\n"));
+    rows.push_back(
+        {.what = "bounded decimal conversion preserves original reads and retained children",
+         .body = replace(stringSub, "  %magnitude = ctjs.constant #ctjs.string<\"2\">\n",
+                         "  %magnitude = scf.if %flag -> (!ctjs.value) {\n"
+                         "    %good = ctjs.constant #ctjs.string<\"2\">\n"
+                         "    scf.yield %good : !ctjs.value\n"
+                         "  } else {\n"
+                         "    %bad = ctjs.constant #ctjs.string<\"02\">\n"
+                         "    scf.yield %bad : !ctjs.value\n  }\n"),
+         .arrays = "a:[x,y] | a:[x,y]",
+         .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+         .exit = "y -> {y}; y -> {y}"});
     reject("structured negative Sub snapshots cannot be own indices",
            replace(subSnapshot, "%base[%i]", "%base[%unit]"), ArrayContentsFailure::UnknownIndex);
     rows.push_back(
@@ -506,14 +526,30 @@ void StructuredCases::signedArithmetic() {
             reject("a String arithmetic snapshot cannot change on the structured backedge",
                    replace(body, "%base, %step, %read, %d :", "%base, %step, %read, %zero :"));
         }
-        reject("String arithmetic cannot borrow a canonical value from another predecessor",
-               replace(stringRight, literal,
-                       "  %text = scf.if %flag -> (!ctjs.value) {\n" +
-                           replace(literal, "%text =", "%good =") +
-                           "    scf.yield %good : !ctjs.value\n"
-                           "  } else {\n"
-                           "    %bad = ctjs.constant #ctjs.string<\"01\">\n"
-                           "    scf.yield %bad : !ctjs.value\n  }\n"));
+        if (operation != "mod") {
+            rows.push_back(
+                {.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(stringRight, literal,
+                                 "  %text = scf.if %flag -> (!ctjs.value) {\n" +
+                                     replace(literal, "%text =", "%good =") +
+                                     "    scf.yield %good : !ctjs.value\n"
+                                     "  } else {\n"
+                                     "    %bad = ctjs.constant #ctjs.string<\"01\">\n"
+                                     "    scf.yield %bad : !ctjs.value\n  }\n"),
+                 .arrays = "a:[x,y] | a:[x,y]",
+                 .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+                 .exit = "y -> {y}; y -> {y}"});
+        } else {
+            reject("String arithmetic cannot borrow a canonical value from another predecessor",
+                   replace(stringRight, literal,
+                           "  %text = scf.if %flag -> (!ctjs.value) {\n" +
+                               replace(literal, "%text =", "%good =") +
+                               "    scf.yield %good : !ctjs.value\n"
+                               "  } else {\n"
+                               "    %bad = ctjs.constant #ctjs.string<\"01\">\n"
+                               "    scf.yield %bad : !ctjs.value\n  }\n"));
+        }
     }
     for (const std::string operation : {"div", "mod"}) {
         const std::string makeResult =

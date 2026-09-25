@@ -52,6 +52,9 @@ def main():
             {"left": 34, "right": 204},
         ),
     }
+    # A closed false call moves the selected literal into the entry block.
+    # The unspecialized source remains a region-allocation refusal below.
+    positives["region"] = (args.fixtures / "region.js", "blocked_1", {"observed": 2})
     counted = (args.fixtures / "counted.js").read_text()
     for trips, expected in enumerate((2935, 33195, 312935, 3133195)):
         source = args.work / f"counted-{trips}.js"
@@ -73,7 +76,7 @@ def main():
             raise RuntimeError(f"{name}: Node/interpreter source observations changed")
         raw = args.work / f"{name}.raw.mlir"
         run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
-        for optimize in (False, True):
+        for optimize in ((True,) if name == "region" else (False, True)):
             prefix = f"{name}.{optimize}"
             native = args.work / f"{prefix}.native.mlir"
             run(
@@ -90,8 +93,12 @@ def main():
             ir = native.read_text()
             if "ctjs.func" in ir or "ctnative.not_native" in ir or "ctjs.skipped" in ir:
                 raise RuntimeError(f"{prefix}: source did not lower completely\n{ir}")
-            if '!emitc.ptr<!emitc.opaque<"std::vector<double>">>' not in ir:
-                raise RuntimeError(f"{prefix}: selection lost its borrowed vector pointer")
+            # The sole true call lets the optimizer select a directly. The
+            # two-call variant keeps the same source branch and both borrows.
+            direct_owner = optimize and name in ("original", "region")
+            has_borrow = '!emitc.ptr<!emitc.opaque<"std::vector<double>">>' in ir
+            if has_borrow == direct_owner:
+                raise RuntimeError(f"{prefix}: unexpected borrowed vector pointer census")
             cleaned = args.work / f"{prefix}.cleaned.mlir"
             run(
                 [
@@ -118,7 +125,7 @@ def main():
                     raise RuntimeError(
                         f"{prefix}/{layout}: expected {owners} owning vectors\n{body}"
                     )
-                borrowed = owners - 1 if "counted" in name else owners
+                borrowed = 0 if direct_owner else owners - 1 if "counted" in name else owners
                 if len(re.findall(r"&[A-Za-z_]\w*", body)) != borrowed:
                     raise RuntimeError(
                         f"{prefix}/{layout}: expected {borrowed} borrowed owners\n{body}"
@@ -132,8 +139,9 @@ def main():
                     if actual != expected:
                         raise RuntimeError(f"{prefix}/{layout}: {actual!r} != {expected!r}")
                     checked += 1
-                if name == "original":
-                    # A vector copy still compiles but clears neither source owner.
+                if (name == "original" and not optimize) or (name == "original-both" and optimize):
+                    # A vector copy still compiles but clears neither source
+                    # owner. Both calls keep the optimized borrow observable.
                     changed, count = re.subn(
                         r"\b([A-Za-z_]\w*)->resize\(",
                         r"std::vector<double> ctnative_copy = *\1;\nctnative_copy.resize(",
@@ -145,7 +153,8 @@ def main():
                     file.write_text(changed)
                     binary = args.work / f"{prefix}.{layout}.copy"
                     run([compilers[0], *FLAGS, str(file), "-o", str(binary)])
-                    if run([str(binary.resolve())]).stdout != "observed=4\n":
+                    copied = "".join(f"{key}=4\n" for key in sorted(observations))
+                    if run([str(binary.resolve())]).stdout != copied:
                         raise RuntimeError(
                             "copy mutation did not expose the original identity loss"
                         )
@@ -197,7 +206,7 @@ def main():
     for source in sources:
         raw = args.work / f"{source.stem}.raw.mlir"
         run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
-        for optimize in (False, True):
+        for optimize in ((False,) if source.stem == "region" else (False, True)):
             result = run(
                 [
                     args.opt,

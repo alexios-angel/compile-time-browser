@@ -1,4 +1,10 @@
 #include "Contents.hpp"
+#include "ctbrowser/core/algorithms.hpp"
+#include "ctbrowser/core/number.hpp"
+#include "ctbrowser/core/number_format.hpp"
+#include "llvm/ADT/APFloat.h"
+
+#include <limits>
 
 namespace ctcompile::ctnative::escape_detail {
 
@@ -102,6 +108,16 @@ std::optional<std::size_t> ownArrayIndex(const ContentsValue & key) {
     return ownArrayIndex(key.origin());
 }
 
+std::optional<std::size_t> arithmeticArrayIndex(const ContentsValue & key) {
+    if (!key.origin() || !key.arithmeticNumber) { return std::nullopt; }
+    const double number = *key.arithmeticNumber;
+    if (!std::isfinite(number) || number < 0 || number >= 4294967295.0 ||
+        std::trunc(number) != number) {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(number);
+}
+
 std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
                                                const ContentsValue & key, mlir::Value result) {
     if (!base.string() || !base.origin() || !key.origin()) { return std::nullopt; }
@@ -130,6 +146,71 @@ std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
     return character;
 }
 
+namespace {
+
+std::optional<double> boundedStringNumber(const ContentsValue & input) {
+    if (!input.string() || !input.origin() || input.asciiCharacter) { return std::nullopt; }
+    auto literal = input.origin().getDefiningOp<ctjs::ConstantOp>();
+    auto string =
+        literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
+    if (!string) { return std::nullopt; }
+    const auto text = string.getValue();
+    // ponytail: at most 32 source bytes; wider Strings need charged parsing.
+    // Validate the whole grammar before Core handles overflow/underflow.
+    if (text.size() > 32) { return std::nullopt; }
+    llvm::StringRef digits = ctbrowser::trim_js_space({text.data(), text.size()});
+    // Only these exact tokens may supply a nonfinite conversion proof. Other
+    // spellings that Core converts to NaN still require validated grammar below.
+    if (digits == "Infinity" || digits == "+Infinity" || digits == "-Infinity" || digits == "NaN") {
+        return ctbrowser::string_to_number({text.data(), text.size()});
+    }
+    int radix = 10;
+    if (digits.consume_front_insensitive("0x")) {
+        radix = 16;
+    } else if (digits.consume_front_insensitive("0o")) {
+        radix = 8;
+    } else if (digits.consume_front_insensitive("0b")) {
+        radix = 2;
+    } else if ((digits.consume_front("+") || digits.consume_front("-")) && digits.empty()) {
+        return std::nullopt;
+    }
+    if (radix == 10 && !digits.empty()) {
+        const auto decimal = [](char c) { return c >= '0' && c <= '9'; };
+        auto rest = digits.drop_while(decimal);
+        bool hasDigits = rest.size() != digits.size();
+        if (rest.consume_front(".")) {
+            const auto fraction = rest.drop_while(decimal);
+            hasDigits |= fraction.size() != rest.size();
+            rest = fraction;
+        }
+        if (!hasDigits) { return std::nullopt; }
+        if (rest.consume_front_insensitive("e")) {
+            if (!rest.consume_front("+")) { rest.consume_front("-"); }
+            unsigned exponent = 0;
+            // Core adds an int exponent to the mantissa order on range failure.
+            // The source-byte bound limits that order's magnitude to 32.
+            if (rest.empty() || !llvm::all_of(rest, decimal) || rest.getAsInteger(10, exponent) ||
+                exponent > static_cast<unsigned>(std::numeric_limits<int>::max() - 32)) {
+                return std::nullopt;
+            }
+            rest = {};
+        }
+        if (!rest.empty()) { return std::nullopt; }
+    } else if ((radix != 10 && digits.empty()) || !llvm::all_of(digits, [radix](char c) {
+                   const auto digit = ctbrowser::hex_value(c);
+                   return digit >= 0 && digit < radix;
+               })) {
+        return std::nullopt;
+    }
+    const double converted = ctbrowser::string_to_number({text.data(), text.size()});
+    // Decimal overflow may feed bitwise conversion. Radix overflow in Core is
+    // NaN, so it still cannot supply a JavaScript conversion proof.
+    if (std::isnan(converted)) { return std::nullopt; }
+    return converted;
+}
+
+} // namespace
+
 // One signed magnitude of an exact primitive Number conversion. Facts attach
 // only to the operation result; primitive origins keep their property keys.
 std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, bool negate) {
@@ -139,17 +220,14 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
     if (!origin) { return std::nullopt; }
     if (auto number = boundedNumber(origin, negate)) { return number; }
     if (input.string()) {
-        if (!negate) { return ownArrayIndex(input); }
-        auto literal = origin.getDefiningOp<ctjs::ConstantOp>();
-        auto string =
-            literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
-        if (!string) { return std::nullopt; }
-        auto text = string.getValue();
-        std::uint32_t magnitude = 0;
-        // ponytail: a sign and ten canonical decimal digits; wider spellings need charged parsing.
-        if (text.consume_front("-") && !text.empty() && text.size() <= 10 && text.front() >= '1' &&
-            text.front() <= '9' && !text.getAsInteger(10, magnitude)) {
-            return magnitude;
+        if (input.asciiCharacter) { return negate ? std::nullopt : ownArrayIndex(input); }
+        const auto converted = boundedStringNumber(input);
+        if (!converted || !std::isfinite(*converted) || std::abs(*converted) > 4294967295.0) {
+            return std::nullopt;
+        }
+        const double magnitude = negate ? -*converted : *converted;
+        if (magnitude >= 0 && std::floor(magnitude) == magnitude) {
+            return static_cast<std::size_t>(magnitude);
         }
         return std::nullopt;
     }
@@ -163,14 +241,56 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
     return std::nullopt;
 }
 
+// Bitwise conversion accepts an original Number or bounded String. Arithmetic and
+// property keys still require their separate exact Number/spelling proofs.
+std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
+    if (input.convertedBits) { return input.convertedBits; }
+    if (const auto positive = boundedConvertedNumber(input)) {
+        return static_cast<std::uint32_t>(*positive);
+    }
+    if (const auto negative = boundedConvertedNumber(input, true)) {
+        return 0U - static_cast<std::uint32_t>(*negative);
+    }
+    if (const auto number = boundedStringNumber(input)) {
+        return ctbrowser::number_to_uint32(*number);
+    }
+    auto origin = input.origin();
+    if (!origin) { return std::nullopt; }
+    bool negate = false;
+    // ponytail: cap literal-only provenance at 64 operations, matching loop proofs.
+    // Unbounded chains need charged traversal; loads and arithmetic still stop here.
+    for (unsigned depth = 0; depth < 64; ++depth) {
+        auto unary = origin.getDefiningOp<ctjs::UnaryOp>();
+        if (!unary ||
+            (unary.getKind() != ctjs::UnaryKind::Neg && unary.getKind() != ctjs::UnaryKind::Plus)) {
+            break;
+        }
+        negate ^= unary.getKind() == ctjs::UnaryKind::Neg;
+        origin = unary.getOperand();
+    }
+    auto literal = origin.getDefiningOp<ctjs::ConstantOp>();
+    const auto number =
+        literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
+    // Core maps nonfinite Numbers to zero and reduces finite Numbers before integer conversion.
+    if (number) {
+        return ctbrowser::number_to_uint32(negate ? -number.getDouble() : number.getDouble());
+    }
+    if (origin == input.origin()) { return std::nullopt; }
+    if (literal && llvm::isa<ctjs::UndefinedAttr>(literal.getValue())) {
+        return ctbrowser::number_to_uint32(std::numeric_limits<double>::quiet_NaN());
+    }
+    if (const auto converted = boundedStringNumber({origin, ContentsKind::String})) {
+        return ctbrowser::number_to_uint32(negate ? -*converted : *converted);
+    }
+    return std::nullopt;
+}
+
 void boundedNumberComplement(const ContentsValue & input, ContentsValue & result) {
-    const auto positive = boundedConvertedNumber(input);
-    const auto negative = boundedConvertedNumber(input, true);
-    if (!positive && !negative) { return; }
+    const auto converted = boundedConvertedBits(input);
+    if (!converted) { return; }
     // Complement exact ToUint32 bits, then recover the signed Number magnitude
     // without signed overflow. Facts attach only to the result's identity.
-    const std::uint32_t bits = ~(positive ? static_cast<std::uint32_t>(*positive)
-                                          : 0U - static_cast<std::uint32_t>(*negative));
+    const std::uint32_t bits = ~*converted;
     if (bits < 2147483648ULL) {
         result.integerNumber = bits;
     } else {
@@ -189,19 +309,14 @@ void boundedNumberBitwise(const ContentsValue & left, const ContentsValue & righ
     case ctjs::BinaryKind::UShr: break;
     default: return;
     }
-    const auto a = boundedConvertedNumber(left);
-    const auto b = boundedConvertedNumber(right);
-    const auto negativeA = boundedConvertedNumber(left, true);
-    const auto negativeB = boundedConvertedNumber(right, true);
-    // Original Boolean/null and canonical Strings convert exactly;
-    // signed Numbers wrap. Mask counts; C++23 signed right shift
-    // preserves the sign. Only UShr keeps an unsigned result;
-    // negative magnitudes never become own-index facts.
-    if ((a || negativeA) && (b || negativeB)) {
-        const auto x =
-            a ? static_cast<std::uint32_t>(*a) : 0U - static_cast<std::uint32_t>(*negativeA);
-        const auto y =
-            b ? static_cast<std::uint32_t>(*b) : 0U - static_cast<std::uint32_t>(*negativeB);
+    const auto a = boundedConvertedBits(left);
+    const auto b = boundedConvertedBits(right);
+    // Bounded primitive operands use Core's ToUint32 conversion. Mask counts;
+    // C++23 signed right shift preserves the sign. Only UShr keeps an unsigned
+    // result; negative magnitudes never become own-index facts.
+    if (a && b) {
+        const auto x = *a;
+        const auto y = *b;
         const auto bits =
             kind == ctjs::BinaryKind::BitAnd   ? x & y
             : kind == ctjs::BinaryKind::BitOr  ? x | y
@@ -218,8 +333,68 @@ void boundedNumberBitwise(const ContentsValue & left, const ContentsValue & righ
     }
 }
 
+namespace {
+
+std::optional<double> arithmeticNumber(const ContentsValue & input) {
+    if (input.arithmeticNumber) { return input.arithmeticNumber; }
+    auto literal =
+        input.origin() ? input.origin().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+    const auto value =
+        literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
+    return value ? std::optional<double>{value.getDouble()} : std::nullopt;
+}
+
+void boundedNumberArithmetic(const ContentsValue & left, const ContentsValue & right,
+                             ctjs::BinaryKind kind, ContentsValue & result) {
+    const auto a = arithmeticNumber(left);
+    const auto b = arithmeticNumber(right);
+    const auto depth = std::max(left.arithmeticDepth, right.arithmeticDepth);
+    const bool negativeUnit = kind == ctjs::BinaryKind::Pow && a && b && *a == -1 &&
+                              std::isfinite(*b) && std::trunc(*b) == *b;
+    if (a && b && depth < 64 &&
+        (kind != ctjs::BinaryKind::Pow || *b == 0 || *b == 1 || negativeUnit ||
+         (*a == 1 && std::isfinite(*b)))) {
+        // ponytail: at most 64 Number operations; Pow only preserves the exact
+        // zero/unit-exponent and finite-exponent +/-unit-base identities. Other powers
+        // need their own binary64 proof. Number x ** +/-0 is one, including NaN x;
+        // x ** 1 preserves x, but 1 ** a nonfinite exponent is NaN.
+        llvm::APFloat computed(kind == ctjs::BinaryKind::Pow && *b == 0 ? 1.0 : *a);
+        if (kind == ctjs::BinaryKind::Pow && negativeUnit) {
+            // Finite integral binary64 exponents have exact parity, including
+            // negative exponents and represented even integers beyond 2^53.
+            computed = llvm::APFloat(std::fmod(*b, 2.0) == 0 ? 1.0 : -1.0);
+        } else if (kind == ctjs::BinaryKind::Mul) {
+            computed.multiply(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
+        } else if (kind == ctjs::BinaryKind::Div) {
+            computed.divide(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
+        } else if (kind == ctjs::BinaryKind::Mod) {
+            computed.mod(llvm::APFloat(*b));
+        } else if (kind == ctjs::BinaryKind::Sub) {
+            computed.subtract(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
+        } else if (kind == ctjs::BinaryKind::Add) {
+            computed.add(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
+        }
+        result.arithmeticNumber = computed.convertToDouble();
+        result.arithmeticDepth = depth + 1;
+        result.convertedBits = ctbrowser::number_to_uint32(*result.arithmeticNumber);
+    }
+}
+
+} // namespace
+
+void boundedNumberUnary(const ContentsValue & input, bool negate, ContentsValue & result) {
+    const auto number = arithmeticNumber(input);
+    if (!number || input.arithmeticDepth >= 64) { return; }
+    // Unary sign/identity preserves binary64, including signed zero and nonfinite
+    // values. Converted bits and String coercions cannot supply this Number fact.
+    result.arithmeticNumber = negate ? -*number : *number;
+    result.arithmeticDepth = input.arithmeticDepth + 1;
+    result.convertedBits = ctbrowser::number_to_uint32(*result.arithmeticNumber);
+}
+
 void boundedNumberProduct(const ContentsValue & left, const ContentsValue & right,
                           ContentsValue & result) {
+    boundedNumberArithmetic(left, right, ctjs::BinaryKind::Mul, result);
     auto a = boundedConvertedNumber(left);
     auto b = boundedConvertedNumber(right);
     const bool negative = a.has_value() != b.has_value();
@@ -240,6 +415,8 @@ void boundedNumberProduct(const ContentsValue & left, const ContentsValue & righ
 
 void boundedNumberDivision(const ContentsValue & left, const ContentsValue & right, bool remainder,
                            ContentsValue & result) {
+    boundedNumberArithmetic(left, right, remainder ? ctjs::BinaryKind::Mod : ctjs::BinaryKind::Div,
+                            result);
     auto a = boundedConvertedNumber(left);
     auto b = boundedConvertedNumber(right);
     const bool negative = remainder ? !a : a.has_value() != b.has_value();
@@ -261,6 +438,7 @@ void boundedNumberDivision(const ContentsValue & left, const ContentsValue & rig
 
 void boundedNumberPower(const ContentsValue & left, const ContentsValue & right,
                         ContentsValue & result) {
+    boundedNumberArithmetic(left, right, ctjs::BinaryKind::Pow, result);
     const auto exponent = boundedConvertedNumber(right);
     const auto positive = boundedConvertedNumber(left);
     const auto negative = boundedConvertedNumber(left, true);
@@ -291,6 +469,7 @@ void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
     // Add selects concatenation before Number conversion; even canonical
     // Strings cannot borrow the numeric proof used by the other operations.
     if (left.string() || right.string()) { return; }
+    boundedNumberArithmetic(left, right, ctjs::BinaryKind::Add, result);
     const auto a = boundedConvertedNumber(left);
     const auto b = boundedConvertedNumber(right);
     // Both original primitives must convert exactly. Guard before adding so
@@ -320,6 +499,7 @@ void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
 
 void boundedNumberDifference(const ContentsValue & left, const ContentsValue & right,
                              ContentsValue & result) {
+    boundedNumberArithmetic(left, right, ctjs::BinaryKind::Sub, result);
     const auto original = boundedConvertedNumber(left);
     const auto offset = boundedConvertedNumber(right);
     // Boolean/null and canonical Strings share unary's exact conversion.

@@ -18,6 +18,11 @@
 
 namespace ctcompile::ctnative::class_detail {
 
+inline bool closureMetadataKey(llvm::StringRef key) {
+    static const llvm::StringSet<> names{"name", "length", "__home", "caller", "arguments"};
+    return key.size() <= 9 && names.contains(key);
+}
+
 struct classInitialization {
     mlir::ModuleOp module;
     unsigned remaining;
@@ -28,15 +33,21 @@ struct classInitialization {
     llvm::DenseMap<mlir::Value, ctjs::CreateClosureOp> holderReads;
     llvm::DenseSet<mlir::Operation *> globalHolderLoads;
     llvm::MapVector<mlir::Operation *, CallableObject> globalHolders;
-    llvm::MapVector<mlir::Operation *, CallableObject> localDOMHolders;
+    llvm::MapVector<mlir::Operation *, CallableObject> localHolders;
     llvm::SmallVector<ctjs::CallOp> calls;
-    llvm::DenseMap<mlir::Value, ctjs::CallOp> heritage;
+    // Publication scans may stop early; charge work in source order, not pointer order.
+    llvm::MapVector<mlir::Value, ctjs::CallOp> heritage;
     llvm::DenseSet<mlir::Value> baseClasses;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<ctjs::SetPropertyOp>> inheritedMethods;
+    llvm::DenseMap<mlir::Value, llvm::StringMap<ctjs::DefineAccessorOp>> inheritedGetters;
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<llvm::StringRef>> snapshotFields;
+    llvm::DenseSet<mlir::Operation *> snapshotMethods;
     llvm::SmallVector<std::pair<ctjs::CallOp, ctjs::SetPropertyOp>> inheritedSlots;
     llvm::DenseSet<mlir::Operation *> setup;
     llvm::DenseSet<mlir::Operation *> retainedSetup;
     llvm::DenseSet<mlir::Operation *> constructors;
+    llvm::DenseSet<mlir::Operation *> normalizedSuper;
+    llvm::MapVector<mlir::Operation *, bool> instanceOfResults;
     llvm::DenseSet<mlir::Operation *> methods;
     llvm::DenseSet<mlir::Operation *> methodCalls;
     llvm::SmallVector<std::pair<ctjs::ConstructOp, ctjs::SetPropertyOp>> methodProbes;
@@ -44,17 +55,29 @@ struct classInitialization {
     llvm::DenseSet<mlir::Operation *> helpers;
     llvm::DenseSet<mlir::Operation *> helperCalls;
     llvm::DenseSet<mlir::Operation *> domEntryHelpers;
+    llvm::DenseSet<mlir::Operation *> domDataOperations;
+    llvm::DenseMap<mlir::Value, mlir::Value> retainedRecordOrigins;
     llvm::DenseSet<mlir::Operation *> getters;
     llvm::DenseSet<mlir::Operation *> throwingGetters;
     llvm::DenseSet<mlir::Operation *> errorOperations;
     llvm::SmallVector<ctjs::GetPropertyOp> constructorReads;
     llvm::SmallVector<std::pair<ctjs::GetPropertyOp, ctjs::FuncOp>> getterReads;
     llvm::SmallVector<ctjs::FuncOp> getterOrder;
+    llvm::DenseMap<mlir::Operation *, unsigned> getterExpansion;
     llvm::SmallVector<ctjs::CreateClosureOp> getterClosures;
+    llvm::SmallVector<std::pair<ctjs::GetPropertyOp, ctjs::FuncOp>> staticMethodReads;
+    llvm::SmallVector<ctjs::CreateClosureOp> staticMethodClosures;
     llvm::MapVector<mlir::Value, mlir::Value> cells;
     llvm::DenseSet<mlir::Operation *> cellOperations;
+    llvm::DenseSet<mlir::Operation *> earlyCaptures;
     llvm::SmallVector<ctjs::CellGetOp> cellReads;
     llvm::SmallVector<ctjs::LoadUpvalueOp> captureReads;
+    llvm::DenseSet<mlir::Value> maps;
+    llvm::DenseSet<mlir::Value> mapCells;
+    llvm::DenseMap<mlir::Value, mlir::Value> mapCaptures;
+    llvm::DenseSet<mlir::Operation *> mapClosures;
+    llvm::DenseSet<mlir::Operation *> mapOperations;
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> deferredPublications;
     llvm::DenseMap<mlir::Value, mlir::Value> holderCaptures;
     llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> callableCaptures;
     llvm::SetVector<mlir::Operation *> capturedHelpers;
@@ -71,39 +94,74 @@ struct classInitialization {
     static bool undefined(mlir::Value value);
     ctjs::FuncOp target(ctjs::CreateClosureOp closure);
     bool proveCells(ctjs::FuncOp entry);
+    bool proveMaps();
     mlir::Value sourceValue(mlir::Value value);
     llvm::SmallVector<mlir::OpOperand *> sourceUses(mlir::Value value);
     bool helperCallback(mlir::OpOperand & use);
     bool helperCallbacks(ctjs::FuncOp helper);
     bool methodCaptures(ctjs::CreateClosureOp method, ctjs::CreateClosureOp constructor,
-                        llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads, bool domEntry);
-    ctjs::CreateClosureOp sourceClosure(mlir::Value value, bool domEntry = false);
+                        llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads, bool domEntry,
+                        unsigned depth = 0);
+    ctjs::CreateClosureOp sourceClosure(mlir::Value value, bool entryAliases = false,
+                                        bool domEntry = false);
     bool unusedReceiver(ctjs::FuncOp fn);
+    bool borrowedHelperReads(mlir::OpOperand & use, const llvm::StringSet<> & methodKeys,
+                             llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads,
+                             unsigned depth = 0);
+    bool clearOwnFieldLoop(ctjs::CallOp snapshot, llvm::ArrayRef<llvm::StringRef> fields,
+                           const HostContract & contract);
+    bool normalizePublicationHelper(ctjs::CreateClosureOp constructor,
+                                    const HostContract & contract);
+    bool normalizePublicationKey(ctjs::CreateClosureOp constructor, const HostContract & contract);
+    bool publicationSuffix(ctjs::CallOp publication, llvm::ArrayRef<ctjs::ConstructOp> instances,
+                           bool allowFields);
+    bool sinkCapturedPublication(ctjs::CallOp setup, const HostContract & contract,
+                                 llvm::SmallVectorImpl<unsigned> & requiredHelpers);
+    bool normalizeCapturedMapHelpers(ctjs::FuncOp scope);
+    bool normalizeNestedMaps(ctjs::FuncOp scope, const HostContract & contract);
+    bool sinkConstructorPublication(ctjs::CreateClosureOp constructor,
+                                    llvm::ArrayRef<ctjs::ConstructOp> instances,
+                                    const HostContract & contract);
+    bool ownFieldSnapshots(ctjs::CreateClosureOp constructor,
+                           llvm::ArrayRef<ctjs::ConstructOp> instances,
+                           llvm::ArrayRef<ctjs::SetPropertyOp> definitions,
+                           const llvm::StringSet<> & methodKeys, const HostContract & contract);
     bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
                     bool methodsAvailable = false);
+    bool retainedMapAliases(mlir::OpOperand & use, llvm::SmallVectorImpl<mlir::Value> & reads);
+    bool retainedMapReads(mlir::OpOperand & use, const llvm::StringSet<> & methodKeys,
+                          llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads);
 
     bool staticGetters(const llvm::StringMap<ctjs::DefineAccessorOp> & definitions,
                        llvm::ArrayRef<ctjs::GetPropertyOp> reads, ctjs::CallOp helper);
 
     bool proveHeritage(const HostContract & contract);
+    bool proveInstanceOf(const HostContract & contract);
 
     bool heritageUse(mlir::OpOperand & use, mlir::Value constructor);
 
     // ponytail: explicit super statements over local bases. Fields, replacement
     // returns and default rest/apply need their own proof.
-    bool normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp base, const HostContract & contract);
+    bool normalizeSuper(ctjs::CreateClosureOp constructor, ctjs::CreateClosureOp baseClosure,
+                        const HostContract & contract);
+
+    bool normalizeSuperMethods(ctjs::FuncOp function,
+                               llvm::ArrayRef<ctjs::SetPropertyOp> baseDefinitions);
 
     bool examine(ctjs::CallOp call, const HostContract & contract, bool domEntry);
 
     bool prove(const HostContract & contract, bool domEntry = false);
+    bool proveDOMDataFamily(const HostContract & contract);
+    bool proveDOMDataScalars(host_detail::analyzer & analysis);
 
     bool proveDOMMethods(const HostContract & contract);
 
     bool normalizeMethods();
+    bool transportHelperMaps();
 
     static void eraseRooted(mlir::Operation * operation);
-    void expandHolders();
+    llvm::SmallVector<ctjs::FuncOp> expandHolders();
 
     void rewrite();
 };

@@ -1,0 +1,52 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name cached-transported-length
+// RUN: FileCheck %s < %t/escape-claims-cached-transported-length.claims
+
+// The loaded receiver crosses an early-return edge before its cached length read.
+// Saved children, changing bounds and changed receivers remain escaping.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function cachedTransportedLengthCleared(flag) {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded = holder[0];
+    if (flag) return 0;
+    var length = loaded.length;
+    for (var i = 0; i < length; i++) loaded[i] = 0;
+    return array;
+}
+function cachedTransportedLengthSaved(flag) {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded = holder[0];
+    if (flag) return 0;
+    var length = loaded.length, saved = loaded[0];
+    for (var i = 0; i < length; i++) loaded[i] = 0;
+    return saved;
+}
+function cachedTransportedLengthChanged(flag) {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded = holder[0];
+    if (flag) return 0;
+    var length = loaded.length;
+    for (var i = 0; i < length; i++) {
+        loaded[i] = 0;
+        length = 1;
+    }
+    return array;
+}
+function cachedTransportedLengthReceiverChanged(flag) {
+    var child = {}, array = [child, 0, child], holder = [array];
+    var loaded = holder[0];
+    if (flag) return 0;
+    var length = loaded.length;
+    loaded = [0, 0, 0];
+    for (var i = 0; i < length; i++) loaded[i] = 0;
+    return array;
+}
+cachedTransportedLengthCleared(false); cachedTransportedLengthCleared(true);
+cachedTransportedLengthSaved(false); cachedTransportedLengthSaved(true);
+cachedTransportedLengthChanged(false); cachedTransportedLengthChanged(true);
+cachedTransportedLengthReceiverChanged(false); cachedTransportedLengthReceiverChanged(true);

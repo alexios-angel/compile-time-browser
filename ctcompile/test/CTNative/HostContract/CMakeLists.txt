@@ -15,9 +15,11 @@ if(TARGET ctcompile-test-host-contract)
     DOMBranchFilter.h
     DOMDataset.h
     DOMIteration.h
+    DOMIteratorClose.h
     DOMJSON.h
     DOMNullable.h
     DOMNumbers.h
+    DOMSnapshotLengths.h
     DOMURI.h
     Fingerprint.h
     HostContractFixtures.h

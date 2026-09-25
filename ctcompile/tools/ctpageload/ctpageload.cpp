@@ -10,6 +10,9 @@
 // back to compiling would report a saving of zero and look like a finding.
 #include <ctbrowser.hpp>
 
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/raw_ostream.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -63,14 +66,18 @@ template <typename F> [[nodiscard]] double median_ms(int runs, F && once) {
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (argc < 2) {
-        std::fprintf(stderr, "usage: ctpageload <page.html>\n"
-                             "  run from a directory where the page's <script src> resolves\n");
+    llvm::cl::OptionCategory category("ctpageload options");
+    llvm::cl::opt<std::string> input(llvm::cl::Positional, llvm::cl::Required,
+                                     llvm::cl::desc("<page.html>"), llvm::cl::cat(category));
+    llvm::cl::HideUnrelatedOptions(category);
+    if (!llvm::cl::ParseCommandLineOptions(
+            argc, argv, "Measure image loading; run where the page's script sources resolve\n",
+            &llvm::errs())) {
         return 2;
     }
-    const std::string page = read_file(argv[1]);
+    const std::string page = read_file(input);
     if (page.empty()) {
-        std::fprintf(stderr, "ctpageload: cannot read %s\n", argv[1]);
+        std::fprintf(stderr, "ctpageload: cannot read %s\n", input.c_str());
         return 2;
     }
 

@@ -60,9 +60,9 @@ var b = looped();
 // --- one class per shape, fields as doubles, the local by value ------------
 //
 // CHECK: emitc.class @ctn_x_y
-// CHECK-NEXT: emitc.field @x : f64
-// CHECK-NEXT: emitc.field @y : f64
-// CHECK-LABEL: emitc.func @closed_1() -> f64
+// CHECK-NEXT: emitc.field @x : !emitc.opaque<"ctnative::js_num">
+// CHECK-NEXT: emitc.field @y : !emitc.opaque<"ctnative::js_num">
+// CHECK-LABEL: emitc.func @closed_1() -> !emitc.opaque<"ctnative::js_num">
 // CHECK: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_x_y">>
 // CHECK: member = "x"
 // CHECK: assign
@@ -91,10 +91,10 @@ var b = looped();
 // emitc.variable of the class in the function, a loop that carries a double
 // and nothing of that class, and the same %[[ACC]] under every `total`.
 //
-// CHECK-LABEL: emitc.func @looped_3() -> f64
+// CHECK-LABEL: emitc.func @looped_3() -> !emitc.opaque<"ctnative::js_num">
 // CHECK: %[[ACC:.*]] = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_total">>
 // CHECK-NOT: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_total">>
-// CHECK: scf.while ({{.*}}) : (f64) -> f64 {
+// CHECK: scf.while ({{.*}}) : (!emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num"> {
 // CHECK-NOT: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_total">>
 // CHECK: "emitc.member"(%[[ACC]]) <{member = "total"}>
 // CHECK-NEXT: emitc.load

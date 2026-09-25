@@ -1,0 +1,2 @@
+# Element query snapshots retain document-owned identities and static membership.
+# RUN: python3 %S/native_dom_query_all.py --translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm

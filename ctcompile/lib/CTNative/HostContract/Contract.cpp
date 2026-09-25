@@ -44,6 +44,12 @@ bool keys(const llvm::json::Object & object, llvm::ArrayRef<llvm::StringRef> all
     return true;
 }
 
+bool closedSourceIntrinsic(llvm::StringRef name) {
+    static const llvm::StringSet<> names{"Map", "Array", "Error", "Object", "Function"};
+    return names.contains(name) || host_detail::classIntrinsicArity(name) ||
+           host_detail::iteratorIntrinsicArity(name);
+}
+
 std::string realmReceiverProblem(const HostContract & contract) {
     if (!contract.classicScriptRealm && !contract.realmOwnDataProperties.empty()) {
         return "realm own-data properties require the classic-script-realm entry receiver";
@@ -64,6 +70,26 @@ std::string realmReceiverProblem(const HostContract & contract) {
 
 } // namespace
 
+const llvm::StringSet<> & host_detail::domInitialIntrinsics() {
+    static const llvm::StringSet<> names{
+        "Object",
+        "Number",
+        "decodeURIComponent",
+        "JSON",
+        "Array",
+        "String",
+        "Symbol",
+        "RegExp",
+        "Element",
+        "Function",
+        "__ctbrowser_regexp",
+        "__ctbrowser_for_of_open",
+        "__ctbrowser_iter_next",
+        "__ctbrowser_iter_close",
+    };
+    return names;
+}
+
 llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     auto parsed = llvm::json::parse(text);
     if (!parsed) { return parsed.takeError(); }
@@ -76,18 +102,23 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     const bool dom = domSession || object->getString("provider") == "ctbrowser-dom-v1";
     const bool domData = object->getString("provider") == "ctbrowser-dom-data-session-v1";
     const bool session = object->getString("provider") == "closed-source-session-v1";
-    if (!dom && !domData && !session && object->getString("provider") != "closed-source-v1") {
+    const bool intrinsics = object->getString("provider") == "ctbrowser-intrinsics-v1";
+    if (!dom && !domData && !session && !intrinsics &&
+        object->getString("provider") != "closed-source-v1") {
         return error("unsupported host provider; expected closed-source-v1, "
-                     "closed-source-session-v1, ctbrowser-dom-v1, ctbrowser-dom-session-v1 or "
-                     "ctbrowser-dom-data-session-v1");
+                     "closed-source-session-v1, ctbrowser-dom-v1, ctbrowser-dom-session-v1, "
+                     "ctbrowser-dom-data-session-v1 or ctbrowser-intrinsics-v1");
     }
-    if (dom ? !keys(*object, {"version", "provider", "module_sha256", "entry", "element_parameters",
-                              "initial_intrinsics", "dataset_parameters"})
-            : !keys(*object,
-                    {"version", "provider", "module_sha256", "entry", "roots", "observations",
-                     "absent_bindings", "undefined_bindings", "initial_intrinsics",
-                     "realm_global_this", "entry_receiver", "element_parameters"}) ||
-                  (!dom && !domData && object->get("element_parameters"))) {
+    if (intrinsics ? !keys(*object, {"version", "provider", "module_sha256", "entry",
+                                     "initial_intrinsics", "parameter_types"})
+        : dom ? !keys(*object,
+                      {"version", "provider", "module_sha256", "entry", "element_parameters",
+                       "initial_intrinsics", "dataset_parameters", "current_document_parameter"})
+              : !keys(*object,
+                      {"version", "provider", "module_sha256", "entry", "roots", "observations",
+                       "absent_bindings", "undefined_bindings", "initial_intrinsics",
+                       "realm_global_this", "entry_receiver", "element_parameters"}) ||
+                    (!dom && !domData && object->get("element_parameters"))) {
         return error("host contract must be an object with only supported fields");
     }
     const auto digest = object->getString("module_sha256");
@@ -96,13 +127,44 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     if (!digest || digest->size() != 64 ||
         !llvm::all_of(*digest,
                       [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }) ||
-        !entry || entry->empty() || (!dom && (roots == nullptr || roots->empty()))) {
+        !entry || entry->empty() || (!dom && !intrinsics && (roots == nullptr || roots->empty()))) {
         return error("host contract requires a lowercase SHA-256, entry symbol and roots");
     }
     HostContract result;
     if (session) { result.provider = HostContract::Provider::closedSourceSession; }
     result.moduleSha256 = digest->str();
     result.entry = entry->str();
+    if (intrinsics) {
+        result.provider = HostContract::Provider::ctbrowserIntrinsics;
+        if (auto failure = names(*object, "initial_intrinsics", result.initialIntrinsics, false)) {
+            return std::move(failure);
+        }
+        if (!llvm::is_contained(result.initialIntrinsics, "Symbol") ||
+            llvm::any_of(result.initialIntrinsics,
+                         [](const auto & name) { return name != "Symbol" && name != "String"; })) {
+            return error("intrinsic entry requires standard Symbol and optional String identities");
+        }
+        if (const auto * requested = object->get("parameter_types")) {
+            const auto * parameters = requested->getAsArray();
+            if (!parameters) { return error("intrinsic parameter_types must be an array"); }
+            for (const auto & parameter : *parameters) {
+                const auto name = parameter.getAsString();
+                if (name == "boolean") {
+                    result.intrinsicParameters.push_back(HostIntrinsicParameter::boolean);
+                } else if (name == "number") {
+                    result.intrinsicParameters.push_back(HostIntrinsicParameter::number);
+                } else if (name == "string") {
+                    result.intrinsicParameters.push_back(HostIntrinsicParameter::string);
+                } else if (name == "symbol") {
+                    result.intrinsicParameters.push_back(HostIntrinsicParameter::symbol);
+                } else {
+                    return error("intrinsic parameter_types supports only boolean, number, "
+                                 "string and symbol");
+                }
+            }
+        }
+        return result;
+    }
     if (dom || domData) {
         result.provider = domData      ? HostContract::Provider::ctbrowserDOMDataSession
                           : domSession ? HostContract::Provider::ctbrowserDOMSession
@@ -121,6 +183,14 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
             result.elementParameters.push_back(static_cast<unsigned>(*index));
         }
         if (dom) {
+            if (const auto * requested = object->get("current_document_parameter")) {
+                const auto index = requested->getAsInteger();
+                if (!index || *index < 0 ||
+                    static_cast<std::uint64_t>(*index) >= result.elementParameters.size()) {
+                    return error("DOM current_document_parameter must name a declared element");
+                }
+                result.currentDocumentParameter = static_cast<unsigned>(*index);
+            }
             if (const auto * requested = object->get("dataset_parameters")) {
                 const auto * indices = requested->getAsArray();
                 if (!indices) { return error("DOM dataset_parameters must be an index array"); }
@@ -144,16 +214,14 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
                 // declarations survive for every method probe and final proof.
                 const bool hasClasses = llvm::is_contained(result.initialIntrinsics,
                                                            host_detail::classDefinedIntrinsic);
+                const auto & supportedIntrinsics = host_detail::domInitialIntrinsics();
                 if (llvm::any_of(result.initialIntrinsics, [&](const auto & name) {
                         if (hasClasses &&
                             (host_detail::classIntrinsicArity(name) || name == "Error")) {
                             return false;
                         }
-                        return name != "Object" && name != "Number" &&
-                               name != "decodeURIComponent" && name != "JSON" && name != "Array" &&
-                               name != "String" && name != "RegExp" &&
-                               name != "__ctbrowser_regexp" && name != "__ctbrowser_for_of_open" &&
-                               name != "__ctbrowser_iter_next" && name != "__ctbrowser_iter_close";
+                        return name.size() > host_detail::maxDOMIntrinsicNameLength ||
+                               !supportedIntrinsics.contains(name);
                     })) {
                     return error("unsupported DOM initial intrinsic identity");
                 }
@@ -175,8 +243,7 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
             return std::move(failure);
         }
         for (const auto & name : result.initialIntrinsics) {
-            if (name != "Map" && name != "Array" && name != "Error" &&
-                !host_detail::classIntrinsicArity(name)) {
+            if (!closedSourceIntrinsic(name)) {
                 return error("unsupported initial intrinsic identity");
             }
             if (llvm::is_contained(result.absentBindings, name) ||
@@ -362,6 +429,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
     if ((contract.provider != HostContract::Provider::closedSource &&
          contract.provider != HostContract::Provider::closedSourceSession &&
          contract.provider != HostContract::Provider::ctbrowserDOMDataSession) ||
+        !contract.intrinsicParameters.empty() || contract.currentDocumentParameter ||
         (contract.provider != HostContract::Provider::ctbrowserDOMDataSession &&
          !contract.elementParameters.empty())) {
         return "closed-source analysis requires a closed-source host provider";
@@ -390,8 +458,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
         return "invalid initial realm globalThis declaration";
     }
     for (const auto & name : contract.initialIntrinsics) {
-        if ((name != "Map" && name != "Array" && name != "Error" && !classIntrinsicArity(name)) ||
-            llvm::is_contained(contract.absentBindings, name) ||
+        if (!closedSourceIntrinsic(name) || llvm::is_contained(contract.absentBindings, name) ||
             llvm::is_contained(contract.undefinedBindings, name)) {
             return "invalid standard initial intrinsic declaration";
         }
@@ -408,11 +475,12 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                 key = write.getKey();
             }
             const auto name = key ? ctjs::constantKey(key) : llvm::StringRef{};
+            static const llvm::StringSet<> descriptorMutations{
+                "__proto__",      "prototype",        "defineProperty",  "defineProperties",
+                "setPrototypeOf", "__defineGetter__", "__defineSetter__"};
             if (llvm::isa<ctjs::DefineAccessorOp, ctjs::DeletePropertyOp, ctjs::DeleteNamedOp>(
                     operation) ||
-                name == "__proto__" || name == "prototype" || name == "defineProperty" ||
-                name == "defineProperties" || name == "setPrototypeOf" ||
-                name == "__defineGetter__" || name == "__defineSetter__") {
+                (name.size() <= 16 && descriptorMutations.contains(name))) {
                 reason = "source can change contracted realm property descriptors or prototype";
                 return;
             }
@@ -449,7 +517,9 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                     llvm::isa<ctjs::StringAttr>(message.getValue())) {
                     continue;
                 }
-            } else if (const unsigned arity = classIntrinsicArity(load.getName())) {
+            } else if (const unsigned arity = classIntrinsicArity(load.getName())
+                                                  ? classIntrinsicArity(load.getName())
+                                                  : iteratorIntrinsicArity(load.getName())) {
                 auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                 auto receiver = call ? call.getReceiver().getDefiningOp<ctjs::ConstantOp>()
                                      : ctjs::ConstantOp{};
@@ -459,10 +529,11 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                      call.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>())) {
                     continue;
                 }
-            } else if (load.getName() == "Array") {
+            } else if (load.getName() == "Array" || load.getName() == "Object") {
+                const auto member = load.getName() == "Array" ? "from" : "getOwnPropertyNames";
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
                     read && use.getOperandNumber() == 0 &&
-                    ctjs::constantKey(read.getKey()) == "from") {
+                    ctjs::constantKey(read.getKey()) == member) {
                     bool closed = true;
                     for (mlir::OpOperand & methodUse : read.getResult().getUses()) {
                         if (llvm::isa<ctjs::RootOp>(methodUse.getOwner())) { continue; }
@@ -477,7 +548,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                     call && use.getOperandNumber() == 1 && call.getArgs().size() == 1) {
                     auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                     if (read && read.getObject() == load.getResult() &&
-                        ctjs::constantKey(read.getKey()) == "from") {
+                        ctjs::constantKey(read.getKey()) == member) {
                         continue;
                     }
                 }

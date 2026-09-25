@@ -433,7 +433,20 @@ def main():
             classes.prepare(args, f"{name}-{owned}", ir, request, success=False)
             refusals += 1
             if name not in CLASS_CASES:
-                dom.lower(args, ir, request, f"{name}-{owned}", success=False, max_steps=steps)
+                diagnostic = dom.lower(
+                    args, ir, request, f"{name}-{owned}", success=False, max_steps=steps
+                )
+                if name.startswith("class_static_shared_dom_"):
+                    reason = (
+                        "class initialization source contains an unknown call, binding or "
+                        "reflective effect (op ctjs.call)"
+                        if name == "class_static_shared_dom_transitive"
+                        else "static method reaches a helper requiring DOM body proof"
+                    )
+                    if reason not in diagnostic:
+                        raise RuntimeError(
+                            f"{name}: static method lost its shared DOM helper refusal"
+                        )
                 refusals += 1
                 continue
             prepared.append((name, owned, ir, request))

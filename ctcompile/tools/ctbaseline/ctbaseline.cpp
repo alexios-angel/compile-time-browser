@@ -27,6 +27,9 @@
 #include <ctbrowser/style/css/parser.hpp>
 #include <ctbrowser/style/engine.hpp>
 
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/raw_ostream.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -104,16 +107,18 @@ void print_json(std::string_view corpus, const std::vector<stage> & stages) {
 int main(int argc, char ** argv) {
     // Paths are given by the caller so this tool has no opinion about where the
     // tree is - it is run from the repository root by tools/check/baseline.py.
-    if (argc < 2) {
-        std::fprintf(stderr,
-                     "usage: ctbaseline <name>=<path> ...\n"
-                     "  a .html, .css or .js file per argument; the extension picks the stages\n");
+    llvm::cl::OptionCategory category("ctbaseline options");
+    llvm::cl::list<std::string> inputs(llvm::cl::Positional, llvm::cl::OneOrMore,
+                                       llvm::cl::desc("<name=path> ..."), llvm::cl::cat(category));
+    llvm::cl::HideUnrelatedOptions(category);
+    if (!llvm::cl::ParseCommandLineOptions(
+            argc, argv, "Measure startup stages for .html, .css and .js inputs\n", &llvm::errs())) {
         return 2;
     }
 
     std::printf("{\n  \"runs\": [\n");
-    for (int i = 1; i < argc; ++i) {
-        const std::string arg{argv[i]};
+    bool first = true;
+    for (const std::string & arg : inputs) {
         const std::size_t eq = arg.find('=');
         const std::string name = eq == std::string::npos ? arg : arg.substr(0, eq);
         const std::string path = eq == std::string::npos ? arg : arg.substr(eq + 1);
@@ -221,7 +226,8 @@ int main(int argc, char ** argv) {
             }
         }
 
-        if (i > 1) { std::printf(",\n"); }
+        if (!first) { std::printf(",\n"); }
+        first = false;
         print_json(name, stages);
     }
     std::printf("\n  ]\n}\n");

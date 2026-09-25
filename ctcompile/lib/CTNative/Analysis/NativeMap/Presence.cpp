@@ -652,8 +652,7 @@ struct presenceAnalysis {
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
             if (snapshotCopies.contains(op)) { return; }
             const auto action = actions.lookup(op);
-            if ((action == "set" || action == "get" || action == "has" || action == "delete") &&
-                !call.getArgs().empty()) {
+            if (nativeMapKeyAction(action) && !call.getArgs().empty()) {
                 const auto kind = current.scalar(call.getArgs()[0]);
                 if (kind != payloadKind::Unknown) { keys[op] = kind; }
             }

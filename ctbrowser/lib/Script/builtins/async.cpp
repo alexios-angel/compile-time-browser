@@ -866,9 +866,7 @@ void install_promise(context & cx) {
                 const bool constructing = detail::constructing_this(self);
                 value made = c.string(std::string{});
                 if (!a.empty() && a[0].is_kind(heap_kind::symbol) && !constructing) {
-                    made =
-                        c.string("Symbol(" +
-                                 static_cast<symbol_object *>(a[0].as_heap())->description + ")");
+                    made = c.string(static_cast<symbol_object *>(a[0].as_heap())->to_string());
                 } else if (!a.empty()) {
                     made = c.string(string_arg(c, a[0]));
                     if (c.throw_pending()) { return value::undefined(); }

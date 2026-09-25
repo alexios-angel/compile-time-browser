@@ -1,5 +1,29 @@
 # What native Bootstrap needs next
 
+## Post-super calls and scaled overwrites, 2026-09-19 UTC
+
+**7c4c4866** resumes B's post-super ordinary-call thread: four positive sources
+add **32 native executions**, with receiver, method identity and ordering checks
+retained. **eb8db016** proves bounded scaled array overwrites and preserves growth,
+alias and cycle refusals. All prior source fixtures remain.
+
+Focused host **1/1**, class initialization/DOM lit **2/2 (308.94s)**, arrays **1/1**,
+and scaled/quotient/offset escape lit **3/3** passed. Class: **195 observations /
+524 main native executions / 390 unprepared and 225 preparation refusals**.
+DOM remains **632 observations / eight executions / 4,910 refusals**. Scaled
+oracle: **54 sites / seven sound / 7 of 10 precision**, zero violations or
+unclaimed/partial/pending sites. Nine source hashes match. Formatter retains
+20 baseline diagnostics in six untouched files; changed checks pass. Full suites
+and broad matrices were skipped.
+
+**Next:** Qi's immutable lexical-home/base lookup, retaining the leaf receiver.
+The preserved 118-result inherited-dispatch now reaches its receiver/prototype
+refusal. Captured helpers, full Bootstrap behavior, broader ownership and the
+application driver remain. The user is switching to the updated unattended loop,
+which now renders live JSON events as readable activity and retains raw logs.
+
+[Exact changes, commands, measurements and loop validation](handoff/2026-09-19-post-super.md).
+
 ## Nearest method overrides and exact quotient overwrites, 2026-09-19 UTC
 
 **0414e5fb** selects the nearest ordinary method on a proved local inheritance

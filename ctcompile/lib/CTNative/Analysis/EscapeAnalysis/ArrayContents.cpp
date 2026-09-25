@@ -1,5 +1,7 @@
 #include "LoopProof.hpp"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+
 namespace ctcompile::ctnative {
 using namespace escape_detail;
 
@@ -37,7 +39,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             state.values[argument] = {argument, ContentsKind::Opaque};
         }
     }
-    state.visited.insert(&function.getBody().front());
+    state.predecessors.try_emplace(&function.getBody().front(), nullptr);
     state.current = &function.getBody().front().front();
     llvm::SmallVector<State, 2> alternatives;
     llvm::SmallPtrSet<mlir::Operation *, 8> arraySites;
@@ -64,9 +66,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         }
         return ArrayContentsFailure::None;
     };
-    const auto forward = [&](State & path, mlir::Block * next, mlir::ValueRange operands) {
+    const auto forward = [&](State & path, mlir::Block * previous, mlir::Block * next,
+                             mlir::ValueRange operands) {
         if (next->getParent() != &function.getBody() || next->empty() ||
-            (!path.visited.insert(next).second &&
+            (!path.predecessors.try_emplace(next, previous).second &&
              (!path.loop || (next != path.loop->header && next != path.loop->body)))) {
             return ArrayContentsFailure::UnsupportedControlFlow;
         }
@@ -77,8 +80,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     };
     const auto snapshot = [&]() -> std::optional<State> {
         // Path enumeration can be exponential. Charge every copied value,
-        // visited block, container and element before allocating the snapshot.
-        if (!spend(state.values.size()) || !spend(state.visited.size())) { return std::nullopt; }
+        // incoming edge, container and element before allocating the snapshot.
+        if (!spend(state.values.size()) || !spend(state.predecessors.size())) {
+            return std::nullopt;
+        }
         for (const auto & [array, elements] : state.arrays) {
             (void)array;
             if (!spend() || !spend(elements.size())) { return std::nullopt; }
@@ -89,10 +94,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         }
         return state;
     };
-    const auto alternative = [&](mlir::Block * next, mlir::ValueRange operands) {
+    const auto alternative = [&](mlir::Block * previous, mlir::Block * next,
+                                 mlir::ValueRange operands) {
         auto copy = snapshot();
         if (!copy) { return ArrayContentsFailure::WorkLimit; }
-        const auto failure = forward(*copy, next, operands);
+        const auto failure = forward(*copy, previous, next, operands);
         if (failure == ArrayContentsFailure::None) { alternatives.push_back(std::move(*copy)); }
         return failure;
     };
@@ -234,7 +240,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 continue;
             }
             if (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(&op)) {
-                const auto failure = forward(state, branch.getDest(), branch.getDestOperands());
+                const auto failure =
+                    forward(state, op.getBlock(), branch.getDest(), branch.getDestOperands());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
                 continue;
             }
@@ -260,14 +267,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // all unrelated conditions retain both structural paths.
                     if (!*continued) { state.loop.reset(); }
                     const auto failure = forward(
-                        state, *continued ? branch.getTrueDest() : branch.getFalseDest(),
+                        state, op.getBlock(),
+                        *continued ? branch.getTrueDest() : branch.getFalseDest(),
                         *continued ? branch.getTrueDestOperands() : branch.getFalseDestOperands());
                     if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
                     continue;
                 }
-                auto failure = alternative(branch.getFalseDest(), branch.getFalseDestOperands());
+                auto failure = alternative(op.getBlock(), branch.getFalseDest(),
+                                           branch.getFalseDestOperands());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                failure = forward(state, branch.getTrueDest(), branch.getTrueDestOperands());
+                failure = forward(state, op.getBlock(), branch.getTrueDest(),
+                                  branch.getTrueDestOperands());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
                 continue;
             }
@@ -280,13 +290,21 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // supply a liveness fact. Repeated destinations still carry
                 // their own operands. Push in reverse for default/case order.
                 for (unsigned i = branch->getNumSuccessors() - 1; i != 0; --i) {
-                    const auto failure = alternative(branch.getCaseDestinations()[i - 1],
-                                                     branch.getCaseOperands(i - 1));
+                    const auto failure =
+                        alternative(op.getBlock(), branch.getCaseDestinations()[i - 1],
+                                    branch.getCaseOperands(i - 1));
                     if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
                 }
-                const auto failure =
-                    forward(state, branch.getDefaultDestination(), branch.getDefaultOperands());
+                const auto failure = forward(state, op.getBlock(), branch.getDefaultDestination(),
+                                             branch.getDefaultOperands());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
+                continue;
+            }
+            // Branch folding can leave an arith predicate constant behind.
+            // It has no heap effects; preserve its identity for structural
+            // branch traversal without using its value to prune either arm.
+            if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(&op)) {
+                state.values[constant.getResult()] = {constant.getResult()};
                 continue;
             }
             // Truthy is total, noncapturing and nonthrowing (Operators.td). An
@@ -374,6 +392,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 ContentsKind kind = ContentsKind::NonBigInt;
                 std::optional<std::size_t> integerNumber;
                 std::optional<std::size_t> negativeIntegerNumber;
+                std::optional<std::uint32_t> convertedBits;
+                unsigned unaryDepth = 0;
                 switch (unary.getKind()) {
                 case ctjs::UnaryKind::Not:
                 case ctjs::UnaryKind::Void: break;
@@ -429,6 +449,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         if ((integerNumber || negativeIntegerNumber) && !spend()) {
                             return refuse(ArrayContentsFailure::WorkLimit, &op);
                         }
+                        unaryDepth = std::min(input.unaryDepth + 1, 65U);
+                        if (!integerNumber && !negativeIntegerNumber && unaryDepth <= 64) {
+                            // ToUint32(-x) is -ToUint32(x) modulo 2^32. Keep
+                            // the read-time conversion without inventing an exact
+                            // Number for subsequent arithmetic or property access.
+                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                            convertedBits = boundedConvertedBits(input);
+                            if (convertedBits && unary.getKind() == ctjs::UnaryKind::Neg) {
+                                *convertedBits = 0U - *convertedBits;
+                            }
+                        }
                     } else {
                         ContentsValue result;
                         boundedNumberComplement(input, result);
@@ -442,8 +473,18 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
-                state.values[unary.getResult()] = {unary.getResult(), kind, integerNumber,
-                                                   negativeIntegerNumber};
+                state.values[unary.getResult()] = {
+                    unary.getResult(), kind,          integerNumber, negativeIntegerNumber,
+                    std::nullopt,      convertedBits, unaryDepth};
+                if (unary.getKind() == ctjs::UnaryKind::Plus ||
+                    unary.getKind() == ctjs::UnaryKind::Neg) {
+                    auto & result = state.values[unary.getResult()];
+                    boundedNumberUnary(held(unary.getOperand()),
+                                       unary.getKind() == ctjs::UnaryKind::Neg, result);
+                    if (result.arithmeticNumber && !spend()) {
+                        return refuse(ArrayContentsFailure::WorkLimit, &op);
+                    }
+                }
                 continue;
             }
             if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(&op)) {
@@ -546,16 +587,28 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
                 if (binary.getKind() == ctjs::BinaryKind::Add) {
                     boundedNumberSum(left, right, result);
+                    if (result.convertedBits && !spend()) {
+                        return refuse(ArrayContentsFailure::WorkLimit, &op);
+                    }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Sub) {
                     boundedNumberDifference(left, right, result);
-                    if (result.integerNumber || result.negativeIntegerNumber) {
+                    if (!result.integerNumber && !result.negativeIntegerNumber &&
+                        boundedConvertedNumber(right) == 0 && left.unaryDepth <= 64) {
+                        // ToNumber(x) - 0 preserves ToUint32(x), including signed
+                        // zero and nonfinite inputs. This is no exact Number fact.
+                        result.convertedBits = boundedConvertedBits(left);
+                        result.unaryDepth = left.unaryDepth;
+                    }
+                    if (result.integerNumber || result.negativeIntegerNumber ||
+                        result.convertedBits) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Mul) {
                     boundedNumberProduct(left, right, result);
-                    if (result.integerNumber || result.negativeIntegerNumber) {
+                    if (result.integerNumber || result.negativeIntegerNumber ||
+                        result.convertedBits) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     }
                 }
@@ -563,13 +616,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     binary.getKind() == ctjs::BinaryKind::Mod) {
                     boundedNumberDivision(left, right, binary.getKind() == ctjs::BinaryKind::Mod,
                                           result);
-                    if (result.integerNumber || result.negativeIntegerNumber) {
+                    if (result.integerNumber || result.negativeIntegerNumber ||
+                        result.convertedBits) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Pow) {
                     boundedNumberPower(left, right, result);
-                    if (result.integerNumber || result.negativeIntegerNumber) {
+                    if (result.integerNumber || result.negativeIntegerNumber ||
+                        result.convertedBits) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     }
                 }
@@ -636,6 +691,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
                 if (binary.getKind() == ctjs::BinaryKind::Add) {
                     boundedNumberSum(left, right, result);
+                    if (result.convertedBits && !spend()) {
+                        return refuse(ArrayContentsFailure::WorkLimit, &op);
+                    }
                 } else {
                     boundedNumberBitwise(left, right, binary.getKind(), result);
                     if (result.integerNumber || result.negativeIntegerNumber) {
@@ -815,7 +873,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         continue;
                     }
                 }
-                const auto index = ownArrayIndex(keyValue);
+                auto index = ownArrayIndex(keyValue);
+                // The loop guard independently bounded every key before replay.
+                // Retain its exact Number snapshot without generalizing scalar
+                // contents, length writes or conversion facts.
+                if (!index && state.loop) { index = arithmeticArrayIndex(keyValue); }
                 if (!index) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
                 // Overwrite only. Extending with set_property can leave holes or
                 // consult a prototype setter; literal append has neither behavior.

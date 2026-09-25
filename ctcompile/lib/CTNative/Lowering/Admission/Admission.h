@@ -24,6 +24,8 @@ struct admission {
     // first return is seen. A function with no return at all returns NaN -
     // undefined's carrier - which lower() picks when this stays `none`.
     carrier returns = carrier::none;
+    // Retain source alternatives when nullable carriers can also contain Boolean.
+    mlir::Type returnedType = {};
     [[nodiscard]] mlir::Type typeOf(mlir::Value v) const;
 
     bool refuse(std::string reason);

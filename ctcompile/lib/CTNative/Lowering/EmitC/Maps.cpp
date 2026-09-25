@@ -12,7 +12,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
         eraseIfUnused(o);
     };
     if (isNativeMapBookkeeping(o)) {
-        swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
+        swap(numberConstant(b, where, std::numeric_limits<double>::quiet_NaN()));
         return true;
     }
     if (o->hasAttr(kNativeMapSnapshotCopy)) {
@@ -28,11 +28,14 @@ bool lowering::replaceMap(mlir::Operation * o) {
     }
     if (auto made = llvm::dyn_cast<ConstructOp>(o); made && o->hasAttr(kNativeMapSite)) {
         auto map = llvm::cast<MapType>(typeOf(made.getResult()));
+        const auto record = recordMapPointers.find(o);
         const std::string callee =
-            (llvm::isa<MapType, BoolType, StrType>(map.getValueType()) ||
-             isObjectValueType(map.getValueType()) ||
-             !mixedMapSpelling(map.getValueType()).empty() ||
-             !nullableMapSpelling(map.getValueType()).empty())
+            record != recordMapPointers.end()
+                ? "ctnative::make_map<std::string, " + record->second + ">"
+            : (llvm::isa<MapType, BoolType, StrType>(map.getValueType()) ||
+               isObjectValueType(map.getValueType()) ||
+               !mixedMapSpelling(map.getValueType()).empty() ||
+               !nullableMapSpelling(map.getValueType()).empty())
                 ? ("ctnative::make_map<" + mapKeySpelling(map.getKeyType()) + ", " +
                    mapValueSpelling(map.getValueType()) + ">")
                       .str()
@@ -61,10 +64,14 @@ bool lowering::replaceMap(mlir::Operation * o) {
             const auto scalar = tag == "string" ? carrier::string
                                 : tag == "bool" ? carrier::boolean
                                                 : carrier::number;
-            const auto type = carrierType(context, scalar);
+            const auto type = scalar == carrier::string
+                                  ? ec::OpaqueType::get(context, kRawStringType)
+                                  : carrierType(context, scalar);
             if (isBooleanStringCarrier(value.getType())) {
-                const auto helper = tag == "string" ? "std::get<std::string>" : "std::get<bool>";
-                return callWithConstValueOperands(b, where, mlir::TypeRange{type},
+                const auto helper = tag == "string" ? "std::get<ctnative::js_string>"
+                                                    : "std::get<ctnative::js_boolean_t>";
+                return callWithConstValueOperands(b, where,
+                                                  mlir::TypeRange{carrierType(context, scalar)},
                                                   b.getStringAttr(helper), mlir::ValueRange{value})
                     .getResult(0);
             }
@@ -76,6 +83,17 @@ bool lowering::replaceMap(mlir::Operation * o) {
             return value;
         };
         const auto convertAlternative = [&](mlir::Value value, mlir::Type type, bool key = false) {
+            if (nullableMapSpelling(type) == kNullableType) {
+                return convertScalar(b, where, value, carrierType(context, carrier::nullable));
+            }
+            // Maps retain their proved raw String/binary64 key/payload storage.
+            if (value.getType() == carrierType(context, carrier::string)) {
+                value =
+                    convertScalar(b, where, value, ec::OpaqueType::get(context, kRawStringType));
+            }
+            if (isNumberCarrier(value.getType())) {
+                value = convertScalar(b, where, value, b.getF64Type());
+            }
             auto spelling = nullableMapSpelling(type);
             if (!spelling.empty()) {
                 const bool mixed = spelling != kNullableStringType;
@@ -83,7 +101,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
                 if (auto lvalue = llvm::dyn_cast<ec::LValueType>(argumentType)) {
                     argumentType = lvalue.getValueType();
                 }
-                if (!mixed || !llvm::isa<mlir::IntegerType>(argumentType)) {
+                if (!mixed || !isBooleanCarrier(argumentType)) {
                     // Preserve Null/Undefined tags and own every String in
                     // both key and payload storage, including saved reads.
                     value = convertScalar(b, where, value,
@@ -100,19 +118,34 @@ bool lowering::replaceMap(mlir::Operation * o) {
                 .getResult(0);
         };
         if (map && args.size() >= 2) {
-            args[1] = convertAlternative(extractProvedScalar(args[1], kNativeMapKeyType),
-                                         map.getKeyType(), true);
+            if (llvm::isa<OptType>(map.getKeyType()) &&
+                carrierOf(map.getKeyType()) == carrier::nullable) {
+                args[1] = convertScalar(b, where, args[1], carrierType(context, carrier::nullable));
+            } else {
+                args[1] = convertAlternative(extractProvedScalar(args[1], kNativeMapKeyType),
+                                             map.getKeyType(), true);
+            }
         }
         if (action == "set") {
             auto call = llvm::cast<CallOp>(o);
             // The result retains its solver fact after the receiver becomes
             // replacement EmitC SSA, which has no analysis entry.
             const auto storedMap = llvm::cast<MapType>(typeOf(call.getResult()));
-            args[2] = convertAlternative(extractProvedScalar(args[2], kNativeMapWriteType),
-                                         storedMap.getValueType());
-            if (isObjectValueType(storedMap.getValueType())) {
+            if (recordMapPointers.contains(o)) {
+                auto type = llvm::cast<ec::LValueType>(args[2].getType()).getValueType();
+                args[2] = ec::AddressOfOp::create(b, where, ec::PointerType::get(type), args[2]);
+            } else {
+                const auto payload = storedMap.getValueType();
+                // Tagged scalar storage retains the complete value; no narrowing is needed.
                 args[2] =
-                    convertScalar(b, where, args[2], carrierType(context, carrier::objectValue));
+                    convertAlternative(nullableMapSpelling(payload) == kNullableType
+                                           ? args[2]
+                                           : extractProvedScalar(args[2], kNativeMapWriteType),
+                                       payload);
+                if (isObjectValueType(storedMap.getValueType())) {
+                    args[2] = convertScalar(b, where, args[2],
+                                            carrierType(context, carrier::objectValue));
+                }
             }
         }
         const auto helper = o->hasAttr(kNativeMapPresent) ? "get_present" : action;
@@ -149,9 +182,16 @@ bool lowering::replaceMap(mlir::Operation * o) {
             ec::AssignOp::create(b, where, local, result);
             swap(local);
         } else {
-            swap(callWithConstValueOperands(b, where, mlir::TypeRange{o->getResult(0).getType()},
-                                            name, args)
-                     .getResult(0));
+            const auto resultType = o->getResult(0).getType();
+            const auto storageType =
+                action == "get" && isNumberCarrier(resultType) ? mlir::Type(b.getF64Type())
+                : action == "get" && resultType == carrierType(context, carrier::string)
+                    ? mlir::Type(ec::OpaqueType::get(context, kRawStringType))
+                    : resultType;
+            auto value =
+                callWithConstValueOperands(b, where, mlir::TypeRange{storageType}, name, args)
+                    .getResult(0);
+            swap(convertScalar(b, where, value, resultType));
         }
         return true;
     }

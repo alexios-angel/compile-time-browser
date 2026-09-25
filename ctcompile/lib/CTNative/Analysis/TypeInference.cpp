@@ -117,23 +117,28 @@ bool isProvedString(const TypeLattice * operand) {
     return llvm::isa_and_nonnull<StrType, StrViewType>(operand->getValue().getType());
 }
 
-// A value on which `+` is numeric addition: a number, a boolean, undefined
-// or null - the types ToPrimitive leaves alone and ToNumber accepts.
-bool isProvedNumericType(mlir::Type type) {
+// Primitive alternatives on which ToPrimitive cannot invoke object hooks.
+// Without Strings, generic `+` is necessarily numeric addition.
+bool isProvedPrimitiveType(mlir::Type type, bool allowString) {
     if (type == nullptr) { return false; }
-    if (llvm::isa<BoolType, NumType>(type)) { return true; }
+    if (llvm::isa<BoolType, NumType>(type) ||
+        (allowString && llvm::isa<StrType, StrViewType>(type))) {
+        return true;
+    }
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
         return llvm::isa<BottomType>(opt.getElementType()) ||
-               isProvedNumericType(opt.getElementType());
+               isProvedPrimitiveType(opt.getElementType(), allowString);
     }
     if (auto variant = llvm::dyn_cast<VariantType>(type)) {
-        return llvm::all_of(variant.getAlternatives(), isProvedNumericType);
+        return llvm::all_of(variant.getAlternatives(), [&](mlir::Type alternative) {
+            return isProvedPrimitiveType(alternative, allowString);
+        });
     }
     return false;
 }
 
 bool isProvedNumeric(const TypeLattice * operand) {
-    return isProvedNumericType(operand->getValue().getType());
+    return isProvedPrimitiveType(operand->getValue().getType(), false);
 }
 
 bool noneAreBigInt(llvm::ArrayRef<const TypeLattice *> operands) {
@@ -293,6 +298,7 @@ bool TypeInference::fieldIsAssignedBefore(mlir::Value object, llvm::StringRef ke
         // ponytail: at most 64 forwarding frames and 65536 queries; larger or
         // recursive borrows need a cached interprocedural presence proof.
         if (++work > 65536 || active.size() >= 64) { return false; }
+        if (auto origin = nativeMapRecordOrigin(value)) { return self(self, origin, before); }
         const auto sites = fieldStoreSites_.find({value, key});
         auto * owner = before->getParentOfType<ctjs::FuncOp>().getOperation();
         if (sites != fieldStoreSites_.end()) {
@@ -394,11 +400,25 @@ void TypeInference::setToEntryState(TypeLattice * lattice) {
     auto value = lattice->getAnchor();
     const bool domInput =
         ownedRoots_ && ownedRoots_->proved() && llvm::is_contained(ownedRoots_->domInputs(), value);
-    const mlir::Type type = domInput || (domEntry_ && domEntry_->isElement(value))
-                                ? mlir::Type(DOMElementType::get(value.getContext()))
-                            : domEntry_ && domEntry_->isCallbackParameter(value)
-                                ? mlir::Type(StrType::get(value.getContext(), StrEncoding::UTF8))
-                                : mlir::Type(BoxedType::get(value.getContext()));
+    mlir::Type type = domInput || (domEntry_ && domEntry_->isElement(value))
+                          ? mlir::Type(DOMElementType::get(value.getContext()))
+                      : domEntry_ && domEntry_->isCallbackParameter(value)
+                          ? mlir::Type(StrType::get(value.getContext(), StrEncoding::UTF8))
+                          : mlir::Type(BoxedType::get(value.getContext()));
+    if (domEntry_) {
+        if (const auto parameter = domEntry_->intrinsicParameter(value)) {
+            switch (*parameter) {
+            case HostIntrinsicParameter::boolean: type = BoolType::get(value.getContext()); break;
+            case HostIntrinsicParameter::number:
+                type = NumType::getDouble(value.getContext());
+                break;
+            case HostIntrinsicParameter::string:
+                type = StrType::get(value.getContext(), StrEncoding::UTF8);
+                break;
+            case HostIntrinsicParameter::symbol: type = SymbolType::get(value.getContext()); break;
+            }
+        }
+    }
     propagateIfChanged(lattice, lattice->join(TypeValue{type}));
 }
 
@@ -406,6 +426,26 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                                                   llvm::ArrayRef<const TypeLattice *> operands,
                                                   llvm::ArrayRef<TypeLattice *> results) {
     mlir::MLIRContext * c = op->getContext();
+
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        read && domEntry_ && domEntry_->isSymbolDescription(read)) {
+        propagateIfChanged(results[0], results[0]->join(TypeValue{
+                                           OptType::get(c, StrType::get(c, StrEncoding::UTF8))}));
+        return mlir::success();
+    }
+
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        read && domEntry_ && !domEntry_->wellKnownSymbol(read).empty()) {
+        propagateIfChanged(results[0], results[0]->join(TypeValue{SymbolType::get(c)}));
+        return mlir::success();
+    }
+
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        read && domEntry_ &&
+        (domEntry_->isElementVectorIndex(read) || domEntry_->isDocumentElement(read))) {
+        propagateIfChanged(results[0], results[0]->join(TypeValue{DOMElementType::get(c)}));
+        return mlir::success();
+    }
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && domEntry_ &&
@@ -416,7 +456,8 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     }
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ && domEntry_->isStringVectorLength(read)) {
+        read && domEntry_ &&
+        (domEntry_->isStringVectorLength(read) || domEntry_->isElementVectorLength(read))) {
         propagateIfChanged(results[0], results[0]->join(TypeValue{doubleType(c)}));
         return mlir::success();
     }
@@ -433,13 +474,15 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 edge->returnsOptionalString()
                     ? mlir::Type(OptType::get(c, StrType::get(c, StrEncoding::UTF8)))
                 : edge->returnsNumber()  ? doubleType(c)
+                : edge->returnsSymbol()  ? mlir::Type(SymbolType::get(c))
                 : edge->returnsString()  ? mlir::Type(StrType::get(c, StrEncoding::UTF8))
                 : edge->returnsElement() ? mlir::Type(DOMElementType::get(c))
                 : edge->returnsStringVector()
                     ? mlir::Type(VecType::get(c, StrType::get(c, StrEncoding::UTF8)))
-                : edge->returnsJSON()    ? mlir::Type(JsonType::get(c))
-                : edge->returnsBoolean() ? boolType(c)
-                                         : absentType(c);
+                : edge->returnsElementVector() ? mlir::Type(VecType::get(c, DOMElementType::get(c)))
+                : edge->returnsJSON()          ? mlir::Type(JsonType::get(c))
+                : edge->returnsBoolean()       ? boolType(c)
+                                               : absentType(c);
             propagateIfChanged(results[0], results[0]->join(TypeValue{type}));
             return mlir::success();
         }
@@ -645,6 +688,11 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                     numeric = doubleType(c);
                 } else if (isProvedNumeric(operands[0]) && isProvedNumeric(operands[1])) {
                     numeric = doubleType(c);
+                } else if (isProvedPrimitiveType(operands[0]->getValue().getType(), true) &&
+                           isProvedPrimitiveType(operands[1]->getValue().getType(), true)) {
+                    // A finite primitive union may select either Number addition
+                    // or String concatenation; neither requires object hooks.
+                    numeric = meet(doubleType(c), stringType(c));
                 }
                 break;
             default: break;

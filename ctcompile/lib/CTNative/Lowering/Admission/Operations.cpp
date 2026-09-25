@@ -24,9 +24,27 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (domEntry) {
+        if (auto thrown = llvm::dyn_cast<ThrowOp>(o);
+            thrown && llvm::is_contained(domEntry->savedThrows(), thrown)) {
+            const auto type = typeOf(thrown.getValue());
+            const auto optional = llvm::dyn_cast_or_null<OptType>(type);
+            auto literal = thrown.getValue().getDefiningOp<ConstantOp>();
+            return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type) ||
+                   (optional && llvm::isa<StrType>(optional.getElementType())) ||
+                   (literal && llvm::isa<NullAttr>(literal.getValue())) ||
+                   refuse("saved DOM throw lost its owning primitive carrier");
+        }
+        if (llvm::isa<mlir::scf::ExecuteRegionOp>(o) &&
+            llvm::any_of(domEntry->savedThrows(),
+                         [&](ThrowOp thrown) { return thrown->getParentOp() == o; })) {
+            return true;
+        }
         if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
-            read && (domEntry->isStringVectorLength(read) || domEntry->isStringVectorIndex(read) ||
-                     domEntry->datasetValueElement(read))) {
+            read &&
+            (!domEntry->wellKnownSymbol(read).empty() || domEntry->isSymbolDescription(read) ||
+             domEntry->isStringVectorLength(read) || domEntry->isStringVectorIndex(read) ||
+             domEntry->isElementVectorLength(read) || domEntry->isElementVectorIndex(read) ||
+             domEntry->isDocumentElement(read) || domEntry->datasetValueElement(read))) {
             return true;
         }
         if (auto closure = llvm::dyn_cast<CreateClosureOp>(o);
@@ -50,12 +68,13 @@ bool admission::op(mlir::Operation * o) {
             return true;
         }
         if (auto load = llvm::dyn_cast<LoadGlobalOp>(o);
-            load && domEntry->isInitialIntrinsic(load)) {
+            load && (domEntry->isInitialIntrinsic(load) || domEntry->isCurrentDocument(load))) {
             return true;
         }
         if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
-            read && (domEntry->method(read) || domEntry->isTokenList(read.getResult()) ||
-                     domEntry->isDataset(read.getResult()))) {
+            read &&
+            (domEntry->method(read) || domEntry->isElementPrototype(read) ||
+             domEntry->isTokenList(read.getResult()) || domEntry->isDataset(read.getResult()))) {
             return true;
         }
         if (auto call = llvm::dyn_cast<CallOp>(o);
@@ -128,7 +147,8 @@ bool admission::op(mlir::Operation * o) {
     if (isNativeMapBookkeeping(o)) { return true; }
     if (auto made = llvm::dyn_cast<ConstructOp>(o)) {
         if (o->hasAttr(kNativeMapSite)) {
-            return carrierOf(typeOf(made.getResult())) == carrier::map ||
+            return nativeMapRecordPayload(made.getResult()) ||
+                   carrierOf(typeOf(made.getResult())) == carrier::map ||
                    refuse("native Map needs supported keys and numeric, boolean, closed mixed, "
                           "owning-string, object-identity union or acyclic Map values; inferred " +
                           printed(typeOf(made.getResult())));
@@ -143,10 +163,27 @@ bool admission::op(mlir::Operation * o) {
     if (const llvm::StringRef action = nativeMapAction(o); !action.empty()) {
         if (action == "size") { return true; }
         auto call = llvm::cast<CallOp>(o);
+        if (nativeMapRecordPayload(call.getReceiver())) {
+            // Record schema and exact read identity live in the same side
+            // proof as ordinary closed objects, never in a boxed carrier.
+            return ((action != "set" || isClosedObject(call.getArgs()[1])) &&
+                    (action != "get" || isClosedObject(call.getResult()))) ||
+                   refuse("native record Map requires closed record payloads and aliases");
+        }
         if (carrierOf(typeOf(call.getReceiver())) != carrier::map) {
             return refuse("native Map receiver has no supported key/value carrier");
         }
         const auto map = llvm::cast<MapType>(typeOf(call.getReceiver()));
+        const bool scalarKey = llvm::isa<OptType>(map.getKeyType()) &&
+                               carrierOf(map.getKeyType()) == carrier::nullable;
+        if (scalarKey && !call.getArgs().empty() &&
+            !isScalarCarrier(carrierOf(typeOf(call.getArgs()[0])))) {
+            return refuse("nullable scalar Map key requires Number, Boolean, Null or Undefined");
+        }
+        // Numeric vectors erase absent tags; a key snapshot must preserve them.
+        if (scalarKey && action == "keys") {
+            return refuse("nullable scalar Map key snapshot needs a tagged element carrier");
+        }
         const auto typedAlternative = [&](mlir::Type schema, mlir::Value operand) {
             const auto value = typeOf(operand);
             auto alternatives = llvm::cast<VariantType>(schema).getAlternatives();
@@ -159,6 +196,7 @@ bool admission::op(mlir::Operation * o) {
                                              llvm::StringRef proofName) {
             const auto value = typeOf(operand);
             const auto c = carrierOf(value);
+            if (nullableMapSpelling(schema) == kNullableType) { return isScalarCarrier(c); }
             const auto absent = llvm::dyn_cast_or_null<OptType>(value);
             const auto element = llvm::cast<OptType>(schema).getElementType();
             const bool allowsBoolean = !mixedMapSpelling(element).empty();
@@ -176,7 +214,7 @@ bool admission::op(mlir::Operation * o) {
         };
         if (!nullableMapSpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
             !nullableAlternative(map.getKeyType(), call.getArgs()[0], kNativeMapKeyType)) {
-            return refuse("nullable native Map key needs a proved String, absent or Boolean "
+            return refuse("nullable native Map key needs a proved scalar, String or absent "
                           "alternative with an owning carrier");
         }
         if (!mixedMapKeySpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
@@ -227,15 +265,16 @@ bool admission::op(mlir::Operation * o) {
         if (!nullableMapSpelling(map.getValueType()).empty()) {
             if (action == "set" &&
                 !nullableAlternative(map.getValueType(), call.getArgs()[1], kNativeMapWriteType)) {
-                return refuse("nullable native Map write needs a proved String, absent or "
-                              "Boolean alternative with an owning carrier");
+                return refuse("nullable native Map write needs a proved scalar, String or "
+                              "absent alternative with an owning carrier");
             }
             const auto element = llvm::cast<OptType>(map.getValueType()).getElementType();
             const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapReadType);
             const bool nullableRead =
                 proof && proof.getValue() == "nullable_string" &&
                 carrierOf(typeOf(call.getResult())) == carrier::nullableString;
-            if (action == "get" && !mixedMapSpelling(element).empty() &&
+            if (action == "get" && nullableMapSpelling(map.getValueType()) != kNullableType &&
+                !mixedMapSpelling(element).empty() &&
                 (!proof || !o->hasAttr(kNativeMapPresent) ||
                  (!nullableRead && !typedAlternative(element, call.getResult())))) {
                 return refuse(
@@ -243,6 +282,9 @@ bool admission::op(mlir::Operation * o) {
             }
         }
         if (action == "keys" || action == "values") {
+            if (action == "values" && nullableMapSpelling(map.getValueType()) == kNullableType) {
+                return refuse("nullable scalar Map value snapshot needs a tagged element carrier");
+            }
             return (isVectorSite(call.getResult()) &&
                     isVectorCarrier(carrierOf(typeOf(call.getResult())))) ||
                    refuse("native Map snapshot requires confined numeric or string elements");
@@ -474,6 +516,7 @@ bool admission::op(mlir::Operation * o) {
                 carrierOf(typeOf(operands[i])) != carrier::closure &&
                 carrierOf(typeOf(operands[i])) != carrier::boolean &&
                 !isStringCarrier(carrierOf(typeOf(operands[i]))) &&
+                !isStringUnionCarrier(carrierOf(typeOf(operands[i]))) &&
                 !(carrierOf(typeOf(operands[i])) == carrier::map &&
                   nativeMapGroup(operands[i]) >= 0) &&
                 !numeric(operands[i], "argument")) {
@@ -521,12 +564,16 @@ bool admission::op(mlir::Operation * o) {
         return true;
     }
     if (auto set = llvm::dyn_cast<CellSetOp>(o); set && namesASharedCell(set.getCell())) {
-        const carrier held = carrierOf(typeOf(set.getCell()));
-        const carrier stored = carrierOf(typeOf(set.getValue()));
-        if (held == carrier::none ||
-            (stored != held && !(held == carrier::nullable && isScalarCarrier(stored)))) {
-            return refuse("an assignment of " + printed(typeOf(set.getValue())) +
-                          " to a shared binding of type " + printed(typeOf(set.getCell())));
+        const auto cellType = typeOf(set.getCell()), valueType = typeOf(set.getValue());
+        const carrier held = carrierOf(cellType), stored = carrierOf(valueType);
+        // Widen only when the selected storage already represents every
+        // alternative. Sharing a nullable carrier does not make Number and
+        // Boolean interchangeable in their separate String unions.
+        const bool widens = isPrimitiveCarrier(held) && isPrimitiveCarrier(stored) &&
+                            carrierOf(meet(cellType, valueType)) == held;
+        if (held == carrier::none || (stored != held && !widens)) {
+            return refuse("an assignment of " + printed(valueType) +
+                          " to a shared binding of type " + printed(cellType));
         }
         return true;
     }
@@ -560,11 +607,27 @@ bool admission::op(mlir::Operation * o) {
         }
         return refuse("a constant that is not a number, a boolean or undefined");
     }
+    const auto numericOperand = [&](mlir::Value value, llvm::StringRef where) {
+        const auto c = carrierOf(typeOf(value));
+        return isStringCarrier(c) || isStringUnionCarrier(c) || numeric(value, where);
+    };
     if (auto b = llvm::dyn_cast<BinaryOp>(o)) {
         switch (b.getKind()) {
-        case BinaryKind::Add:
+        case BinaryKind::Add: {
             if (stringConcatenation(typeOf(b.getLhs()), typeOf(b.getRhs()))) { return true; }
+            if (carrierOf(typeOf(b.getResult())) == carrier::numberString &&
+                isPrimitiveCarrier(carrierOf(typeOf(b.getLhs()))) &&
+                isPrimitiveCarrier(carrierOf(typeOf(b.getRhs())))) {
+                return true;
+            }
+            if ((carrierOf(typeOf(b.getLhs())) == carrier::string &&
+                 isPrimitiveCarrier(carrierOf(typeOf(b.getRhs())))) ||
+                (carrierOf(typeOf(b.getRhs())) == carrier::string &&
+                 isPrimitiveCarrier(carrierOf(typeOf(b.getLhs()))))) {
+                return true;
+            }
             return numeric(b.getLhs(), "binary") && numeric(b.getRhs(), "binary");
+        }
         case BinaryKind::Concat:
             return stringConcatenation(typeOf(b.getLhs()), typeOf(b.getRhs())) ||
                    refuse("concatenation requires two proved owning UTF-8 strings");
@@ -572,25 +635,35 @@ bool admission::op(mlir::Operation * o) {
         case BinaryKind::Mul:
         case BinaryKind::Div:
         case BinaryKind::Mod:
-        case BinaryKind::Pow: return numeric(b.getLhs(), "binary") && numeric(b.getRhs(), "binary");
+        case BinaryKind::Pow:
+        case BinaryKind::BitAnd:
+        case BinaryKind::BitOr:
+        case BinaryKind::BitXor:
+        case BinaryKind::Shl:
+        case BinaryKind::Shr:
+        case BinaryKind::UShr:
+            return numericOperand(b.getLhs(), "binary") && numericOperand(b.getRhs(), "binary");
         // (`**` is not std::pow; exponentiate() below is why.)
         default: return refuse("a bitwise or string operator is not native yet");
         }
     }
     if (auto b = llvm::dyn_cast<BinaryStaticOp>(o)) {
         if (b.getKind() != BinaryKind::Add) {
-            return refuse("a static bitwise operator is not native yet");
+            // The verifier restricts the remaining static kinds to bitwise
+            // operations. Primitive conversion cannot invoke object hooks.
+            return numericOperand(b.getLhs(), "bitwise") && numericOperand(b.getRhs(), "bitwise");
         }
         return numeric(b.getLhs(), "++") && numeric(b.getRhs(), "++");
     }
     if (auto u = llvm::dyn_cast<UnaryOp>(o)) {
         switch (u.getKind()) {
+        case UnaryKind::BitNot:
         case UnaryKind::Neg:
-        case UnaryKind::Plus: return numeric(u.getOperand(), "unary");
+        case UnaryKind::Plus: return numericOperand(u.getOperand(), "unary");
         case UnaryKind::TypeOf:
-            return isScalarCarrier(carrierOf(typeOf(u.getOperand()))) ||
+            return carrierOf(typeOf(u.getOperand())) == carrier::symbol ||
+                   isPrimitiveCarrier(carrierOf(typeOf(u.getOperand()))) ||
                    isObjectCarrier(carrierOf(typeOf(u.getOperand()))) ||
-                   isStringCarrier(carrierOf(typeOf(u.getOperand()))) ||
                    refuse("typeof requires a scalar, object identity or owning string carrier");
         case UnaryKind::Not:
             // `!x` applies the carrier's exact truthiness conversion, then
@@ -599,7 +672,7 @@ bool admission::op(mlir::Operation * o) {
                 return refuse("! of " + printed(typeOf(u.getOperand())));
             }
             return true;
-        default: return refuse("void and ~ are not native yet");
+        default: return refuse("void is not native yet");
         }
     }
     if (auto cmp = llvm::dyn_cast<CompareOp>(o)) {
@@ -611,6 +684,10 @@ bool admission::op(mlir::Operation * o) {
             return numeric(cmp.getLhs(), "compare") && numeric(cmp.getRhs(), "compare");
         case CompareKind::Eq:
         case CompareKind::StrictEq:
+            if (carrierOf(typeOf(cmp.getLhs())) == carrier::symbol &&
+                carrierOf(typeOf(cmp.getRhs())) == carrier::symbol) {
+                return true;
+            }
             if (stringEquality(typeOf(cmp.getLhs()), typeOf(cmp.getRhs()))) { return true; }
             if (isObjectCarrier(carrierOf(typeOf(cmp.getLhs()))) ||
                 isObjectCarrier(carrierOf(typeOf(cmp.getRhs())))) {
@@ -638,10 +715,7 @@ bool admission::op(mlir::Operation * o) {
         return true;
     }
     if (auto load = llvm::dyn_cast<LoadGlobalOp>(o)) {
-        if (carrierOf(typeOf(load.getResult())) != carrier::number &&
-            carrierOf(typeOf(load.getResult())) != carrier::boolean &&
-            carrierOf(typeOf(load.getResult())) != carrier::nullable &&
-            !isStringCarrier(carrierOf(typeOf(load.getResult())))) {
+        if (!isPrimitiveCarrier(carrierOf(typeOf(load.getResult())))) {
             return refuse(("global `" + load.getName() + "` is " +
                            printed(typeOf(load.getResult())) + ", not a number")
                               .str());
@@ -675,20 +749,21 @@ bool admission::op(mlir::Operation * o) {
                 joined = meet(joined, type);
             }
         });
-        consistent &= isScalarCarrier(carrierOf(joined)) || isStringCarrier(carrierOf(joined));
+        consistent &= isPrimitiveCarrier(carrierOf(joined));
         return consistent || refuse(where + " has inconsistent global observation types");
     }
     if (auto attempt = llvm::dyn_cast<TryOp>(o)) { return exceptionRegion(attempt); }
     if (llvm::isa<TryExitOp, TryYieldOp>(o)) { return true; }
     if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
         const carrier c = carrierOf(typeOf(ret.getValue()));
-        if (c == carrier::booleanString) {
-            return refuse("a Bool/String temporary needs a single proved return type");
-        }
         if (c == carrier::none) { return refuse("returns " + printed(typeOf(ret.getValue()))); }
+        returnedType =
+            returnedType ? meet(returnedType, typeOf(ret.getValue())) : typeOf(ret.getValue());
         if (returns == carrier::none) { returns = c; }
         if (returns != c) {
-            if (isScalarCarrier(returns) && isScalarCarrier(c)) {
+            if (isStringUnionCarrier(carrierOf(returnedType))) {
+                returns = carrierOf(returnedType);
+            } else if (isScalarCarrier(returns) && isScalarCarrier(c)) {
                 returns = carrier::nullable;
             } else if ((isObjectCarrier(returns) || isScalarCarrier(returns)) &&
                        (isObjectCarrier(c) || isScalarCarrier(c))) {

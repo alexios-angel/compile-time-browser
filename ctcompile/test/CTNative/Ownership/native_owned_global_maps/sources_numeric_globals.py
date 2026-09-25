@@ -327,7 +327,11 @@ def numeric_entry_cases():
             "local_numeric_" + tag,
             number_literal.replace(" + 1;", " + " + literal + ";"),
             value,
-            "the exact Number pair proof does not admit conversion from " + tag,
+            (
+                "Number/Boolean arithmetic retains the evaluated call and numeric coercion"
+                if tag == "bool"
+                else "the exact Number pair proof does not admit conversion from " + tag
+            ),
             repair=(" + " + literal + ";", " + 1;", "local_add_number_literal"),
         )
     snapshot = rows["local_numeric_saved_snapshot"]["source"]
@@ -374,7 +378,6 @@ NUMERIC_ENTRY_UNOWNED = {
     "local_add_object_control",
     "local_numeric_future_bool",
     "local_numeric_later_bool",
-    "local_numeric_bool",
     "local_numeric_null",
     "local_numeric_undefined",
 }

@@ -74,6 +74,13 @@ template <typename Call> struct UnreadCallIsAStatement : mlir::OpRewritePattern<
 // of them. These are the ones that are C expressions without side effects:
 // unused, they are dead. A call, an assign, a variable are not on the list.
 bool isPureExpression(mlir::Operation * o) {
+    if (auto call = llvm::dyn_cast<ec::MemberCallOpaqueOp>(o)) {
+        auto receiver = llvm::dyn_cast<ec::OpaqueType>(call.getReceiver().getType());
+        return receiver && receiver.getValue() == "ctnative::js_num" &&
+               call.getCallee() == "value" && call.getArgOperands().empty() && !call.getArgs() &&
+               !call.getTemplateArgs() && call.getNumResults() == 1 &&
+               call.getResult(0).getType().isF64();
+    }
     return llvm::isa<ec::ConstantOp, ec::LiteralOp, ec::AddOp, ec::SubOp, ec::MulOp, ec::DivOp,
                      ec::RemOp, ec::CmpOp, ec::CastOp, ec::LogicalAndOp, ec::LogicalOrOp,
                      ec::LogicalNotOp, ec::UnaryMinusOp, ec::UnaryPlusOp, ec::ConditionalOp,

@@ -1,0 +1,2 @@
+# Original Bootstrap R.find counts use public DOM/Style without a VM.
+# RUN: python3 %S/native_dom_spread_length.py --translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm

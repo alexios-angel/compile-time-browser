@@ -9,6 +9,7 @@ import re
 import shutil
 
 from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers, run
+from CTNative.Browser.native_dom import link_options
 
 PROGRAMS = {
     "guarded": (2, {"caught42": 42, "normal20": 20}),
@@ -77,6 +78,7 @@ POSITIVES = (
     "protected_boolean_helper",
     "protected_string_helper",
     "computed_throw",
+    "mixed_concatenation",
 )
 TWO_THROW_SITES = ("two_sites", "finally_override", "boolean_value", "string_sites", "numeric_bits")
 STRING_LIFETIMES = (
@@ -457,6 +459,10 @@ def execution_tools(args):
 
 
 def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False):
+    # Typed Number/String concatenation calls the same public Core as the VM.
+    _, libraries = link_options(
+        argparse.Namespace(build=args.build, include=Path(CORE_INCLUDE[2:])), core_only=True
+    )
     deduced = args.work / f"{name}.deduced.mlir"
     deduced.unlink(missing_ok=True)
     run(
@@ -507,7 +513,7 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
         for index, compiler in enumerate(compilers):
             binary = (args.work / f"{name}.{mode}.{index}").resolve()
             binary.unlink(missing_ok=True)
-            run([compiler, *flags, str(source), "-o", str(binary)])
+            run([compiler, *flags, str(source), *libraries, "-o", str(binary)])
             if VM_SYMBOL.search(run([nm, "-C", str(binary)]).stdout):
                 raise RuntimeError(f"{name}/{mode}: compiled binary reaches the VM")
             observed = run([str(binary)]).stdout
@@ -541,6 +547,7 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
                     "-fsanitize=address,undefined",
                     "-fsanitize-address-use-after-scope",
                     str(source),
+                    *libraries,
                     "-o",
                     str(sanitized),
                 ]
@@ -557,6 +564,7 @@ def main():
     parser.add_argument("--translate")
     parser.add_argument("--opt")
     parser.add_argument("--reference")
+    parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--node", required=True)
     parser.add_argument("--oracle-only", action="store_true")
     parser.add_argument("--fixtures", type=Path, required=True)

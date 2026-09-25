@@ -1,4 +1,5 @@
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
 
 namespace ctcompile::ctnative {
@@ -8,6 +9,31 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
     llvm::function_ref<llvm::SmallVector<mlir::OpOperand *>(mlir::Value)> projectedUses = {}) {
     const auto error = [](llvm::StringRef message) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), message);
+    };
+    const auto precedes = [&](mlir::Operation * definition, mlir::Operation * use) {
+        // Immutable slots may be read in branches, loops and exception continuations.
+        // The complete use census still requires unique unconditional stores;
+        // no backedge can replace a slot or carry the holder into another scope.
+        while (use->getBlock() != definition->getBlock()) {
+            if (!spend()) { return false; }
+            auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(use->getParentOp());
+            // Only the call executes before dispatch. Direct continuation uses
+            // follow dispatch; the Invoke must follow initialization. Saved
+            // holder transport is still rejected by the complete use census.
+            const bool protectedCall = invocation &&
+                                       use->getParentRegion() == &invocation.getBody() &&
+                                       llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(use);
+            const bool continuation =
+                invocation && (use->getParentRegion() == &invocation.getNormalBody() ||
+                               use->getParentRegion() == &invocation.getUnwindBody());
+            if (!protectedCall && !continuation &&
+                !llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp, ctjs::TryOp>(
+                    use->getParentOp())) {
+                return false;
+            }
+            use = use->getParentOp();
+        }
+        return definition->isBeforeInBlock(use);
     };
     CallableObject result;
     if (publication) {
@@ -93,8 +119,7 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
             if (!spend()) { return error("DOM helper work budget exhausted"); }
             auto * operation = use.getOwner();
             auto * definition = alias.getDefiningOp();
-            if (operation->getBlock() != definition->getBlock() ||
-                !definition->isBeforeInBlock(operation)) {
+            if (!precedes(definition, operation)) {
                 return error("DOM helper object has nonlocal or unordered uses");
             }
             if (llvm::isa<ctjs::RootOp>(operation)) { continue; }
@@ -104,7 +129,7 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
             if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
                 auto name = key(store.getKey());
                 auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
-                if (alias != object.getResult() ||
+                if (alias != object.getResult() || store->getBlock() != object->getBlock() ||
                     (publication && !store->isBeforeInBlock(publication)) ||
                     use.getOperandNumber() != 0 || !name || name.getValue() == "__proto__" ||
                     !closure || closure->getBlock() != object->getBlock() ||
@@ -123,8 +148,7 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
                 auto methodRead =
                     callee ? callee.getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
                 if (!methodRead || methodRead.getObject() != alias ||
-                    methodRead->getBlock() != definition->getBlock() ||
-                    !methodRead->isBeforeInBlock(operation)) {
+                    !precedes(methodRead, operation)) {
                     return error("DOM helper object escapes or observes its identity");
                 }
                 result.calls.push_back(operation);
@@ -136,7 +160,7 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
         if (!spend()) { return error("DOM helper work budget exhausted"); }
         auto name = key(read.getKey());
         auto store = name ? slots.lookup(name) : ctjs::SetPropertyOp{};
-        if (!store || (read.getObject() == object.getResult() && !store->isBeforeInBlock(read))) {
+        if (!store || (read.getObject() == object.getResult() && !precedes(store, read))) {
             return error("DOM helper object read lacks a preceding own callable slot");
         }
         result.reads.emplace_back(read, store.getValue().getDefiningOp<ctjs::CreateClosureOp>());

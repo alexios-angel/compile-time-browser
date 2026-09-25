@@ -34,6 +34,9 @@ void test_receivers() {
 }
 
 void test_keys() {
+    expect_result("return Set.prototype.keys === Set.prototype.values && "
+                  "Set.prototype[Symbol.iterator] === Set.prototype.values;",
+                  "true");
     expect_result("const m = new Map(); m.set(-0, 'z'); return m.has(0) + '|' + "
                   "Object.is([...m.keys()][0], 0);",
                   "true|true");

@@ -588,11 +588,16 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
         if (narrowModule && wideModule) {
             const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
             const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
-            if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 64) {
+            // Each unary result charges its producer, scalar snapshot and either
+            // the exact BitNot Number or the Plus/Neg bitwise conversion fact.
+            // Plus/Neg also charge the independent binary64 Number snapshot.
+            const unsigned perResult = spelling == "bitnot" ? 3 : 4;
+            if (!narrow.complete || !expanded.complete ||
+                expanded.work != narrow.work + 32 * perResult) {
                 fail(row{.what = "arithmetic snapshots charge every primitive origin",
                          .body = wide.contents.body,
                          .expected = ""},
-                     "32 extra results did not cost one producer and one snapshot each");
+                     "32 extra results did not charge their producers, snapshots and proved facts");
             }
             check(*wideModule, wide);
         } else {

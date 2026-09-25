@@ -1,0 +1,2 @@
+# Proved element for-of uses ordinary native loops over typed browser snapshots.
+# RUN: python3 %S/native_dom_element_iteration.py --translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm

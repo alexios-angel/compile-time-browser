@@ -4,11 +4,12 @@
 // slightly outside the tier will ever see, and none of which had a pin - plus
 // the one refusal that cites an obligation by number:
 //
-//   1. `admission::numeric` - ONE message with NINE call sites, each passing a
+//   1. `admission::numeric` - ONE message with several call sites, each passing a
 //      different `where`. The word in front of "operand is" is the only thing
 //      that tells a reader which operation refused, so a rewrite that lost the
 //      `where` argument would leave every one of them saying the same thing
-//      and no test would notice. Two are pinned here.
+//      and no test would notice. Its original examples below are now native;
+//      the remaining broad union is rejected earlier by the carrier sweep.
 //   2. the carrier check in `admission::function`, "a value of type T from
 //      `OP`" - the sweep after every operation, which catches what the arms
 //      let through. It is the most common refusal in this file's own probes
@@ -24,8 +25,17 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/binary.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=BINARY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/generic-binary.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
+// RUN:   | FileCheck %s --check-prefix=GENERIC --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/union-binary.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
+// RUN:   | FileCheck %s --check-prefix=UNION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-binary.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
+// RUN:   | FileCheck %s --check-prefix=OPTIONAL --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/store.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=STORE
@@ -42,22 +52,29 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=DYNKEY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/looparray.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=LOOPARRAY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/tilde.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=TILDE
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
+// RUN:   | FileCheck %s --check-prefix=TILDE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bits.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=BITS
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
+// RUN:   | FileCheck %s --check-prefix=BITS --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/frameslot.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=FRAMESLOT
 
-// --- numeric(), where = "binary" --------------------------------------------
+// --- former numeric() refusals and a wider unsupported union --------------------------------------------
 //
+// String and Boolean/String union subtraction and generic addition are native.
+// A broader Boolean/Number/String union fails the carrier sweep at its join;
+// preserve all former sources as positives.
 // BINARY: ctjs.func {{.*}}@badd$1
-// BINARY-SAME: ctnative.not_native = "binary operand is !ctnative.str<utf8>, not a number"
+// BINARY-SAME: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.bool, !ctnative.num<i32>, !ctnative.str<utf8>> from `scf.if`"
+
+// GENERIC: call_opaque "ctnative::add"
+// UNION: call_opaque "ctnative::to_number"{{.*}}!emitc.opaque<"ctnative::boolean_string">{{.*}} -> !emitc.opaque<"ctnative::js_num">
+// OPTIONAL: member_call_opaque {{.*}} "to_number"() : !emitc.opaque<"ctnative::nullable_string">, () -> !emitc.opaque<"ctnative::js_num">
 
 // --- a formerly refused Boolean global ------------------------------------
 //
@@ -109,11 +126,10 @@
 // LOOPARRAY: ctjs.func {{.*}}@ab$1
 // LOOPARRAY-SAME: ctnative.not_native = "an array literal that is loop-carried - more than one value reaches the variable that holds it (assigned again inside a loop, or on only one path before it)"
 
-// --- the two "not native yet" operator arms ---------------------------------
+// --- formerly refused Number bitwise operators -----------------------------
 //
-// They are worded almost alike and come from different operations - ctjs.unary
-// and ctjs.binary_static - so a reader cannot tell them apart by eye and a
-// rewrite that merged them would look like a tidy-up.
+// Preserve both original source bodies as positives. Unary ~ and binary |
+// operate on js_num, whose overloads implement JavaScript's 32-bit conversion.
 //
 // MEASURED, AND IT SURPRISES: `x | y`, `x >> y` and `x >>> y` all arrive as
 // ctjs.binary_static, so the BinaryOp arm's own default ("a bitwise or string
@@ -121,11 +137,9 @@
 // tried here. It is left unpinned rather than pinned against a construct that
 // does not produce it.
 //
-// TILDE: ctjs.func {{.*}}@bits$1
-// TILDE-SAME: ctnative.not_native = "void and ~ are not native yet"
+// TILDE: bitwise_not {{.*}} : (!emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 
-// BITS: ctjs.func {{.*}}@shift$1
-// BITS-SAME: ctnative.not_native = "a static bitwise operator is not native yet"
+// BITS: bitwise_or {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 
 // --- obligation O-4: one literal, one frame slot ----------------------------
 //
@@ -140,7 +154,19 @@
 // FRAMESLOT-SAME: ctnative.not_native = "an array literal created inside a branch or a loop - its storage has to be one frame slot (obligation O-4)"
 
 //--- binary.js
-function badd(n) { var u = "text"; return u - n; }
+function badd(n) { var u = n; if (n > 0) { u = "text"; } else if (n < 0) { u = false; } return u + n; }
+var r = badd(1);
+
+//--- generic-binary.js
+function badd(n) { var u; if (n > 0) { u = "text"; } else { u = false; } return u + n; }
+var r = badd(1);
+
+//--- union-binary.js
+function badd(n) { var u; if (n > 0) { u = "text"; } else { u = false; } return u - n; }
+var r = badd(1);
+
+//--- optional-binary.js
+function badd(n) { var u; if (n > 0) { u = "text"; } return u - n; }
 var r = badd(1);
 
 //--- store.js

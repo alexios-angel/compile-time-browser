@@ -270,9 +270,10 @@ std::optional<std::string> closureLifter::examineFunctionBinding(ctjs::CreateCel
 // arms and here for a second reason on top of theirs: the closure is
 // defined in ANOTHER ctjs.func and naming it from this one is not something
 // SSA allows at all. So `lift()` never sees this site - it walks the uses
-// of the closure value - and that is sound only because condition 5 has
-// proved the callee has no capture left for a lift to prepend.
-void closureLifter::makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target) {
+// of the closure value. Record the site so the lift can prepend any data
+// captures from the sibling caller's existing capture parameters.
+void closureLifter::makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target,
+                                        ctjs::CreateClosureOp holder) {
     const unsigned parameters =
         target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
     mlir::OpBuilder at(call);
@@ -285,6 +286,7 @@ void closureLifter::makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target) 
                                              mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
                                              call.getReceiver(), undefined, undefined, arguments,
                                              /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+    boundCaptureCalls[target.getOperation()].push_back({direct, holder});
     call.getResult().replaceAllUsesWith(direct.getResult());
     call.erase();
 }
@@ -365,7 +367,7 @@ void closureLifter::removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<u
 }
 
 // THE WHOLE OF STEP 4, RUN ONCE AND BEFORE `census()`.
-void closureLifter::bindLocalFunctions(liftReport & out) {
+bool closureLifter::bindLocalFunctions(liftReport & out, bool probeSiblings) {
     llvm::MapVector<mlir::Operation *, functionBinding> plans;
     module.walk([&](ctjs::CreateCellOp cell) {
         if (!holdsAFunction(cell)) { return; }
@@ -399,6 +401,12 @@ void closureLifter::bindLocalFunctions(liftReport & out) {
             for (unsigned j = 0; j < captures; ++j) {
                 auto held = plan.closure.getUpvalues()[j].getDefiningOp<ctjs::CreateCellOp>();
                 if (held && taken.contains(held.getOperation())) { continue; }
+                if ((allowSiblingCaptures || probeSiblings) &&
+                    llvm::all_of(plan.slots, [&](const functionBinding::capturedSlot & slot) {
+                        return siblingCaptureSlot(plan.closure, j, slot.made).has_value();
+                    })) {
+                    continue;
+                }
                 whyNotAFunctionBinding[entry.first] =
                     "it is read from inside another function, and capture " + std::to_string(j) +
                     " of the function it holds is not a binding this step erases - a call out "
@@ -409,6 +417,21 @@ void closureLifter::bindLocalFunctions(liftReport & out) {
             }
         }
     }
+    // A probe changes no IR. Only candidates that still need data captures
+    // after callable-slot removal require a speculative whole-lift attempt.
+    for (auto & entry : plans) {
+        functionBinding & plan = entry.second;
+        if (!taken.contains(entry.first) || plan.captured.empty() ||
+            llvm::all_of(plan.closure.getUpvalues(), [&](mlir::Value capture) {
+                auto cell = capture.getDefiningOp<ctjs::CreateCellOp>();
+                return cell && taken.contains(cell.getOperation());
+            })) {
+            continue;
+        }
+        if (probeSiblings) { return true; }
+        siblingBindingTargets.insert(plan.target.getOperation());
+    }
+    if (probeSiblings) { return false; }
     // PASS A: EVERY READ BECOMES A CALL OF THE TARGET.
     llvm::MapVector<mlir::Operation *, slotRemoval> removals;
     for (auto & entry : plans) {
@@ -450,7 +473,7 @@ void closureLifter::bindLocalFunctions(liftReport & out) {
                             "name that this step cannot rewrite, and the binding is a "
                             "function VALUE this tier cannot spell");
                     }
-                    makeBoundCallDirect(call, plan.target);
+                    makeBoundCallDirect(call, plan.target, made);
                     // BOTH COUNTERS, and `calls` is the load-bearing one:
                     // tools/check/native-claims.py reads "rewrote N call(s)"
                     // out of the remark as the number of ctjs.call_direct
@@ -563,6 +586,7 @@ void closureLifter::bindLocalFunctions(liftReport & out) {
         }
         plan.cell.erase();
     }
+    return !siblingBindingTargets.empty();
 }
 
 // WHY A CLOSURE PUT INTO A LOCAL BINDING IS NOT A DIRECT CALL, which is

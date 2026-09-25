@@ -22,11 +22,11 @@
 // element types (native-array.mlir). The document cites those files by name.
 //
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EQUALITY
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/relational.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=RELATIONAL
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/typeof.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=TYPEOF
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bitwise.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=BITWISE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/concat.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CONCAT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=EQUALITY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/relational.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=RELATIONAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/typeof.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=TYPEOF
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bitwise.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=BITWISE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/concat.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=CONCAT
 // RUN: cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%t/globalstring.js -DOUTPUT=%t/globalstring.mlir -P %S/../../Checks/pipeline.cmake
 // RUN: FileCheck %s --check-prefix=GLOBALSTRING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/globalstring.mlir
 // RUN: ctjs-translate --mlir-to-cpp %t/globalstring.mlir > %t/globalstring.cpp
@@ -40,12 +40,12 @@
 // numeric ordering and typeof now lower; the source differential fixture
 // checks their answers independently of these structural assertions.
 //
-// EQUALITY: emitc.func @equality_1() -> f64
+// EQUALITY: emitc.func @equality_1() -> !emitc.opaque<"ctnative::js_num">
 // EQUALITY: call_opaque "ctnative::scalar_strict_equal"
 // EQUALITY-NOT: ctnative.not_native
-// RELATIONAL: emitc.func @relational_1() -> f64
+// RELATIONAL: emitc.func @relational_1() -> !emitc.opaque<"ctnative::js_num">
 // RELATIONAL-NOT: ctnative.not_native
-// TYPEOF: emitc.func @kind_1({{.*}}) -> f64
+// TYPEOF: emitc.func @kind_1({{.*}}) -> !emitc.opaque<"ctnative::js_num">
 // TYPEOF-NOT: ctnative.not_native
 
 // --- ND-9: A BITWISE OPERATOR IS ToInt32, WHICH IS NOT A C++ CAST -----------
@@ -55,12 +55,18 @@
 // JavaScript, and `static_cast<int32_t>(2147483648.0)` is UNDEFINED BEHAVIOUR
 // in C++ - not merely a different number, an unbounded one. NaN and the
 // infinities are 0 under ToInt32 and are undefined behaviour under the cast
-// too. So the operator is refused until it is emitted with the wrap written
-// out, which is the same shape the `**` guard has.
+// too. The typed Number operator now uses the public Core conversion shared
+// with the VM, including the wrap and non-finite cases.
 //
-// BITWISE: ctnative.not_native = "a static bitwise operator is not native yet"
+// BITWISE: bitwise_or
+// BITWISE-SAME: !emitc.opaque<"ctnative::js_num">
+// BITWISE-NOT: ctnative.not_native
 
-// CONCAT: ctnative.not_native = "binary operand is !ctnative.str<utf8>, not a number"
+// Exact Number/String concatenation uses the typed String overload and public
+// Core formatting; string-coercions.test checks the executable results.
+// CONCAT: emitc.func @concat_1({{.*}}!emitc.opaque<"ctnative::js_num">{{.*}}) -> !emitc.opaque<"ctnative::js_string">
+// CONCAT: add {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_string">) -> !emitc.opaque<"ctnative::js_string">
+// CONCAT-NOT: ctnative.not_native
 
 // The unchanged global String load returns through its owning optional carrier.
 // Its actual String tag survives the call and is printed without narrowing.

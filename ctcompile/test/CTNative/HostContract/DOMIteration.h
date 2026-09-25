@@ -73,6 +73,7 @@ module {
         input.walk([&](ctjs::GetPropertyOp read) {
             empty &= !proof.method(read) && !proof.isDataset(read.getResult()) &&
                      !proof.isStringVectorLength(read) && !proof.isStringVectorIndex(read) &&
+                     !proof.isElementVectorLength(read) && !proof.isElementVectorIndex(read) &&
                      !proof.datasetValueElement(read);
         });
         return empty;
@@ -123,6 +124,253 @@ module {
         DOMEntryAnalysis refused(*input, request);
         check(noEvidence(*input, refused),
               "nonzero starts, wrong latches, wrong indices and inexact bounds withhold evidence");
+    }
+
+    const std::string queryPrefix = R"MLIR(
+module {
+  ctjs.func @iterate$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %queryName = ctjs.constant #ctjs.string<"querySelectorAll">
+    %query = ctjs.get_property %element[%queryName]
+    %selector = ctjs.constant #ctjs.string<".selected">
+    %keys = ctjs.call %query(%element, %selector)
+    %lengthName = ctjs.constant #ctjs.string<"length">
+    %length = ctjs.get_property %keys[%lengthName]
+    %zero = ctjs.constant #ctjs.number<0>
+    %one = ctjs.constant #ctjs.number<4607182418800017408>
+)MLIR";
+    const auto queried = replaced(source, prefix, queryPrefix);
+    const auto ordinary = queryPrefix + R"MLIR(
+    %loop:2 = scf.while (%count = %zero, %index = %zero) : (!ctjs.value, !ctjs.value) -> (!ctjs.value, !ctjs.value) {
+      %less = ctjs.compare lt %index, %length
+      %test = ctjs.truthy %less
+      scf.condition(%test) %index, %count : !ctjs.value, !ctjs.value
+    } do {
+    ^bb0(%index: !ctjs.value, %count: !ctjs.value):
+        %key = ctjs.get_property %keys[%index]
+        %nextCount = ctjs.binary add %count, %one
+        %nextIndex = ctjs.binary_static add %index, %one
+        scf.yield %nextCount, %nextIndex : !ctjs.value, !ctjs.value
+    }
+    ctjs.return %loop#1
+  }
+}
+)MLIR";
+    const auto withMutation = [](const std::string & input) {
+        return replaced(input, "        %nextCount =", R"MLIR(
+        %setterName = ctjs.constant #ctjs.string<"setAttribute">
+        %setter = ctjs.get_property %key[%setterName]
+        %attribute = ctjs.constant #ctjs.string<"class">
+        %text = ctjs.constant #ctjs.string<"visited">
+        %written = ctjs.call %setter(%key, %attribute, %text)
+        %nextCount =)MLIR");
+    };
+    const auto mutated = withMutation(queried);
+    const auto ordinaryMutated = withMutation(ordinary);
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        auto request = contract;
+        request.provider = provider;
+        request.initialIntrinsics.clear();
+        request.datasetParameters.clear();
+        for (const auto & candidate : {queried, mutated, ordinary, ordinaryMutated}) {
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(candidate, &context);
+            check(static_cast<bool>(input), "independent element snapshot loop parses");
+            if (!input) { continue; }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            DOMEntryAnalysis proof(*input, request);
+            check(proof.proved(),
+                  "guarded element snapshots support read and attribute-write loops");
+            if (!proof.proved()) {
+                std::fprintf(stderr, "%s\n", proof.reason().str().c_str());
+                continue;
+            }
+            unsigned lengths = 0, indices = 0, queries = 0;
+            input->walk([&](ctjs::GetPropertyOp read) {
+                lengths += proof.isElementVectorLength(read);
+                indices += proof.isElementVectorIndex(read);
+                if (proof.isElementVectorIndex(read)) {
+                    check(proof.isElement(read.getResult()) &&
+                              proof.isElementIdentity(read.getResult()),
+                          "guarded snapshot member is a nonnull borrowed element");
+                }
+            });
+            input->walk([&](ctjs::CallOp call) {
+                const auto * edge = proof.call(call);
+                if (edge && edge->kind == HostDOMMethod::querySelectorAll) {
+                    ++queries;
+                    check(edge->returnsElementVector() && !edge->returnsBoolean() &&
+                              edge->usesStyle(),
+                          "query collection has a distinct typed result and Style requirement");
+                }
+            });
+            check(lengths == 1 && indices == 1 && queries == 1,
+                  "snapshot evidence names only the proved length, index and selector call");
+            check(DOMEntryAnalysis(*input, request, proof.steps()).proved(),
+                  "element snapshot proof reproduces its exact work budget");
+            for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+                DOMEntryAnalysis limited(*input, request, budget);
+                check(limited.exhausted() && noEvidence(*input, limited),
+                      "incomplete element snapshots publish no borrowed handle evidence");
+            }
+            if (candidate == mutated || candidate == ordinaryMutated) {
+                auto datasetRequest = request;
+                datasetRequest.datasetParameters = {0};
+                DOMEntryAnalysis refused(*input, datasetRequest);
+                check(noEvidence(*input, refused) &&
+                          refused.reason().contains("backedge dataset-alias proof"),
+                      "dataset-enabled loops still require a backedge alias proof");
+            }
+        }
+        for (const auto & invalid :
+             {replaced(queried, "ctjs.compare lt %index, %length", "ctjs.compare lt %index, %one"),
+              replaced(queried, "%key = ctjs.get_property %keys[%index]",
+                       "%key = ctjs.get_property %keys[%one]"),
+              replaced(queried, "ctjs.return %loop#2", "ctjs.return %keys"),
+              replaced(queried, "ctjs.return %loop#2",
+                       "ctjs.set_property %keys[%lengthName], %zero\n    ctjs.return %loop#2"),
+              replaced(ordinary, "%index = %zero", "%index = %one"),
+              replaced(ordinary, "ctjs.binary_static add %index, %one",
+                       "ctjs.binary_static add %index, %zero"),
+              replaced(ordinary, "scf.condition(%test) %index, %count",
+                       "scf.condition(%test) %count, %index"),
+              replaced(ordinary, "ctjs.compare lt %index, %length",
+                       "ctjs.compare le %index, %length"),
+              replaced(replaced(ordinary, "        %key = ctjs.get_property %keys[%index]\n", ""),
+                       "      %less =",
+                       "      %key = ctjs.get_property %keys[%index]\n      %less =")}) {
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+            check(static_cast<bool>(input), "invalid element snapshot witness parses");
+            if (!input) { continue; }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            DOMEntryAnalysis refused(*input, request);
+            check(noEvidence(*input, refused),
+                  "unsafe indices, snapshot escape and writes remain refused");
+        }
+    }
+
+    // Independent importer-shaped element iteration: the proxy's eager copy
+    // is bounded, while a separate observation of the NodeList stays whole.
+    const auto iterated = replaced(replaced(replaced(queried, "ctjs.compare lt %index, %length",
+                                                     "ctjs.compare lt %index, %materialized#1"),
+                                            "%key = ctjs.get_property %keys[%index]",
+                                            "%key = ctjs.get_property %materialized#0[%index]"),
+                                   "    %length = ctjs.get_property %keys[%lengthName]", R"MLIR(
+    %aliasLength = ctjs.get_property %keys[%lengthName]
+    %open = ctjs.load_global "__ctbrowser_for_of_open"
+    %undefined = ctjs.constant #ctjs.undefined
+    %record = ctjs.call %open(%undefined, %keys)
+    %fast = ctjs.compare strict_eq %record, %undefined
+    %testFast = ctjs.truthy %fast
+    %materialized:2 = scf.if %testFast -> (!ctjs.value, !ctjs.value) {
+      %iterable = ctjs.iterable of %keys
+      %length = ctjs.get_property %iterable[%lengthName]
+      scf.yield %iterable, %length : !ctjs.value, !ctjs.value
+    } else {
+      scf.yield %keys, %aliasLength : !ctjs.value, !ctjs.value
+    })MLIR");
+    const auto iterationRequest = [&](mlir::ModuleOp input) {
+        auto request = contract;
+        request.datasetParameters.clear();
+        request.initialIntrinsics = {"Array", "Element", "__ctbrowser_for_of_open",
+                                     "__ctbrowser_iter_next", "__ctbrowser_iter_close"};
+        request.moduleSha256 = hostContractFingerprint(input);
+        return request;
+    };
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(iterated, &context);
+        check(static_cast<bool>(input), "element for-of normalization fixture parses");
+        if (!input) { continue; }
+        auto request = iterationRequest(*input);
+        request.provider = provider;
+        if (auto failure = normalizeDOMIteration(*input, request, 100000)) {
+            check(false, "element for-of normalizes through the complete snapshot proof");
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+            continue;
+        }
+        request.moduleSha256 = hostContractFingerprint(*input);
+        DOMEntryAnalysis proof(*input, request);
+        check(proof.proved(), "normalized element iteration reproves without iterator objects");
+        unsigned lengths = 0, indices = 0, caps = 0, iterables = 0;
+        input->walk([&](ctjs::GetPropertyOp read) {
+            lengths += proof.isElementVectorLength(read);
+            indices += proof.isElementVectorIndex(read);
+        });
+        input->walk([&](ctjs::ConstantOp constant) {
+            auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue());
+            caps += number && number.getDouble() == double(1U << 24);
+        });
+        input->walk([&](ctjs::IterableOp) { ++iterables; });
+        check(lengths == 2 && indices == 1 && caps == 1 && iterables == 0,
+              "only iteration is capped; the original snapshot alias remains whole");
+        for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+            DOMEntryAnalysis limited(*input, request, budget);
+            check(limited.exhausted() && noEvidence(*input, limited),
+                  "incomplete normalized iteration exposes no element or index evidence");
+        }
+    }
+    const auto bodyBegin = iterated.find("    %queryName =");
+    const auto bodyEnd = iterated.find("    ctjs.return %loop#2");
+    const auto discardedInput =
+        replaced(iterated, "    %queryName =",
+                 "    %discard = arith.constant false\n    scf.if %discard {\n" +
+                     iterated.substr(bodyBegin, bodyEnd - bodyBegin) +
+                     "      scf.yield\n    } else {\n      scf.yield\n    }\n    %queryName =");
+    for (const auto & [invalid, diagnostic] : {
+             std::pair{replaced(iterated, "ctjs.compare lt %index, %materialized#1",
+                                "ctjs.compare lt %index, %aliasLength"),
+                       "own length guard"},
+             std::pair{replaced(iterated, "ctjs.get_property %materialized#0[%index]",
+                                "ctjs.get_property %materialized#0[%one]"),
+                       "own length guard"},
+             std::pair{replaced(iterated, "ctjs.return %loop#2", "ctjs.return %materialized#0"),
+                       "escapes its observations"},
+             std::pair{replaced(iterated, "ctjs.compare strict_eq %record, %undefined",
+                                "ctjs.compare strict_eq %undefined, %undefined"),
+                       "exact source materialization arm"},
+             std::pair{discardedInput, "would discard a recorded input"},
+         }) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unsafe element materialization fixture parses");
+        if (!input) { continue; }
+        auto request = iterationRequest(*input);
+        const auto reason = llvm::toString(normalizeDOMIteration(*input, request, 100000));
+        check(reason.find(diagnostic) != std::string::npos,
+              "unsafe materialization bounds, uses and discarded identities refuse");
+        request.moduleSha256 = hostContractFingerprint(*input);
+        check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+              "refused private materialization publishes no borrowed evidence");
+    }
+    auto staleIteration = mlir::parseSourceString<mlir::ModuleOp>(iterated, &context);
+    check(static_cast<bool>(staleIteration), "materialization fingerprint fixture parses");
+    if (staleIteration) {
+        auto request = iterationRequest(*staleIteration);
+        mlir::Value aliasLength;
+        staleIteration->walk([&](ctjs::GetPropertyOp read) {
+            if (ctjs::constantKey(read.getKey()) == "length" &&
+                read.getObject().getDefiningOp<ctjs::CallOp>()) {
+                aliasLength = read.getResult();
+            }
+        });
+        staleIteration->walk([&](ctjs::CompareOp compare) {
+            if (compare.getKind() == ctjs::CompareKind::Lt) {
+                compare.getRhsMutable().assign(aliasLength);
+                compare->setAttr("ctnative.host_element_vector_index",
+                                 mlir::BoolAttr::get(&context, true));
+            }
+        });
+        const auto changed = hostContractFingerprint(*staleIteration);
+        for (bool fresh : {false, true}) {
+            if (fresh) { request.moduleSha256 = changed; }
+            const auto reason =
+                llvm::toString(normalizeDOMIteration(*staleIteration, request, 100000));
+            check(reason.find(fresh ? "own length" : "fingerprint") != std::string::npos,
+                  "stale fingerprints and forged reports cannot authorize uncapped copy bounds");
+            auto reproof = request;
+            reproof.moduleSha256 = hostContractFingerprint(*staleIteration);
+            check(noEvidence(*staleIteration, DOMEntryAnalysis(*staleIteration, reproof)),
+                  "failed private materialization reproof withholds all evidence");
+        }
     }
 
     const std::string memberRead = "%value = ctjs.get_property %dataset[%key]";
@@ -448,6 +696,10 @@ module {
     %Object =)MLIR"),
                  "    ctjs.return %loop#2",
                  "      scf.yield %loop#2 : !ctjs.value\n    }\n    ctjs.return %guarded");
+    const std::string undefinedGuard =
+        replaced(guarded, "    %absent = ctjs.unary not %element", R"MLIR(
+    %undefined = ctjs.constant #ctjs.undefined
+    %absent = ctjs.compare strict_eq %element, %undefined)MLIR");
     const std::string truthyGuard = replaced(replaced(valueSource, "    %Object =", R"MLIR(
     %testElement = ctjs.truthy %element
     %guarded = scf.if %testElement -> (!ctjs.value) {
@@ -481,7 +733,10 @@ module {
       scf.yield %innerEmpty : !ctjs.value
     }
       scf.yield %inner : !ctjs.value)MLIR");
-    for (const auto & admitted : {guarded, truthyGuard, nestedDiscarded, nestedSelected,
+    for (const auto & admitted : {guarded, undefinedGuard,
+                                  replaced(undefinedGuard, "strict_eq %element, %undefined",
+                                           "strict_eq %undefined, %element"),
+                                  truthyGuard, nestedDiscarded, nestedSelected,
                                   replaced(truthyGuard, "    %testElement = ctjs.truthy %element",
                                            "    %once = ctjs.unary not %element\n"
                                            "    %twice = ctjs.unary not %once\n"
@@ -515,29 +770,44 @@ module {
                   "only the impossible entry arm disappears; the guarded member loop remains");
         }
     }
-    bool completedGuardBudget = false;
-    for (unsigned budget = 0; budget < 4096; ++budget) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(guarded, &context);
-        check(static_cast<bool>(input), "guard budget fixture parses");
-        if (!input) { break; }
-        auto request = contract;
-        request.moduleSha256 = hostContractFingerprint(*input);
-        auto error = normalizeDOMElementGuards(*input, request, budget);
-        if (!error) {
-            completedGuardBudget = true;
+    for (const auto & budgetSource : {guarded, undefinedGuard}) {
+        bool completedGuardBudget = false;
+        for (unsigned budget = 0; budget < 4096; ++budget) {
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
+            check(static_cast<bool>(input), "guard budget fixture parses");
+            if (!input) { break; }
+            auto request = contract;
             request.moduleSha256 = hostContractFingerprint(*input);
-            check(DOMEntryAnalysis(*input, request).proved(),
-                  "the first complete guard budget preserves the live loop proof");
-            break;
+            auto error = normalizeDOMElementGuards(*input, request, budget);
+            if (!error) {
+                completedGuardBudget = true;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                check(DOMEntryAnalysis(*input, request).proved(),
+                      "the first complete guard budget preserves the live loop proof");
+                break;
+            }
+            const auto reason = llvm::toString(std::move(error));
+            check(reason.find("budget") != std::string::npos &&
+                      request.moduleSha256 == hostContractFingerprint(*input),
+                  "every incomplete guard budget preserves all original source operations");
         }
-        const auto reason = llvm::toString(std::move(error));
-        check(reason.find("budget") != std::string::npos &&
-                  request.moduleSha256 == hostContractFingerprint(*input),
-              "every incomplete guard budget preserves all original source operations");
+        check(completedGuardBudget, "the guarded loop completes within the test work limit");
     }
-    check(completedGuardBudget, "the guarded loop completes within the test work limit");
     for (const auto & unproved :
-         {replaced(guarded, "ctjs.unary not %element", "ctjs.unary not %this"),
+         {replaced(undefinedGuard, "strict_eq %element, %undefined", "strict_eq %this, %undefined"),
+          replaced(undefinedGuard, "    %absent = ctjs.compare strict_eq %element, %undefined",
+                   R"MLIR(
+    %cell = ctjs.create_cell %element
+    %saved = ctjs.cell_get %cell
+    %absent = ctjs.compare strict_eq %saved, %undefined)MLIR"),
+          replaced(undefinedGuard, "    %absent = ctjs.compare strict_eq %element, %undefined",
+                   R"MLIR(
+    %closestName = ctjs.constant #ctjs.string<"closest">
+    %closest = ctjs.get_property %element[%closestName]
+    %selector = ctjs.constant #ctjs.string<".missing">
+    %nullable = ctjs.call %closest(%element, %selector)
+    %absent = ctjs.compare strict_eq %nullable, %undefined)MLIR"),
+          replaced(guarded, "ctjs.unary not %element", "ctjs.unary not %this"),
           replaced(guarded, "    %absent = ctjs.unary not %element", R"MLIR(
     %cell = ctjs.create_cell %element
     %saved = ctjs.cell_get %cell
@@ -596,22 +866,29 @@ module {
         check(request.moduleSha256 == hostContractFingerprint(*input),
               "invalid element declarations preserve the complete guarded source");
     }
-    auto staleGuard = mlir::parseSourceString<mlir::ModuleOp>(guarded, &context);
-    check(static_cast<bool>(staleGuard), "guard fingerprint fixture parses");
-    if (staleGuard) {
-        auto request = contract;
-        request.moduleSha256 = hostContractFingerprint(*staleGuard);
-        auto entry = staleGuard->lookupSymbol<ctjs::FuncOp>(request.entry);
-        entry.walk([&](ctjs::UnaryOp unary) {
-            unary->setOperand(0, entry.getBody().front().getArgument(0));
-        });
-        const auto fingerprint = hostContractFingerprint(*staleGuard);
-        auto error = normalizeDOMElementGuards(*staleGuard, request, 100000);
-        const bool refused = static_cast<bool>(error);
-        const auto reason = refused ? llvm::toString(std::move(error)) : std::string{};
-        check(refused && reason.find("fingerprint") != std::string::npos &&
-                  fingerprint == hostContractFingerprint(*staleGuard),
-              "changed guard operands refuse without changing the source");
+    for (const auto & staleSource : {guarded, undefinedGuard}) {
+        auto staleGuard = mlir::parseSourceString<mlir::ModuleOp>(staleSource, &context);
+        check(static_cast<bool>(staleGuard), "guard fingerprint fixture parses");
+        if (staleGuard) {
+            auto request = contract;
+            request.moduleSha256 = hostContractFingerprint(*staleGuard);
+            auto entry = staleGuard->lookupSymbol<ctjs::FuncOp>(request.entry);
+            entry.walk([&](ctjs::UnaryOp unary) {
+                unary->setOperand(0, entry.getBody().front().getArgument(0));
+            });
+            entry.walk([&](ctjs::CompareOp compare) {
+                if (compare.getKind() == ctjs::CompareKind::StrictEq) {
+                    compare->setOperand(0, entry.getBody().front().getArgument(0));
+                }
+            });
+            const auto fingerprint = hostContractFingerprint(*staleGuard);
+            auto error = normalizeDOMElementGuards(*staleGuard, request, 100000);
+            const bool refused = static_cast<bool>(error);
+            const auto reason = refused ? llvm::toString(std::move(error)) : std::string{};
+            check(refused && reason.find("fingerprint") != std::string::npos &&
+                      fingerprint == hostContractFingerprint(*staleGuard),
+                  "changed guard operands refuse without changing the source");
+        }
     }
     auto liveGuard = mlir::parseSourceString<mlir::ModuleOp>(
         replaced(guarded,

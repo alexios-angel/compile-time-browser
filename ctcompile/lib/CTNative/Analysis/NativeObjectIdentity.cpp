@@ -16,8 +16,7 @@ namespace {
 bool mapKeyUse(mlir::OpOperand & use) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
     if (!call || use.getOperandNumber() != 2) { return false; }
-    const auto action = nativeMapAction(call);
-    return action == "set" || action == "get" || action == "has" || action == "delete";
+    return nativeMapKeyAction(nativeMapAction(call));
 }
 
 bool strictComparison(mlir::Operation * op) {
@@ -239,7 +238,7 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
         fieldsSafe && comparisonFieldEnvironment(module, globals, ordinaryObject);
     mlir::DominanceInfo dominance;
     for (auto & [root, family] : families) {
-        bool usedAsKey = false, usedAsPayload = false, compared = false;
+        bool usedAsKey = false, usedAsPayload = false, retainedRecord = false, compared = false;
         llvm::SmallVector<ctjs::CreateObjectOp> made;
         for (mlir::Value value : family) {
             if (auto object = value.getDefiningOp<ctjs::CreateObjectOp>()) {
@@ -248,9 +247,13 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
             for (mlir::OpOperand & use : value.getUses()) {
                 usedAsKey |= mapKeyUse(use);
                 usedAsPayload |= object_detail::mapPayloadUse(use);
+                retainedRecord |= isNativeMapRecordStore(use);
                 compared |= strictComparison(use.getOwner());
             }
         }
+        // This family already has enclosing stack owners and typed Map borrows.
+        // Its aliases must keep the same record schema, never identity objects.
+        if (retainedRecord) { continue; }
         const bool comparisonOnly = !usedAsKey && !usedAsPayload;
         if ((comparisonOnly && !compared) || made.empty()) { continue; }
         std::string reason;

@@ -43,7 +43,7 @@
 // both sides read, so only the read-only case is wrong and only it is refused.
 // If this goes red the rule has become a blanket ban on a set of key names.
 //
-// SHADOWED: emitc.func @shadowed_1() -> f64
+// SHADOWED: emitc.func @shadowed_1() -> !emitc.opaque<"ctnative::js_num">
 // SHADOWED-NOT: ctnative.not_native
 
 // __proto__ is an inherited ACCESSOR. Its setter ignores a primitive value,

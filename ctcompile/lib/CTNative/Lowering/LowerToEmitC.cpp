@@ -8,24 +8,10 @@
 // collector, and there is no boxed fallback - a refusal is a reason on the
 // function, and the compilation-unit gate says whether the program is native.
 //
-// HOW A VALUE IS REPRESENTED, and where the representation is exact:
-//
-//   bool               bool     exactly
-//   num<i32|i64|f64>   double   exactly - every JavaScript number is one
-//   str<utf8>         std::string  owning bytes, including NUL and WTF-8
-//   opt<num<...>>      double   with undefined as NaN. EXACT in arithmetic
-//   opt<bottom>                 (undefined + 1 is NaN), relational comparison
-//                               (undefined < 1 is false, as NaN < 1 is), and
-//                               truthiness (both are falsy). NOT exact for
-//                               equality with undefined/null, `typeof`, or
-//                               printing - so every use in which the
-//                               difference is observable is refused.
-//
-// The two `opt` rows exist because of the closed-world global rule: a global
-// is undefined until its first store runs and nothing orders a load after
-// one, so a numeric global is `opt<num>` (TypeInference.h). Numbers stay
-// `double` even when proved `i32`: an int32_t representation is a Phase 63
-// measurement, not a Phase 62½ obligation, and `double` is always correct.
+// JavaScript Booleans and Numbers use ctnative::js_boolean_t and js_num.
+// Strings own their bytes; nullable scalars retain distinct undefined/null tags.
+// Collection and public ctbrowser storage boundaries extract raw C++ values
+// explicitly. The carrier table lives in LoweringSupport.cpp.
 //
 // NOT A DIALECT CONVERSION, deliberately. After --ctjs-lift-to-scf the body is
 // structured, and after the inference every value's type is known; retyping
@@ -226,7 +212,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         std::unique_ptr<DOMEntryAnalysis> domEntry;
         if (hostContract &&
             (hostContract->provider == HostContract::Provider::ctbrowserDOM ||
-             hostContract->provider == HostContract::Provider::ctbrowserDOMSession)) {
+             hostContract->provider == HostContract::Provider::ctbrowserDOMSession ||
+             hostContract->provider == HostContract::Provider::ctbrowserIntrinsics)) {
             if (auto error = prepareDOMEntry(module, *hostContract, hostMaxSteps)) {
                 module.emitError() << llvm::toString(std::move(error));
                 return signalPassFailure();
@@ -341,20 +328,55 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             guards.addPass(createCTNativePrecompute(options));
             if (failed(runPipeline(guards, module))) { return signalPassFailure(); }
         }
-        // Recovery is speculative until type/effect admission and the entire
+        // Recovery/normalization is speculative until type/effect admission and the entire
         // closed call component pass. Refused functions keep their original
         // status edges for boxed lowering; a diagnostic is never a proof.
         llvm::SmallVector<std::pair<ctjs::FuncOp, mlir::OwningOpRef<ctjs::FuncOp>>, 0>
-            exceptionOriginals;
+            recoveryOriginals;
         module.walk([&](ctjs::FuncOp fn) {
             if (hostContract) { return; }
             fn->removeAttr("ctnative.exception_refusal");
+            fn->removeAttr("ctnative.structure_refusal");
             bool handlers = false;
             fn.walk([&](ctjs::PushHandlerOp) { handlers = true; });
-            if (!handlers) { return; }
+            if (!handlers) {
+                bool switches = false;
+                fn.walk([&](mlir::scf::IndexSwitchOp) { switches = true; });
+                if (!switches) { return; }
+                unsigned remaining = structureMaxSteps;
+                // Reserve the copy's cost before allocating it, as class
+                // method normalization and exception recovery already do.
+                auto walked = fn.walk([&](mlir::Operation * op) {
+                    const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
+                    if (cost > remaining) { return mlir::WalkResult::interrupt(); }
+                    remaining -= static_cast<unsigned>(cost);
+                    return mlir::WalkResult::advance();
+                });
+                if (walked.wasInterrupted()) {
+                    fn->setAttr("ctnative.structure_refusal",
+                                mlir::StringAttr::get(
+                                    &getContext(), "native structured-exit work budget exhausted"));
+                    return;
+                }
+                mlir::OwningOpRef<ctjs::FuncOp> normalized(llvm::cast<ctjs::FuncOp>(fn->clone()));
+                if (auto error = normalizeStructuredExits(*normalized, remaining)) {
+                    fn->setAttr(
+                        "ctnative.structure_refusal",
+                        mlir::StringAttr::get(&getContext(), llvm::toString(std::move(error))));
+                    return;
+                }
+                // Keep the original body for the same final admission rollback
+                // used by exception recovery. No solver facts exist yet.
+                mlir::OwningOpRef<ctjs::FuncOp> original(
+                    llvm::cast<ctjs::FuncOp>(fn->cloneWithoutRegions()));
+                original->getBody().takeBody(fn.getBody());
+                fn.getBody().takeBody(normalized->getBody());
+                recoveryOriginals.emplace_back(fn, std::move(original));
+                return;
+            }
             auto recovery = recoverPrimitiveExceptionRegion(fn, exceptionMaxSteps);
             if (recovery.recovered) {
-                exceptionOriginals.emplace_back(fn, std::move(recovery.original));
+                recoveryOriginals.emplace_back(fn, std::move(recovery.original));
             } else if (!recovery.refusal.empty()) {
                 fn->setAttr("ctnative.exception_refusal",
                             mlir::StringAttr::get(&getContext(), recovery.refusal));
@@ -669,7 +691,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 }
                 llvm::StringRef name;
                 if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
-                    if (admittedDOM && admittedDOM->isInitialIntrinsic(load)) { return; }
+                    if (admittedDOM && (admittedDOM->isInitialIntrinsic(load) ||
+                                        admittedDOM->isCurrentDocument(load))) {
+                        return;
+                    }
                     if (callsOnly(load) || isNativeMapBookkeeping(load)) { return; }
                     name = load.getName();
                 }
@@ -706,7 +731,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // creation site, and whether a shape's definition is a template is a
         // property of every site in the program at once, so no site's type can
         // be spelled until all of them have been seen.
-        for (auto & [fn, original] : exceptionOriginals) {
+        for (auto & [fn, original] : recoveryOriginals) {
             if (llvm::is_contained(accepted, fn)) { continue; }
             fn.getBody().takeBody(original->getBody());
             if (auto marker = (*original)->getAttr("ctjs.not_structured")) {

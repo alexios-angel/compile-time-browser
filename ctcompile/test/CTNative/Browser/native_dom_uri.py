@@ -133,12 +133,12 @@ def client(name, entry, owned):
                 }}
                 const auto version = doc.version();
                 const auto result = {call};
-                static_assert(std::is_same_v<std::remove_cv_t<decltype(result)>, std::string>);
-                assert(result == expected[choice] && doc.version() == version);
+                static_assert(std::is_same_v<std::remove_cv_t<decltype(result)>, ctnative::js_string>);
+                assert(result.value() == expected[choice] && doc.version() == version);
                 assert(doc.set_attribute(node, doc.atoms().intern("later"), "changed"));
-                assert(result == expected[choice]);
-                observe(result);
-                survivor = result;
+                assert(result.value() == expected[choice]);
+                observe(result.value());
+                survivor = result.value();
             }}
         }}
         assert(survivor == expected.back());

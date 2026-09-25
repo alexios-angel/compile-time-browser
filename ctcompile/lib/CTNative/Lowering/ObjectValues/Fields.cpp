@@ -108,9 +108,13 @@ bool lowering::replaceIdentityField(mlir::Operation * op) {
         if (isNullableStringCarrier(storage) && target != storage) {
             const auto helper = isNullableCarrier(target) ? "ctnative::object_absent_field"
                                                           : "ctnative::global_string";
-            value = callWithConstValueOperands(b, where, mlir::TypeRange{target},
+            const auto resultType = isNullableCarrier(target)
+                                        ? mlir::Type(target)
+                                        : ec::OpaqueType::get(context, kRawStringType);
+            value = callWithConstValueOperands(b, where, mlir::TypeRange{resultType},
                                                b.getStringAttr(helper), mlir::ValueRange{value})
                         .getResult(0);
+            value = convertScalar(b, where, value, target);
         } else {
             value = convertScalar(b, where, value, target);
         }

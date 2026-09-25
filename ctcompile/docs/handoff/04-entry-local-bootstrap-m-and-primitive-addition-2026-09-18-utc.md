@@ -2,7 +2,7 @@
 
 ## Entry-local Bootstrap M and primitive addition, 2026-09-18 UTC
 
-Started clean at **92192514**. The **16:07:54 AGENT-SYNC closure** confirmed
+Started clean at **92192514**. The **16:07:54 AGENT-SYNC.jsonl closure** confirmed
 all interrupted work committed; September 7 WIP is already an ancestor. Both
 agents' logs and historical unmerged branches were reviewed. Continued the
 original W/r/H helper boundary in HANDOFF and master 00/24. Parallel agents
@@ -88,7 +88,7 @@ the overall plan are not complete.
 
 ## Mixed class/DOM intrinsics and primitive subtraction, 2026-09-18 UTC
 
-Started clean at **051ab3d2**. The **15:45 AGENT-SYNC closure** confirmed the
+Started clean at **051ab3d2**. The **15:45 AGENT-SYNC.jsonl closure** confirmed the
 interrupted Error/power drafts were committed. September 7 WIP is already an
 ancestor; historical isolated branches were retained. Continued the exact
 W/r/H boundary recorded by HANDOFF and master 00/24. Parallel agents supplied
@@ -171,7 +171,7 @@ concatenation. Native Bootstrap and the overall plan are not complete.
 ## Declared Error class/DOM composition and primitive powers, 2026-09-18 UTC
 
 Resumed **eight dirty tracked files plus the primitive-power oracle at c2108572**,
-left by the **15:25:30 AGENT-SYNC loop failure**. The original **15:11:07 journal**,
+left by the **15:25:30 AGENT-SYNC.jsonl loop failure**. The original **15:11:07 journal**,
 diff and current handoff identified the interrupted Error/primitive-power thread.
 September 7 WIP is already an ancestor; both agents' logs and unmerged branches
 were reviewed. Parallel agents completed escape recovery and part of the audit;
@@ -245,7 +245,7 @@ plan are unfinished.
 
 ## Config defaults and primitive bitwise snapshots, 2026-09-18 UTC
 
-Resumed **six dirty files at d7e13751**, abandoned by the **14:17:21 AGENT-SYNC
+Resumed **six dirty files at d7e13751**, abandoned by the **14:17:21 AGENT-SYNC.jsonl
 loop failure**: omitted/defaulted Config argument tests and the primitive-bitwise
 draft. Both agents' recent commits and unmerged branches were reviewed; September
 7 WIP was already an ancestor. Parallel agents worked on native fixtures, escape
@@ -351,7 +351,7 @@ conversions remain open. Native Bootstrap and the overall plan remain unfinished
 
 ## Transitive method arguments and primitive division, 2026-09-18 UTC
 
-Started clean at **2ac4ab0d**. The **13:43:50 AGENT-SYNC session closure**
+Started clean at **2ac4ab0d**. The **13:43:50 AGENT-SYNC.jsonl session closure**
 confirmed the interrupted argument work was committed; this session continued
 its recorded Config transitive-call boundary. September 7 WIP was absent.
 Parallel agents supplied native tests, an escape draft and a proof audit; root
@@ -415,7 +415,7 @@ remain open. Native Bootstrap and the overall plan remain unfinished.
 
 ## Original class-method arguments and primitive products, 2026-09-18 UTC
 
-Resumed four dirty files at **47a08427**, abandoned by the **13:27:02 AGENT-SYNC
+Resumed four dirty files at **47a08427**, abandoned by the **13:27:02 AGENT-SYNC.jsonl
 loop failure**. The September 7 WIP was absent from unmerged branches. Agents
 recovered native tests, extended primitive-product tests and audited the native
 proof; root finished the drafts after two agent service limits.
@@ -482,7 +482,7 @@ Bootstrap and the overall plan remain unfinished.
 
 ## Constructor-stored DOM methods and primitive unary snapshots, 2026-09-18 UTC
 
-Resumed dirty **9586e616** after the **13:02:02 AGENT-SYNC loop failure**:
+Resumed dirty **9586e616** after the **13:02:02 AGENT-SYNC.jsonl loop failure**:
 two unfinished class DOM test files named the original `class_element` method
 boundary. The September 7 WIP is already merged. Parallel agents recovered tests,
 audited the proof and implemented the independent escape change; root finished
@@ -548,7 +548,7 @@ Bootstrap and the overall plan remain unfinished. No push.
 
 ## Captured local class getters, 2026-09-18 UTC
 
-Resumed clean **1b941768** after the **12:36 AGENT-SYNC failure** explicitly
+Resumed clean **1b941768** after the **12:36 AGENT-SYNC.jsonl failure** explicitly
 abandoned the previous capture work. The **12:34 journal** and this handoff named
 `press$4`'s captured `Button.NAME` as the interrupted thread; no dirty draft
 remained. September 7 WIP was already merged. Parallel agents supplied tests and
@@ -602,7 +602,7 @@ Native Bootstrap and the overall plan are unfinished.
 
 ## Original class/DOM composition and String BitNot, 2026-09-18 UTC
 
-Started clean at **4961fffd** after the **12:09:01 AGENT-SYNC session closure**.
+Started clean at **4961fffd** after the **12:09:01 AGENT-SYNC.jsonl session closure**.
 No interrupted edits remained and September 7 WIP was absent. Resumed the recorded
 `class_key`/`class_order` composition boundary. Independent agents supplied focused
 native tests, String BitNot and a read-only proof audit; root completed integration
@@ -674,7 +674,7 @@ the overall plan are unfinished.
 
 ## Confined DOM fields and canonical String powers, 2026-09-18 UTC
 
-Continued clean **86ebc737** after the **11:56:44 AGENT-SYNC journal** closed
+Continued clean **86ebc737** after the **11:56:44 AGENT-SYNC.jsonl journal** closed
 its interrupted receiver work. Resumed the ordinary instance-field boundary
 recorded in HANDOFF/master00; September 7 WIP was absent from unmerged branches.
 Three agents handled escape analysis, native tests and a read-only composition
@@ -747,7 +747,7 @@ broader Number/String conversions remain open. Native Bootstrap is incomplete.
 
 ## Direct DOM receivers and canonical String bitwise snapshots, 2026-09-18 UTC
 
-Resumed dirty **43860a33** from the **11:38:29 AGENT-SYNC journal** and its
+Resumed dirty **43860a33** from the **11:38:29 AGENT-SYNC.jsonl journal** and its
 explicit **11:38:51 abandonment**. The interrupted files were the two-file
 String bitwise draft and untracked `class_dom.py` / `class-dom.mlir`. September 7
 WIP was absent from unmerged branches. Independent agents audited the native

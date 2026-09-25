@@ -83,6 +83,40 @@ int main() {
          "  %r = ctjs.binary add %s, %p {check}\n",
          "!ctnative.str<utf8>"},
 
+        {"generic addition of an optional String selects Number or String",
+         five + "  %s = ctjs.constant #ctjs.string<\"x\">\n"
+                "  %u = ctjs.constant #ctjs.undefined\n"
+                "  %t = ctjs.truthy %p\n"
+                "  %value = scf.if %t -> (!ctjs.value) {\n"
+                "    scf.yield %s : !ctjs.value\n"
+                "  } else {\n"
+                "    scf.yield %u : !ctjs.value\n"
+                "  }\n"
+                "  %r = ctjs.binary add %value, %a {check}\n",
+         "!ctnative.variant<!ctnative.num<f64>, !ctnative.str<utf8>>"},
+        {"generic addition preserves String possibility through chained results",
+         five + "  %s = ctjs.constant #ctjs.string<\"x\">\n"
+                "  %t = ctjs.truthy %p\n"
+                "  %value = scf.if %t -> (!ctjs.value) {\n"
+                "    scf.yield %s : !ctjs.value\n"
+                "  } else {\n"
+                "    scf.yield %a : !ctjs.value\n"
+                "  }\n"
+                "  %first = ctjs.binary add %value, %a\n"
+                "  %r = ctjs.binary add %first, %b {check}\n",
+         "!ctnative.variant<!ctnative.num<f64>, !ctnative.str<utf8>>"},
+        {"optional String plus an unknown operand still needs object or BigInt proof",
+         "  %s = ctjs.constant #ctjs.string<\"x\">\n"
+         "  %u = ctjs.constant #ctjs.undefined\n"
+         "  %t = ctjs.truthy %p\n"
+         "  %value = scf.if %t -> (!ctjs.value) {\n"
+         "    scf.yield %s : !ctjs.value\n"
+         "  } else {\n"
+         "    scf.yield %u : !ctjs.value\n"
+         "  }\n"
+         "  %r = ctjs.binary add %value, %q {check}\n",
+         "!ctnative.boxed"},
+
         // --- A SECOND BLOCK, which the single-block rows above cannot test --
         //
         // Every other row lives in the entry block, and the entry block is

@@ -137,6 +137,7 @@ def check_result_calls(cpp, name, mode):
         "result_alias": ["get", "set", "get"],
         "result_argument_order": ["get", "get", "set", "get"],
         "result_bool": ["get", "set", "get", "set", "size"],
+        "result_missing_return": ["get", "set", "get", "set", "size"],
         "result_delete": ["get", "set", "get", "set", "get", "set", "size"],
         "result_string": ["get", "set", "size"],
         "result_formal": ["get", "set", "size"],
@@ -212,6 +213,13 @@ def check_result_calls(cpp, name, mode):
     }[name]
     if sequence != expected or "ctnative::map_set(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: lost runtime getter/mutation/final observation calls")
+    if name == "result_missing_return":
+        observed = re.search(
+            r"\b(\w+)\s*=\s*ctnative::to_nullable\(" + re.escape(calls[-1][0]) + r"\);",
+            entry[1],
+        )
+        if not observed or f"g_trace = {observed[1]};" not in entry[1]:
+            raise RuntimeError(f"{name}/{mode}: trace lost the final size result")
     seeded = {
         **seeded_result_sources(),
         **key_fact_sources(),
@@ -337,6 +345,9 @@ def nullable_identity_cpp(cpp, name):
         raise RuntimeError("nullable identity observer needs exactly one entry")
     changed += "\nint main() {\n    if (ctnative_test_entry() != 0) { return 90; }\n"
     for index, (arguments, tag, value) in enumerate(NULLABLE_OBSERVATIONS[name]):
+        arguments = ", ".join(
+            f"ctnative::js_boolean_t{{{argument}}}" for argument in arguments.split(", ")
+        )
         changed += (
             f"    const auto observed_{index} = g_host->slot->m_get({arguments});\n"
             f"    if (observed_{index}.tag != ctnative::nullable_string::kind::{tag} ||\n"
@@ -455,13 +466,13 @@ int main() {
         return 92;
     }
     first.reset();
-    if (!owner_lifetime.expired() || table_lifetime.expired() || table->m_get() != SAVED_FIRST) {
+    if (!owner_lifetime.expired() || table_lifetime.expired() || table->m_get().value() != SAVED_FIRST) {
         return 93;
     }
     table.reset();
     if (!table_lifetime.expired() || ctn_test_maps[0].expired()) { return 94; }
     for (int index = 0; index < 1024; ++index) {
-        if (callable() != SAVED_NEXT || g_host->slot->m_get() != FRESH_NEXT) { return 95; }
+        if (callable().value() != SAVED_NEXT || g_host->slot->m_get().value() != FRESH_NEXT) { return 95; }
     }
     callable = {};
     if (!ctn_test_maps[0].expired() || ctn_test_maps[1].expired()) { return 96; }
@@ -545,7 +556,7 @@ int main() {
     owner.reset();
     table.reset();
     if (!owner_lifetime.expired() || !table_lifetime.expired() ||
-        ctn_test_maps[0].expired() || getter() != 1) { return 91; }
+        ctn_test_maps[0].expired() || getter().value() != 1) { return 91; }
     for (int index = 0; index < 4096; ++index) {
         auto churn = std::make_shared<ctn_slot>();
         churn->slot = std::make_shared<typename decltype(g_host->slot)::element_type>();
@@ -553,18 +564,18 @@ int main() {
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock()) { return 92; }
     BEFORE_FIRST
-    if (SAVED_FIRST != 2 || getter() != 2 || g_host->slot->m_get() != 1) { return 93; }
+    if (SAVED_FIRST != 2 || getter().value() != 2 || g_host->slot->m_get().value() != 1) { return 93; }
     AFTER_FIRST
     for (int index = 0; index < 1024; ++index) {
-        if (SAVED_NEXT != index + 3 || getter() != index + 3 ||
-            g_host->slot->m_get() != index + 1 ||
+        if (SAVED_NEXT != index + 3 || getter().value() != index + 3 ||
+            g_host->slot->m_get().value() != index + 1 ||
             FRESH_NEXT != index + 2) { return 94; }
     }
     setter = {};
-    if (ctn_test_maps[0].expired() || getter() != 1026) { return 95; }
+    if (ctn_test_maps[0].expired() || getter().value() != 1026) { return 95; }
     auto copied = getter;
     getter = {};
-    if (ctn_test_maps[0].expired() || copied() != 1026) { return 96; }
+    if (ctn_test_maps[0].expired() || copied().value() != 1026) { return 96; }
     copied = {};
     if (!ctn_test_maps[0].expired() || ctn_test_maps[1].expired()) { return 97; }
     auto fresh_getter = g_host->slot->m_get;
@@ -572,7 +583,7 @@ int main() {
     std::weak_ptr fresh_table = g_host->slot;
     g_host.reset();
     if (!fresh_owner.expired() || !fresh_table.expired() ||
-        ctn_test_maps[1].expired() || fresh_getter() != 1025) { return 98; }
+        ctn_test_maps[1].expired() || fresh_getter().value() != 1025) { return 98; }
     fresh_getter = {};
     if (!ctn_test_maps[1].expired()) { return 99; }
     return 0;
@@ -585,31 +596,34 @@ int main() {
         changed = changed.replace(
             "CHECK_SIGNATURE",
             """
-    static_assert(std::is_same_v<decltype(setter), std::function<js_num(std::string)>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(ctnative::js_string)>>);
     static_assert(!std::is_invocable_v<decltype(setter)>);
     static_assert(!std::is_invocable_v<decltype(setter), int>);
     static_assert(!std::is_invocable_v<decltype(setter), std::string, int>);
 """,
         )
         changed = changed.replace("BEFORE_FIRST", "std::string saved_key(96, 's');")
-        changed = changed.replace("SAVED_FIRST", "setter(saved_key)")
+        changed = changed.replace("SAVED_FIRST", "setter(ctnative::js_string{saved_key}).value()")
         changed = changed.replace(
             "AFTER_FIRST",
             """
     saved_key.assign(96, 't');
-    if (setter(std::string(96, 's')) != 2 || getter() != 2) { return 100; }
+    if (setter(ctnative::js_string{std::string(96, 's')}).value() != 2 || getter().value() != 2) { return 100; }
 """,
         )
-        changed = changed.replace("SAVED_NEXT", 'setter("saved-" + std::to_string(index))')
         changed = changed.replace(
-            "FRESH_NEXT", 'g_host->slot->m_set("fresh-" + std::to_string(index))'
+            "SAVED_NEXT", 'setter(ctnative::js_string{"saved-" + std::to_string(index)}).value()'
+        )
+        changed = changed.replace(
+            "FRESH_NEXT",
+            'g_host->slot->m_set(ctnative::js_string{"fresh-" + std::to_string(index)}).value()',
         )
     else:
         for marker in ("CHECK_SIGNATURE", "BEFORE_FIRST", "AFTER_FIRST"):
             changed = changed.replace(marker, "")
-        changed = changed.replace("SAVED_FIRST", "setter()")
-        changed = changed.replace("SAVED_NEXT", "setter()")
-        changed = changed.replace("FRESH_NEXT", "g_host->slot->m_set()")
+        changed = changed.replace("SAVED_FIRST", "setter().value()")
+        changed = changed.replace("SAVED_NEXT", "setter().value()")
+        changed = changed.replace("FRESH_NEXT", "g_host->slot->m_set().value()")
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()

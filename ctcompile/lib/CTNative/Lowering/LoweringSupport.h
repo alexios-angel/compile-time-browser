@@ -46,17 +46,22 @@ namespace ec = mlir::emitc;
 enum class carrier {
     none,
     boolean,
+    symbol,
     number,
     nullable,
     string,
     nullableString,
     booleanString,
+    nullableBooleanString,
+    numberString,
+    nullableNumberString,
     map,
     closure,
     methodTable,
     objectIdentity,
     objectValue,
     domElement,
+    domElementVector,
     json,
     structure,
     vector,
@@ -64,18 +69,37 @@ enum class carrier {
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
-inline constexpr llvm::StringLiteral kBooleanStringType = "std::variant<bool, std::string>";
+inline constexpr llvm::StringLiteral kStringType = "ctnative::js_string";
+inline constexpr llvm::StringLiteral kRawStringType = "std::string";
+inline constexpr llvm::StringLiteral kNumberType = "ctnative::js_num";
+inline constexpr llvm::StringLiteral kBooleanType = "ctnative::js_boolean_t";
+inline constexpr llvm::StringLiteral kSymbolType = "ctnative::js_symbol_t";
+inline constexpr llvm::StringLiteral kBooleanStringType = "ctnative::boolean_string";
+inline constexpr llvm::StringLiteral kNullableBooleanStringType =
+    "ctnative::nullable_boolean_string";
+inline constexpr llvm::StringLiteral kBooleanStringMapType =
+    "std::variant<ctnative::js_boolean_t, std::string>";
+inline constexpr llvm::StringLiteral kNumberStringType = "ctnative::number_string";
+inline constexpr llvm::StringLiteral kNullableNumberStringType = "ctnative::nullable_number_string";
 inline constexpr llvm::StringLiteral kNullableStringType = "ctnative::nullable_string";
 inline constexpr llvm::StringLiteral kNullableType = "ctnative::nullable_scalar";
 inline constexpr llvm::StringLiteral kObjectValueType = "ctnative::object_value";
 inline constexpr llvm::StringLiteral kDOMElementType = "ctbrowser::element_ref";
+inline constexpr llvm::StringLiteral kDOMElementVectorType = "std::vector<ctbrowser::element_ref>";
 // The lattice's json rung, carried by the shared Core parser's owning tree.
 inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
 bool isScalarCarrier(carrier value);
+bool isStringUnionCarrier(carrier value);
+bool isPrimitiveCarrier(carrier value);
 mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternatives alternatives);
 bool isNullableCarrier(mlir::Type type);
+bool isNumberCarrier(mlir::Type type);
+bool isBooleanCarrier(mlir::Type type);
 bool isNullableStringCarrier(mlir::Type type);
 bool isBooleanStringCarrier(mlir::Type type);
+bool isNullableBooleanStringCarrier(mlir::Type type);
+bool isNumberStringCarrier(mlir::Type type);
+bool isNullableNumberStringCarrier(mlir::Type type);
 bool isStringCarrier(carrier value);
 bool isVectorCarrier(carrier value);
 bool stringConcatenation(mlir::Type left, mlir::Type right);

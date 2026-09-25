@@ -1,0 +1,2 @@
+# Original Bootstrap R.find uses the current document root only under a source presence guard.
+# RUN: python3 %S/native_dom_document_default.py --translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm

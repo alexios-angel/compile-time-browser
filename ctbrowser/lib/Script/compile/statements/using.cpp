@@ -90,7 +90,8 @@ void compiler_impl::compile_using_region(bool async, const std::function<void()>
         emit_const(kind_reg, value::number(static_cast<double>(k)));
     };
     using_stacks_.push_back(stack_reg);
-    finallies_.push_back(finally_context{kind_reg, value_reg, loops_.size(), {}, {}});
+    finallies_.push_back(
+        finally_context{kind_reg, value_reg, loops_.size(), {}, {}, handler_depth_});
 
     const std::size_t guard = proto().emit(instruction{op::push_handler, caught_reg});
     ++handler_depth_;

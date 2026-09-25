@@ -59,10 +59,10 @@ var s = shared();
 // has no carrier for - would fail the line after.
 //
 // CHECK:      emitc.class @ctn_x
-// CHECK-NEXT:   emitc.field @x : f64
+// CHECK-NEXT:   emitc.field @x : !emitc.opaque<"ctnative::js_num">
 // CHECK-NEXT: }
 // CHECK:      emitc.class @ctn_n
-// CHECK-NEXT:   emitc.field @n : f64
+// CHECK-NEXT:   emitc.field @n : !emitc.opaque<"ctnative::js_num">
 // CHECK-NEXT: }
 
 // --- TWO LITERALS, ONE CLASS ------------------------------------------------
@@ -73,7 +73,7 @@ var s = shared();
 // `plus` could not take one pointer type.
 //
 // CHECK:      emitc.class @ctn_base attributes {ctnative.provenance = "object literal at {{[^"]*}}, {{[^"]*}} (2 sites)"}
-// CHECK-NEXT:   emitc.field @base : f64
+// CHECK-NEXT:   emitc.field @base : !emitc.opaque<"ctnative::js_num">
 // CHECK-NEXT: }
 
 // --- EVERY FUNCTION IS CLAIMED ----------------------------------------------
@@ -92,17 +92,17 @@ var s = shared();
 // `emitc.func` rejects an lvalue argument type outright - and reads `x`
 // through it.
 //
-// CHECK: emitc.func @read_only_1() -> f64
+// CHECK: emitc.func @read_only_1() -> !emitc.opaque<"ctnative::js_num">
 // CHECK: %[[P:.*]] = "emitc.variable"{{.*}} -> !emitc.lvalue<!emitc.opaque<"ctn_x">>
 // CHECK: %[[ADDR:.*]] = address_of %[[P]] : !emitc.lvalue<!emitc.opaque<"ctn_x">>
-// CHECK: call @fn_2(%[[ADDR]], %{{.*}}) : (!emitc.ptr<!emitc.opaque<"ctn_x">>, f64) -> f64
+// CHECK: call @fn_2(%[[ADDR]], %{{.*}}) : (!emitc.ptr<!emitc.opaque<"ctn_x">>, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 
-// CHECK: emitc.func @fn_2(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>, %arg1: f64) -> f64
+// CHECK: emitc.func @fn_2(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>, %arg1: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // CHECK: %[[SELF:.*]] = "emitc.variable"{{.*}} -> !emitc.lvalue<!emitc.ptr<!emitc.opaque<"ctn_x">>>
 // CHECK: assign %arg0 : !emitc.ptr<!emitc.opaque<"ctn_x">> to %[[SELF]]
 // CHECK: %[[X:.*]] = "emitc.member_of_ptr"(%[[SELF]]) <{member = "x"}>
-// CHECK: load %[[X]] : <f64>
-// CHECK: add %{{.*}} : (f64, f64) -> f64
+// CHECK: load %[[X]] : <!emitc.opaque<"ctnative::js_num">>
+// CHECK: add %{{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 
 // --- A MUTATING METHOD ------------------------------------------------------
 //
@@ -111,25 +111,25 @@ var s = shared();
 // member access that yields an lvalue through a parameter is this one. The
 // caller reads `c.n` after the call and gets what the method wrote.
 //
-// CHECK: emitc.func @mutating_3() -> f64
+// CHECK: emitc.func @mutating_3() -> !emitc.opaque<"ctnative::js_num">
 // CHECK: call @fn_4(%{{.*}}) : (!emitc.ptr<!emitc.opaque<"ctn_n">>) -> !emitc.opaque<"ctnative::nullable_scalar">
 // CHECK: emitc.func @fn_4(%arg0: !emitc.ptr<!emitc.opaque<"ctn_n">>) -> !emitc.opaque<"ctnative::nullable_scalar">
 // CHECK: %[[NREAD:.*]] = "emitc.member_of_ptr"(%{{.*}}) <{member = "n"}>
-// CHECK: load %[[NREAD]] : <f64>
+// CHECK: load %[[NREAD]] : <!emitc.opaque<"ctnative::js_num">>
 // CHECK: %[[NWRITE:.*]] = "emitc.member_of_ptr"(%{{.*}}) <{member = "n"}>
-// CHECK: assign %{{.*}} : f64 to %[[NWRITE]] : <f64>
+// CHECK: assign %{{.*}} : !emitc.opaque<"ctnative::js_num"> to %[[NWRITE]] : <!emitc.opaque<"ctnative::js_num">>
 
 // --- TWO OBJECTS SHARING ONE LIFTED METHOD ----------------------------------
 //
 // Two frame slots, two address_of, ONE function - and its parameter is the
 // class both of them are.
 //
-// CHECK: emitc.func @shared_5() -> f64
+// CHECK: emitc.func @shared_5() -> !emitc.opaque<"ctnative::js_num">
 // CHECK: %[[A:.*]] = address_of %{{.*}} : !emitc.lvalue<!emitc.opaque<"ctn_base">>
-// CHECK: call @fn_6(%[[A]], %{{.*}}) : (!emitc.ptr<!emitc.opaque<"ctn_base">>, f64) -> f64
+// CHECK: call @fn_6(%[[A]], %{{.*}}) : (!emitc.ptr<!emitc.opaque<"ctn_base">>, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // CHECK: %[[B:.*]] = address_of %{{.*}} : !emitc.lvalue<!emitc.opaque<"ctn_base">>
-// CHECK: call @fn_6(%[[B]], %{{.*}}) : (!emitc.ptr<!emitc.opaque<"ctn_base">>, f64) -> f64
-// CHECK: emitc.func @fn_6(%arg0: !emitc.ptr<!emitc.opaque<"ctn_base">>, %arg1: f64) -> f64
+// CHECK: call @fn_6(%[[B]], %{{.*}}) : (!emitc.ptr<!emitc.opaque<"ctn_base">>, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
+// CHECK: emitc.func @fn_6(%arg0: !emitc.ptr<!emitc.opaque<"ctn_base">>, %arg1: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 
 // --- THE COUNTERS, WHICH ARE NOT PASS STATISTICS ----------------------------
 //

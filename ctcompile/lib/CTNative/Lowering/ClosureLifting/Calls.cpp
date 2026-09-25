@@ -40,13 +40,18 @@ ctjs::CreateClosureOp closureLifter::closureCalledBy(mlir::Operation * user) {
             return targetOf(made) == direct.getTarget() ? made : ctjs::CreateClosureOp{};
         }
         // bindLocalFunctions proved these calls before erasing the captured
-        // callable. Its uncaptured target is the identity; input annotations
+        // callable. Its target and recorded site are the identity; input annotations
         // or an arbitrary callee value cannot substitute for that proof.
         auto constant = direct.getCalleeValue().getDefiningOp<ctjs::ConstantOp>();
         if (!constant || !llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) { return {}; }
         auto found = uniqueClosureByTarget.lookup(direct.getTarget());
-        return found && bindingClosures.contains(found.getOperation()) &&
-                       targetOf(found).getUpvalueCount() == 0
+        if (!found || !bindingClosures.contains(found.getOperation())) { return {}; }
+        if (targetOf(found).getUpvalueCount() == 0) { return found; }
+        const auto sites = boundCaptureCalls.find(direct.getTarget().getOperation());
+        return sites != boundCaptureCalls.end() && llvm::any_of(sites->second,
+                                                                [&](const boundCaptureCall & site) {
+                                                                    return site.call == direct;
+                                                                })
                    ? found
                    : ctjs::CreateClosureOp{};
     }

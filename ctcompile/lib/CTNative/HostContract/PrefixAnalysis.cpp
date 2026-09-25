@@ -51,8 +51,9 @@ prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contr
             reflective = true;
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
-            reflective |= load.getName() == "eval" || load.getName() == "Function" ||
-                          load.getName() == "Reflect" || load.getName() == "Object";
+            static const llvm::StringSet<> reflectiveGlobals{"eval", "Function", "Reflect",
+                                                             "Object"};
+            reflective |= load.getName().size() <= 8 && reflectiveGlobals.contains(load.getName());
         }
         mlir::Value propertyKey;
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
@@ -66,16 +67,22 @@ prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contr
             auto text =
                 literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
             const bool number = literal && llvm::isa<ctjs::NumberAttr>(literal.getValue());
+            static const llvm::StringSet<> reflectiveProperties{"caller",
+                                                                "callee",
+                                                                "arguments",
+                                                                "eval",
+                                                                "Function",
+                                                                "Reflect",
+                                                                "Object",
+                                                                "getOwnPropertyDescriptor",
+                                                                "getOwnPropertyDescriptors",
+                                                                "getPrototypeOf",
+                                                                "setPrototypeOf",
+                                                                "ownKeys"};
             reflective |=
                 !number &&
-                (!text || !ctjs::ordinaryKey(text.getValue()) || text.getValue() == "caller" ||
-                 text.getValue() == "callee" || text.getValue() == "arguments" ||
-                 text.getValue() == "eval" || text.getValue() == "Function" ||
-                 text.getValue() == "Reflect" || text.getValue() == "Object" ||
-                 text.getValue() == "getOwnPropertyDescriptor" ||
-                 text.getValue() == "getOwnPropertyDescriptors" ||
-                 text.getValue() == "getPrototypeOf" || text.getValue() == "setPrototypeOf" ||
-                 text.getValue() == "ownKeys");
+                (!text || !ctjs::ordinaryKey(text.getValue()) ||
+                 (text.getValue().size() <= 25 && reflectiveProperties.contains(text.getValue())));
         }
         reflective |= operation->hasAttr("ctjs.skipped");
         if (auto function = llvm::dyn_cast<ctjs::FuncOp>(operation)) {
@@ -181,7 +188,9 @@ prefixAnalysis::completion prefixAnalysis::function(ctjs::FuncOp function,
 
 prefixAnalysis::completion prefixAnalysis::region(mlir::Region & region, environment & values,
                                                   unsigned depth) {
-    if (region.empty()) { return {completion::Kind::yielded, {}}; }
+    if (region.empty()) {
+        return {completion::Kind::yielded, {}};
+    }
     if (!llvm::hasSingleElement(region)) {
         stop(region.getParentOp(), "unstructured prefix control");
         return {};

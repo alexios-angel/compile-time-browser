@@ -4,16 +4,16 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/undefined.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=UNDEF
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/notanumber.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=NAN
 
-// UNDEF: emitc.func @eqnum_1({{.*}}) -> f64
+// UNDEF: emitc.func @eqnum_1({{.*}}) -> !emitc.opaque<"ctnative::js_num">
 // UNDEF: call_opaque "ctnative::scalar_strict_equal"
 // UNDEF-NOT: ctnative.not_native
-// NAN: emitc.func @eqbool_1({{.*}}) -> f64
+// NAN: emitc.func @eqbool_1({{.*}}) -> !emitc.opaque<"ctnative::js_num">
 // NAN: call_opaque "ctnative::scalar_strict_equal"
 // NAN-NOT: ctnative.not_native
 

@@ -380,6 +380,9 @@ PrimitiveAlternatives analyzer::entryCategories(
                                      !dominance.properlyDominates(definition, consumer)))) {
         return {};
     }
+    if (auto known = classScalarReads.find(value); known != classScalarReads.end()) {
+        return known->second.categories();
+    }
     if (auto known = results.find(value); known != results.end()) {
         if (dependencies) {
             if (!step()) { return {}; }
@@ -401,6 +404,21 @@ PrimitiveAlternatives analyzer::entryCategories(
         auto store = stores.front();
         return entryCategories(store.getValue(), results, store, depth + 1, dependencies);
     }
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(definition)) {
+        // A saved own-field read keeps its read-time category, even when a
+        // later write changes the field. This is no constant-value evidence.
+        // The caller family separately censuses every use of this local leaf.
+        auto made = read.getObject().getDefiningOp<ctjs::CreateObjectOp>();
+        auto write = made ? currentWrite(read, depth + 1) : ctjs::SetPropertyOp{};
+        if (!made || made->getParentOp() != entry || read->getParentOp() != entry || !write ||
+            write->getParentOp() != entry || write.getObject() != made.getResult() ||
+            !dominance.properlyDominates(made.getOperation(), write) ||
+            !dominance.properlyDominates(write.getOperation(), read)) {
+            return {};
+        }
+        if (dependencies) { dependencies->push_back(value); }
+        return entryCategories(write.getValue(), results, write, depth + 1, dependencies);
+    }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition)) {
         switch (binary.getKind()) {
         case ctjs::BinaryKind::Add:
@@ -412,16 +430,23 @@ PrimitiveAlternatives analyzer::entryCategories(
         default: return {};
         }
         const auto number = mlir::TypeID::get<ctjs::NumberAttr>();
-        if (entryCategories(binary.getLhs(), results, binary, depth + 1, dependencies).tag() !=
-                number ||
-            entryCategories(binary.getRhs(), results, binary, depth + 1, dependencies).tag() !=
-                number) {
-            return {};
-        }
+        const auto numeric = [&](mlir::Value operand) {
+            auto tag = entryCategories(operand, results, binary, depth + 1, dependencies).tag();
+            return tag == number || tag == mlir::TypeID::get<ctjs::BooleanAttr>();
+        };
+        if (!numeric(binary.getLhs()) || !numeric(binary.getRhs())) { return {}; }
         // This is a category, never an evaluated Number. Zero, signed zero,
         // NaN and infinities remain possible; primitive()/truth() must not
         // consume this evidence to select a source arm or substitute a value.
         return PrimitiveAlternatives::forTag(number);
+    }
+    if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(definition);
+        compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+        if (!entryCategories(compare.getLhs(), results, compare, depth + 1, dependencies).known ||
+            !entryCategories(compare.getRhs(), results, compare, depth + 1, dependencies).known) {
+            return {};
+        }
+        return PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>());
     }
     if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(definition)) {
         if (!step() || !dominance.dominates(branch.getCondition(), branch)) { return {}; }
@@ -472,18 +497,25 @@ std::optional<HostScalarGlobalRead> analyzer::scalarGlobalRead(ctjs::LoadGlobalO
     // Their original operands, sole stores and source scope/order still pass
     // the same bounded category walk, and publication still requires the
     // complete environment proof. An empty list supplies no value or type.
-    // The worklist only supplies categories. Require the actual completed
-    // calls in the final environment census too, with entry order and scope.
+    // The worklist only supplies categories. Require each dependency in the
+    // completed family, including its exact caller leaf and read-time field.
     for (mlir::Value dependency : result.dependencies) {
         if (!step()) { return std::nullopt; }
-        auto * call = dependency.getDefiningOp();
-        if (!call || call->getParentOp() != entry || !dominance.properlyDominates(call, store)) {
+        auto * origin = dependency.getDefiningOp();
+        if (!origin || origin->getParentOp() != entry ||
+            !dominance.properlyDominates(origin, store)) {
             return std::nullopt;
         }
+        auto field = llvm::dyn_cast<ctjs::GetPropertyOp>(origin);
+        auto leaf = field ? field.getObject().getDefiningOp<ctjs::CreateObjectOp>()
+                          : ctjs::CreateObjectOp{};
         bool found = false;
         for (const HostCallableEdge & edge : checkedCalls) {
             if (!step()) { return std::nullopt; }
-            found |= edge.call == call && edge.capturedMap.has_value();
+            if (!edge.capturedMap) { continue; }
+            found |= edge.call == origin ||
+                     (leaf && llvm::is_contained(edge.capturedMap->leafObjects, leaf) &&
+                      llvm::is_contained(edge.capturedMap->leafReads, field));
         }
         if (!found) { return std::nullopt; }
     }

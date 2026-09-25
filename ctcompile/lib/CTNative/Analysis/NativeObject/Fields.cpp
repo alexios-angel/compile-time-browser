@@ -8,6 +8,7 @@
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSwitch.h"
 
 namespace ctcompile::ctnative {
@@ -135,7 +136,9 @@ struct fieldPresenceQuery {
         auto text =
             constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue()) : ctjs::StringAttr{};
         if (!text || text.getValue() != name) { return {}; }
-        const unsigned arity = name == "set" ? 2 : name == "clear" ? 0 : 1;
+        static const llvm::StringMap<unsigned> arities{{"set", 2}, {"clear", 0}};
+        const auto method = name.size() <= 5 ? arities.find(name) : arities.end();
+        const unsigned arity = method != arities.end() ? method->second : 1U;
         if (call.getArgs().size() != arity || (name != "set" && name != "get" && name != "has" &&
                                                name != "delete" && name != "clear")) {
             return {};

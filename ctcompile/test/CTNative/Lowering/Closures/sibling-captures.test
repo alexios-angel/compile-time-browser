@@ -1,0 +1,217 @@
+# Bound sibling calls pass the identical existing cell through ordinary lifted
+# parameters. The original nested-sibling source is retained in primitive-cells.
+# RUN: split-file %s %t
+# RUN: %node %t/expected.cjs %t/values.js
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/runtime.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=ctbrowser::script --implicit-check-not=ctbrowser::aot
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name sibling_runtime_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name sibling_runtime_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.mlir --js %t/values.js --work %t --name sibling_optimized_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.mlir --js %t/values.js --work %t --name sibling_optimized_clang --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name sibling_mutation --mutate siblingSnapshot --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/different-cell.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MISSING
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/deeper.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MISSING
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escaping-caller.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/reassigned-function.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REASSIGNED
+# RUN: python3 %t/rollback.py ctjs-opt ctjs-translate %dom_clang %build %t %S/../../../Support/aot-entry-table.cmake
+
+# NATIVE-DAG: !emitc.ptr<!emitc.opaque<"ctnative::number_string">>
+# NATIVE-DAG: emitc.func @change_
+# CPP: ctnative::number_string*
+# MUTATION: global 'siblingSnapshot' differs
+# MISSING: it is read from inside another function, and capture 0 of the function it holds is not a binding this step erases
+# REFUSED: ctnative.not_native =
+# REASSIGNED: it is assigned more than once
+
+#--- values.js
+function nestedCell(text, number) {
+    var value = text;
+    function read() { return value; }
+    function middle() {
+        function write() { value = number; }
+        write();
+        return read();
+    }
+    var before = read();
+    var after = middle();
+    return before + ":" + after + ":" + read();
+}
+function siblingUpdates(start, increment) {
+    var value = start;
+    function change(delta) {
+        if (delta > 0) { value = value + delta; }
+        return value;
+    }
+    function middle(delta) {
+        var before = value;
+        var changed = change(delta);
+        return before + ":" + changed + ":" + value;
+    }
+    var nested = middle(increment);
+    var direct = change(1);
+    return nested + ":" + direct + ":" + value;
+}
+function siblingConstant(text) {
+    var value = text;
+    function read() { return value; }
+    function middle() { return value + ":" + read(); }
+    return middle();
+}
+var siblingSnapshot = nestedCell("before", 7);
+var siblingNul = nestedCell("a\u0000b", 0);
+var siblingWrites = siblingUpdates(7, 2);
+var siblingNoWrite = siblingUpdates(-0, 0);
+var siblingValue = siblingConstant("unchanged");
+
+#--- expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+assert.equal(scope.siblingSnapshot, "before:7:7");
+assert.equal(scope.siblingNul, "a\u0000b:0:0");
+assert.equal(scope.siblingWrites, "7:9:9:10:10");
+assert.equal(scope.siblingNoWrite, "0:0:0:1:1");
+assert.equal(scope.siblingValue, "unchanged:unchanged");
+
+#--- different-cell.js
+function distinctCells() {
+    var value = 7;
+    var other = 7;
+    function read() { return value; }
+    function middle() { return other + read(); }
+    return middle();
+}
+distinctCells();
+
+#--- deeper.js
+function deepCell() {
+    var value = 7;
+    function read() { return value; }
+    function middle() {
+        function inner() { return value + read(); }
+        return inner();
+    }
+    return middle();
+}
+deepCell();
+
+#--- escaping-caller.js
+function escapingCaller() {
+    var value = 7;
+    function read() { return value; }
+    function middle() { value = value + 1; return read(); }
+    return middle;
+}
+var escaped = escapingCaller();
+escaped();
+
+#--- reassigned-function.js
+function assignedAgain() {
+    var value = 7;
+    function read() { return value; }
+    function middle() { return value + read(); }
+    read = function () { return 8; };
+    return middle();
+}
+assignedAgain();
+
+#--- rollback.py
+"""A failed native lift must leave executable boxed closure semantics."""
+
+import argparse
+from pathlib import Path
+import sys
+
+from CTNative.Browser.native_dom import link_options
+from CTNative.harness import run
+from Target.Cpp.harness import FLAGS
+
+opt, translate, cxx, build, work, table_script = sys.argv[1:]
+build, work = Path(build), Path(work)
+source = work / "rollback.js"
+source.write_text((work / "escaping-caller.js").read_text() + "\nvar rollbackResult = escaped();\n")
+raw = run([translate, "--ctbrowser-js-to-ctjs", str(source)]).stdout
+refused = run(
+    [
+        opt,
+        "--ctjs-resolve-globals",
+        "--ctjs-lift-to-scf",
+        "--ctnative-lower-to-emitc=optimize=false",
+    ],
+    input_text=raw,
+).stdout
+assert "ctnative.not_native" in refused and "ctjs.load_upvalue" in refused
+boxed = run(
+    [opt, "--ctjs-lower-to-emitc", "--ctjs-drop-uncompiled", "--emitc-eliminate-block-arguments"],
+    input_text=refused,
+).stdout
+cpp = work / "rollback-generated.cpp"
+cpp.write_text(
+    run([translate, "--mlir-to-cpp", "--declare-variables-at-top"], input_text=boxed).stdout
+)
+table = work / "rollback-table.cpp"
+run(
+    [
+        "cmake",
+        f"-DGENERATED={cpp}",
+        f"-DOUTPUT={table}",
+        "-DTABLE=rollback_table",
+        "-P",
+        table_script,
+    ]
+)
+client = work / "rollback-client.cpp"
+client.write_text(r"""
+// Match the existing boxed fixture warning policy, only for generated code.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wunused-variable"
+#pragma clang diagnostic ignored "-Wunused-but-set-variable"
+#include "rollback-generated.cpp"
+#pragma clang diagnostic pop
+#include "rollback-table.cpp"
+#include <ctbrowser/script/builtins.hpp>
+#include <ctbrowser/script/compile.hpp>
+#include <ctbrowser/script/vm.hpp>
+#include <cassert>
+#include <fstream>
+#include <iterator>
+#include <string>
+int main(int argc, char ** argv) {
+    assert(argc == 2);
+    std::ifstream input(argv[1]);
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    auto program = ctbrowser::script::compiler::compile(source);
+    assert(program.ok);
+    const auto installed = ctcompile::aot::install_strict(program, rollback_table);
+    assert(installed.ok() && installed.installed == 4 && installed.interpreted == 0);
+    ctbrowser::script::context context;
+    ctbrowser::script::install_builtins(context);
+    assert(context.run(program).ok);
+    const auto value = context.global("rollbackResult");
+    assert(value.is_number() && value.as_number() == 9);
+}
+""")
+include = build.parent / "ctbrowser/include"
+includes, libraries = link_options(argparse.Namespace(build=build, include=include), core_only=True)
+binary = work / "rollback"
+run(
+    [
+        cxx,
+        *FLAGS,
+        "-I" + str(build.parent / "ctcompile/include"),
+        *includes,
+        str(client),
+        str(build / "lib/Script/libctbrowser-script.a"),
+        *libraries,
+        "-o",
+        str(binary),
+    ]
+)
+run([str(binary), str(source)])
+print("refused sibling capture: four boxed entries execute, rollbackResult=9")

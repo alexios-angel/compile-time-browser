@@ -172,7 +172,7 @@ struct RoleOf {
 
 struct Verdict {
     EscapeReason reason = EscapeReason::Confined;
-    mlir::Operation * by = nullptr; // the sinking operation, when escaping
+    mlir::Operation * by = nullptr; // the sinking operation, when known
     unsigned position = 0;          // its operand index
 };
 
@@ -239,9 +239,11 @@ struct DirectLoadEvidence {
 };
 
 struct EscapeVerdicts {
-    /// Every tracked site in a LIVE top-level CFG block, in program order
-    /// (a MapVector so the claims file is deterministic). Sites in dead CFG
-    /// blocks are dropped and counted. Nested-region sites are out of scope.
+    /// Every tracked site under a LIVE top-level CFG block, in preorder
+    /// (a MapVector so the inventory is deterministic). All descendants of dead
+    /// top-level blocks are dropped and counted. Nested sites remain UnknownOp
+    /// with no operand witness, unless an earlier whole-function refusal applies;
+    /// neither nested liveness nor distinct dynamic instances are inferred.
     llvm::MapVector<mlir::Operation *, Verdict> sites;
     /// Every direct Stored write, independently of the first-reason verdicts.
     DirectStorageEvidence directStorage;
@@ -263,7 +265,8 @@ struct EscapeVerdicts {
     /// R4 `suspended` or R1's guard `arguments_late`: every site escapes with
     /// this reason.
     std::optional<EscapeReason> wholeFunction;
-    /// A separate complete local-container proof discharged these Stored sites.
+    /// A separate complete local-container proof discharged these stored sites,
+    /// including implicit region captures whose exact operand role is Stored.
     /// Its all-write graph must be acyclic, every operation must be supported,
     /// and none of these sites may be reachable through the returned value.
     /// This does not discharge native type, identity or lifetime obligations.
@@ -582,14 +585,23 @@ struct ArrayContentsEvidence {
 /// not const; nothing here changes a lattice.
 /// Models the function's top-level CFG. A live operation's nested regions
 /// sink their implicit captures as unknown_op; no region-control-flow proof
-/// is inferred. Allocations inside nested regions have no verdict and must
-/// never be treated as confined by a consumer. Frame-retaining operations
-/// inside those regions still trigger the whole-function refusals.
+/// is inferred. Allocations inside nested regions are inventoried with an
+/// UnknownOp verdict and no operand witness, after whole-function refusals.
+/// Only the independent refinement below may discharge that inventory verdict.
+/// Frame-retaining operations inside those regions still trigger whole-function refusals.
 ///
 /// With initialized solver evidence, a complete current computeArrayContents
-/// proof may discharge Stored sites absent from every return path. A bounded
+/// proof may discharge Stored sites absent from every return path, including
+/// UnknownOp region captures whose exact operand role is Stored. A bounded
 /// acyclicity check over ALL array/object writes excludes transient cycles. Retained
-/// children keep their original Stored witness; no unique owner is inferred.
+/// children keep their original witness; no unique owner is inferred.
+/// For scf.if/scf.while, a charged census checks current operand/result lattices
+/// and direct Stored targets before the independent contents proof. The legacy
+/// top-level census remains incomplete. Nested allocations require exclusively
+/// scf.if ancestors; the complete contents query rejects repeated root blocks
+/// except allocation/region-free counted loops, proving at most one instance per
+/// call. A site may refine only when absent from every return's reachable sites.
+/// This proves frame confinement, never region lifetime or native ownership.
 /// Unsupported operations, cycles, missing lattices or budget exhaustion leave
 /// every original verdict intact. No native admission consumes this refinement.
 [[nodiscard]] EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp function,

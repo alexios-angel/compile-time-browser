@@ -20,6 +20,41 @@ bool readsBinding(mlir::OpOperand & operand) {
         return supportsConstBinding(cast.getResult().getType());
     }
     if (llvm::isa<ec::AssignOp>(op)) { return operand.getOperandNumber() == 1; }
+    if (auto call = llvm::dyn_cast<ec::MemberCallOpaqueOp>(op)) {
+        const auto receiver = llvm::dyn_cast<ec::OpaqueType>(call.getReceiver().getType());
+        if (!receiver || call.getArgs() || call.getTemplateArgs() || call.getNumResults() != 1) {
+            return false;
+        }
+        const auto result = call.getResult(0).getType();
+        if (receiver.getValue() == "ctnative::js_num" &&
+            call.getCallee() == "unsigned_shift_right" && call.getArgOperands().size() == 1) {
+            const auto number = llvm::dyn_cast<ec::OpaqueType>(result);
+            return number && number == receiver && call.getArgOperands()[0].getType() == number;
+        }
+        if (receiver.getValue() == "ctnative::nullable_scalar" && call.getCallee() == "to_string" &&
+            call.getArgOperands().empty()) {
+            const auto string = llvm::dyn_cast<ec::OpaqueType>(result);
+            return string && string.getValue() == "ctnative::js_string";
+        }
+        if ((receiver.getValue() == "ctnative::js_string" ||
+             receiver.getValue() == "ctnative::nullable_string") &&
+            call.getCallee() == "to_number" && call.getArgOperands().empty()) {
+            const auto number = llvm::dyn_cast<ec::OpaqueType>(result);
+            return number && number.getValue() == "ctnative::js_num";
+        }
+        if (call.getCallee() == "value" && call.getArgOperands().empty()) {
+            if (receiver.getValue() == "ctnative::js_num") { return result.isF64(); }
+            const auto storage = llvm::dyn_cast<ec::OpaqueType>(result);
+            return receiver.getValue() == "ctnative::js_string" && storage &&
+                   storage.getValue() == "std::string";
+        }
+        if (receiver.getValue() != "ctnative::js_string" || call.getCallee() != "startsWith" ||
+            call.getArgOperands().size() != 1 || !result.isInteger(1)) {
+            return false;
+        }
+        const auto argument = llvm::dyn_cast<ec::OpaqueType>(call.getArgOperands()[0].getType());
+        return argument && argument.getValue() == "ctnative::js_string";
+    }
     if (auto call = llvm::dyn_cast<ec::CallOpaqueOp>(op)) {
         // This describes the C++ operand ABI, never purity or heap effects.
         // Native helper construction supplies it for by-value/const-reference

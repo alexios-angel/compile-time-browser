@@ -1,0 +1,1125 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name right-shift-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-right-shift-index-overwrite.claims
+
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 34 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 35 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 36 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 37 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 38 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 39 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 41 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 42 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 43 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 44 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 45 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 46 {{[0-9]+}} obj confined
+
+// CHECK: escape {{[0-9a-f]+}} 47 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 48 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 49 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 50 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 51 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 52 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 53 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 54 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 55 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 56 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 57 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 58 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 59 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 60 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 61 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 62 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 63 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 64 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 65 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 66 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 67 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 68 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 69 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 70 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 71 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 72 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 73 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 74 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 75 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 76 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 77 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 78 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 79 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 80 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 81 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 82 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 83 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 84 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 85 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 86 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 87 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 88 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 89 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 90 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 91 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 92 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 93 {{[0-9]+}} obj confined
+
+// CHECK: escape {{[0-9a-f]+}} 94 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 95 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 96 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 97 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 98 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 99 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 100 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 101 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 102 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 103 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 104 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 105 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 106 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 107 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 108 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 109 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 110 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 111 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 112 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 113 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 114 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 115 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 116 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 117 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 118 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 119 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 120 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 121 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 122 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 123 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 124 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 125 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 126 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 127 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 128 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 129 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 130 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 131 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 132 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 133 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 134 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 135 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 136 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 137 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 138 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 139 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 140 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 141 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 142 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 143 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 144 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 145 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 146 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 147 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 148 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 149 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 150 {{[0-9]+}} obj escapes:stored
+
+
+// CHECK: escape {{[0-9a-f]+}} 151 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 152 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 153 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 154 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 155 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 156 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 157 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 158 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 159 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 160 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 161 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 162 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 163 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 164 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 165 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 166 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function signedShift() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >> 1] = 0;
+    return a;
+}
+function unsignedShift() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> 1] = 0;
+    return a;
+}
+function unalignedStart() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 1; i < a.length; i += 2) a[i >> 1] = 0;
+    return a;
+}
+function modulo32() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i >> 32] = 0;
+    return a;
+}
+function negativeCount() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> -31] = 0;
+    return a;
+}
+function reloadGap() {
+    var child = {}, a = [child, child, 0, 1];
+    for (var i = 0; i < a.length; i += 2) a[i >> a[3]] = 0;
+    return a;
+}
+function signedUpper() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[1073741823 - ((2147483647 - i) >> 1)] = 0;
+    return a;
+}
+function unsignedUpper() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[2147483647 - ((4294967295 - i) >>> 1)] = 0;
+    return a;
+}
+function reversedShift() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[1 - (i >> 1)] = 0;
+    return a;
+}
+function saved() {
+    var child = {}, a = [child, child, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[i >> 1] = 0;
+    return saved;
+}
+function remaining() {
+    var child = {}, a = [child, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[i >>> 1] = 0;
+    return a;
+}
+function zeroTrip() {
+    var child = {}, a = [child];
+    for (var i = 1; i < a.length; i += 2) a[i >> 1] = 0;
+    return a;
+}
+function nondivisibleStride() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[i >> 1] = 0;
+    return a;
+}
+function overlappingCount() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >> a[1]] = 0;
+    return a;
+}
+function laterOverlap() {
+    var child = {}, a = [child, child, 0, 1];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i >> a[3]] = 0;
+        a[3] = 0;
+    }
+    return a;
+}
+function signedDiscontinuity() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((2147483647 + i) >> 0) - 2147483647] = 0;
+    return a;
+}
+function unsignedOverflow() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(4294967296 + i) >>> 0] = 0;
+    return a;
+}
+function negativeInput() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((i - 2) >>> 0) - 4294967294] = 0;
+    return a;
+}
+function stringCount() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >> "1"] = 0;
+    return a;
+}
+function varyingCount() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i >> i] = 0;
+    return a;
+}
+function cycle() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i >> 1] = a;
+        a[i >> 1] = 0;
+    }
+    return a;
+}
+function negativeLower() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i - 4294967295) >>> 1] = 0;
+    return a;
+}
+function negativeAcrossSign() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 2147483649) >>> 1) - 1073741823] = 0;
+    return a;
+}
+function negativeReversed() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[2147483647 - ((-1 - i) >>> 1)] = 0;
+    return a;
+}
+function negativeMaskedCount() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 4) >>> -31) - 2147483646] = 0;
+    return a;
+}
+function negativeReloadGap() {
+    var child = {}, a = [child, child, 0, 1];
+    for (var i = 0; i < a.length; i += 2) a[((i - 4) >>> a[3]) - 2147483646] = 0;
+    return a;
+}
+function negativeUnaligned() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 1; i < a.length; i += 2) a[((i - 4) >>> 1) - 2147483646] = 0;
+    return a;
+}
+function negativeSaved() {
+    var child = {}, a = [child, child, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 4) >>> 1) - 2147483646] = 0;
+    return saved;
+}
+function negativeZeroCrossing() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((i - 1) >>> 0) - 4294967295] = 0;
+    return a;
+}
+function negativeOverflow() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(i - 4294967296) >>> 0] = 0;
+    return a;
+}
+function negativeNondivisible() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[((i - 4) >>> 1) - 2147483646] = 0;
+    return a;
+}
+function negativeReloadOverlap() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 4) >>> a[1]) - 2147483646] = 0;
+    return a;
+}
+function negativeLaterOverlap() {
+    var child = {}, a = [child, child, 0, 1];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((i - 4) >>> a[3]) - 2147483646] = 0;
+        a[3] = 2;
+    }
+    return a;
+}
+function signedNegative() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 4) >> 1) + 2] = 0;
+    return a;
+}
+function signedMinimum() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 2147483648) >> 1) + 1073741824] = 0;
+    return a;
+}
+function signedPositiveWrapped() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483648) >> 1) + 1073741824] = 0;
+    return a;
+}
+function signedNegativeWrapped() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i - 4294967295) >> 1] = 0;
+    return a;
+}
+function signedZeroCrossing() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) >> 1) + 1] = 0;
+    return a;
+}
+function signedNegativeUnaligned() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 1; i < a.length; i += 2) a[((i - 4) >> 1) + 2] = 0;
+    return a;
+}
+function signedNegativeReloadGap() {
+    var child = {}, a = [child, child, 0, 1];
+    for (var i = 0; i < a.length; i += 2) a[((i - 4) >> a[3]) + 2] = 0;
+    return a;
+}
+function signedNegativeSaved() {
+    var child = {}, a = [child, child, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 4) >> 1) + 2] = 0;
+    return saved;
+}
+function signedLowerCrossing() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 2147483649) >> 1) - 1073741823] = 0;
+    return a;
+}
+function signedNegativeNondivisible() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[((i - 4) >> 1) + 2] = 0;
+    return a;
+}
+function signedNegativeReloadOverlap() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 4) >> a[1]) + 2] = 0;
+    return a;
+}
+function signedNegativeLaterOverlap() {
+    var child = {}, a = [child, child, 0, 1];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((i - 4) >> a[3]) + 2] = 0;
+        a[3] = 2;
+    }
+    return a;
+}
+function signedPositiveUpper() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[-1 - ((4294967295 - i) >> 1)] = 0;
+    return a;
+}
+signedShift(); unsignedShift(); unalignedStart(); modulo32(); negativeCount(); reloadGap();
+signedUpper(); unsignedUpper(); reversedShift(); saved(); remaining(); zeroTrip();
+nondivisibleStride(); overlappingCount(); laterOverlap(); signedDiscontinuity();
+unsignedOverflow(); negativeInput(); stringCount(); varyingCount(); cycle();
+negativeLower(); negativeAcrossSign(); negativeReversed(); negativeMaskedCount();
+negativeReloadGap(); negativeUnaligned(); negativeSaved(); negativeZeroCrossing();
+negativeOverflow(); negativeNondivisible(); negativeReloadOverlap(); negativeLaterOverlap();
+signedNegative(); signedMinimum(); signedPositiveWrapped(); signedNegativeWrapped();
+signedZeroCrossing(); signedNegativeUnaligned(); signedNegativeReloadGap();
+signedNegativeSaved(); signedLowerCrossing(); signedNegativeNondivisible();
+signedNegativeReloadOverlap(); signedNegativeLaterOverlap(); signedPositiveUpper();
+
+function unevenCleared() {
+    var child = {}, a = [child, child, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i >> 1] = 0;
+    return a;
+}
+function unevenRetained() {
+    var child = {}, a = [child, child, child, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i >> 1] = 0;
+    return a;
+}
+function unevenReloadGap() {
+    var child = {}, a = [child, child, 1, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i >> a[2]] = 0;
+    return a;
+}
+function scaledReloadGap() {
+    var child = {}, a = [child, 1, child, 1, 0, 1, child];
+    for (var i = 0; i < a.length; i += 3) a[((i >> a[1]) << 2) / 2] = 0;
+    return a;
+}
+function fractionalIntermediate() {
+    var child = {}, a = [child, child, child, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[(i >> 1) / 2] = 0;
+    return a;
+}
+function repeatedComposition() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i >> 1) >> 1] = 0;
+    return a;
+}
+function unevenReversed() {
+    var child = {}, a = [child, 0, child, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[3 - (i >> 1)] = 0;
+    return a;
+}
+function scaledRetained() {
+    var child = {}, a = [child, 1, child, 1, child, 1, child];
+    for (var i = 0; i < a.length; i += 3) a[((i >> a[1]) << 2) / 2] = 0;
+    return a;
+}
+unevenCleared(); unevenRetained(); unevenReloadGap(); scaledReloadGap();
+fractionalIntermediate(); repeatedComposition(); unevenReversed(); scaledRetained();
+
+function pairUpper() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483647) >> 0) & 2] = 0;
+    return a;
+}
+function pairLower() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 2147483649) >> 0) & 2] = 0;
+    return a;
+}
+function pairUnsignedZero() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) >>> 0) & 2] = 0;
+    return a;
+}
+function pairCountReload() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483647) >> a[1]) & 2] = 0;
+    return a;
+}
+function pairUnevenSigned() {
+    var child = {}, a = [child, 1, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[i >> a[1]] = 0;
+    return a;
+}
+function pairUnevenUnsigned() {
+    var child = {}, a = [child, 1, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[i >>> a[1]] = 0;
+    return a;
+}
+function pairUnevenNegativeSigned() {
+    var child = {}, a = [child, 1, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[((i - 6) >> a[1]) + 3] = 0;
+    return a;
+}
+function pairUnevenNegativeUnsigned() {
+    var child = {}, a = [child, 1, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[((i - 6) >>> a[1]) - 2147483645] = 0;
+    return a;
+}
+function pairFourVisits() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(((i & 2) + 2147483647) >> 0) & 2] = 0;
+    return a;
+}
+function pairRetained() {
+    var child = {}, a = [child, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483647) >> 0) & 2] = 0;
+    return a;
+}
+function pairSaved() {
+    var child = {}, a = [child, 0, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483647) >> 0) & 2] = 0;
+    return saved;
+}
+function pairLaterCount() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((i + 2147483647) >> a[1]) & 2] = 0;
+        a[1] = 1;
+    }
+    return a;
+}
+
+pairUpper(); pairLower(); pairUnsignedZero(); pairCountReload(); pairUnevenSigned(); pairUnevenUnsigned(); pairUnevenNegativeSigned(); pairUnevenNegativeUnsigned(); pairFourVisits(); pairRetained(); pairSaved(); pairLaterCount();
+
+function roundedSigned() {
+    var child = {}, a = [child, 3, child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i * 9) >> a[1]] = 0;
+    return a;
+}
+function roundedUnsigned() {
+    var child = {}, a = [child, 3, child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i * 9) >>> a[1]] = 0;
+    return a;
+}
+function roundedRetained() {
+    var child = {}, a = [child, 3, child, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i * 9) >> a[1]] = 0;
+    return a;
+}
+function roundedOverlap() {
+    var child = {}, a = [child, 3, 3, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 9) >> a[2]) % a.length] = 0;
+    return a;
+}
+function roundedLaterStore() {
+    var child = {}, a = [child, 3, child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) { a[(i * 9) >> a[1]] = 0; a[1] = 4; }
+    return a;
+}
+function roundedMixed() {
+    var child = {}, a = [child, 3, child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i * 10) >> a[1]] = 0;
+    return a;
+}
+roundedSigned(); roundedUnsigned(); roundedRetained(); roundedOverlap(); roundedLaterStore(); roundedMixed();
+
+function jumpUpper() {
+    var child = {}, a = [child, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483647) >> a[2]) + 1] = 0;
+    return a;
+}
+function jumpLower() {
+    var child = {}, a = [child, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 2147483649) >> a[2]) + 1] = 0;
+    return a;
+}
+function jumpUnsignedZero() {
+    var child = {}, a = [child, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i - 1) >>> a[2]] = 0;
+    return a;
+}
+function jumpMaskedCount() {
+    var child = {}, a = [child, child, 63, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483647) >> a[2]) + 1] = 0;
+    return a;
+}
+function jumpNegativeCount() {
+    var child = {}, a = [child, child, -1, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483647) >> a[2]) + 1] = 0;
+    return a;
+}
+function jumpSignedInterior() {
+    var child = {}, a = [child, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 1073741823 - 2147483649) >> a[2]) + 1] = 0;
+    return a;
+}
+function jumpUnsignedInterior() {
+    var child = {}, a = [child, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i * 1073741823 - 1) >>> a[2]] = 0;
+    return a;
+}
+function jumpRetained() {
+    var child = {}, a = [child, child, 31, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483647) >> a[2]) + 1] = 0;
+    return a;
+}
+function jumpSaved() {
+    var child = {}, a = [child, child, 31, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483647) >> a[2]) + 1] = 0;
+    return saved;
+}
+function jumpOverlap() {
+    var child = {}, a = [31, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(((i + 2147483647) >> a[0]) + 1) & 1] = 0;
+    return a;
+}
+function jumpLaterStore() {
+    var child = {}, a = [child, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((i + 2147483647) >> a[2]) + 1] = 0;
+        a[2] = 63;
+    }
+    return a;
+}
+function jumpNegativePosition() {
+    var child = {}, a = [child, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i + 2147483647) >> a[2]] = 0;
+    return a;
+}
+jumpUpper(); jumpLower(); jumpUnsignedZero(); jumpMaskedCount(); jumpNegativeCount();
+jumpSignedInterior(); jumpUnsignedInterior(); jumpRetained(); jumpSaved(); jumpOverlap();
+jumpLaterStore(); jumpNegativePosition();
+
+function residueJumpUpper() {
+    var child = {}, a = [1, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483646 + i * 2) >> a[0]) & 3] = 0;
+    return a;
+}
+function residueJumpLower() {
+    var child = {}, a = [1, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 2 - 2147483650) >> a[0]) & 3] = 0;
+    return a;
+}
+function residueJumpMaskedCount() {
+    var child = {}, a = [33, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483646 + i * 2) >> a[0]) & 3] = 0;
+    return a;
+}
+function residueJumpNegativeCount() {
+    var child = {}, a = [-31, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483646 + i * 2) >> a[0]) & 3] = 0;
+    return a;
+}
+function residueJumpRetained() {
+    var child = {}, a = [1, child, 0, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483646 + i * 2) >> a[0]) & 3] = 0;
+    return a;
+}
+function residueJumpSaved() {
+    var child = {}, a = [1, child, 0, child, 0, 0], saved = a[1];
+    for (var i = 0; i < a.length; i += 2) a[((2147483646 + i * 2) >> a[0]) & 3] = 0;
+    return saved;
+}
+function residueJumpOverlap() {
+    var child = {}, a = [1, 1, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483646 + i * 2) >> a[1]) & 3] = 0;
+    return a;
+}
+function residueJumpLaterStore() {
+    var child = {}, a = [1, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((2147483646 + i * 2) >> a[0]) & 3] = 0;
+        a[0] = 1;
+    }
+    return a;
+}
+function residueJumpUnsignedDeferred() {
+    var child = {}, a = [1, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 2 - 2) >>> a[0]) & 3] = 0;
+    return a;
+}
+residueJumpUpper(); residueJumpLower(); residueJumpMaskedCount(); residueJumpNegativeCount();
+residueJumpRetained(); residueJumpSaved(); residueJumpOverlap(); residueJumpLaterStore();
+residueJumpUnsignedDeferred();
+
+function unsignedResidueJumpReversed() {
+    var child = {}, a = [1, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2 - i * 2) >>> a[0]) & 3] = 0;
+    return a;
+}
+function unsignedResidueJumpMaskedCount() {
+    var child = {}, a = [33, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 2 - 2) >>> a[0]) & 3] = 0;
+    return a;
+}
+function unsignedResidueJumpNegativeCount() {
+    var child = {}, a = [-31, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 2 - 2) >>> a[0]) & 3] = 0;
+    return a;
+}
+function unsignedResidueJumpRetained() {
+    var child = {}, a = [1, child, child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 2 - 2) >>> a[0]) & 3] = 0;
+    return a;
+}
+function unsignedResidueJumpSaved() {
+    var child = {}, a = [1, child, 0, child, 0, 0], saved = a[1];
+    for (var i = 0; i < a.length; i += 2) a[((i * 2 - 2) >>> a[0]) & 3] = 0;
+    return saved;
+}
+function unsignedResidueJumpOverlap() {
+    var child = {}, a = [1, 1, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 2 - 2) >>> a[1]) & 3] = 0;
+    return a;
+}
+function unsignedResidueJumpLaterStore() {
+    var child = {}, a = [1, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((i * 2 - 2) >>> a[0]) & 3] = 0;
+        a[0] = 3;
+    }
+    return a;
+}
+function unsignedResidueJumpErased() {
+    var child = {}, a = [2, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 2 - 2) >>> a[0]) & 3] = 0;
+    return a;
+}
+unsignedResidueJumpReversed(); unsignedResidueJumpMaskedCount(); unsignedResidueJumpNegativeCount();
+unsignedResidueJumpRetained(); unsignedResidueJumpSaved(); unsignedResidueJumpOverlap();
+unsignedResidueJumpLaterStore(); unsignedResidueJumpErased();
+
+function mixedRoundedSigned() {
+    var child = {}, a = [child, 3, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[(i * 10) >> a[1]] = 0;
+    return a;
+}
+function mixedRoundedUnsigned() {
+    var child = {}, a = [child, 3, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[(i * 10) >>> a[1]] = 0;
+    return a;
+}
+function mixedRoundedOverlap() {
+    var child = {}, a = [child, 3, 3, 0, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[((i * 10) >> a[2]) % a.length] = 0;
+    return a;
+}
+function mixedRoundedSaved() {
+    var child = {}, a = [child, 3, child, 0, 0, child], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[(i * 10) >> a[1]] = 0;
+    return saved;
+}
+mixedRoundedSigned(); mixedRoundedUnsigned(); mixedRoundedOverlap(); mixedRoundedSaved();
+
+function mixedComposedMod() {
+    var child = {}, a = [child, 3, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 10) >> a[1]) % 5] = 0;
+    return a;
+}
+function mixedComposedMask() {
+    var child = {}, a = [child, 3, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[((i * 10) >> a[1]) & 5] = 0;
+    return a;
+}
+function mixedComposedUnsignedMod() {
+    var child = {}, a = [child, 3, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 10) >>> a[1]) % 5] = 0;
+    return a;
+}
+function mixedComposedUnsignedMask() {
+    var child = {}, a = [child, 3, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[((i * 10) >>> a[1]) & 5] = 0;
+    return a;
+}
+function mixedComposedRetained() {
+    var child = {}, a = [child, 3, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[((i * 10) >> a[1]) & 5] = 0;
+    return a;
+}
+function mixedComposedSaved() {
+    var child = {}, a = [child, 3, child, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 10) >> a[1]) % 5] = 0;
+    return saved;
+}
+function mixedComposedOverlap() {
+    var child = {}, a = [3, 3, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 10) >> a[0]) % 5] = 0;
+    return a;
+}
+function mixedComposedLaterStore() {
+    var child = {}, a = [child, 3, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((i * 10) >> a[1]) & 5] = 0;
+        a[1] = 2;
+    }
+    return a;
+}
+mixedComposedMod(); mixedComposedMask(); mixedComposedUnsignedMod(); mixedComposedUnsignedMask();
+mixedComposedRetained(); mixedComposedSaved(); mixedComposedOverlap(); mixedComposedLaterStore();
+
+function partitionedMixedShift() {
+    var child = {}, a = [child, 2, child, 0, 0, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i * 3) >> a[1]) & 11] = 0;
+    return a;
+}
+function partitionedUnsignedShift() {
+    var child = {}, a = [child, 2, child, 0, 0, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i * 3) >>> a[1]) & 11] = 0;
+    return a;
+}
+function partitionedNonzeroShift() {
+    var child = {}, a = [child, 2, child, 0, 0, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 3; i < a.length; i += 3) a[((i * 3) >> a[1]) & 11] = 0;
+    return a;
+}
+function partitionedRetainedShift() {
+    var child = {}, a = [child, 2, child, 0, child, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i * 3) >> a[1]) & 11] = 0;
+    return a;
+}
+function partitionedSavedShift() {
+    var child = {}, a = [child, 2, child, 0, 0, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[((i * 3) >> a[1]) & 11] = 0;
+    return saved;
+}
+function partitionedOverlapShift() {
+    var child = {}, a = [child, 2, 2, 0, 0, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i * 3) >> a[2]) & 11] = 0;
+    return a;
+}
+function partitionedLaterShift() {
+    var child = {}, a = [child, 2, child, 0, 0, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) {
+        a[((i * 3) >> a[1]) & 11] = 0;
+        a[1] = 1;
+    }
+    return a;
+}
+partitionedMixedShift(); partitionedUnsignedShift(); partitionedNonzeroShift();
+partitionedRetainedShift(); partitionedSavedShift(); partitionedOverlapShift(); partitionedLaterShift();
+
+function convertedMixedComplement() {
+    var child = {}, a = [0, child, 3, 0, child, child];
+    for (var i = 0; i < a.length; i += 2) a[(~(((i * 10) >> a[2]) + 2147483646)) & 5] = 0;
+    return a;
+}
+function convertedMixedLeftShift() {
+    var child = {}, a = [0, child, 3, 0, child, child];
+    for (var i = 0; i < a.length; i += 2) a[((((i * 10) >> a[2]) + 2147483647) << 1 >>> 1) & 5] = 0;
+    return a;
+}
+function convertedMixedSignedShift() {
+    var child = {}, a = [child, child, 3, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((((i * 10) >> a[2]) + 2147483646) >> 0) & 5] = 0;
+    return a;
+}
+function convertedMixedUnsignedShift() {
+    var child = {}, a = [child, child, 3, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((((i * 10) >> a[2]) - 2) >>> 0) & 5] = 0;
+    return a;
+}
+function convertedMixedRetained() {
+    var child = {}, a = [child, child, 3, 0, child, child];
+    for (var i = 0; i < a.length; i += 2) a[(~(((i * 10) >> a[2]) + 2147483646)) & 5] = 0;
+    return a;
+}
+function convertedMixedSaved() {
+    var child = {}, a = [0, child, 3, 0, child, child], saved = a[1];
+    for (var i = 0; i < a.length; i += 2) a[(~(((i * 10) >> a[2]) + 2147483646)) & 5] = 0;
+    return saved;
+}
+function convertedMixedOverlap() {
+    var child = {}, a = [0, 3, 3, 0, child, child];
+    for (var i = 0; i < a.length; i += 2) a[(~(((i * 10) >> a[1]) + 2147483646)) & 5] = 0;
+    return a;
+}
+function convertedMixedLaterStore() {
+    var child = {}, a = [0, child, 3, 0, child, child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[(~(((i * 10) >> a[2]) + 2147483646)) & 5] = 0;
+        a[2] = 1;
+    }
+    return a;
+}
+convertedMixedComplement(); convertedMixedLeftShift(); convertedMixedSignedShift(); convertedMixedUnsignedShift();
+convertedMixedRetained(); convertedMixedSaved(); convertedMixedOverlap(); convertedMixedLaterStore();
+
+function lowSuffixAnd() {
+    var child = {}, a = [child, 0, 0, 0, 3, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 10) a[i & ~a[4]] = 0;
+    return a;
+}
+function lowSuffixOr() {
+    var child = {}, a = [0, 0, 0, child, 0, 0, 0, 3, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 10) a[i | a[7]] = 0;
+    return a;
+}
+function lowSuffixRetained() {
+    var child = {}, a = [child, child, 0, 0, 3, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 10) a[i & ~a[4]] = 0;
+    return a;
+}
+function lowSuffixSaved() {
+    var child = {}, a = [child, 0, 0, 0, 3, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 10) a[i & ~a[4]] = 0;
+    return saved;
+}
+function lowSuffixOverlap() {
+    var child = {}, a = [child, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 10) a[i & ~a[8]] = 0;
+    return a;
+}
+function lowSuffixLaterStore() {
+    var child = {}, a = [child, 0, 0, 0, 3, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 10) {
+        a[i & ~a[4]] = 0;
+        a[4] = 1;
+    }
+    return a;
+}
+lowSuffixAnd(); lowSuffixOr(); lowSuffixRetained(); lowSuffixSaved(); lowSuffixOverlap(); lowSuffixLaterStore();
+
+function directMaskAnd() {
+    var child = {}, a = [child, child, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i & a[2]] = 0;
+    return a;
+}
+function directMaskOr() {
+    var child = {}, a = [0, 0, child, child, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[i | a[4]] = 0;
+    return a;
+}
+function directMaskXor() {
+    var child = {}, a = [0, child, child, 2, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i ^ a[3]] = 0;
+    return a;
+}
+function directMaskRetained() {
+    var child = {}, a = [child, child, 5, child, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i & a[2]] = 0;
+    return a;
+}
+function directMaskSaved() {
+    var child = {}, a = [child, child, 5, 0, child, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[i & a[2]] = 0;
+    return saved;
+}
+function directMaskOverlap() {
+    var child = {}, a = [child, 5, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i & a[1]] = 0;
+    return a;
+}
+function directMaskLaterStore() {
+    var child = {}, a = [child, child, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) {
+        a[i & a[2]] = 0;
+        a[2] = 1;
+    }
+    return a;
+}
+directMaskAnd(); directMaskOr(); directMaskXor(); directMaskRetained();
+directMaskSaved(); directMaskOverlap(); directMaskLaterStore();
+
+function directConvertedComplement() {
+    var child = {}, a = [child, 536870912, 0, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((~(i * 536870912) + 1) / a[1]) + 3] = 0;
+    return a;
+}
+function directConvertedSigned() {
+    var child = {}, a = [0, 29, child, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((i * 536870912) >> a[1]) + 4] = 0;
+    return a;
+}
+function directConvertedUnsigned() {
+    var child = {}, a = [0, 29, child, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((i - 4) * 536870912) >>> a[1]] = 0;
+    return a;
+}
+function directConvertedLeft() {
+    var child = {}, a = [child, child, child, 1, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[(((i * 536870912) << a[3]) / 1073741824) + 2] = 0;
+    return a;
+}
+function directConvertedRetained() {
+    var child = {}, a = [child, 29, child, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((i * 536870912) >> a[1]) + 4] = 0;
+    return a;
+}
+function directConvertedSaved() {
+    var child = {}, a = [0, 29, child, 0, child, 0, 0, child], saved = a[4];
+    for (var i = 0; i < a.length; i += 3) a[((i * 536870912) >> a[1]) + 4] = 0;
+    return saved;
+}
+function directConvertedOverlap() {
+    var child = {}, a = [0, 0, 29, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((i * 536870912) >> a[2]) + 4] = 0;
+    return a;
+}
+function directConvertedLaterStore() {
+    var child = {}, a = [0, 29, child, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) {
+        a[((i * 536870912) >> a[1]) + 4] = 0;
+        a[1] = 30;
+    }
+    return a;
+}
+directConvertedComplement(); directConvertedSigned(); directConvertedUnsigned(); directConvertedLeft();
+directConvertedRetained(); directConvertedSaved(); directConvertedOverlap(); directConvertedLaterStore();
+
+function directConvertedFractional() {
+    var child = {}, a = [child, child, child, 1, 0, 0, 0, 0];
+    for (var i = 6; i < a.length; i += 3) a[(((i * 536870912) << a[3]) / 3) + 2] = 0;
+    return a;
+}
+directConvertedFractional();
+
+function crossingMaskXor() {
+    var child = {}, a = [child, 29, 0, child, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[(((i * 536870912) ^ 2147483648) >> a[1]) + 4] = 0;
+    return a;
+}
+function crossingMaskOr() {
+    var child = {}, a = [0, 29, 0, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(((i * 536870912) | 536870912) >> a[1]) + 4] = 0;
+    return a;
+}
+function crossingMaskAnd() {
+    var child = {}, a = [0, 29, child, 0, child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[(((i * 536870912) & -536870913) >> a[1]) + 4] = 0;
+    return a;
+}
+function crossingMaskNegative() {
+    var child = {}, a = [child, 29, 0, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((((i - 3) * 536870912) ^ 2147483648) >> a[1]) + 4] = 0;
+    return a;
+}
+function crossingMaskRetained() {
+    var child = {}, a = [child, 29, child, child, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[(((i * 536870912) ^ 2147483648) >> a[1]) + 4] = 0;
+    return a;
+}
+function crossingMaskSaved() {
+    var child = {}, a = [child, 29, 0, child, 0, 0, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[(((i * 536870912) ^ 2147483648) >> a[1]) + 4] = 0;
+    return saved;
+}
+function crossingMaskOverlap() {
+    var child = {}, a = [2147483648, 29, 0, child, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[(((i * 536870912) ^ a[0]) >> a[1]) + 4] = 0;
+    return a;
+}
+function crossingMaskLaterStore() {
+    var child = {}, a = [child, 29, 0, child, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) {
+        a[(((i * 536870912) ^ 2147483648) >> a[1]) + 4] = 0;
+        a[1] = 30;
+    }
+    return a;
+}
+crossingMaskXor(); crossingMaskOr(); crossingMaskAnd(); crossingMaskNegative();
+crossingMaskRetained(); crossingMaskSaved(); crossingMaskOverlap(); crossingMaskLaterStore();
+
+function primitiveModuloCount() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> "33"] = 0;
+    return a;
+}
+function primitiveBooleanCount() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> true] = 0;
+    return a;
+}
+function primitiveFalseCount() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i >>> false] = 0;
+    return a;
+}
+function primitiveReloadCount() {
+    var child = {}, a = [child, child, 0, "1"];
+    for (var i = 0; i < a.length; i += 2) a[i >>> a[3]] = 0;
+    return a;
+}
+function primitiveRetainedChild() {
+    var child = {}, a = [child, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> "1"] = 0;
+    return a;
+}
+function primitiveSavedChild() {
+    var child = {}, a = [child, child, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> "1"] = 0;
+    return saved;
+}
+function primitiveNoncanonicalCount() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> "01"] = 0;
+    return a;
+}
+function primitiveLaterStore() {
+    var child = {}, a = [child, child, 0, "1"];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i >>> a[3]] = 0;
+        a[3] = 0;
+    }
+    return a;
+}
+primitiveModuloCount(); primitiveBooleanCount(); primitiveFalseCount(); primitiveReloadCount();
+primitiveRetainedChild(); primitiveSavedChild(); primitiveNoncanonicalCount(); primitiveLaterStore();

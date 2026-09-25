@@ -27,6 +27,7 @@ int main() {
     const std::string S = "  %s = ctjs.create_object {check}\n";
     const std::string A = "  %s = ctjs.create_array [] {check}\n";
     const std::string R = "  ctjs.return %p\n";
+    const std::string nested = "  %t = ctjs.truthy %p\n  scf.if %t {\n" + A + "  }\n";
 
     const std::vector<row> rows = {
         // ===================================================================
@@ -390,7 +391,7 @@ int main() {
                  "  }\n" +
                  R,
          .expected = "confined"},
-        {.what = "a region-local allocation has no verdict even when another region captures it",
+        {.what = "a region-local allocation stays unknown when another region captures it",
          .body = "  %t = ctjs.truthy %p\n"
                  "  scf.if %t {\n"
                  "    %local = ctjs.create_object {check}\n"
@@ -399,7 +400,7 @@ int main() {
                  "    }\n"
                  "  }\n" +
                  R,
-         .expected = "<no verdict>"},
+         .expected = "escapes:unknown_op"},
         {.what = "a region-local array yielded to the CFG has no confinement verdict",
          .body = "  %result = scf.execute_region -> !ctjs.value {\n"
                  "    %local = ctjs.create_array [] {check}\n"
@@ -407,7 +408,40 @@ int main() {
                  "  }\n"
                  "  ctjs.store_global \"held\", %result\n" +
                  R,
-         .expected = "<no verdict>"},
+         .expected = "escapes:unknown_op"},
+        {.what = "nested inventory does not infer repeated loop instance ownership",
+         .body = "  scf.while : () -> () {\n" + A +
+                 "    %t = ctjs.truthy %p\n    scf.condition(%t)\n"
+                 "  } do {\n    scf.yield\n  }\n" +
+                 R,
+         .expected = "escapes:unknown_op"},
+        {.what = "nested inventory does not infer dead branch liveness",
+         .body = "  %no = arith.constant false\n  scf.if %no {\n" + S + "  }\n" + R,
+         .expected = "escapes:unknown_op"},
+        {.what = "dead root CFG blocks count every nested allocation",
+         .body = R + "^dead:\n" + nested + R,
+         .expected = "<no verdict>",
+         .deadSites = 1},
+        {.what = "a late root arguments builder retains earlier nested sites",
+         .body = nested + "  %args = ctjs.make_arguments\n" + R,
+         .expected = "escapes:arguments_late",
+         .by = "ctjs.make_arguments",
+         .capturesAllArguments = true,
+         .wholeFunction = "arguments_late"},
+        {.what = "a prologue arguments builder does not prove nested instances",
+         .body = "  %args = ctjs.make_arguments\n" + nested + R,
+         .expected = "escapes:unknown_op",
+         .capturesAllArguments = true},
+        {.what = "suspension refusal includes nested allocation sites",
+         .body = nested + "  %paused = ctjs.suspend await %p\n" + R,
+         .expected = "escapes:suspended",
+         .by = "ctjs.suspend",
+         .wholeFunction = "suspended"},
+        {.what = "nested sites without solver lattices remain unknown",
+         .body = nested + R,
+         .expected = "escapes:unknown_op",
+         .unvisitedOperands = 1,
+         .withAnalysis = false},
         {.what = "a missing lattice for a region capture is counted without assuming confinement",
          .body = S + "  %t = ctjs.truthy %p\n"
                      "  scf.if %t {\n"

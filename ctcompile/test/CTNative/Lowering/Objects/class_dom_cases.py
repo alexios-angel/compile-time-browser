@@ -295,6 +295,37 @@ TWO_ELEMENT_CLASSES = {
     "method_transitive_bad_field_after_good",
 }
 CLASS_REFUSALS = {
+    # Instance calls do not supply argument authority to an unused static body.
+    "class_static_shared_dom_helper": """const get = t => t.getAttribute('x');
+  class Button {
+    constructor(element) { this.element = element; }
+    read() { return get(this.element) === null; }
+    static unused(t) { return get(t); }
+  }
+  return new Button(element).read();
+""",
+    # Helpers first seen by a static retain the strict source census.
+    "class_static_shared_dom_transitive": """const get = t => t.getAttribute('x');
+  const wrap = t => get(t);
+  class Utility { static unused(t) { return wrap(t); } }
+  const utility = new Utility();
+  class Button {
+    constructor(element) { this.element = element; }
+    read() { return get(this.element) === null; }
+  }
+  return new Button(element).read();
+""",
+    # A static declared later must not inherit the earlier instance's DOM proof.
+    "class_static_shared_dom_later_static": """const get = t => t.getAttribute('x');
+  const wrap = t => get(t);
+  class Button {
+    constructor(element) { this.element = element; }
+    read() { return get(this.element) === null; }
+  }
+  class Utility { static unused(t) { return wrap(t); } }
+  const utility = new Utility();
+  return new Button(element).read();
+""",
     "class_error_read": ERROR_CLASS.replace("  return new Shape", "  Shape.NAME; return new Shape"),
     "class_error_replaced": ERROR_CLASS.replace(
         "  return new Shape", "  Error = 9; return new Shape"

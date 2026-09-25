@@ -146,7 +146,7 @@ int main() {
 
 ACTION_CHECKS = r"""
         for (const bool active : {true, false}) {
-            assert(@ENTRY@(alias) == active);
+            assert(static_cast<bool>(@ENTRY@(alias)) == active);
             assert(doc.read().attribute_value(button, classes) == (active ? "btn active" : "btn"));
             assert(doc.read().attribute_value(button, pressed) == (active ? "true" : "false"));
             const auto writes = doc.take_writes();
@@ -550,7 +550,7 @@ def lower(args, ir, contract, name, *, optimize=False, success=True, max_steps=N
     return text
 
 
-def link_options(args, *, selectors=False):
+def link_options(args, *, selectors=False, core_only=False):
     cache = dict(
         re.findall(
             r"^([A-Za-z0-9_]+):[^=\n]+=(.*)$", (args.build / "CMakeCache.txt").read_text(), re.M
@@ -561,10 +561,9 @@ def link_options(args, *, selectors=False):
         value = cache.get(name, "")
         if value and not value.endswith("-NOTFOUND"):
             includes += ["-isystem", value]
-    libraries = [
-        args.build / "lib/DOM/libctbrowser-dom.a",
-        args.build / "lib/Core/libctbrowser-core.a",
-    ]
+    libraries = [args.build / "lib/Core/libctbrowser-core.a"]
+    if not core_only:
+        libraries.insert(0, args.build / "lib/DOM/libctbrowser-dom.a")
     if selectors:
         libraries.insert(0, args.build / "lib/Style/libctbrowser-style.a")
     for name in ("CTBROWSER_SIMDUTF", "CTBROWSER_MIMALLOC"):
@@ -583,7 +582,9 @@ def link_options(args, *, selectors=False):
     return includes, [*map(str, libraries), "-pthread", *rpaths]
 
 
-def standalone(args, native, name, checks, compilers, includes, libraries):
+def standalone(
+    args, native, name, checks, compilers, includes, libraries, *, allow_undefined=False
+):
     text = native.read_text()
     entries = NATIVE.findall(text)
     if (
@@ -602,7 +603,17 @@ def standalone(args, native, name, checks, compilers, includes, libraries):
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         if VM.search(cpp) or "ctbrowser::element_ref" not in cpp or re.search(r"\bmain\s*\(", cpp):
             raise RuntimeError(f"{name}/{mode}: missing typed standalone DOM entry\n{cpp}")
-        if "nullable_scalar" in cpp:
+        scalar_uses = cpp
+        if allow_undefined:
+            # Optional String comparisons use the existing exact undefined
+            # constant; keep rejecting every other scalar-carrier declaration.
+            scalar_uses = re.sub(
+                r"ctnative::nullable_scalar const \w+ = "
+                r"ctnative::nullable_scalar\{ctnative::undefined_t\{\}\};",
+                "",
+                cpp,
+            )
+        if "nullable_scalar" in scalar_uses:
             raise RuntimeError(f"{name}/{mode}: Boolean DOM entry carries a scalar value model")
         # The runtime header's helpers are the shared browser API's callers
         # (toggle_class -> ctbrowser::toggle_token, and so on); the program

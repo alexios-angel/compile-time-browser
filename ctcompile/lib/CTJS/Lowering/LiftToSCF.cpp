@@ -316,6 +316,13 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                 mlir::Operation * handler = nullptr;
                 bool exceptionCandidate = true;
                 body.getFunctionBody().walk([&](mlir::Operation * operation) {
+                    // Captured helpers and local iterator holders also need
+                    // their original saved registers. This proves no effects.
+                    if (llvm::isa<BinaryStaticOp, CreateClosureOp, CreateCellOp, CellGetOp,
+                                  CreateObjectOp, SetPropertyOp, DefineAccessorOp, IterableOp>(
+                            operation)) {
+                        return mlir::WalkResult::advance();
+                    }
                     if (!llvm::isa<FrameEnterOp, FrameExitOp, RootOp, ConstantOp, BinaryOp, UnaryOp,
                                    CompareOp, TruthyOp, FromBoolOp, PushHandlerOp, PopHandlerOp,
                                    CheckOp, CatchLandOp, ThrowOp, ReturnOp, LoadGlobalOp,

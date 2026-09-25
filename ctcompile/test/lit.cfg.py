@@ -16,6 +16,7 @@ from lit.llvm.subst import ToolSubst  # noqa: E402
 
 config.name = "ctcompile"
 config.suffixes = [".mlir", ".td", ".test"]
+config.excludes = ["Inputs"]
 config.test_format = lit.formats.ShTest(not llvm_config.use_lit_shell)
 
 config.test_source_root = os.path.dirname(__file__)

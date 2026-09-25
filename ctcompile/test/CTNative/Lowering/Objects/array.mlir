@@ -39,7 +39,7 @@
 // a copy per use: an `emitc.load` of it would be a `std::vector` by value
 // passed by value, and a second `emitc.variable` would be a second array.
 //
-// DENSE-LABEL: emitc.func @sum_of_three_1() -> f64
+// DENSE-LABEL: emitc.func @sum_of_three_1() -> !emitc.opaque<"ctnative::js_num">
 // DENSE: %[[A:.*]] = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"std::vector<double>">>
 // DENSE-NOT: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"std::vector<double>">>
 // DENSE: call_opaque "ctnative::vec_push"(%[[A]],
@@ -58,14 +58,14 @@
 // and refuses this function outright. The DENSE-NOT below is that arm's test:
 // no string constant survives into the emitted function.
 //
-// DENSE-LABEL: emitc.func @counted_2() -> f64
+// DENSE-LABEL: emitc.func @counted_2() -> !emitc.opaque<"ctnative::js_num">
 // DENSE: %[[C:.*]] = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"std::vector<double>">>
 // DENSE: call_opaque "ctnative::vec_length"(%[[C]])
 // DENSE-NOT: ctjs.
 
 // --- two widths are one vector<double>, not a vector of a union -------------
 //
-// DENSE-LABEL: emitc.func @widened_3() -> f64
+// DENSE-LABEL: emitc.func @widened_3() -> !emitc.opaque<"ctnative::js_num">
 // DENSE: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"std::vector<double>">>
 // DENSE-NOT: ctjs.
 

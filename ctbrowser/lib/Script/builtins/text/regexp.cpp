@@ -47,71 +47,90 @@ bool get_substitution(context & cx, const std::string & matched, const std::stri
                       const std::string & tpl, std::string & out) {
     out.clear();
     const std::size_t tail = std::min(subject.size(), position + matched.size());
-    for (std::size_t i = 0; i < tpl.size(); ++i) {
-        const char c = tpl[i];
-        if (c != '$' || i + 1 >= tpl.size()) {
-            out += c;
-            continue;
-        }
-        const char next = tpl[i + 1];
-        if (next == '$') {
-            out += '$';
-            ++i;
-        } else if (next == '&') {
-            out += matched;
-            ++i;
-        } else if (next == '`') {
-            out += subject.substr(0, position);
-            ++i;
-        } else if (next == '\'') {
-            out += subject.substr(tail);
-            ++i;
-        } else if (next >= '0' && next <= '9') {
-            // `$nn` when two digits name a group that exists, else `$n`, else
-            // the text itself (22.1.3.19.1 steps 9-11 of the digit arm).
-            std::size_t digits = 1;
-            std::size_t index = static_cast<std::size_t>(next - '0');
-            if (i + 2 < tpl.size() && tpl[i + 2] >= '0' && tpl[i + 2] <= '9') {
-                const std::size_t wide = index * 10 + static_cast<std::size_t>(tpl[i + 2] - '0');
-                if (wide >= 1 && wide <= captures.size()) {
-                    digits = 2;
-                    index = wide;
-                }
-            }
-            if (index >= 1 && index <= captures.size()) {
-                const value cap = captures[index - 1];
-                if (!cap.is_undefined()) {
-                    if (!stringable_arg(cx, cap)) { return false; }
-                    out += cx.to_string(cap);
-                }
-            } else {
-                out += tpl.substr(i, 1 + digits);
-            }
-            i += digits;
-        } else if (next == '<') {
-            // `$<name>` reads the groups object; with no groups object the
-            // three characters are literal, and so are they when no `>` closes.
-            const std::size_t close = tpl.find('>', i + 2);
-            if (named_captures.is_undefined() || close == std::string::npos) {
-                out += "$<";
-                ++i;
+    std::size_t length = 0;
+    const auto expand = [&](bool build) {
+        length = 0;
+        const auto append = [&](std::string_view text) {
+            if (!check_string_growth(cx, length, text.size())) { return false; }
+            length += text.size();
+            if (build) { out += text; }
+            return true;
+        };
+        for (std::size_t i = 0; i < tpl.size(); ++i) {
+            const char c = tpl[i];
+            if (c != '$' || i + 1 >= tpl.size()) {
+                if (!append(std::string_view{tpl}.substr(i, 1))) { return false; }
                 continue;
             }
-            const std::string name = tpl.substr(i + 2, close - (i + 2));
-            const detail::unwind_watch watch{cx};
-            const value cap = cx.lookup_property(named_captures, name);
-            if (watch.threw()) { return false; }
-            if (!cap.is_undefined()) {
-                if (!stringable_arg(cx, cap)) { return false; }
-                out += cx.to_string(cap);
+            const char next = tpl[i + 1];
+            if (next == '$') {
+                if (!append("$")) { return false; }
+                ++i;
+            } else if (next == '&') {
+                if (!append(matched)) { return false; }
+                ++i;
+            } else if (next == '`') {
+                if (!append(std::string_view{subject}.substr(0, position))) { return false; }
+                ++i;
+            } else if (next == '\'') {
+                if (!append(std::string_view{subject}.substr(tail))) { return false; }
+                ++i;
+            } else if (next >= '0' && next <= '9') {
+                // `$nn` when two digits name a group that exists, else `$n`, else
+                // the text itself (22.1.3.19.1 steps 9-11 of the digit arm).
+                std::size_t digits = 1;
+                std::size_t index = static_cast<std::size_t>(next - '0');
+                if (i + 2 < tpl.size() && tpl[i + 2] >= '0' && tpl[i + 2] <= '9') {
+                    const std::size_t wide =
+                        index * 10 + static_cast<std::size_t>(tpl[i + 2] - '0');
+                    if (wide >= 1 && wide <= captures.size()) {
+                        digits = 2;
+                        index = wide;
+                    }
+                }
+                if (index >= 1 && index <= captures.size()) {
+                    const value cap = captures[index - 1];
+                    if (!cap.is_undefined()) {
+                        const auto & text = static_cast<const string_object *>(cap.as_heap())->text;
+                        if (!append(text)) { return false; }
+                    }
+                } else {
+                    if (!append(std::string_view{tpl}.substr(i, 1 + digits))) { return false; }
+                }
+                i += digits;
+            } else if (next == '<') {
+                // `$<name>` reads the groups object; with no groups object the
+                // three characters are literal, and so are they when no `>` closes.
+                const std::size_t close = tpl.find('>', i + 2);
+                if (named_captures.is_undefined() || close == std::string::npos) {
+                    if (!append("$<")) { return false; }
+                    ++i;
+                    continue;
+                }
+                const std::string name = tpl.substr(i + 2, close - (i + 2));
+                const detail::unwind_watch watch{cx};
+                const value cap = cx.lookup_property(named_captures, name);
                 if (watch.threw()) { return false; }
+                if (!cap.is_undefined()) {
+                    if (!stringable_arg(cx, cap)) { return false; }
+                    const std::string text = cx.to_string(cap);
+                    if (watch.threw() || !append(text)) { return false; }
+                }
+                i = close;
+            } else {
+                if (!append(std::string_view{tpl}.substr(i, 1))) { return false; }
             }
-            i = close;
-        } else {
-            out += c;
         }
+        return true;
+    };
+    // Numbered captures are already strings, so this pass has no observable
+    // work and refuses huge expansions before allocating the result. Named
+    // getters and their ToString calls must instead run once, in token order.
+    if (named_captures.is_undefined()) {
+        if (!expand(false)) { return false; }
+        out.reserve(length);
     }
-    return true;
+    return expand(true);
 }
 
 value regexp_create(context & cx, value pattern, value flags) {
@@ -683,12 +702,24 @@ void install_regexp(context & cx) {
                 }
             }
             if (at >= next_source_position) {
-                accumulated += s.substr(next_source_position, at - next_source_position);
+                const std::size_t prefix = at - next_source_position;
+                if (!check_string_growth(c, accumulated.size(), prefix)) {
+                    return value::undefined();
+                }
+                accumulated.append(s, next_source_position, prefix);
+                if (!check_string_growth(c, accumulated.size(), replacement.size())) {
+                    return value::undefined();
+                }
                 accumulated += replacement;
                 next_source_position = at + matched.size();
             }
         }
-        if (next_source_position < s.size()) { accumulated += s.substr(next_source_position); }
+        if (next_source_position < s.size()) {
+            if (!check_string_growth(c, accumulated.size(), s.size() - next_source_position)) {
+                return value::undefined();
+            }
+            accumulated.append(s, next_source_position);
+        }
         return c.string(accumulated);
     });
 

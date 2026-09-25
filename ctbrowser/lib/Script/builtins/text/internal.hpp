@@ -27,10 +27,21 @@ void trim_bounds(std::string_view s, bool from_start, bool from_end, std::size_t
 
 // GetSubstitution, 22.1.3.19.1: the `$` template language of replace.
 // `named_captures` is undefined when the pattern has no groups object, in
-// which case `$<` is literal. FALSE with a throw in flight.
+// which case `$<` is literal. Numbered captures are strings or undefined,
+// already coerced by RegExp @@replace. FALSE with a throw in flight.
 [[nodiscard]] bool get_substitution(context & cx, const std::string & matched,
                                     const std::string & subject, std::size_t position,
                                     std::span<const value> captures, value named_captures,
                                     const std::string & replacement_template, std::string & out);
+
+// The same byte ceiling as repeat/pad, checked before replacement expansion
+// or concatenation can request an unbounded native allocation.
+[[nodiscard]] inline bool check_string_growth(context & cx, std::size_t length,
+                                              std::size_t addition) {
+    constexpr auto limit = static_cast<std::size_t>(max_string_length);
+    if (length <= limit && addition <= limit - length) { return true; }
+    cx.throw_error("RangeError", "Invalid string length");
+    return false;
+}
 
 } // namespace ctbrowser::script::builtins_detail

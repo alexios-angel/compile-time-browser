@@ -2,6 +2,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/ADT/StringMap.h"
 
 #include <algorithm>
 #include <cmath>
@@ -452,7 +453,9 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
                 return false;
             }
             const auto key = ctjs::constantKey(read.getKey());
-            const unsigned arity = key == "set" ? 2u : (key == "clear" || key == "keys" ? 0u : 1u);
+            static const llvm::StringMap<unsigned> arities{{"set", 2}, {"clear", 0}, {"keys", 0}};
+            const auto method = key.size() <= 5 ? arities.find(key) : arities.end();
+            const unsigned arity = method != arities.end() ? method->second : 1U;
             if (key == "size" || invoke.getArgs().size() != arity) { return false; }
             const auto origin = maps.lookup(invoke.getReceiver());
             if (!origin.first) { return false; }

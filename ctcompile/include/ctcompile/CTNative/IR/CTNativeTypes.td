@@ -102,6 +102,16 @@ def CTNative_BoolType : CTNative_Type<"Bool", "bool"> {
   }];
 }
 
+def CTNative_SymbolType : CTNative_Type<"Symbol", "symbol"> {
+  let summary = "A JavaScript primitive Symbol identity";
+  let description = [{
+    Introduced by a live intrinsic proof for a standard well-known Symbol read.
+    Identity is distinct from String descriptions and from ordinary objects.
+    The carrier is ctnative::js_symbol_t; coercion, symbol-keyed properties and
+    mixed unions require separate admission proofs.
+  }];
+}
+
 def CTNative_NumType : CTNative_Type<"Num", "num"> {
   let summary = "A JavaScript number, as one of three C++ arithmetic types";
   let description = [{

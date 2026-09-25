@@ -39,13 +39,19 @@ conversion. Thus `-0.5` reads element zero; negative integers, NaN, infinity,
 out-of-bounds keys and nonnumeric scalar tags produce undefined. This is the
 repository's reference behavior, not ECMAScript property-key conversion.
 
-Scalar consumers support truthiness, `!`, `typeof`, equality with another
-string or absence, and concatenation with a definite owning string. Generic
-`+` still requires a definite string on at least one side: two optional strings
-could both contain undefined and require numeric addition. Numeric coercion,
-mixed string/number equality, string property access and storing optional
-strings as Map payloads remain refused. Numeric global observations are used
-by the fixture; arbitrary string publication is outside this increment.
+Scalar consumers support truthiness, `!`, `typeof`, numeric conversion,
+concatenation and strict/loose equality with admitted primitive carriers.
+Generic `+` preserves whether the actual alternatives need numeric addition or
+String concatenation, returning a typed Number/String union. Optional snapshot
+reads retain absence: null/undefined do not loosely equal empty text or zero.
+Two present Strings compare textually before any numeric conversion. String
+property access and Map payload storage retain their independent proof gates.
+
+The original numeric-coercion, mixed-equality and optional-add source probes now
+pin native helpers with optimization disabled. The existing compiled snapshot
+fixture still passes its VM differential, GCC/Clang compilation, deduced output,
+Script-symbol checks and mutation. See [the focused equality handoff](handoff/2026-09-20-native-primitive-equality.md).
+Historical measurements below retain their original scope.
 
 ## Standard builtin and confinement proof
 

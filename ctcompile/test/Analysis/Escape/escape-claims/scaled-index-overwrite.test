@@ -1,0 +1,273 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name scaled-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-scaled-index-overwrite.claims
+
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 34 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 35 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 36 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 37 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 38 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 39 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function unit() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i * 1] = 0;
+    return a;
+}
+function commuted() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 * i] = 0;
+    return a;
+}
+function oneVisit() {
+    var child = {}, a = [child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i * 2] = 0;
+    return a;
+}
+function nonzeroStart() {
+    var child = {}, a = [0, 0, child];
+    for (var i = 1; i < a.length; i += 2) a[i * 2] = 0;
+    return a;
+}
+function reloadedFactor() {
+    var child = {}, a = [child, 2];
+    for (var i = 0; i < a.length; i += 2) a[i * a[1]] = 0;
+    return a;
+}
+function nestedFactor() {
+    var child = {}, a = [child, 2, 1];
+    for (var i = 0; i < a.length; i += 3) a[i * a[a[2]]] = 0;
+    return a;
+}
+function saved() {
+    var child = {}, a = [child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[i * 2] = 0;
+    return saved;
+}
+function remaining() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i += 2) a[i * 2] = 0;
+    return a;
+}
+function cycle() {
+    var child = {}, a = [child, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i * 2] = a;
+        a[i * 2] = 0;
+    }
+    return a;
+}
+function zeroTrip() {
+    var child = {}, a = [child, 0];
+    for (var i = 2; i < a.length; i += 2) a[i * 2] = 0;
+    return a;
+}
+function growth() {
+    var child = {}, a = [child, 0];
+    for (var i = 1; i < a.length; i += 3) a[i * 2] = 0;
+    return a;
+}
+function stringFactor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i * "1"] = 0;
+    return a;
+}
+function fractionalFactor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i * 0.5] = 0;
+    return a;
+}
+function negativeFactor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i * -1] = 0;
+    return a;
+}
+function zeroFactor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i * 0] = 0;
+    return a;
+}
+function changingFactor() {
+    var child = {}, a = [child, child], factor = 1;
+    for (var i = 0; i < a.length; i++) {
+        a[i * factor] = 0;
+        factor = 0;
+    }
+    return a;
+}
+function overlappingFactor() {
+    var child = {}, a = [1, child];
+    for (var i = 0; i < a.length; i++) a[i * a[0]] = 0;
+    return a;
+}
+function laterOverlap() {
+    var child = {}, a = [child, 2];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i * a[1]] = 0;
+        a[1] = 1;
+    }
+    return a;
+}
+function zeroOwn() {
+    var child = {}, a = [child, 0];
+    for (var i = 0; i < a.length; i++) a[i * 0] = 0;
+    return a;
+}
+function zeroCommuted() {
+    var child = {}, a = [child, 0];
+    for (var i = 0; i < a.length; i++) a[-0 * i] = 0;
+    return a;
+}
+function zeroTranslated() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) * 0 + 1] = 0;
+    return a;
+}
+function zeroSaved() {
+    var child = {}, a = [child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i * 0] = 0;
+    return saved;
+}
+function zeroReload() {
+    var child = {}, a = [child, 0];
+    for (var i = 0; i < a.length; i++) a[i * a[1]] = 0;
+    return a;
+}
+function zeroOverlap() {
+    var child = {}, a = [0, child];
+    for (var i = 0; i < a.length; i++) a[i * a[0]] = 0;
+    return a;
+}
+function zeroLaterOverlap() {
+    var child = {}, a = [child, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[i * a[1]] = 0;
+        a[1] = 1;
+    }
+    return a;
+}
+function singletonWideScale() {
+    var child = {}, a = [child];
+    for (var i = 0; i < a.length; i += 2) a[i * 4294967295] = 0;
+    return a;
+}
+function singletonWideTranslated() {
+    var child = {}, a = [child];
+    for (var i = 0; i < a.length; i += 2) a[(i + 1) * 2147483648 - 2147483648] = 0;
+    return a;
+}
+function singletonWideRetained() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i += 2) a[i * 4294967295] = 0;
+    return a;
+}
+function singletonWideIntermediate() {
+    var child = {}, a = [child];
+    for (var i = 0; i < a.length; i += 2) a[(i + 2) * 2147483648 - 2147483648 - 2147483648] = 0;
+    return a;
+}
+function multipleWideScale() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i += 2) a[i * 4294967295] = 0;
+    return a;
+}
+function booleanFactor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[true * i] = 0;
+    return a;
+}
+function nullFactor() {
+    var child = {}, a = [child, 0];
+    for (var i = 0; i < a.length; i++) a[i * null] = 0;
+    return a;
+}
+function falseRetained() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[false * i] = 0;
+    return a;
+}
+function negativeStringFactor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i * "-1" + 1] = 0;
+    return a;
+}
+function stringFactorSaved() {
+    var child = {}, a = [child, child], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i * "1"] = 0;
+    return saved;
+}
+function stringFactorReload() {
+    var child = {}, a = [child, "2"];
+    for (var i = 0; i < a.length; i += 2) a[i * a[1]] = 0;
+    return a;
+}
+function stringFactorOverlap() {
+    var child = {}, a = ["1", child];
+    for (var i = 0; i < a.length; i++) a[i * a[0]] = 0;
+    return a;
+}
+function stringFactorLaterOverlap() {
+    var child = {}, a = [child, "2"];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i * a[1]] = 0;
+        a[1] = 1;
+    }
+    return a;
+}
+function noncanonicalStringFactor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i * "01"] = 0;
+    return a;
+}
+function undefinedFactor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i * undefined] = 0;
+    return a;
+}
+unit(); commuted(); oneVisit(); nonzeroStart(); reloadedFactor(); nestedFactor();
+saved(); remaining(); cycle(); zeroTrip(); growth(); stringFactor();
+fractionalFactor(); negativeFactor(); zeroFactor(); changingFactor();
+overlappingFactor(); laterOverlap();
+zeroOwn(); zeroCommuted(); zeroTranslated(); zeroSaved(); zeroReload();
+zeroOverlap(); zeroLaterOverlap();
+singletonWideScale(); singletonWideTranslated(); singletonWideRetained();
+singletonWideIntermediate(); multipleWideScale();
+booleanFactor(); nullFactor(); falseRetained(); negativeStringFactor();
+stringFactorSaved(); stringFactorReload(); stringFactorOverlap();
+stringFactorLaterOverlap(); noncanonicalStringFactor(); undefinedFactor();

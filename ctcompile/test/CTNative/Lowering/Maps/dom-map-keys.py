@@ -26,20 +26,21 @@ void check_payloads(ctbrowser::element_ref key, ctbrowser::element_ref missing) 
     using namespace ctnative;
     using K = ctbrowser::element_ref;
     auto numbers = make_number_map<K>();
-    auto booleans = make_map<K, bool>();
+    auto booleans = make_map<K, js_boolean_t>();
     auto strings = make_map<K, std::string>();
     auto optional = make_map<K, nullable_string>();
-    auto mixed = make_map<K, std::variant<bool, std::string>>();
-    auto nullable_mixed = make_map<K, std::variant<bool, nullable_string>>();
+    auto scalars = make_map<K, nullable_scalar>();
+    auto mixed = make_map<K, std::variant<js_boolean_t, std::string>>();
+    auto nullable_mixed = make_map<K, std::variant<js_boolean_t, nullable_string>>();
     auto objects = make_map<K, object_value>();
     auto identity = std::make_shared<identity_object>();
     const std::string text = "an owning saved payload longer than the small String buffer";
     map_set(numbers, key, -0.0);
-    map_set(booleans, key, false);
+    map_set(booleans, key, js_boolean_t{false});
     map_set(strings, key, text);
     map_set(optional, key, nullable_string{text});
-    map_set(mixed, key, std::variant<bool, std::string>{text});
-    map_set(nullable_mixed, key, std::variant<bool, nullable_string>{nullable_string{text}});
+    map_set(mixed, key, std::variant<js_boolean_t, std::string>{text});
+    map_set(nullable_mixed, key, std::variant<js_boolean_t, nullable_string>{nullable_string{text}});
     map_set(objects, key, object_value{identity});
     const auto check = [&](const auto & borrow) {
         const auto number = map_get(borrow(numbers), key);
@@ -66,6 +67,29 @@ void check_payloads(ctbrowser::element_ref key, ctbrowser::element_ref missing) 
     };
     check([](const auto & owner) { return owner; });
     check([](const auto & owner) { return owner.get(); });
+    // Payloads retain their tags and sign; only keys normalize negative zero.
+    for (auto value : {nullable_scalar{}, nullable_scalar::null(), nullable_scalar{-0.0},
+                       nullable_scalar{std::numeric_limits<double>::quiet_NaN()},
+                       nullable_scalar{js_boolean_t{false}}, nullable_scalar{js_boolean_t{true}}}) {
+        map_set(scalars, key, value);
+        assert(map_has(scalars, key) && !map_has(scalars, missing));
+        const auto saved_scalar = map_get(scalars, key);
+        const auto raw = map_get(scalars.get(), key);
+        assert(saved_scalar.tag == value.tag && raw.tag == value.tag);
+        assert(map_get(scalars, missing).tag == nullable_scalar::kind::undefined);
+        assert(map_get_present_nullable_as<nullable_scalar>(scalars, key).tag == value.tag);
+        if (value.tag == nullable_scalar::kind::number) {
+            const auto number = map_get_present_nullable_as<double>(scalars.get(), key);
+            assert(std::isnan(value.value) ? std::isnan(number) : std::signbit(number));
+        } else if (value.tag == nullable_scalar::kind::boolean) {
+            assert(map_get_present_nullable_as<js_boolean_t>(scalars, key) ==
+                   js_boolean_t{value.value != 0});
+        }
+        map_delete(scalars, key);
+        assert(!map_has(scalars, key));
+        assert(map_get(scalars.get(), key).tag == nullable_scalar::kind::undefined);
+        assert(saved_scalar.tag == value.tag);
+    }
     const auto saved = map_get(strings.get(), key);
     const auto saved_object = map_get_present_identity(objects.get(), key);
 #ifdef CTCOMPILE_TEST_ORDERED

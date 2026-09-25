@@ -2,6 +2,7 @@
 
 #include <ctbrowser/dom/document.hpp>
 
+#include <cstddef>
 #include <expected>
 #include <optional>
 #include <span>
@@ -28,6 +29,24 @@ enum class token_error {
 [[nodiscard]] std::expected<bool, dom_error> update_tokens(document & doc, node_id element,
                                                            atom attribute,
                                                            std::span<const std::string> tokens);
+
+// Membership does not validate the argument: an empty or whitespace-containing
+// token is simply absent. Both strings are borrowed for the duration of the call.
+[[nodiscard]] bool contains_token(std::string_view attribute_text, std::string_view token);
+
+struct token_argument_error {
+    std::size_t index;
+    token_error error;
+};
+
+// All arguments are validated in order before any DOM access. The outer error
+// identifies the first invalid token; the inner result has update_tokens' write
+// semantics, including normalization with no arguments and same-value writes.
+using token_update_result = std::expected<std::expected<bool, dom_error>, token_argument_error>;
+[[nodiscard]] token_update_result add_tokens(document & doc, node_id element, atom attribute,
+                                             std::span<const std::string> tokens);
+[[nodiscard]] token_update_result remove_tokens(document & doc, node_id element, atom attribute,
+                                                std::span<const std::string> tokens);
 
 struct token_toggle_result {
     bool present;

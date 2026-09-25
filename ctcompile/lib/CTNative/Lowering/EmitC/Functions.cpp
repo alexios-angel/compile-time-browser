@@ -1,6 +1,7 @@
 // EmitC/Functions.cpp - native lowering implementation.
 #include "../Admission/Admission.h"
 #include "Emitter.h"
+#include "SymbolTransport.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -42,9 +43,10 @@ void lowering::applyDeclarativeRules(ctjs::FuncOp fn) {
 }
 
 void lowering::lower(ctjs::FuncOp fn) {
-    const bool isEntry = !needsDOM && isScriptEntry(fn);
+    const bool hostEntry = hasHostEntry || needsDOM;
+    const bool isEntry = !hostEntry && isScriptEntry(fn);
     mlir::Block & entry = fn.getBody().front();
-    if (needsDOM) {
+    if (hostEntry) {
         // The complete entry proof has no collector or retained values. Drop
         // bookkeeping before choosing carriers so dead undefined placeholders
         // cannot pull a scalar value model into an ordinary DOM action.
@@ -59,13 +61,8 @@ void lowering::lower(ctjs::FuncOp fn) {
     convertBoundaries(fn);
     prepareExceptions(fn);
 
-    // The signature takes the parameters after the three implicit
-    // arguments and returns the proved carrier. A function that returns
-    // nothing returns NaN, which is undefined's carrier.
-    // THE RECEIVER IS THE FIRST PARAMETER, and this is the whole of the
-    // signature change: `double bump_3(ctn_x * self, double n)`. It comes
-    // first because ctjs.call_direct's operand 0 is the receiver, so the
-    // caller already passes it there.
+    // Explicit source parameters follow the three importer bookkeeping values.
+    // A lifted receiver comes first, as a borrowed pointer to its concrete shape.
     const bool carriesReceiver = fn->hasAttr("ctnative.receiver");
     llvm::SmallVector<mlir::Type> params;
     if (carriesReceiver) { params.push_back(entry.getArgument(0).getType()); }
@@ -76,12 +73,10 @@ void lowering::lower(ctjs::FuncOp fn) {
     for (mlir::BlockArgument parameter : domStyleParameters) {
         if (parameter.getOwner() == &entry) { params.push_back(styleType); }
     }
-    const mlir::Type f64 = mlir::Float64Type::get(context);
+    const mlir::Type numeric = carrierType(context, carrier::number);
     const mlir::Type i32 = mlir::IntegerType::get(context, 32);
-    // THE RETURN TYPE IS WHAT THE RETURNS CARRY - retyped already, so any
-    // ctjs.return's operand type is the answer; a function that never
-    // returns a value returns undefined, carried as a NaN double.
-    mlir::Type returnType = isEntry ? i32 : f64;
+    // Retyped returns and the joined return census select the result carrier.
+    mlir::Type returnType = isEntry ? i32 : numeric;
     if (!isEntry) {
         fn.getBody().walk([&](ctjs::ReturnOp ret) { returnType = ret.getValue().getType(); });
         if (const auto joined = resultTypes.lookup(fn.getSymName())) { returnType = joined; }
@@ -109,6 +104,7 @@ void lowering::lower(ctjs::FuncOp fn) {
             domStyles[parameter] = body.addArgument(styleType, made.getLoc());
         }
     }
+    prepareDOMStyles(made);
 
     // THE ONE LOCAL A RECEIVER COSTS, built by memberAccess() at the first
     // field it reads: `emitc.member_of_ptr` wants an lvalue HOLDING the
@@ -130,6 +126,7 @@ void lowering::lower(ctjs::FuncOp fn) {
         }
     });
     for (mlir::Operation * o : ops) { replace(o, isEntry, returnType); }
+    transportSymbols(made);
 
     // ponytail: the pinned SCFToEmitC lowerDoWhile drops backedge assignments
     // when after contains only a yield. Keep a printing no-op through later
@@ -228,6 +225,14 @@ void lowering::lower(ctjs::FuncOp fn) {
                     at.getStringAttr("ctnative::require_style"),
                     mlir::ValueRange{parameter, domStyles.lookup(parameter)});
             }
+        }
+        if (domDocumentParameter && domDocumentParameter.getOwner() == &body) {
+            // A lexical RAII declaration must survive unused-call cleanup and
+            // top-declaration printing. Bind only after every input validates.
+            ec::VerbatimOp::create(
+                at, made.getLoc(),
+                "const ctnative::document_scope ctn_document_scope(*{}.owner, {});",
+                mlir::ValueRange{domDocumentParameter, domStyles.lookup(domDocumentParameter)});
         }
     }
 

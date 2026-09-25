@@ -1,0 +1,72 @@
+# Ordinary return dispatch reuses bounded normalization on a disposable clone.
+# Budget failure and later type refusal must preserve the original switch.
+# RUN: split-file %s %t
+# RUN: %node %t/expected.cjs %t/values.js
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func --implicit-check-not=scf.index_switch < %t/runtime.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/runtime.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=ctbrowser::script --implicit-check-not=ctbrowser::aot
+# RUN: ctjs-opt %t/runtime.mlir --ctnative-print-deduced -o %t/deduced.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name return_dispatch_runtime_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name return_dispatch_runtime_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/deduced.mlir --js %t/values.js --work %t --name return_dispatch_deduced_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/deduced.mlir --js %t/values.js --work %t --name return_dispatch_deduced_clang --core-build %build
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.mlir --js %t/values.js --work %t --name return_dispatch_optimized_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.mlir --js %t/values.js --work %t --name return_dispatch_optimized_clang --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name return_dispatch_mutation --mutate zNumeric --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
+# RUN: ctjs-opt %t/input.mlir --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false structure-max-steps=0" | FileCheck %s --check-prefix=BUDGET
+# RUN: ctjs-opt %t/input.mlir --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false structure-max-steps=1" | FileCheck %s --check-prefix=BUDGET
+# RUN: cat %t/values.js %t/bigint.js > %t/refused.js
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refused.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED --implicit-check-not=ctnative.structure_refusal
+
+# NATIVE: emitc.func @numberCell_1
+# NATIVE-SAME: !emitc.opaque<"ctnative::number_string">
+# CPP: ctnative::number_string
+# MUTATION: global 'zNumeric' differs
+# BUDGET: ctjs.func private @numberCell$1
+# BUDGET-SAME: ctnative.structure_refusal = "native structured-exit work budget exhausted"
+# BUDGET: scf.index_switch
+# REFUSED: ctjs.func private @numberCell$1
+# REFUSED-SAME: ctnative.not_native =
+# REFUSED: scf.index_switch
+
+#--- values.js
+// Preserve the initial draft's separate control-flow boundary.
+function numberCell(mode, text, number) {
+    var value = text;
+    function writeNumber() { value = number; }
+    function writeText() { value = text + "!"; }
+    var before = value;
+    writeNumber();
+    var middle = value;
+    writeText();
+    if (mode === 0) { return before; }
+    if (mode === 1) { return middle; }
+    return value;
+}
+numberCell(0, "before", 7);
+var before = numberCell(0, "retained text before the stores", 7);
+var middle = numberCell(1, "retained text before the stores", 7);
+var after = numberCell(2, "retained text before the stores", 7);
+var aNumeric = +middle;
+var zNumeric = aNumeric + 1;
+var negativeZero = numberCell(1, "zero", -0);
+var nan = numberCell(1, "NaN", 0 / 0);
+var nul = numberCell(0, "a\u0000b", 9);
+
+#--- bigint.js
+numberCell(1, "blocked", 1n);
+
+#--- expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+const expected = {before: "retained text before the stores", middle: 7, aNumeric: 7, zNumeric: 8, after: "retained text before the stores!", negativeZero: -0, nan: NaN, nul: "a\u0000b"};
+for (const [name, value] of Object.entries(expected)) {
+    assert.equal(typeof scope[name], typeof value, `${name} type`);
+    assert.ok(Object.is(scope[name], value), `${name} value`);
+}
+console.log("8 return-dispatch observations agree with JavaScript");

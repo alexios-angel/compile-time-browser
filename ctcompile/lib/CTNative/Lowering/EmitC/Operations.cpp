@@ -37,7 +37,7 @@ mlir::Value lowering::cellPlace(mlir::OpBuilder & b, mlir::Location where, mlir:
 
 mlir::Value lowering::memberAccess(mlir::OpBuilder & b, mlir::Location where, mlir::Value object,
                                    llvm::StringRef member, mlir::Type type) {
-    if (!receiverArgs.contains(object)) {
+    if (!receiverArgs.contains(object) && !llvm::isa<ec::PointerType>(object.getType())) {
         return ec::MemberOp::create(b, where, ec::LValueType::get(type), member, object);
     }
     // AT THE FIRST FIELD, NOT AT THE FUNCTION'S FIRST LINE - AND THIS IS A
@@ -54,8 +54,12 @@ mlir::Value lowering::memberAccess(mlir::OpBuilder & b, mlir::Location where, ml
     // Block start still dominates every use, so building it here is free.
     mlir::Value & local = receiverLocal[object];
     if (!local) {
-        mlir::OpBuilder at =
-            mlir::OpBuilder::atBlockBegin(llvm::cast<mlir::BlockArgument>(object).getOwner());
+        mlir::OpBuilder at(context);
+        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(object)) {
+            at.setInsertionPointToStart(argument.getOwner());
+        } else {
+            at.setInsertionPointAfter(object.getDefiningOp());
+        }
         local = ec::VariableOp::create(at, where, ec::LValueType::get(object.getType()),
                                        ec::OpaqueAttr::get(context, ""));
         ec::AssignOp::create(at, where, local, object);
@@ -72,9 +76,13 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     using namespace ctjs;
     mlir::OpBuilder b(o);
     const mlir::Location where = o->getLoc();
-    const auto f64 = mlir::Float64Type::get(context);
+    const auto numeric = carrierType(context, carrier::number);
     const auto i1 = mlir::IntegerType::get(context, 1);
+    const auto boolean = carrierType(context, carrier::boolean);
     const auto swap = [&](mlir::Value with) {
+        if (isBooleanCarrier(o->getResult(0).getType()) && with.getType().isInteger(1)) {
+            with = convertScalar(b, where, with, boolean);
+        }
         o->getResult(0).replaceAllUsesWith(with);
         eraseIfUnused(o);
     };
@@ -142,6 +150,11 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             if (expected == carrierType(context, carrier::string)) {
                 if (!emptyString) { emptyString = stringConstant(b, where, ""); }
                 use.set(emptyString);
+            } else if (isNumberStringCarrier(expected) || isBooleanStringCarrier(expected) ||
+                       isNullableNumberStringCarrier(expected) ||
+                       isNullableBooleanStringCarrier(expected)) {
+                if (!emptyString) { emptyString = stringConstant(b, where, ""); }
+                use.set(convertScalar(b, where, emptyString, expected));
             } else if (isNullableStringCarrier(expected)) {
                 if (!emptyNullableString) {
                     emptyNullableString = ec::ConstantOp::create(
@@ -169,12 +182,12 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             } else if (isNullableCarrier(expected)) {
                 if (!emptyNullable) { emptyNullable = absentConstant(b, where); }
                 use.set(emptyNullable);
-            } else if (expected == i1) {
+            } else if (expected == i1 || isBooleanCarrier(expected)) {
                 if (!emptyBoolean) { emptyBoolean = boolConstant(b, where, false); }
-                use.set(emptyBoolean);
+                use.set(convertScalar(b, where, emptyBoolean, expected));
             }
         }
-        swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
+        swap(numberConstant(b, where, std::numeric_limits<double>::quiet_NaN()));
         return;
     }
     // PHASE 59 SLICE 2 STEP 2: THE SHARED BINDING, AS A VARIABLE AND TWO
@@ -188,14 +201,10 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && admission::isCarriedCell(o)) {
         mlir::Value local = ec::VariableOp::create(b, where, cell.getResult().getType(),
                                                    ec::OpaqueAttr::get(context, ""));
-        if (llvm::cast<ec::LValueType>(local.getType()).getValueType() ==
-                carrierType(context, carrier::string) &&
-            cell.getInitial().getType() != carrierType(context, carrier::string)) {
-            if (!cell->hasAttr(kAssignedBeforeRead)) {
-                llvm::report_fatal_error("ctnative lowering: a string cell has an observable "
-                                         "non-string initial - admission should refuse it");
-            }
-        } else {
+        // Inference omits this initial only when a write dominates every
+        // read, including captured reads. A definite union then need not
+        // represent the hoisted undefined; observable initials still do.
+        if (!cell->hasAttr(kAssignedBeforeRead)) {
             ec::AssignOp::create(
                 b, where, local,
                 convertScalar(b, where, cell.getInitial(),
@@ -250,9 +259,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                 ec::MemberOp::create(b, where, ec::LValueType::get(type), f.fields[i], local);
             mlir::Value init =
                 isNullableCarrier(type) ? absentConstant(b, where)
-                : llvm::isa<mlir::IntegerType>(type)
+                : isBooleanCarrier(type)
                     ? boolConstant(b, where, false)
-                    : f64Constant(b, where, std::numeric_limits<double>::quiet_NaN());
+                    : numberConstant(b, where, std::numeric_limits<double>::quiet_NaN());
             ec::AssignOp::create(b, where, member, init);
         }
         swap(local);
@@ -273,7 +282,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         return;
     }
     if (vectorLengthReads.contains(o)) {
-        swap(callWithConstValueOperands(b, where, mlir::TypeRange{f64},
+        swap(callWithConstValueOperands(b, where, mlir::TypeRange{numeric},
                                         b.getStringAttr("ctnative::vec_length"),
                                         mlir::ValueRange{cellPlace(b, where, o->getOperand(0))})
                  .getResult(0));
@@ -283,9 +292,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         const auto resultType = o->getResult(0).getType();
         // Only a proved Number drops absence. String snapshots use their own
         // vec_at overload and retain that overload's nullable String carrier.
-        const auto storageType = llvm::isa<mlir::Float64Type>(resultType)
-                                     ? carrierType(context, carrier::nullable)
-                                     : resultType;
+        const auto storageType =
+            isNumberCarrier(resultType) ? carrierType(context, carrier::nullable) : resultType;
         const auto value =
             callWithConstValueOperands(
                 b, where, mlir::TypeRange{storageType}, b.getStringAttr("ctnative::vec_at"),
@@ -295,22 +303,27 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         return;
     }
     if (vectorLengthWrites.contains(o)) {
-        ec::VerbatimOp::create(b, where,
-                               llvm::isa<ec::PointerType>(o->getOperand(0).getType())
-                                   ? "{}->resize(static_cast<std::vector<double>::size_type>({}));"
-                                   : "{}.resize(static_cast<std::vector<double>::size_type>({}));",
-                               mlir::ValueRange{o->getOperand(0), o->getOperand(2)});
+        ec::VerbatimOp::create(
+            b, where,
+            llvm::isa<ec::PointerType>(o->getOperand(0).getType())
+                ? "{}->resize(static_cast<std::vector<double>::size_type>({}));"
+                : "{}.resize(static_cast<std::vector<double>::size_type>({}));",
+            mlir::ValueRange{o->getOperand(0),
+                             convertScalar(b, where, o->getOperand(2), b.getF64Type())});
         eraseIfUnused(o);
         return;
     }
     if (vectorIndexWrites.contains(o)) {
         // EmitC subscript cannot take an opaque lvalue; loading it would copy
         // the vector. Keep this ordinary assignment on the original storage.
-        ec::VerbatimOp::create(b, where,
-                               llvm::isa<ec::PointerType>(o->getOperand(0).getType())
-                                   ? "(*{})[static_cast<std::vector<double>::size_type>({})] = {};"
-                                   : "{}[static_cast<std::vector<double>::size_type>({})] = {};",
-                               o->getOperands());
+        ec::VerbatimOp::create(
+            b, where,
+            llvm::isa<ec::PointerType>(o->getOperand(0).getType())
+                ? "(*{})[static_cast<std::vector<double>::size_type>({})] = {};"
+                : "{}[static_cast<std::vector<double>::size_type>({})] = {};",
+            mlir::ValueRange{o->getOperand(0),
+                             convertScalar(b, where, o->getOperand(1), b.getF64Type()),
+                             convertScalar(b, where, o->getOperand(2), b.getF64Type())});
         eraseIfUnused(o);
         return;
     }
@@ -344,7 +357,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     }
     if (auto k = llvm::dyn_cast<ConstantOp>(o)) {
         if (auto n = llvm::dyn_cast<NumberAttr>(k.getValue())) {
-            swap(f64Constant(b, where, n.getDouble()));
+            swap(numberConstant(b, where, n.getDouble()));
         } else if (auto bo = llvm::dyn_cast<BooleanAttr>(k.getValue())) {
             swap(boolConstant(b, where, bo.getValue()));
         } else if (llvm::isa<UndefinedAttr, NullAttr>(k.getValue())) {
@@ -354,36 +367,48 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             swap(stringConstant(b, where, string.getValue()));
         } else {
             // Erased property-key constants need only a dead placeholder.
-            swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
+            swap(numberConstant(b, where, std::numeric_limits<double>::quiet_NaN()));
         }
         return;
     }
-    if (auto bin = llvm::dyn_cast<BinaryOp>(o)) {
-        const bool strings = bin.getResult().getType() == carrierType(context, carrier::string);
-        const mlir::Value l = strings ? bin.getLhs() : number(b, where, bin.getLhs());
-        const mlir::Value r = strings ? bin.getRhs() : number(b, where, bin.getRhs());
-        switch (bin.getKind()) {
+    if (llvm::isa<BinaryOp, BinaryStaticOp>(o)) {
+        const auto kind = llvm::isa<BinaryOp>(o) ? llvm::cast<BinaryOp>(o).getKind()
+                                                 : llvm::cast<BinaryStaticOp>(o).getKind();
+        const auto resultType = o->getResult(0).getType();
+        const bool strings = resultType == carrierType(context, carrier::string);
+        const mlir::Value l = strings ? o->getOperand(0) : number(b, where, o->getOperand(0));
+        const mlir::Value r = strings ? o->getOperand(1) : number(b, where, o->getOperand(1));
+        switch (kind) {
         case BinaryKind::Add:
-        case BinaryKind::Concat:
-            swap(ec::AddOp::create(b, where, bin.getResult().getType(), l, r));
-            return;
-        case BinaryKind::Sub: swap(ec::SubOp::create(b, where, f64, l, r)); return;
-        case BinaryKind::Mul: swap(ec::MulOp::create(b, where, f64, l, r)); return;
-        case BinaryKind::Div: swap(ec::DivOp::create(b, where, f64, l, r)); return;
+        case BinaryKind::Concat: swap(ec::AddOp::create(b, where, resultType, l, r)); return;
+        case BinaryKind::Sub: swap(ec::SubOp::create(b, where, numeric, l, r)); return;
+        case BinaryKind::Mul: swap(ec::MulOp::create(b, where, numeric, l, r)); return;
+        case BinaryKind::Div: swap(ec::DivOp::create(b, where, numeric, l, r)); return;
         case BinaryKind::Mod: swap(libmCall(b, where, "std::fmod", {l, r})); return;
         case BinaryKind::Pow: swap(exponentiate(b, where, l, r)); return;
+        case BinaryKind::BitAnd: swap(ec::BitwiseAndOp::create(b, where, numeric, l, r)); return;
+        case BinaryKind::BitOr: swap(ec::BitwiseOrOp::create(b, where, numeric, l, r)); return;
+        case BinaryKind::BitXor: swap(ec::BitwiseXorOp::create(b, where, numeric, l, r)); return;
+        case BinaryKind::Shl: swap(ec::BitwiseLeftShiftOp::create(b, where, numeric, l, r)); return;
+        case BinaryKind::Shr:
+            swap(ec::BitwiseRightShiftOp::create(b, where, numeric, l, r));
+            return;
+        case BinaryKind::UShr:
+            swap(ec::MemberCallOpaqueOp::create(
+                     b, where, mlir::TypeRange{numeric}, l, b.getStringAttr("unsigned_shift_right"),
+                     mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{r})
+                     .getResult(0));
+            return;
         default: llvm_unreachable("admission refused it");
         }
     }
-    if (auto bin = llvm::dyn_cast<BinaryStaticOp>(o)) {
-        swap(ec::AddOp::create(b, where, f64, number(b, where, bin.getLhs()),
-                               number(b, where, bin.getRhs())));
-        return;
-    }
     if (auto u = llvm::dyn_cast<UnaryOp>(o)) {
         switch (u.getKind()) {
+        case UnaryKind::BitNot:
+            swap(ec::BitwiseNotOp::create(b, where, numeric, number(b, where, u.getOperand())));
+            return;
         case UnaryKind::Neg:
-            swap(ec::UnaryMinusOp::create(b, where, f64, number(b, where, u.getOperand())));
+            swap(ec::UnaryMinusOp::create(b, where, numeric, number(b, where, u.getOperand())));
             return;
         // `+x` IS GONE BY NOW, ERASED BY UnaryPlusIsIdentity in
         // applyDeclarativeRules() above. This arm is not dead code and it
@@ -394,33 +419,41 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         // blaming admission. Naming the pattern that owed the rewrite is the
         // whole difference between a bug report and a wild goose chase.
         case UnaryKind::Plus:
-            if (u.getOperand().getType() == f64) {
+            if (u.getOperand().getType() == numeric) {
                 llvm::report_fatal_error("ctnative lowering: numeric unary plus survived "
                                          "UnaryPlusIsIdentity");
             }
             swap(number(b, where, u.getOperand()));
             return;
         case UnaryKind::TypeOf:
-            if (isObjectValueCarrier(u.getOperand().getType())) {
+            if (u.getOperand().getType() == carrierType(context, carrier::symbol)) {
+                swap(stringConstant(b, where, "symbol"));
+            } else if (isObjectValueCarrier(u.getOperand().getType())) {
                 needsObjectValue = true;
-                swap(callWithConstValueOperands(
-                         b, where, mlir::TypeRange{carrierType(context, carrier::string)},
-                         b.getStringAttr("ctnative::object_typeof"),
-                         mlir::ValueRange{u.getOperand()})
-                         .getResult(0));
+                swap(convertScalar(
+                    b, where,
+                    callWithConstValueOperands(
+                        b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
+                        b.getStringAttr("ctnative::object_typeof"),
+                        mlir::ValueRange{u.getOperand()})
+                        .getResult(0),
+                    carrierType(context, carrier::string)));
             } else if (isIdentityCarrier(u.getOperand().getType())) {
                 swap(stringConstant(b, where, "object"));
             } else if (isNullableCarrier(u.getOperand().getType())) {
-                swap(callWithConstValueOperands(
-                         b, where, mlir::TypeRange{carrierType(context, carrier::string)},
-                         b.getStringAttr("ctnative::scalar_typeof"),
-                         mlir::ValueRange{u.getOperand()})
-                         .getResult(0));
+                swap(convertScalar(
+                    b, where,
+                    callWithConstValueOperands(
+                        b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
+                        b.getStringAttr("ctnative::scalar_typeof"),
+                        mlir::ValueRange{u.getOperand()})
+                        .getResult(0),
+                    carrierType(context, carrier::string)));
             } else {
                 swap(stringConstant(b, where,
-                                    u.getOperand().getType() == f64  ? "number"
-                                    : u.getOperand().getType() == i1 ? "boolean"
-                                                                     : "string"));
+                                    u.getOperand().getType() == numeric          ? "number"
+                                    : isBooleanCarrier(u.getOperand().getType()) ? "boolean"
+                                                                                 : "string"));
             }
             return;
         case UnaryKind::Not: {
@@ -440,8 +473,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             needsObjectValue = true;
             const auto helper = cmp.getKind() == CompareKind::Eq ? "ctnative::object_equal"
                                                                  : "ctnative::object_strict_equal";
-            swap(callWithConstValueOperands(b, where, mlir::TypeRange{i1}, b.getStringAttr(helper),
-                                            mlir::ValueRange{left, right})
+            swap(callWithConstValueOperands(b, where, mlir::TypeRange{boolean},
+                                            b.getStringAttr(helper), mlir::ValueRange{left, right})
                      .getResult(0));
             return;
         }
@@ -449,8 +482,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                          left.getType() != right.getType())) {
             const auto helper = cmp.getKind() == CompareKind::Eq ? "ctnative::scalar_equal"
                                                                  : "ctnative::scalar_strict_equal";
-            swap(callWithConstValueOperands(b, where, mlir::TypeRange{i1}, b.getStringAttr(helper),
-                                            mlir::ValueRange{left, right})
+            swap(callWithConstValueOperands(b, where, mlir::TypeRange{boolean},
+                                            b.getStringAttr(helper), mlir::ValueRange{left, right})
                      .getResult(0));
             return;
         }
@@ -550,6 +583,24 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             llvm::sort(names);
             for (llvm::StringRef name : names) {
                 const auto storedType = globalTypes.lookup(name);
+                static const llvm::DenseMap<carrier, llvm::StringRef> printHelpers{
+                    {carrier::booleanString, "ctnative::print_boolean_string"},
+                    {carrier::nullableBooleanString, "ctnative::print_nullable_boolean_string"},
+                    {carrier::numberString, "ctnative::print_number_string"},
+                    {carrier::nullableNumberString, "ctnative::print_nullable_number_string"}};
+                if (auto helper = printHelpers.find(carrierOf(storedType));
+                    helper != printHelpers.end()) {
+                    mlir::Value current =
+                        convertScalar(b, where, lvalueOfGlobal(b, where, name),
+                                      carrierType(context, carrierOf(storedType)));
+                    mlir::Value label = ec::LiteralOp::create(
+                        b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
+                        b.getStringAttr(cpp::c_string_literal(name.str())));
+                    callWithConstValueOperands(b, where, mlir::TypeRange{},
+                                               b.getStringAttr(helper->second),
+                                               mlir::ValueRange{label, current});
+                    continue;
+                }
                 if (!llvm::isa_and_nonnull<NumType, BoolType, StrType>(storedType)) {
                     if (!isScalarCarrier(carrierOf(storedType)) &&
                         !isStringCarrier(carrierOf(storedType))) {
@@ -571,7 +622,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                                                        globalStorageType(name));
                     mlir::Value current =
                         callWithConstValueOperands(
-                            b, where, mlir::TypeRange{carrierType(context, carrier::string)},
+                            b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
                             b.getStringAttr("ctnative::global_string"), mlir::ValueRange{loaded})
                             .getResult(0);
                     mlir::Value label = ec::LiteralOp::create(
@@ -589,7 +640,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                                                    carrierType(context, carrier::nullable));
                 mlir::Value current =
                     callWithConstValueOperands(
-                        b, where, mlir::TypeRange{isBoolean ? mlir::Type(i1) : mlir::Type(f64)},
+                        b, where,
+                        mlir::TypeRange{
+                            isBoolean ? boolean : ec::OpaqueType::get(context, "ctnative::js_num")},
                         b.getStringAttr(isBoolean ? "ctnative::global_boolean"
                                                   : "ctnative::global_number"),
                         mlir::ValueRange{loaded})
@@ -598,8 +651,16 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                     const auto literal = [&](llvm::StringRef spelling) -> mlir::Value {
                         return ec::LiteralOp::create(b, where, textType, b.getStringAttr(spelling));
                     };
-                    current = ec::ConditionalOp::create(b, where, textType, current,
-                                                        literal("\"true\""), literal("\"false\""));
+                    current =
+                        ec::ConditionalOp::create(b, where, textType, truthy(b, where, current),
+                                                  literal("\"true\""), literal("\"false\""));
+                } else {
+                    // C varargs consume binary64, not the JavaScript value class.
+                    current = ec::MemberCallOpaqueOp::create(
+                                  b, where, mlir::TypeRange{b.getF64Type()}, current,
+                                  b.getStringAttr("value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+                                  mlir::ValueRange{})
+                                  .getResult(0);
                 }
                 mlir::Value format = ec::LiteralOp::create(
                     b, where, textType,

@@ -6,21 +6,49 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 
 #include <optional>
 #include <utility>
 
 namespace ctcompile::ctnative::host_detail {
 
+// Copy a recovered invocation's inert continuation tuple at the builder's
+// insertion point. The supplied payload is the normal result or caught value;
+// only unwind adds the original pre-call state. This does not execute/remove the
+// call or select an exceptional edge: the consumer must prove that separately.
+// Failure changes no IR. The invocation and both continuations remain intact.
+mlir::FailureOr<llvm::SmallVector<mlir::Value>> projectInvocationContinuation(
+    ctjs::InvokeOp invocation, bool unwind, mlir::Value payload, mlir::OpBuilder & at,
+    unsigned & remaining);
+
 inline constexpr llvm::StringLiteral classDefinedIntrinsic = "__ctbrowser_class_defined";
+
+// Ordinary DOM identities; class preparation consumes its separate declarations.
+inline constexpr unsigned maxDOMIntrinsicNameLength = 23; // __ctbrowser_for_of_open
+const llvm::StringSet<> & domInitialIntrinsics();
+
+inline bool reservedCallbackBinding(llvm::StringRef name) {
+    static const llvm::StringSet<> names{"globalThis", "undefined", "NaN", "Infinity"};
+    return name.size() <= 10 && names.contains(name);
+}
 
 // Invocation shape only: identity does not prove heritage, receiver rebinding,
 // field initialization or super lookup, and never authorizes erasing a call.
 inline unsigned classIntrinsicArity(llvm::StringRef name) {
-    if (name == classDefinedIntrinsic || name == "__ctbrowser_bind_this") { return 1; }
-    if (name == "__ctbrowser_init_fields") { return 2; }
-    if (name == "__ctbrowser_class_heritage" || name == "__ctbrowser_super_get") { return 3; }
-    return 0;
+    static const llvm::StringMap<unsigned> arities{{classDefinedIntrinsic, 1},
+                                                   {"__ctbrowser_bind_this", 1},
+                                                   {"__ctbrowser_init_fields", 2},
+                                                   {"__ctbrowser_class_heritage", 3},
+                                                   {"__ctbrowser_super_get", 3}};
+    return name.size() <= 26 ? arities.lookup(name) : 0;
+}
+
+inline unsigned iteratorIntrinsicArity(llvm::StringRef name) {
+    static const llvm::StringMap<unsigned> arities{{"__ctbrowser_for_of_open", 1},
+                                                   {"__ctbrowser_iter_next", 1},
+                                                   {"__ctbrowser_iter_close", 2}};
+    return name.size() <= 23 ? arities.lookup(name) : 0;
 }
 
 // Complete original Bootstrap F callback; callers still prove enclosure, uses,
@@ -78,6 +106,10 @@ struct analyzer {
     llvm::DenseMap<mlir::Operation *, HostCallableEdge> capturedCalls;
     llvm::DenseSet<mlir::Operation *> capturedOperations;
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> capturedResults;
+    // Private read-time categories, reconstructed independently by class
+    // preparation and the final provider. These never authorize native ownership.
+    llvm::DenseMap<mlir::Value, PrimitiveAlternatives> classScalarReads;
+    HostLocalRecords localRecords;
     llvm::DenseSet<mlir::Operation *> mutableScalarReads;
 
     analyzer(mlir::ModuleOp module, const HostContract & contract, unsigned steps);
@@ -120,6 +152,7 @@ struct analyzer {
     bool exactCall(mlir::Operation * call);
     bool transportedCallable(ctjs::FuncOp function);
     bool singleInvocation(ctjs::FuncOp function);
+    std::string localRecordProblem();
     std::string environmentProblem();
     HostSlotReport slot(const HostRootRequest & root, llvm::StringRef key);
 };

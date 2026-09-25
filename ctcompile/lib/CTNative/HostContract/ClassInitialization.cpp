@@ -42,16 +42,19 @@ struct CTNativeSpecializeClassInitializationPass
             module.emitError("class initialization host fingerprint mismatch");
             return signalPassFailure();
         }
-        if (contract->provider != HostContract::Provider::closedSource ||
+        if ((contract->provider != HostContract::Provider::closedSource &&
+             contract->provider != HostContract::Provider::ctbrowserDOMDataSession) ||
             !llvm::is_contained(contract->initialIntrinsics, host_detail::classDefinedIntrinsic) ||
             llvm::any_of(contract->initialIntrinsics,
                          [](const auto & name) {
-                             return !host_detail::classIntrinsicArity(name) && name != "Error";
+                             return !host_detail::classIntrinsicArity(name) && name != "Error" &&
+                                    name != "Function" && name != "Object" && name != "Array" &&
+                                    name != "Map" && !host_detail::iteratorIntrinsicArity(name);
                          }) ||
             contract->realmGlobalThis || contract->classicScriptRealm ||
             !contract->absentBindings.empty() || !contract->undefinedBindings.empty()) {
             module.emitError("class initialization requires standard class helper identities and "
-                             "optional Error identity");
+                             "optional Error/Object/Array/Map/Function iterator identities");
             return signalPassFailure();
         }
         // Super normalization is speculative; refusal publishes no partial body.
@@ -111,6 +114,7 @@ llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, 
     HostContract binding = contract;
     binding.provider = HostContract::Provider::closedSource;
     binding.elementParameters.clear();
+    binding.currentDocumentParameter.reset();
     llvm::erase_if(binding.initialIntrinsics, [](const auto & name) {
         return !host_detail::classIntrinsicArity(name) && name != "Error";
     });

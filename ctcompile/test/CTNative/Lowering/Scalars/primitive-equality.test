@@ -1,0 +1,277 @@
+# Primitive equality preserves source tags; loose equality converts only the
+# mixed primitive cases required by JavaScript. Original refusal witnesses run
+# unchanged in separate units so their convert declarations remain independent.
+# RUN: split-file %s %t
+# RUN: %node %t/expected.cjs %t/values.js
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=RUNTIME --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/runtime.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=ctbrowser::script --implicit-check-not=ctbrowser::aot
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
+# RUN: ctjs-opt %t/runtime.mlir --ctnative-print-deduced -o %t/runtime.deduced.mlir
+# RUN: ctjs-opt %t/optimized.mlir --ctnative-print-deduced -o %t/optimized.deduced.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name equality_runtime_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name equality_runtime_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name equality_runtime_deduced_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name equality_runtime_deduced_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.mlir --js %t/values.js --work %t --name equality_optimized_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.mlir --js %t/values.js --work %t --name equality_optimized_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name equality_optimized_deduced_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name equality_optimized_deduced_clang --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name equality_numeric_mutation --mutate zLoose --core-build %build 2>&1 | FileCheck %s --check-prefix=NUMERIC-MUTATION
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name equality_string_mutation --mutate zStrict --core-build %build 2>&1 | FileCheck %s --check-prefix=STRICT-MUTATION
+# RUN: %node %t/witness-expected.cjs %t/number-witness.js true
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/number-witness.js | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/number-witness.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/number-witness.mlir --js %t/number-witness.js --work %t --name equality_number-witness_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/number-witness.mlir --js %t/number-witness.js --work %t --name equality_number-witness_clang --core-build %build
+# RUN: %node %t/witness-expected.cjs %t/boolean-witness.js false
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-witness.js | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/boolean-witness.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/boolean-witness.mlir --js %t/boolean-witness.js --work %t --name equality_boolean-witness_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/boolean-witness.mlir --js %t/boolean-witness.js --work %t --name equality_boolean-witness_clang --core-build %build
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-hook.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bigint.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/symbol.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/broad-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+
+# RUNTIME-DAG: call_opaque "ctnative::primitive_equal"
+# RUNTIME-DAG: call_opaque "ctnative::primitive_strict_equal"
+# RUNTIME-DAG: !emitc.opaque<"ctnative::nullable_number_string">
+# RUNTIME-DAG: !emitc.opaque<"ctnative::nullable_boolean_string">
+# CPP-DAG: ctnative::primitive_equal(
+# CPP-DAG: ctnative::primitive_strict_equal(
+# NUMERIC-MUTATION: global 'zLoose' differs
+# STRICT-MUTATION: global 'zStrict' differs
+# REFUSED: ctnative.not_native =
+
+#--- values.js
+function convert(value) { return value == 3; }
+convert(3);
+convert("3");
+
+function numberChoice(flag, number, text) { return flag ? number : text; }
+function booleanChoice(flag, boolean, text) { return flag ? boolean : text; }
+function optionalNumber(mode, number, text) {
+    let missing;
+    if (mode === 1) { return null; }
+    if (mode === 2) { return number; }
+    if (mode === 3) { return text; }
+    return missing;
+}
+function optionalBoolean(mode, boolean, text) {
+    let missing;
+    if (mode === 1) { return null; }
+    if (mode === 2) { return boolean; }
+    if (mode === 3) { return text; }
+    return missing;
+}
+function optionalScalar(mode, value) {
+    let missing;
+    if (mode === 1) { return null; }
+    if (mode === 2) { return value; }
+    return missing;
+}
+function optionalString(mode, text) {
+    let missing;
+    if (mode === 1) { return null; }
+    if (mode === 2) { return text; }
+    return missing;
+}
+function looseNumber(left, right) { return left == right; }
+function strictNumber(left, right) { return left === right; }
+function unequalNumber(left, right) { return left != right; }
+function differentNumber(left, right) { return left !== right; }
+function looseBoolean(left, right) { return left == right; }
+function strictBoolean(left, right) { return left === right; }
+function looseCross(left, right) { return left == right; }
+function reverseCross(left, right) { return right == left; }
+function strictCross(left, right) { return left === right; }
+function looseOptional(left, right) { return left == right; }
+function strictOptional(left, right) { return left === right; }
+function looseScalarString(left, right) { return left == right; }
+function strictScalarString(left, right) { return left === right; }
+function textNumber(text, number) { return text == number; }
+function booleanText(boolean, text) { return boolean == text; }
+
+var witnessNumber = convert(3);
+var witnessString = convert("3");
+var witnessOther = convert(4);
+var looseZero = looseNumber(numberChoice(true, 0, ""), numberChoice(false, 0, "0"));
+var distinctText = looseNumber(numberChoice(false, 0, "00"), numberChoice(false, 0, "0"));
+var looseNaN = looseNumber(numberChoice(true, 0 / 0, ""), numberChoice(true, 0 / 0, ""));
+var looseSignedZero = looseNumber(numberChoice(true, -0, ""), numberChoice(true, 0, ""));
+var strictNumberText = strictNumber(numberChoice(true, 0, ""), numberChoice(false, 0, "0"));
+var strictText = strictNumber(numberChoice(false, 0, "0"), numberChoice(false, 0, "0"));
+var strictNaN = strictNumber(numberChoice(true, 0 / 0, ""), numberChoice(true, 0 / 0, ""));
+var strictSignedZero = strictNumber(numberChoice(true, -0, ""), numberChoice(true, 0, ""));
+var unequalZero = unequalNumber(numberChoice(true, 0, ""), numberChoice(false, 0, "0"));
+var differentZero = differentNumber(numberChoice(true, 0, ""), numberChoice(false, 0, "0"));
+var booleanOne = looseBoolean(booleanChoice(true, true, ""), booleanChoice(false, false, "1"));
+var booleanFalseWord = looseBoolean(booleanChoice(true, false, ""), booleanChoice(false, false, "false"));
+var booleanEmpty = looseBoolean(booleanChoice(true, false, ""), booleanChoice(false, false, ""));
+var strictFalse = strictBoolean(booleanChoice(true, false, ""), booleanChoice(true, false, ""));
+var strictFalseWord = strictBoolean(booleanChoice(true, false, ""), booleanChoice(false, false, "false"));
+var crossZeroFalse = looseCross(numberChoice(true, 0, ""), booleanChoice(true, false, ""));
+var reverseZeroFalse = reverseCross(numberChoice(false, 0, "0"), booleanChoice(true, false, ""));
+var crossSameText = strictCross(numberChoice(false, 0, "0"), booleanChoice(false, false, "0"));
+var crossDifferentKinds = strictCross(numberChoice(true, 0, ""), booleanChoice(true, false, ""));
+var absentLoose = looseOptional(optionalNumber(0, 0, ""), optionalBoolean(1, false, ""));
+var absentStrict = strictOptional(optionalNumber(0, 0, ""), optionalBoolean(1, false, ""));
+var missingStrict = strictOptional(optionalNumber(0, 0, ""), optionalBoolean(0, false, ""));
+var nullFalse = looseOptional(optionalNumber(1, 0, ""), optionalBoolean(2, false, ""));
+var optionalZeroFalse = looseOptional(optionalNumber(2, 0, ""), optionalBoolean(2, false, ""));
+var optionalFalseWord = looseOptional(optionalNumber(3, 0, "false"), optionalBoolean(2, false, ""));
+var nanMissing = looseOptional(optionalNumber(2, 0 / 0, ""), optionalBoolean(0, false, ""));
+var scalarNullMissing = looseScalarString(optionalScalar(1, 0), optionalString(0, ""));
+var scalarAbsentStrict = strictScalarString(optionalScalar(1, 0), optionalString(0, ""));
+var scalarWhitespace = looseScalarString(optionalScalar(2, 0), optionalString(2, "\u00a0 \t"));
+var scalarFalseZero = looseScalarString(optionalScalar(2, false), optionalString(2, "0"));
+var scalarZeroNull = looseScalarString(optionalScalar(2, 0), optionalString(1, ""));
+var scalarMissingEmpty = looseScalarString(optionalScalar(0, false), optionalString(2, ""));
+var radixNumber = textNumber("0x10", 16);
+var nulNumber = textNumber("0\u0000", 0);
+var directFalseZero = booleanText(false, "0");
+var nulSame = strictNumber(numberChoice(false, 0, "a\u0000b"), numberChoice(false, 0, "a\u0000b"));
+var nulDifferent = strictNumber(numberChoice(false, 0, "a\u0000b"), numberChoice(false, 0, "a"));
+
+var earlyEqual = changing == null;
+var changing = numberChoice(true, 0, "0");
+var saved = changing;
+changing = "0";
+var globalLoose = changing == saved;
+var globalStrict = changing === saved;
+changing = 0 / 0;
+var globalNaN = changing === changing;
+var zLoose = +looseOptional(optionalNumber(2, 0, ""), optionalBoolean(2, false, ""));
+var zStrict = +strictOptional(optionalNumber(2, 0, ""), optionalBoolean(2, false, ""));
+
+#--- expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+const expected = {
+    witnessNumber: true,
+    witnessString: true,
+    witnessOther: false,
+    looseZero: true,
+    distinctText: false,
+    looseNaN: false,
+    looseSignedZero: true,
+    strictNumberText: false,
+    strictText: true,
+    strictNaN: false,
+    strictSignedZero: true,
+    unequalZero: false,
+    differentZero: true,
+    booleanOne: true,
+    booleanFalseWord: false,
+    booleanEmpty: true,
+    strictFalse: true,
+    strictFalseWord: false,
+    crossZeroFalse: true,
+    reverseZeroFalse: true,
+    crossSameText: true,
+    crossDifferentKinds: false,
+    absentLoose: true,
+    absentStrict: false,
+    missingStrict: true,
+    nullFalse: false,
+    optionalZeroFalse: true,
+    optionalFalseWord: false,
+    nanMissing: false,
+    scalarNullMissing: true,
+    scalarAbsentStrict: false,
+    scalarWhitespace: true,
+    scalarFalseZero: true,
+    scalarZeroNull: false,
+    scalarMissingEmpty: false,
+    radixNumber: true,
+    nulNumber: false,
+    directFalseZero: true,
+    nulSame: true,
+    nulDifferent: false,
+    earlyEqual: true,
+    changing: NaN,
+    saved: 0,
+    globalLoose: true,
+    globalStrict: false,
+    globalNaN: false,
+    zLoose: 1,
+    zStrict: 0
+};
+assert.equal(Object.keys(expected).length, 48);
+for (const [name, value] of Object.entries(expected)) {
+    assert.equal(typeof scope[name], typeof value, `${name} type`);
+    assert.ok(Object.is(scope[name], value), `${name} value`);
+}
+console.log("48 primitive equality observations agree with JavaScript");
+
+#--- number-witness.js
+function convert(mode) {
+    let value;
+    if (mode === 1) { value = 3; }
+    if (mode === 2) { value = "3"; }
+    return value == 3;
+}
+convert(0);
+convert(1);
+convert(2);
+
+var missing = convert(0);
+var primary = convert(1);
+var text = convert(2);
+
+#--- boolean-witness.js
+function convert(mode) {
+    let value;
+    if (mode === 1) { value = true; }
+    if (mode === 2) { value = "3"; }
+    return value == true;
+}
+convert(0);
+convert(1);
+convert(2);
+
+var missing = convert(0);
+var primary = convert(1);
+var text = convert(2);
+
+#--- witness-expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+assert.equal(scope.missing, false);
+assert.equal(scope.primary, true);
+assert.equal(scope.text, process.argv[3] === "true");
+
+#--- object-hook.js
+function convert(value) { return value == 3; }
+convert({valueOf: function() { return 3; }});
+
+#--- bigint.js
+function convert(value) { return value == "3"; }
+convert(3n);
+
+#--- symbol.js
+function convert(value) { return value == "3"; }
+convert(Symbol("3"));
+
+#--- broad-union.js
+function convert(mode) {
+    let value = 3;
+    if (mode === 1) { value = true; }
+    if (mode === 2) { value = "3"; }
+    return value == 3;
+}
+convert(0);
+convert(1);
+convert(2);
+
+#--- ordering.js
+function convert(value) { return value < 4; }
+convert(3);
+convert("3");

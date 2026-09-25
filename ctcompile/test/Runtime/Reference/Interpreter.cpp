@@ -88,6 +88,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -123,7 +124,7 @@ void write_percent_encoded(const std::string & s) {
     for (const char raw : s) {
         const auto c = static_cast<unsigned char>(raw);
         if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-            c == '-' || c == '.' || c == '_' || c == '~') {
+            std::string_view("-._~").contains(raw)) {
             std::putchar(raw);
         } else {
             std::putchar('%');
