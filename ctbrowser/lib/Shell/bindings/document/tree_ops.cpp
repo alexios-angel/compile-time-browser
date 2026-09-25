@@ -334,9 +334,22 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
             doc_->set_template_content(target, into);
         }
     }
+    // A SHADOW ROOT'S CONTEXT IS ITS HOST (the ShadowRoot innerHTML setter):
+    // the host's element name, and in XML the namespace declarations in scope
+    // there (innerHTML-setter.xhtml's `<bar:span/>`).
+    node_id context = target;
+    if (const shadow_tree * tree = shadow_tree_of(target)) { context = tree->host; }
     document scratch{*atoms_};
-    const node_id body = parse_fragment_for(*doc_, scratch, target, markup, namespace_of(target));
-    if (!body) { return; }
+    const node_id body = parse_fragment_for(*doc_, scratch, context, markup, namespace_of(context));
+    if (!body) {
+        // The XML fragment parsing algorithm (HTML 13.4) on markup that is
+        // not well-formed: a SyntaxError, and the element is left as it was.
+        if (doc_->xml() && cx_ != nullptr) {
+            throw_dom_exception(*cx_, "SyntaxError",
+                                "Failed to set 'innerHTML': the markup is not well-formed XML");
+        }
+        return;
+    }
     {
         const auto txn = doc_->read();
         const std::span<const node_id> kids = txn.children(into);

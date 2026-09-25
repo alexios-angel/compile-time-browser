@@ -81,15 +81,17 @@ void test_xml_document_serialises_as_xml() {
                   "alert([a.outerHTML, br.outerHTML, a.innerHTML].join());"
                   // And the setter is the XML fragment parser: the context's
                   // namespace is the default, a declared prefix resolves, and
-                  // an ill-formed fragment leaves the element alone.
+                  // an ill-formed fragment is a SyntaxError that leaves the
+                  // element alone.
                   "a.innerHTML = '<b/><q:r xmlns:q=\"urn:q\"/>';"
-                  "var kept = a.innerHTML; a.innerHTML = '<b>';"
+                  "var kept = a.innerHTML, threw = '';"
+                  "try { a.innerHTML = '<b>'; } catch (e) { threw = e.name; }"
                   "alert([a.firstChild.namespaceURI === ns, a.lastChild.namespaceURI,"
-                  " a.lastChild.prefix, a.innerHTML === kept].join());"
+                  " a.lastChild.prefix, a.innerHTML === kept, threw].join());"
                   "</script>"),
              "<a xmlns=\"http://www.w3.org/1999/xhtml\"><p xmlns=\"urn:x\"/></a>,"
              "<br xmlns=\"http://www.w3.org/1999/xhtml\" />,<p xmlns=\"urn:x\"/>;"
-             "true,urn:q,q,true");
+             "true,urn:q,q,true,SyntaxError");
 }
 
 } // namespace

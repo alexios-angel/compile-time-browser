@@ -50,6 +50,18 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
         }
         return wrap(c, root);
     });
+    // `rootElement` (SVG 2, partial interface Document): the document element
+    // when it is an SVG <svg>, else null - how a script reaches the root of a
+    // parsed .svg (DOMParser-parseFromString-xml-scripting-support-disabled).
+    define_getter(cx, doc, "rootElement", [this](context & c, std::span<value>) {
+        const auto txn = doc_->read();
+        const node_id root = txn.root();
+        if (txn.kind(root).value_or(node_kind::document) != node_kind::element ||
+            txn.element_ns(root) != node_ns::svg || txn.local_name(root) != "svg") {
+            return value::null();
+        }
+        return wrap(c, root);
+    });
     define_getter(
         cx, doc, "body", [this](context & c, std::span<value>) { return wrap(c, body_element()); },
         [this](context & c, std::span<value> a) {
