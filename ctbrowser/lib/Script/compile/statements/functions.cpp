@@ -387,7 +387,8 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         proto().emit(instruction{op::new_cell, flag});
     }
     // THE new.target ITS ARROWS SEE - see new_target_local.
-    if (!out_.functions[index].is_arrow && arrow_wants_new_target(n.a, false)) {
+    if (!out_.functions[index].is_arrow && is_captured(new_target_local) &&
+        arrow_wants_new_target(n.a, false)) {
         const std::uint16_t held = declare_local(std::string{new_target_local});
         fn().locals.back().boxed = true;
         proto().emit(instruction{op::load_new_target, held});

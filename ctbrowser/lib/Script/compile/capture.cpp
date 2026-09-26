@@ -60,6 +60,12 @@ void compiler_impl::tour(std::int32_t idx, std::int32_t enclosing, std::int32_t 
     // their locals must be cells it can be handed (is_captured). Recorded
     // against the function the call is in.
     if (is_direct_eval_call(n)) { eval_ticks_.push_back(inner); }
+    // `new.target` - or an eval, which may say it - under the name of the
+    // hidden local that carries it into arrows (new_target_local), so a
+    // function asks is_captured before walking its body for one.
+    if (n.kind == vp::nk::new_target || is_direct_eval_call(n)) {
+        mentions_[std::string{new_target_local}].push_back(inner);
+    }
     // A template's substitutions are text on the node, not children, so
     // nothing below this reaches them.
     if (n.kind == vp::nk::tmpl) {
