@@ -4,6 +4,8 @@
 
 #include "internal.hpp"
 
+#include <ctbrowser/style/css/token.hpp>
+
 namespace ctbrowser::shell {
 
 namespace {
@@ -222,11 +224,34 @@ std::string browser::collect_author_styles(document & doc, dom_bindings * bindin
     // wrapping them in `@media` says to the cascade, evaluated and re-evaluated
     // against the window exactly as a rule of the sheet's own would be.
     const atom media_attribute = atoms_.intern_lower("media");
+    //
+    // EOF CLOSES WHAT THE ATTRIBUTE LEFT OPEN (CSS Syntax 3 §5.4.9): a list
+    // written `(orientation` is `(orientation)`, and wrapping it as written
+    // put the `{` of the @media rule inside its parenthesis, which swallowed
+    // the sheet (test_media_queries' "parsing tests").
     const auto gated = [&](node_id at, std::string text) {
         const std::string_view media =
             trim(txn.attribute_value(at, media_attribute), ctbrowser::html_whitespace);
         if (media.empty()) { return text; }
-        return "@media " + std::string{media} + " {\n" + text + "\n}";
+        std::string list{media};
+        std::string closers;
+        const ctbrowser::style::css::token_stream ts = ctbrowser::style::css::tokenize(media);
+        for (const ctbrowser::style::css::css_token & t : ts.tokens) {
+            using ctbrowser::style::css::token_type;
+            if (t.type == token_type::function || t.type == token_type::open_paren) {
+                closers.push_back(')');
+            } else if (t.type == token_type::open_square) {
+                closers.push_back(']');
+            } else if (t.type == token_type::open_curly) {
+                closers.push_back('}');
+            } else if ((t.type == token_type::close_paren || t.type == token_type::close_square ||
+                        t.type == token_type::close_curly) &&
+                       !closers.empty()) {
+                closers.pop_back();
+            }
+        }
+        list.append(closers.rbegin(), closers.rend());
+        return "@media " + list + " {\n" + text + "\n}";
     };
     // ONE sheet, concatenated in document order, rather than one add_sheet per
     // <style> and <link>. Both preserve source order; this one also cannot get

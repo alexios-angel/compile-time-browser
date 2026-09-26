@@ -77,7 +77,8 @@ constexpr feature_entry feature_table[] = {
      {}},
     {"monochrome", media_feature::name::monochrome, media_feature::kind::integer, {}, {}},
     {"color", media_feature::name::color, media_feature::kind::integer, {}, {}},
-    {"color-index", media_feature::name::unknown, media_feature::kind::integer, {}, {}},
+    // A screen with no colour lookup table: `color-index` is 0 (§6.3).
+    {"color-index", media_feature::name::color_index, media_feature::kind::integer, {}, {}},
     {"prefers-contrast", media_feature::name::prefers_contrast, media_feature::kind::discrete,
      "no-preference more less custom", "no-preference"},
     {"prefers-reduced-data", media_feature::name::prefers_reduced_data,
@@ -105,8 +106,10 @@ constexpr feature_entry feature_table[] = {
     {"color-gamut", media_feature::name::color_gamut, media_feature::kind::discrete,
      "srgb p3 rec2020", "srgb"},
     {"grid", media_feature::name::grid, media_feature::kind::integer, {}, {}},
+    // A screen is not a television: `scan` matches none of its values
+    // (Media Queries 4 §6.4), and `none` is no keyword it takes.
     {"scan", media_feature::name::scan, media_feature::kind::discrete, "interlace progressive",
-     "progressive"},
+     "none"},
 };
 
 // A CONTAINER'S SIZE FEATURES, and only these (CSS Conditional 5 §3.2): the
@@ -225,7 +228,15 @@ constexpr feature_entry container_features[] = {
     switch (f.which) {
     case n::width: return number(width);
     case n::height: return number(height);
-    case n::aspect_ratio: return height > 0 && number(width / height);
+    // A RATIO IS EQUAL ONLY WHEN IT IS: the 1e-4 a length's equality allows
+    // makes 59/80 equal 5900/8001 (test_media_queries), so the equality is
+    // relative and to a float's precision.
+    case n::aspect_ratio:
+        if (height <= 0) { return false; }
+        if (f.op == media_feature::compare::equal) {
+            return std::fabs(width / height - f.value) <= 1e-6f * std::max(f.value, 1.0f);
+        }
+        return number(width / height);
     case n::orientation: return matches_keyword(f, height >= width ? "portrait" : "landscape");
     case n::prefers_color_scheme: return matches_keyword(f, env.dark ? "dark" : "light");
     case n::prefers_reduced_motion:
@@ -240,6 +251,7 @@ constexpr feature_entry container_features[] = {
     case n::monochrome: return number(env.monochrome ? 8.0f : 0.0f);
     case n::color: return number(env.monochrome ? 0.0f : 8.0f);
     case n::grid: return number(0.0f);
+    case n::color_index: return number(0.0f);
     case n::unknown: return false;
     default: return matches_keyword(f, e.answer); // the fixed discrete ones
     }
@@ -288,8 +300,9 @@ constexpr feature_entry container_features[] = {
     // (orientation: 0)` does not match either.
     enum class written : std::uint8_t {
         keyword,
-        zero,   // a unitless 0, a <length> by CSS Values 4 §6.1
-        number, // any other unitless number
+        zero,    // a unitless 0, a <length> by CSS Values 4 §6.1
+        integer, // any other unitless integer
+        number,  // any other unitless number
         length,
         resolution,
         ratio,
@@ -314,12 +327,16 @@ constexpr feature_entry container_features[] = {
                 s.tokens[at[i + 2]].type == token_type::number) {
                 const double d = s.tokens[at[i + 2]].number;
                 f.value = d == 0 ? 0.0f : static_cast<float>(t.number / d);
-                w = written::ratio;
+                // A NEGATIVE TERM IS NO <ratio> (CSS Values 4 §7.2): `-1/1`
+                // parses as a feature and is unknown.
+                w = t.number < 0 || d < 0 ? written::other : written::ratio;
                 return 3;
             }
             f.value = length_in_px(s, t, env, box);
             if (t.type == token_type::number) {
-                w = t.number == 0 ? written::zero : written::number;
+                w = t.number == 0                   ? written::zero
+                    : (t.flags & flag_integer) != 0 ? written::integer
+                                                    : written::number;
             } else {
                 const std::string_view unit = s.unit_of(t);
                 w = ascii_iequals_any(unit, {"dpi", "dpcm", "dppx", "x"}) ? written::resolution
@@ -401,13 +418,25 @@ constexpr feature_entry container_features[] = {
             case media_feature::kind::length:
                 fits = w == written::length || w == written::zero;
                 break;
-            case media_feature::kind::resolution: fits = w == written::resolution; break;
+            // A negative resolution is no <resolution> (Media Queries 4 §6.1).
+            case media_feature::kind::resolution:
+                fits = w == written::resolution && f.value >= 0;
+                break;
+            // AN <integer> IS AN INTEGER TOKEN, negative ones included:
+            // `(color: -1)` is known and false, `(color: 1.0)` is unknown
+            // (test_media_queries). `grid` is the <mq-boolean> 0 or 1, and
+            // takes no range at all.
             case media_feature::kind::integer:
-                fits = (w == written::number || w == written::zero) && f.value >= 0 &&
-                       f.value == static_cast<float>(static_cast<long>(f.value));
+                fits = w == written::integer || w == written::zero;
+                if (e->which == media_feature::name::grid) {
+                    fits = fits && f.op == media_feature::compare::equal &&
+                           (f.value == 0 || f.value == 1);
+                }
                 break;
             case media_feature::kind::ratio:
-                fits = w == written::ratio || w == written::number || w == written::zero;
+                fits = (w == written::ratio || w == written::integer || w == written::number ||
+                        w == written::zero) &&
+                       f.value >= 0;
                 break;
             }
         }
