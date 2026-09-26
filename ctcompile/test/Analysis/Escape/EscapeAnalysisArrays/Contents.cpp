@@ -1010,6 +1010,26 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const auto literalOperandGap =
         nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
                            siblingInput("%read", "%two", "%secondFlag", literalOperandFlag));
+    const auto equalLiteralForwarding = selectedInput(
+        "%thenLiteral", "%elseLiteral", "      %thenLiteral = ctjs.constant #ctjs.boolean<true>\n",
+        "      %elseLiteral = ctjs.constant #ctjs.boolean<true>\n", "%literalOperand");
+    const auto equalLiteralFlag = carryLiteral(strictBooleanFlag(), equalLiteralForwarding);
+    const auto equalLiteralKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", equalLiteralFlag));
+    const auto equalLiteralGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", equalLiteralFlag));
+    const auto equalFalseForwarding = selectedInput(
+        "%thenLiteral", "%elseLiteral", "      %thenLiteral = ctjs.constant #ctjs.boolean<false>\n",
+        "      %elseLiteral = ctjs.constant #ctjs.boolean<false>\n", "%literalOperand");
+    const std::string equalLiteralTuple =
+        "    %literalTuple:2 = scf.if %flag -> (!ctjs.value, !ctjs.value) {\n"
+        "      %thenLiteral = ctjs.constant #ctjs.boolean<true>\n"
+        "      scf.yield %zero, %thenLiteral : !ctjs.value, !ctjs.value\n"
+        "    } else {\n"
+        "      %elseLiteral = ctjs.constant #ctjs.boolean<true>\n"
+        "      scf.yield %one, %elseLiteral : !ctjs.value, !ctjs.value\n"
+        "    }\n";
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -3465,6 +3485,80 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         {.what = "strict Boolean tests forward an identical literal operand",
          .body = loopValues + allocationLoop(literalOperandKeys) + done,
          .confinedNested = "fresh"},
+        {.what = "strict Boolean tests recognize distinct equal literal arms",
+         .body = loopValues + allocationLoop(equalLiteralKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "distinct left false literals preserve reversed predicate polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     carryLiteral(strictBooleanFlag("%boolean", "#ctjs.boolean<false>",
+                                                    "    %boolean = ctjs.convert to_boolean %p\n",
+                                                    true),
+                                  equalFalseForwarding),
+                     true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "equal literal leaves survive nested selected-slot transport",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     carryLiteral(strictBooleanFlag(),
+                                  equalLiteralTuple + selectedInput("%literalTuple#1",
+                                                                    "%literalTuple#1", "", "",
+                                                                    "%literalOperand"))))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "another tuple slot cannot borrow equal Boolean leaves",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     carryLiteral(strictBooleanFlag(),
+                                  equalLiteralTuple + selectedInput("%literalTuple#0",
+                                                                    "%literalTuple#0", "", "",
+                                                                    "%literalOperand"))))) +
+                 done,
+         .complete = false},
+        {.what = "equal literal arms preserve distinct mutable read snapshots",
+         .body = loopValues +
+                 allocationLoop(carryLiteral(strictBooleanReads, equalLiteralForwarding)) + done,
+         .complete = false},
+        {.what = "equal literal leaves cannot suppress then arm effects",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     carryLiteral(
+                         strictBooleanFlag(),
+                         selectedInput("%thenLiteral", "%elseLiteral",
+                                       "      %thenLiteral = ctjs.constant #ctjs.boolean<true>\n"
+                                       "      %called = ctjs.call %p(%q)\n",
+                                       "      %elseLiteral = ctjs.constant #ctjs.boolean<true>\n",
+                                       "%literalOperand"))))) +
+                 done,
+         .complete = false},
+        {.what = "equal literal leaves cannot suppress else arm effects",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     carryLiteral(
+                         strictBooleanFlag(),
+                         selectedInput("%thenLiteral", "%elseLiteral",
+                                       "      %thenLiteral = ctjs.constant #ctjs.boolean<true>\n",
+                                       "      %elseLiteral = ctjs.constant #ctjs.boolean<true>\n"
+                                       "      %called = ctjs.call %p(%q)\n",
+                                       "%literalOperand"))))) +
+                 done,
+         .complete = false},
+        {.what = "a returned equal-literal holder retains its child",
+         .body = loopValues + allocationLoop(equalLiteralKeys) + "  ctjs.return %guard\n"},
+        {.what = "clearing an equal-literal holder releases its child",
+         .body =
+             loopValues + allocationLoop(equalLiteralKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved equal-literal child survives clearing its holder",
+         .body = loopValues + allocationLoop(equalLiteralKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
         {.what = "a forwarded left false literal preserves reversed predicate polarity",
          .body = loopValues +
                  allocationLoop(selectedStore(siblingInput(
@@ -5345,6 +5439,82 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  .expected = ""},
              "the Boolean literal operand mutation fixture did not parse");
     }
+    retention_row equalLiteralMutation{
+        .what = "equal Boolean leaves reprove live values, tags, operands and guards",
+        .body = loopValues +
+                allocationLoop(equalLiteralGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto equalLiteralModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + equalLiteralMutation.body + "}\n", &context);
+    if (equalLiteralModule) {
+        ctjs::FuncOp function = *equalLiteralModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto compare = second.getCondition()
+                           .getDefiningOp<ctjs::TruthyOp>()
+                           .getValue()
+                           .getDefiningOp<ctjs::CompareOp>();
+        auto carrier = compare.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto * thenYield = carrier.getThenRegion().front().getTerminator();
+        auto * elseYield = carrier.getElseRegion().front().getTerminator();
+        auto thenLiteral = thenYield->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
+        auto elseLiteral = elseYield->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value originalInput = compare.getLhs();
+        const mlir::Value opaque = function.getBody().front().getArgument(3);
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*equalLiteralModule))) {
+            fail(row{.what = equalLiteralMutation.what,
+                     .body = equalLiteralMutation.body,
+                     .expected = ""},
+                 "the equal Boolean leaf stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 12; ++state) {
+            thenLiteral.setValueAttr(
+                state == 4
+                    ? mlir::Attribute(ctjs::NumberAttr::get(&context, 4607182418800017408ULL))
+                    : mlir::Attribute(ctjs::BooleanAttr::get(&context, state != 1 && state != 3)));
+            elseLiteral.setValueAttr(
+                state == 5
+                    ? mlir::Attribute(ctjs::NumberAttr::get(&context, 4607182418800017408ULL))
+                    : mlir::Attribute(ctjs::BooleanAttr::get(&context, state != 2 && state != 3)));
+            thenYield->setOperand(0, state == 6 ? zero : thenLiteral.getResult());
+            elseYield->setOperand(0, state == 7 ? opaque : elseLiteral.getResult());
+            load->setOperand(1, state == 8 ? zero : originalPosition);
+            compare.setKindAttr(ctjs::CompareKindAttr::get(
+                &context, state == 9 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+            compare->setOperand(0, state == 10 ? opaque : originalInput);
+            equalLiteralMutation.complete = state == 0 || state == 11;
+            equalLiteralMutation.confinedNested = equalLiteralMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*equalLiteralModule, equalLiteralMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                equalLiteralMutation.complete) {
+                fail(row{.what = equalLiteralMutation.what,
+                         .body = equalLiteralMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied equal Boolean leaves");
+            }
+        }
+    } else {
+        fail(row{.what = equalLiteralMutation.what,
+                 .body = equalLiteralMutation.body,
+                 .expected = ""},
+             "the equal Boolean leaf mutation fixture did not parse");
+    }
     retention_row booleanMutation{
         .what =
             "ToBoolean correspondence reproves live conversion inputs, kinds, yields and guards",
@@ -5861,7 +6031,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         }
     }
     std::printf(
-        "array retention: %zu rows, two hundred eighty-six live states, %zu budget cutoffs\n",
+        "array retention: %zu rows, two hundred ninety-eight live states, %zu budget cutoffs\n",
         rows.size(), budgets);
 }
 
