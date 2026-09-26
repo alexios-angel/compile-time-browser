@@ -74,6 +74,12 @@ public:
     bool dispatch_event(std::string_view type, node_id target, value event);
 
     bool click(node_id target);
+    // The node the `click` whose activation behaviour is running was
+    // dispatched at (events/dispatch.cpp); a <label>'s activation reads it.
+    node_id activation_event_target;
+    // HTML 4.10.4: a label's labeled control, labelable custom elements and
+    // all (element/control_methods/collections_and_labels.cpp).
+    [[nodiscard]] node_id labeled_control(node_id label);
     // After ANY write to the document, the browser's own included (a
     // <summary>'s activation): the observers' records and the attribute change
     // steps (entry.cpp).

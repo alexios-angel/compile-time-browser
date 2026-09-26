@@ -4,6 +4,17 @@ namespace ctbrowser::shell {
 using namespace detail;
 using namespace input_types;
 
+// The labeled control `label.control` answers, for the browser's activation
+// behaviour of a <label> (browser::activate) - so a click on a label reaches
+// a form-associated custom element or an <output>, which the browser's own
+// control kinds do not include.
+node_id dom_bindings::labeled_control(node_id label) {
+    const control_helpers helpers{this};
+    const auto txn = doc_->read();
+    if (!label || !txn.contains(label)) { return node_id{}; }
+    return helpers.labeled_control(txn, this, label);
+}
+
 void dom_bindings::install_control_collections_labels(context & cx) {
     const control_helpers helpers{this};
     // --- RadioNodeList.value, HTML 4.10.20.1 --------------------------------------------

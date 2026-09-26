@@ -5,6 +5,28 @@
 
 namespace ctbrowser::shell {
 
+namespace {
+
+// HTML 3.2.5.2.7 "interactive content" - what a <label> leaves alone: a click
+// aimed at one, or at anything inside one, is that element's own.
+[[nodiscard]] bool is_interactive_content(const read_txn & txn, atom_table & atoms, node_id id) {
+    if (txn.element_ns(id) != node_ns::html) { return false; }
+    const std::string_view local = txn.local_name(id);
+    const auto has = [&](std::string_view name) {
+        return txn.has_attribute(id, atoms.intern(name));
+    };
+    if (local == "a") { return has("href"); }
+    if (local == "audio" || local == "video") { return has("controls"); }
+    if (local == "img") { return has("usemap"); }
+    if (local == "input") {
+        return !ascii_iequals(txn.attribute_value(id, atoms.intern("type")), "hidden");
+    }
+    return local == "button" || local == "details" || local == "embed" || local == "iframe" ||
+           local == "label" || local == "select" || local == "textarea";
+}
+
+} // namespace
+
 // THE ACTIVATION BEHAVIOUR of one element, run by the bindings' dispatch after
 // a `click`'s listeners and only if none of them cancelled it - `target` IS the
 // activation target, the first node on the event's path that has any, so this
@@ -14,11 +36,28 @@ namespace ctbrowser::shell {
 void browser::activate(node_id target) {
     std::string_view tag;
     node_id labelled;
+    // The node the click was dispatched at, read before anything below
+    // dispatches another.
+    const node_id clicked = bindings_->activation_event_target;
     {
         const auto txn = doc_->read();
         tag = atoms_.text(txn.tag(target).value_or(atom{}));
-        if (tag == "label") { labelled = labelled_control(txn, target); }
+        if (tag == "label") {
+            // "...for events targeted at interactive content descendants of a
+            // label element, and any descendants of those, must be to do
+            // nothing" (4.10.4): a <textarea> or an <audio controls> in the
+            // label has no activation behaviour of its own, so the label is
+            // its click's activation target - and must not then click the
+            // control it labels.
+            bool interactive = false;
+            node_id at = clicked;
+            for (; at && at != target; at = txn.parent(at)) {
+                interactive = interactive || is_interactive_content(txn, atoms_, at);
+            }
+            if (interactive && at == target) { return; }
+        }
     }
+    if (tag == "label") { labelled = bindings_->labeled_control(target); }
     if (tag == "a" || tag == "area") {
         (void)follow_link(target);
         return;
