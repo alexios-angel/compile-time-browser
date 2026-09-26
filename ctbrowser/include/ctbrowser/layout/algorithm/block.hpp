@@ -58,9 +58,19 @@ struct block_flow {
         // card with a header, a body and a footer is three of them.
         // `stretch` against a definite height is the containing block's
         // height less this box's margins, as a border box.
+        // A calc-size() over `stretch` runs its calculation over that size,
+        // measured in the box box-sizing names.
+        const auto stretched = [&] {
+            const float border =
+                std::max(0.0f, c.available_height - edges.margin_top - edges.margin_bottom);
+            if (!b.height.has_calculation()) { return border; }
+            const float inner = edges.vertical_inner();
+            const float size = b.border_box ? border : std::max(0.0f, border - inner);
+            const float applied = b.height.apply(size, c.available_height, b.font_size);
+            return std::max(0.0f, b.border_box ? applied : applied + inner);
+        };
         const float declared_height =
-            b.height_stretch && c.available_height > 0
-                ? std::max(0.0f, c.available_height - edges.margin_top - edges.margin_bottom)
+            b.height_stretch && c.available_height > 0 ? stretched()
             : has_definite_height(b, c)
                 ? std::max(0.0f,
                            border_box_size(b, b.height, c.available_height, edges.vertical_inner()))

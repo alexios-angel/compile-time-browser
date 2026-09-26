@@ -595,8 +595,16 @@ private:
         // §5.1) - has_definite_height says so - but a calc-size() over it
         // still runs its calculation over that automatic height.
         b.height = parse_length(prop(style, height_));
-        b.height_stretch = ascii_iequals_any(
-            trimmed(prop(style, height_)), {"stretch", "-webkit-fill-available", "-moz-available"});
+        {
+            // ...and a calc-size() over `stretch` runs over that size.
+            std::string_view basis = trimmed(prop(style, height_));
+            while (basis.starts_with("calc-size(")) {
+                basis = trim(basis.substr(10), " \t");
+                basis = trim(basis.substr(0, basis.find_first_of(", \t")), " \t");
+            }
+            b.height_stretch =
+                ascii_iequals_any(basis, {"stretch", "-webkit-fill-available", "-moz-available"});
+        }
         b.border_box = trimmed(prop(style, box_sizing_)) == "border-box";
         {
             const std::string_view mode = trimmed(prop(style, writing_mode_));
