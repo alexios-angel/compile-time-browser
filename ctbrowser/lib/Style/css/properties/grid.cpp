@@ -7,6 +7,8 @@
 //                                        split into them
 //   none | <string>+                     grid-template-areas
 //   [ row | column ] || dense            grid-auto-flow
+//   the grid-template and grid shorthands, split into their longhands and
+//   folded back when the longhands can be spelled as one
 //
 // The specified form drops empty line-name lists (`[] 150px []` is `150px`)
 // and writes a grid line integer-first (`span 1 i` is `span i`); the
@@ -622,6 +624,308 @@ std::string fold_grid_lines(std::span<const std::string> lines) {
     std::string out;
     for (std::size_t i = 0; i < kept.size(); ++i) { out += (i == 0 ? "" : " / ") + kept[i]; }
     return out;
+}
+
+} // namespace detail
+
+// --- grid-template and grid, CSS Grid 2 §7.4 and §7.8 ------------------------
+//
+//   grid-template = none | [ <'grid-template-rows'> / <'grid-template-columns'> ]
+//                 | [ <line-names>? <string> <track-size>? <line-names>? ]+
+//                   [ / <explicit-track-list> ]?
+//   grid = <'grid-template'>
+//        | <'grid-template-rows'> / [ auto-flow && dense? ] <'grid-auto-columns'>?
+//        | [ auto-flow && dense? ] <'grid-auto-rows'>? / <'grid-template-columns'>
+//
+// grid-template's longhands are rows, columns and areas, in that order;
+// grid's are those three and then auto-rows, auto-columns and auto-flow.
+
+namespace {
+
+// The significant indices of `value` split at its top-level `/`s.
+[[nodiscard]] std::vector<std::vector<std::size_t>> slash_parts(const token_stream & ts) {
+    std::vector<std::vector<std::size_t>> parts{{}};
+    int depth = 0;
+    for (const std::size_t i : significant(ts)) {
+        const token_type type = ts.tokens[i].type;
+        if (type == token_type::function || type == token_type::open_paren ||
+            type == token_type::open_square) {
+            ++depth;
+        } else if (type == token_type::close_paren || type == token_type::close_square) {
+            --depth;
+        }
+        if (depth == 0 && type == token_type::delim && ts.text_of(ts.tokens[i]) == "/") {
+            parts.emplace_back();
+            continue;
+        }
+        parts.back().push_back(i);
+    }
+    return parts;
+}
+
+// The source text of some significant tokens, as their own value.
+[[nodiscard]] std::string part_text(const token_stream & ts, std::span<const std::size_t> at) {
+    if (at.empty()) { return {}; }
+    cursor c{ts, std::vector<std::size_t>(at.begin(), at.end()), 0};
+    return std::string{c.slice(0, at.size())};
+}
+
+// A track list longhand's canonical value for some tokens: `explicit` refuses
+// an auto repeat and `none`, as the list after a grid-template's areas does.
+[[nodiscard]] std::optional<std::string> track_list_of(const token_stream & ts,
+                                                       std::span<const std::size_t> at,
+                                                       bool explicit_only) {
+    const std::string text = part_text(ts, at);
+    if (text.empty()) { return std::nullopt; }
+    const token_stream own = tokenize(text);
+    std::optional<std::string> list = track_list(own, false, {});
+    if (!list) { return std::nullopt; }
+    if (explicit_only && (*list == "none" || list->find("auto-fill") != std::string::npos ||
+                          list->find("auto-fit") != std::string::npos)) {
+        return std::nullopt;
+    }
+    return list;
+}
+
+// The names of one `[ ... ]` into `names`; false for a malformed block.
+[[nodiscard]] bool gather_names(cursor & c, std::vector<std::string> & names) {
+    const std::optional<std::string> block = line_names(c);
+    if (!block) { return false; }
+    if (block->empty()) { return true; }
+    for (const std::string_view word :
+         split_top_level(std::string_view{*block}.substr(1, block->size() - 2), " ")) {
+        if (!word.empty()) { names.emplace_back(word); }
+    }
+    return true;
+}
+
+[[nodiscard]] std::string names_text(std::span<const std::string> names) {
+    if (names.empty()) { return {}; }
+    std::string out = "[";
+    for (std::size_t i = 0; i < names.size(); ++i) { out += (i == 0 ? "" : " ") + names[i]; }
+    return out + "]";
+}
+
+// grid-template's areas form: `[names]? "row" size? [names]?` per row, each
+// row's trailing names and the next row's leading ones one line's names.
+[[nodiscard]] bool split_template_areas(const token_stream & ts, std::span<const std::size_t> at,
+                                        std::vector<std::string> & out) {
+    cursor c{ts, std::vector<std::size_t>(at.begin(), at.end()), 0};
+    std::vector<std::vector<std::string>> lines{{}}; // line names, one entry per grid line
+    std::vector<std::string> sizes;
+    std::string strings;
+    while (!c.done()) {
+        while (!c.done() && c.peek().type == token_type::open_square) {
+            if (!gather_names(c, lines.back())) { return false; }
+        }
+        if (c.done() || c.peek().type != token_type::string) { return false; }
+        strings += (strings.empty() ? "" : " ") + std::string{c.text()};
+        ++c.i;
+        std::string size = "auto";
+        if (!c.done() && c.peek().type != token_type::open_square &&
+            c.peek().type != token_type::string) {
+            const std::optional<std::string> one = track_size(c, size_kind::track, {});
+            if (!one) { return false; }
+            size = *one;
+        }
+        sizes.push_back(size);
+        lines.emplace_back();
+        while (!c.done() && c.peek().type == token_type::open_square) {
+            if (!gather_names(c, lines.back())) { return false; }
+        }
+    }
+    const std::optional<std::string> areas = template_areas(tokenize(strings));
+    if (!areas || *areas == "none") { return false; }
+    std::string rows;
+    for (std::size_t i = 0; i < sizes.size(); ++i) {
+        append(rows, names_text(lines[i]));
+        append(rows, sizes[i]);
+    }
+    append(rows, names_text(lines.back()));
+    out = {rows, "none", *areas};
+    return true;
+}
+
+// A rows longhand as the rows of an areas form - `[names]` before each size
+// and after the last - or nullopt when it is not one: a repeat(), or a
+// different number of rows from the areas'.
+struct template_row {
+    std::string before; // the names on the line above, first row only
+    std::string size;
+    std::string after; // the names on the line below
+};
+
+[[nodiscard]] std::optional<std::vector<template_row>> template_rows(std::string_view rows) {
+    const token_stream ts = tokenize(rows);
+    cursor c{ts, significant(ts), 0};
+    std::vector<template_row> out;
+    std::string pending;
+    while (!c.done()) {
+        if (c.peek().type == token_type::open_square) {
+            const std::optional<std::string> block = line_names(c);
+            if (!block) { return std::nullopt; }
+            if (out.empty()) {
+                pending = *block;
+            } else {
+                out.back().after = *block;
+            }
+            continue;
+        }
+        if (c.peek().type == token_type::function && ascii_iequals(c.text(), "repeat(")) {
+            return std::nullopt;
+        }
+        const std::optional<std::string> size = track_size(c, size_kind::track, {});
+        if (!size) { return std::nullopt; }
+        out.push_back(template_row{out.empty() ? pending : std::string{}, *size, {}});
+    }
+    return out;
+}
+
+} // namespace
+
+namespace detail {
+
+bool split_grid_template(std::string_view value, std::vector<std::string> & out) {
+    const token_stream ts = tokenize(value);
+    const std::vector<std::vector<std::size_t>> parts = slash_parts(ts);
+    if (parts.size() > 2) { return false; }
+    bool strings = false;
+    for (const std::size_t i : parts.front()) {
+        strings = strings || ts.tokens[i].type == token_type::string;
+    }
+    if (strings) {
+        if (!split_template_areas(ts, parts.front(), out)) { return false; }
+        if (parts.size() == 2) {
+            const std::optional<std::string> columns = track_list_of(ts, parts[1], true);
+            if (!columns) { return false; }
+            out[1] = *columns;
+        }
+        return true;
+    }
+    if (parts.size() == 1) {
+        cursor c{ts, parts.front(), 0};
+        if (c.at.size() != 1 || !c.is_ident("none")) { return false; }
+        out = {"none", "none", "none"};
+        return true;
+    }
+    const std::optional<std::string> rows = track_list_of(ts, parts[0], false);
+    const std::optional<std::string> columns = track_list_of(ts, parts[1], false);
+    if (!rows || !columns) { return false; }
+    out = {*rows, *columns, "none"};
+    return true;
+}
+
+std::string fold_grid_template(std::span<const std::string> v) {
+    const std::string & rows = v[0];
+    const std::string & columns = v[1];
+    const std::string & areas = v[2];
+    if (ascii_iequals(areas, "none")) {
+        if (ascii_iequals(rows, "none") && ascii_iequals(columns, "none")) { return "none"; }
+        return rows + " / " + columns;
+    }
+    // THE AREAS FORM, which spells each row beside its string - so it exists
+    // only when the rows are one size per string, with no repeat() among them.
+    const std::optional<std::vector<template_row>> each = template_rows(rows);
+    const token_stream strings = tokenize(areas);
+    std::vector<std::string_view> row_strings;
+    for (const css_token & t : strings.tokens) {
+        if (t.type == token_type::string) { row_strings.push_back(strings.text_of(t)); }
+    }
+    if (!each || each->size() != row_strings.size()) { return {}; }
+    if (!ascii_iequals(columns, "none") && (columns.find("auto-fill") != std::string::npos ||
+                                            columns.find("auto-fit") != std::string::npos)) {
+        return {};
+    }
+    std::string out;
+    for (std::size_t i = 0; i < each->size(); ++i) {
+        const template_row & row = (*each)[i];
+        append(out, row.before);
+        append(out, row_strings[i]);
+        if (!ascii_iequals(row.size, "auto")) { append(out, row.size); }
+        append(out, row.after);
+    }
+    if (!ascii_iequals(columns, "none")) { out += " / " + columns; }
+    return out;
+}
+
+bool split_grid(std::string_view value, std::vector<std::string> & out) {
+    std::vector<std::string> template_part;
+    if (split_grid_template(value, template_part)) {
+        out = {template_part[0], template_part[1], template_part[2], "auto", "auto", "row"};
+        return true;
+    }
+    const token_stream ts = tokenize(value);
+    const std::vector<std::vector<std::size_t>> parts = slash_parts(ts);
+    if (parts.size() != 2) { return false; }
+    // `[ auto-flow && dense? ] <track-size>*` - the auto-flow side.
+    const auto flow_side = [&](std::span<const std::size_t> at, std::string & dense,
+                               std::string & sizes) {
+        std::vector<std::size_t> rest;
+        bool flow = false;
+        std::size_t k = 0;
+        for (; k < at.size() && k < 2; ++k) {
+            const css_token & t = ts.tokens[at[k]];
+            if (t.type != token_type::ident) { break; }
+            if (ascii_iequals(ts.text_of(t), "auto-flow") && !flow) {
+                flow = true;
+            } else if (ascii_iequals(ts.text_of(t), "dense") && dense.empty()) {
+                dense = " dense";
+            } else {
+                break;
+            }
+        }
+        if (!flow) { return false; }
+        rest.assign(at.begin() + static_cast<std::ptrdiff_t>(k), at.end());
+        sizes = "auto";
+        if (rest.empty()) { return true; }
+        const std::string text = part_text(ts, rest);
+        const std::optional<std::string> list = track_list(tokenize(text), true, {});
+        if (!list) { return false; }
+        sizes = *list;
+        return true;
+    };
+    std::string dense, sizes;
+    if (flow_side(parts[0], dense, sizes)) {
+        const std::optional<std::string> columns = track_list_of(ts, parts[1], false);
+        if (!columns) { return false; }
+        out = {"none", *columns, "none", sizes, "auto", "row" + dense};
+        return true;
+    }
+    dense.clear();
+    if (flow_side(parts[1], dense, sizes)) {
+        const std::optional<std::string> rows = track_list_of(ts, parts[0], false);
+        if (!rows) { return false; }
+        out = {*rows, "none", "none", "auto", sizes, "column" + dense};
+        return true;
+    }
+    return false;
+}
+
+std::string fold_grid(std::span<const std::string> v) {
+    const std::string & rows = v[0];
+    const std::string & columns = v[1];
+    const std::string & areas = v[2];
+    const std::string & auto_rows = v[3];
+    const std::string & auto_columns = v[4];
+    const std::string & flow = v[5];
+    const bool auto_rows_initial = ascii_iequals(auto_rows, "auto");
+    const bool auto_columns_initial = ascii_iequals(auto_columns, "auto");
+    if (auto_rows_initial && auto_columns_initial && ascii_iequals(flow, "row")) {
+        return fold_grid_template(v.first(3));
+    }
+    const bool dense = flow.ends_with(" dense");
+    const std::string_view direction = std::string_view{flow}.substr(0, flow.find(' '));
+    if (ascii_iequals(areas, "none") && ascii_iequals(rows, "none") && direction == "row" &&
+        auto_columns_initial) {
+        return std::string{"auto-flow"} + (dense ? " dense" : "") +
+               (auto_rows_initial ? "" : " " + auto_rows) + " / " + columns;
+    }
+    if (ascii_iequals(areas, "none") && ascii_iequals(columns, "none") && direction == "column" &&
+        auto_rows_initial) {
+        return rows + " / auto-flow" + (dense ? " dense" : "") +
+               (auto_columns_initial ? "" : " " + auto_columns);
+    }
+    return {};
 }
 
 } // namespace detail

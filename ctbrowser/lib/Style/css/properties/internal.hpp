@@ -134,6 +134,13 @@ struct scan {
 [[nodiscard]] bool split_grid_lines(std::string_view shorthand, std::string_view value,
                                     std::vector<std::string> & out);
 [[nodiscard]] std::string fold_grid_lines(std::span<const std::string> lines);
+// grid-template into rows, columns and areas; grid into those and auto-rows,
+// auto-columns and auto-flow. A fold is empty when the longhands cannot be
+// one value of the shorthand.
+[[nodiscard]] bool split_grid_template(std::string_view value, std::vector<std::string> & out);
+[[nodiscard]] std::string fold_grid_template(std::span<const std::string> v);
+[[nodiscard]] bool split_grid(std::string_view value, std::vector<std::string> & out);
+[[nodiscard]] std::string fold_grid(std::span<const std::string> v);
 // Border radius shorthand and corner longhands; defined in shorthands.cpp.
 [[nodiscard]] bool match_border_radius(std::string_view value, bool shorthand, std::string & out);
 // Border image shorthand and its numeric/image longhands; defined in shorthands.cpp.

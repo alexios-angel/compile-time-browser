@@ -151,9 +151,31 @@ void test_what_a_page_reads_back() {
     CHECK_EQ(logged(page, "set="), std::string{"set=20px / 1.5 fantasy|20px / 30px fantasy"});
 }
 
+// grid-template and grid (CSS Grid 2 §7.4, §7.8): split into their longhands
+// and folded back only when the longhands can be spelled as one value.
+void test_grid_is_a_shorthand() {
+    declaration_block block;
+    CHECK(set_declaration(block, "grid-template", "[a] \"a\" 10px [] \"b\" / 5fr", false));
+    CHECK_EQ(declaration_value(block, "grid-template-rows"), std::string{"[a] 10px auto"});
+    CHECK_EQ(declaration_value(block, "grid-template-areas"), std::string{"\"a\" \"b\""});
+    CHECK_EQ(declaration_value(block, "grid-template"), std::string{"[a] \"a\" 10px \"b\" / 5fr"});
+    CHECK_EQ(set_and_read("grid-template", "none / none"), std::string{"none"});
+    CHECK_EQ(set_and_read("grid-template", "10px"), std::string{});
+    CHECK_EQ(set_and_read("grid", "auto-flow auto / 100px 100px"),
+             std::string{"none / 100px 100px"});
+    CHECK_EQ(set_and_read("grid", "1px / auto-flow dense 2px"),
+             std::string{"1px / auto-flow dense 2px"});
+    declaration_block mixed;
+    CHECK(set_declaration(mixed, "grid", "30px / 50px", false));
+    CHECK(set_declaration(mixed, "grid-auto-flow", "column", false));
+    CHECK_EQ(declaration_value(mixed, "grid"), std::string{});
+    CHECK_EQ(declaration_value(mixed, "grid-template"), std::string{"30px / 50px"});
+}
+
 } // namespace
 
 int main() {
+    test_grid_is_a_shorthand();
     test_white_space_is_a_shorthand();
     test_animation_is_a_shorthand();
     test_what_a_page_reads_back();

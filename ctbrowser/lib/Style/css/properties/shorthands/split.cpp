@@ -772,6 +772,8 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     }
     case shape::grid_lines:
         return split_grid_lines(e.syntax->name, value, out) ? split::ok : split::invalid;
+    case shape::grid_template: return split_grid_template(value, out) ? split::ok : split::invalid;
+    case shape::grid: return split_grid(value, out) ? split::ok : split::invalid;
     case shape::slash_pair: return split_slash_pair(e, value, out);
     case shape::bar: return split_bar(e, parts, out);
     case shape::gap_rule: return split_gap_rule(value, out) ? split::ok : split::invalid;

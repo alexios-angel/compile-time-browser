@@ -31,6 +31,8 @@ enum class shape : std::uint8_t {
     radius,          // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
     place,           // `place-*`: an align value then a justify one, each of several words
     grid_lines,      // grid-row / grid-column / grid-area: `/`-separated grid lines
+    grid_template,   // CSS Grid 2 §7.4: rows / columns, or the areas form (grid.cpp)
+    grid,            // CSS Grid 2 §7.8: a grid-template, or one side auto-flow (grid.cpp)
     slash_pair,      // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
     bar,             // `a || b || c`: each part goes to the longhand that takes it
     columns,         // width/count and optional `/ column-height`; resets column-wrap
@@ -221,6 +223,12 @@ inline constexpr shorthand_syntax table[] = {
     {"grid-column", shape::grid_lines, "grid-column-start grid-column-end", ""},
     {"grid-area", shape::grid_lines,
      "grid-row-start grid-column-start grid-row-end grid-column-end", ""},
+    {"grid-template", shape::grid_template,
+     "grid-template-rows grid-template-columns grid-template-areas", ""},
+    {"grid", shape::grid,
+     "grid-template-rows grid-template-columns grid-template-areas grid-auto-rows "
+     "grid-auto-columns grid-auto-flow",
+     ""},
     {"container", shape::slash_pair, "container-name container-type", ""},
     {"place-content", shape::place, "align-content justify-content", ""},
     {"place-items", shape::place, "align-items justify-items", ""},

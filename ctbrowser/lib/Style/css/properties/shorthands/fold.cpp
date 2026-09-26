@@ -246,6 +246,8 @@ namespace ctbrowser::style::css::shorthand_detail {
     case shape::pair:
     case shape::place: return v[0] == v[1] ? v[0] : join(v);
     case shape::grid_lines: return fold_grid_lines(v);
+    case shape::grid_template: return fold_grid_template(v);
+    case shape::grid: return fold_grid(v);
     case shape::slash_pair:
         return ascii_iequals(v[1], initial_of(e.longhands[1])) ? v[0] : v[0] + " / " + v[1];
     case shape::bar:
