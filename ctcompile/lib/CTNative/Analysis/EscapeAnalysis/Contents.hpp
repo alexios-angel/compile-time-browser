@@ -88,6 +88,31 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
         while (true) {
             // The shared budget bounds traversal; exhaustion supplies no partial key.
             if (!spend(1)) { return {}; }
+            if (auto selected = value.getDefiningOp<mlir::scf::IfOp>()) {
+                const auto position = llvm::cast<mlir::OpResult>(value).getResultNumber();
+                mlir::Value common;
+                for (mlir::Region & region : selected->getRegions()) {
+                    if (!spend(1)) { return {}; }
+                    if (!llvm::hasSingleElement(region) || region.front().empty() ||
+                        region.front().getNumArguments() != 0) {
+                        common = {};
+                        break;
+                    }
+                    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                    if (!yield || yield.getNumOperands() != selected.getNumResults() ||
+                        (common && common != yield.getOperand(position))) {
+                        common = {};
+                        break;
+                    }
+                    common = yield.getOperand(position);
+                }
+                // An identical saved SSA value keeps its snapshot through any
+                // enclosing Boolean chain. Every arm effect is checked separately.
+                if (common) {
+                    value = common;
+                    continue;
+                }
+            }
             if (auto convert = value.getDefiningOp<ctjs::ConvertOp>();
                 convert && convert.getKind() == ctjs::ConvertKind::ToBoolean) {
                 value = convert.getOperand();
