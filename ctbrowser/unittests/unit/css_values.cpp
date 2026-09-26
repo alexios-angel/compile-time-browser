@@ -114,6 +114,9 @@ void test_the_things_that_must_survive() {
     ok("list-style-type", "symbols(cyclic 'a')", "symbols(cyclic \"a\")");
     bad("list-style-type", "symbols(fixed url(\"x.svg\"))");
     bad("list-style-type", "\"marker\" none");
+    ok("text-fit", "GROW consistent 300%", "grow consistent 300%");
+    bad("text-fit", "grow 150% consistent");
+    bad("text-fit", "consistent 100%");
     // AN ARBITRARY SUBSTITUTION FUNCTION IS A VALUE FOR ANY PROPERTY, CSS
     // Values 5: what its arguments mean is decided after parsing, so a length
     // grammar has no business refusing one.

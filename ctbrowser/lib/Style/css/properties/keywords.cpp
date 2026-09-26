@@ -896,6 +896,30 @@ constexpr pair_grammar pair_grammars[] = {
     return symbols_valid(ts, std::span{at}.subspan(1, at.size() - 2));
 }
 
+// `none | [ grow | shrink ] [ consistent | per-line | per-line-all ]?
+// <percentage>?` (CSS Text 4 §10.1).
+[[nodiscard]] std::optional<std::string> text_fit(const token_stream & ts, const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    const auto word = [&](std::size_t i) {
+        const css_token & t = ts.tokens[at[i]];
+        return t.type == token_type::ident ? ascii_lower_copy(ts.text_of(t)) : std::string{};
+    };
+    if (at.empty() || at.size() > 3) { return std::nullopt; }
+    if (at.size() == 1 && word(0) == "none") { return "none"; }
+    if (word(0) != "grow" && word(0) != "shrink") { return std::nullopt; }
+    std::string out = word(0);
+    std::size_t k = 1;
+    if (k < at.size() && !word(k).empty() &&
+        has_keyword("consistent per-line per-line-all", word(k))) {
+        out += " " + word(k++);
+    }
+    if (k < at.size() && ts.tokens[at[k]].type == token_type::percentage) {
+        out += " " + serialize_number(ts.tokens[at[k++]].number) + "%";
+    }
+    if (k != at.size()) { return std::nullopt; }
+    return out;
+}
+
 // A <'position-area'> as position-try-fallbacks lists it (CSS Anchor
 // Positioning 1 §3.1): one or two keywords of one grammar - x with y, block
 // with inline, self-block with self-inline, or two axis-free ones - with
@@ -1456,6 +1480,10 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
     if (!handled && ascii_iequals(property, "font-palette")) {
         handled = true;
         answer = font_palette(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "text-fit")) {
+        handled = true;
+        answer = text_fit(ts, found);
     }
     if (!handled && ascii_iequals(property, "position-try-fallbacks")) {
         handled = true;

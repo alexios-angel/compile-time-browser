@@ -348,6 +348,12 @@ namespace ctbrowser::style::css::shorthand_detail {
     case shape::border_image: return fold_border_image(v);
     case shape::background: return fold_background(v);
     case shape::mask: return fold_mask(v);
+    case shape::text_spacing:
+        if (v[0] == "space-all" && v[1] == "no-autospace") { return "none"; }
+        if (v[0] == "auto" && v[1] == "auto") { return "auto"; }
+        if (v[0] == "auto" || v[1] == "auto") { return {}; }
+        if (v[0] == "normal") { return v[1]; }
+        return v[1] == "normal" ? v[0] : v[0] + " " + v[1];
     case shape::position_try: return ascii_iequals(v[0], "normal") ? v[1] : v[0] + " " + v[1];
     case shape::pair:
     case shape::place: return v[0] == v[1] ? v[0] : join(v);

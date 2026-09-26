@@ -852,6 +852,48 @@ split split_position_try(std::string_view value, std::vector<std::string> & out)
     return split::ok;
 }
 
+// `text-spacing`, CSS Text 4 §8.1: `none` is space-all and no-autospace,
+// `auto` both auto, and otherwise a text-spacing-trim keyword at one end
+// with text-autospace's words - or nothing, its initial - beside it.
+split split_text_spacing(std::string_view value, std::vector<std::string> & out) {
+    std::vector<std::string_view> words;
+    for (const std::string_view raw : split_top_level(value, html_whitespace)) {
+        if (!trim(raw, html_whitespace).empty()) { words.push_back(trim(raw, html_whitespace)); }
+    }
+    if (words.size() == 1 && ascii_iequals(words[0], "none")) {
+        out = {"space-all", "no-autospace"};
+        return split::ok;
+    }
+    if (words.size() == 1 && ascii_iequals(words[0], "auto")) {
+        out = {"auto", "auto"};
+        return split::ok;
+    }
+    for (const std::size_t at : {std::size_t{0}, words.size() - 1}) {
+        if (words.empty()) { break; }
+        const value_check trim_part = check_declaration("text-spacing-trim", words[at], false);
+        if (!trim_part.valid || is_wide_keyword(trim_part.serialized) ||
+            ascii_iequals(trim_part.serialized, "auto")) {
+            continue;
+        }
+        std::string rest;
+        for (std::size_t i = 0; i < words.size(); ++i) {
+            if (i != at) { rest += (rest.empty() ? "" : " ") + std::string{words[i]}; }
+        }
+        if (rest.empty()) {
+            out = {trim_part.serialized, "normal"};
+            return split::ok;
+        }
+        const value_check space = check_declaration("text-autospace", rest, false);
+        if (!space.valid || is_wide_keyword(space.serialized) ||
+            ascii_iequals(space.serialized, "auto")) {
+            continue;
+        }
+        out = {trim_part.serialized, space.serialized};
+        return split::ok;
+    }
+    return split::invalid;
+}
+
 // A value's halves either side of its one top-level `/`, EMPTY ONES KEPT:
 // `/ 10px` is a first half missing, not a value without a slash, which is
 // what split_top_level - skipping empty fields - made of it. The value alone
@@ -1001,6 +1043,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::background: return split_background(value, out) ? split::ok : split::invalid;
     case shape::mask: return split_mask(value, out) ? split::ok : split::invalid;
     case shape::position_try: return split_position_try(value, out);
+    case shape::text_spacing: return split_text_spacing(value, out);
     case shape::border_image: return split_border_image(value, out) ? split::ok : split::invalid;
     case shape::place: {
         std::string align, justify;

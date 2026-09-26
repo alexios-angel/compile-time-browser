@@ -742,6 +742,14 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             return out.empty() ? collapse_keyword(text) : out;
         }
+        // text-fit's default `consistent` is left unwritten (text-fit-computed).
+        if (property == "text-fit") {
+            std::string words = collapse_keyword(text);
+            if (const std::size_t at = words.find(" consistent"); at != std::string::npos) {
+                words.erase(at, 11);
+            }
+            return words;
+        }
         // 4h. offset-rotate's angle in degrees, `reverse` as `auto 180deg`
         //     (Motion Path 1 §4.4, offset-rotate-computed).
         if (property == "offset-rotate") {

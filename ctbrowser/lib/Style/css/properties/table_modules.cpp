@@ -306,6 +306,9 @@ constexpr property_syntax modules[] = {
     {"text-autospace", k::freeform, "", "normal", true, false},
     {"text-spacing-trim", k::keyword_only,
      "normal auto space-all trim-both trim-all trim-start space-first", "normal", true, false},
+    // CSS Text 4 §8.1's shorthand of the two, and §10's text-fit.
+    {"text-spacing", k::freeform, "", "normal", true, false, true},
+    {"text-fit", k::freeform, "", "none", false, false}, // keywords.cpp
     {"text-size-adjust", k::percentage, "auto none", "auto", true, true},
     {"text-combine-upright", k::freeform, "", "none", true, false},
     {"text-orientation", k::keyword_only, "mixed upright sideways", "mixed", true, false},
