@@ -287,6 +287,23 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-string-read-prefix-return": """function customElements(anchor) {
+  const saved = anchor.getAttribute('data-number');
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-string-read-prefix-snapshot": """function customElements(anchor) {
+  const saved = anchor.getAttribute('data-number');
+  try {
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -513,7 +530,7 @@ def main():
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
     for name, source in SOURCES.items():
-        string_read = name == "write-string-read-snapshot"
+        string_read = name.startswith("write-string-read-")
         number_inputs = (
             tuple(
                 zip(
@@ -1113,6 +1130,48 @@ def main():
                     "const saved =",
                     "Number.prototype.toString = anchor; const saved =",
                 ),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
+    raw_string_body = SOURCES["write-string-read-prefix-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    refusals.update(
+        {
+            "write-string-read-prefix-" + name: raw_string_body.replace(before, after)
+            for name, before, after in (
+                ("coercing-input", "anchor.getAttribute('data-number')", "anchor"),
+                (
+                    "wrong-receiver",
+                    "const saved = anchor.getAttribute('data-number')",
+                    "const read = anchor.getAttribute; const saved = read('data-number')",
+                ),
+                (
+                    "rebound-getter",
+                    "const saved =",
+                    "anchor.getAttribute = anchor.setAttribute; const saved =",
+                ),
+                ("missing-argument", "getAttribute('data-number')", "getAttribute()"),
+                (
+                    "extra-argument",
+                    "getAttribute('data-number')",
+                    "getAttribute('data-number', 'extra')",
+                ),
+                (
+                    "coercing-name",
+                    "getAttribute('data-number')",
+                    "getAttribute(anchor)",
+                ),
+                (
+                    "unknown-getter",
+                    "anchor.getAttribute('data-number')",
+                    "anchor.unknown",
+                ),
+                (
+                    "unknown-producer",
+                    "anchor.getAttribute('data-number')",
+                    "anchor.unknown()",
+                ),
+                ("prefix-effect", "const saved =", "anchor.unknown(); const saved ="),
                 ("invalid-name", "'data-written'", "'bad name'"),
             )
         }
