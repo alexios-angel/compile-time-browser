@@ -243,6 +243,12 @@ std::size_t dom_bindings::run_due_callbacks() {
         }
         note_callback_fault("requestAnimationFrame");
         ++ran;
+        // EACH CALLBACK ENDS IN A MICROTASK CHECKPOINT, as a timer does:
+        // "clean up after running a callback" (HTML 8.1.4.4) checkpoints once
+        // the script stack is empty, so the first callback's promise
+        // reactions run before the second callback
+        // (promise-resolution-order.html).
+        cx_->drain_microtasks();
     }
     cancelled_frames_.clear();
     cx_->drain_microtasks();
