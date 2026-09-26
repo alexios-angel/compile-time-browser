@@ -393,7 +393,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         // so `x = super.y` reads the parent's - wired, as an object literal's
         // method is, only when an initialiser says `super` or `eval(`.
         if (std::ranges::any_of(instance_fields, [&](std::int32_t f) {
-                return mentions_super(at(f).b, false) || mentions_direct_eval(at(f).b, false);
+                return mentions_super(at(f).b, false) || contains_direct_eval(at(f).b);
             })) {
             proto().emit(instruction{op::set_prop, init, name_operand("__home"), prototype_reg});
         }

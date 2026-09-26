@@ -885,7 +885,7 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
                 continue;
             }
             const std::uint16_t fnreg = alloc_reg();
-            const bool homed = mentions_super(prop.b, true) || mentions_direct_eval(prop.b, true);
+            const bool homed = mentions_super(prop.b, true) || contains_direct_eval(prop.b);
             method_pending_ = homed; // see frame::has_home
             // An accessor is named for its key, "get id" (15.4.5 step 6).
             compile_named_expr(prop.b, fnreg,
@@ -908,7 +908,7 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
         }
         const std::uint16_t v = alloc_reg();
         const bool homed =
-            prop.c == 1 && (mentions_super(prop.b, true) || mentions_direct_eval(prop.b, true));
+            prop.c == 1 && (mentions_super(prop.b, true) || contains_direct_eval(prop.b));
         if (prop.c == 2 && prop.b >= 0) {
             // `{ a = 1 }` outside a pattern: the early-error pass refuses it
             // (13.2.5.1), so this is unreachable from a checked program.

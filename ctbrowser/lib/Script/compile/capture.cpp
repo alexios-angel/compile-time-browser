@@ -152,18 +152,14 @@ bool compiler_impl::mentions_super(std::int32_t idx, bool root) const {
     return false;
 }
 
-bool compiler_impl::mentions_direct_eval(std::int32_t idx, bool root) const {
-    if (idx < 0) { return false; }
-    const vp::node & n = at(idx);
-    if (is_direct_eval_call(n)) { return true; }
-    if (!root && (n.kind == vp::nk::func_decl || n.kind == vp::nk::func_expr)) { return false; }
-    for (const std::int32_t slot : child_slots(n)) {
-        if (mentions_direct_eval(slot, false)) { return true; }
-    }
-    for (const std::int32_t k : kids(n)) {
-        if (mentions_direct_eval(k, false)) { return true; }
-    }
-    return false;
+bool compiler_impl::contains_direct_eval(std::int32_t idx) const {
+    // The index covers the program's own tree; a template hole's sub-tree
+    // numbers its nodes afresh (see compile_ident's dead-zone note).
+    if (current_ast_ != &ast_) { return false; }
+    const interval where = range_of(idx);
+    if (where.empty()) { return false; }
+    const auto e = std::ranges::lower_bound(eval_ticks_, where.lo);
+    return e != eval_ticks_.end() && *e < where.hi;
 }
 
 bool compiler_impl::arrow_wants_new_target(std::int32_t idx, bool in_arrow) const {

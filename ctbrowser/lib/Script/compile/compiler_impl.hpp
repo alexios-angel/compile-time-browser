@@ -463,9 +463,11 @@ public:
     // Set for a method, accessor or constructor about to be compiled - one
     // whose home object is wired; the body consumes it (frame::has_home).
     bool method_pending_ = false;
-    // Does the subtree say `eval(...)` - a direct eval, which may say `super`
-    // for the function it is in (the same walk as mentions_super).
-    [[nodiscard]] bool mentions_direct_eval(std::int32_t idx, bool root) const;
+    // Does this function (or field initialiser) hold a direct `eval(...)` -
+    // which may say `super` for it - itself or in anything nested (the
+    // capture index's eval ticks, so a nested function's counts too: the
+    // home object it wires is then only unneeded, never missing).
+    [[nodiscard]] bool contains_direct_eval(std::int32_t idx) const;
     // AN ARROW'S new.target IS ITS ENCLOSING FUNCTION'S (15.3.3: it has none
     // of its own), and load_new_target reads the running frame's - the
     // arrow's, undefined. A function whose body has an arrow saying
