@@ -438,7 +438,7 @@ bool compiler_impl::compile_param_eval(const vp::node & n, std::uint16_t dst) {
 // the call hands them over by name to direct_eval_name, which compiles the
 // source with those names as its entry function's upvalues:
 //
-//   (eval, source, callee, this, descriptor, cells...)
+//   (eval, source, callee, this, descriptor, new.target, cells...)
 //
 // `eval` is the binding's current value - the call is only direct if it is
 // %eval% (step 6 of 13.3.6.1), which the native checks - `callee` the running
@@ -471,12 +471,9 @@ eval_site compiler_impl::eval_site_here() {
 }
 
 bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
-    // AT A PROGRAM'S TOP LEVEL only inside a direct eval's program, whose
-    // caller's bindings a nested `eval` sees too.
-    if (!is_direct_eval_call(n) || (frames_.size() < 2 && eval_outer_names_.empty()) ||
-        !with_scopes_.empty()) {
-        return false;
-    }
+    // AT A PROGRAM'S TOP LEVEL TOO: a block's `let` there is a local of the
+    // script frame, which `{ let x; eval('x') }` reads (lex-env-heritage).
+    if (!is_direct_eval_call(n) || !with_scopes_.empty()) { return false; }
     const std::size_t level = frames_.size() - 1;
     // `eval` that is a local or an upvalue is somebody else's function.
     if (find_local_entry(fn(), "eval") != nullptr || resolve_upvalue(level, "eval") >= 0) {
@@ -573,11 +570,15 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
     }
     const std::uint16_t names = alloc_reg();
     emit_string(names, descriptor);
+    // The eval's `new.target` is its caller's (GetNewTarget reads the this
+    // environment it shares).
+    const std::uint16_t target = alloc_reg();
+    proto().emit(instruction{op::load_new_target, target});
     for (const local * l : handed) {
         const std::uint16_t r = alloc_reg();
         proto().emit(instruction{op::move, r, l->reg});
     }
-    proto().emit(instruction{op::call, base, static_cast<std::uint16_t>(5 + handed.size())});
+    proto().emit(instruction{op::call, base, static_cast<std::uint16_t>(6 + handed.size())});
     proto().emit(instruction{op::move, dst, base});
     release_to(mark);
     return true;

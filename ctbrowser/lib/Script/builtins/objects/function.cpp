@@ -472,8 +472,9 @@ void install_dynamic_function(context & cx) {
                                        : mode == "sloppy" ? immutability::sloppy
                                                           : immutability::none);
                 };
+                const value new_target = a.size() > 5 ? a[5] : value::undefined();
                 eval_site site;
-                std::size_t next = 5;
+                std::size_t next = 6;
                 std::size_t at = 0;
                 bool first = true;
                 while (at <= descriptor.size()) {
@@ -534,6 +535,7 @@ void install_dynamic_function(context & cx) {
                         entry->set("__home", *home);
                     }
                 }
+                c.pass_new_target(new_target);
                 return c.call(value::object(entry), {}, self);
             });
         native->retained.push_back(intrinsic);

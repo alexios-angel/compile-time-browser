@@ -232,7 +232,7 @@ void compiler_impl::collect_declared_names(std::int32_t body) {
     }
 }
 
-void compiler_impl::predeclare_locals(std::int32_t body) {
+void compiler_impl::predeclare_locals(std::int32_t body, bool lexical_only) {
     // A PROGRAM'S top level counts too, not only a function's block. It
     // never used to: a classic script's top-level declarations are globals,
     // so there was nothing to pre-declare. A MODULE's are locals, and a
@@ -282,6 +282,10 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
         }
         const std::int32_t stmt =
             at(outer).kind == vp::nk::export_decl && at(outer).a >= 0 ? at(outer).a : outer;
+        if (lexical_only && !(at(stmt).kind == vp::nk::var_decl && at(stmt).text != "var") &&
+            at(stmt).kind != vp::nk::class_decl) {
+            continue;
+        }
         if (at(stmt).kind == vp::nk::var_decl) {
             // A `let`/`const`/`using` binding is in its TDZ until its
             // declarator has run: the offset past the declarator (or, with
@@ -330,6 +334,7 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
             hoist(std::string{at(stmt).text}, at(stmt).end);
         }
     }
+    if (lexical_only) { return; }
     // And every `var` in a NESTED block, which the loop above cannot see -
     // it walks this body's own statements only. `hoist` returns early on a
     // name already declared, so the statements just handled cost a lookup.

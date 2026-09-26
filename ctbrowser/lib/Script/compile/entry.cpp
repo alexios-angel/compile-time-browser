@@ -79,10 +79,17 @@ void compiler_impl::compile_program() {
             return std::ranges::find(eval_outer_names_, name) != eval_outer_names_.end();
         });
     }
-    if (top_level_is_scope_) { predeclare_locals(ast_.root); }
+    // AN EVAL'S `let`, `const` and `class` ARE ITS OWN, strict or not
+    // (19.2.1.3 step 17: a new declarative environment) - hoisted like a
+    // function body's, where only its `var`s go the caller's way.
+    if (top_level_is_scope_) {
+        predeclare_locals(ast_.root);
+    } else if (completion_value_) {
+        predeclare_locals(ast_.root, true);
+    }
     // A CLASSIC SCRIPT'S TOP-LEVEL `const`s are globals here, and immutable
     // ones - known before the hoisted functions below compile their writes.
-    if (!top_level_is_scope_) {
+    if (!top_level_is_scope_ && !completion_value_) {
         for (const std::int32_t s : kids(root)) {
             if (at(s).kind != vp::nk::var_decl ||
                 declared_immutability(at(s)) == immutability::none) {

@@ -69,6 +69,17 @@ int main() {
               " y = eval('super.x'); z = () => super.x; } var b = new B();"
               " return b.y + b.z(); })()",
               "2");
+    // ...the eval's `new.target` is its caller's...
+    js_expect("(function(){ function F() { this.t = eval('new.target'); }"
+              " return new F().t === F; })()",
+              "true");
+    // ...its `let`, `const` and `class` are its own, strict or not...
+    js_expect("(function(){ eval('let q = 1; class K {}'); return typeof q + typeof K; })()",
+              "undefinedundefined");
+    js_expect("(function(){ try { eval('typeof w; let w;'); } catch (e) {"
+              " return e.constructor.name; } return 'none'; })()",
+              "ReferenceError");
+    js_expect("(function(){ return eval('let v = 3; (() => v)()'); })()", "3");
     // ...and a class field initialiser may not say `arguments`.
     js_expect("(function(){ class C { x = eval('arguments'); } try { new C(); } catch (e) {"
               " return e.constructor.name; } return 'none'; })()",

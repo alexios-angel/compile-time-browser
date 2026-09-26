@@ -402,7 +402,9 @@ public:
     // Hoist this body's own `let`/`const`/`var` names into registers before
     // anything is compiled. Nested function declarations hoist too and are
     // compiled first, so the locals they capture have to exist by then.
-    void predeclare_locals(std::int32_t body);
+    // `lexical_only`: an eval's top level, whose `let`/`const`/`class` are its
+    // own (19.2.1.3 step 17's lexEnv) while its `var`s stay the caller's.
+    void predeclare_locals(std::int32_t body, bool lexical_only = false);
     template <typename Hoist> void hoist_nested_vars(std::int32_t index, const Hoist & hoist);
     template <typename Each>
     void each_block_function(std::int32_t index, const Each & each,
