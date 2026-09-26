@@ -198,6 +198,32 @@ void compiler_impl::compile_for(const vp::node & n) {
     pop_scope();
 }
 
+void compiler_impl::compile_for_head_source(const vp::node & n, std::uint16_t dst) {
+    // d: bit0 const, bit3 let, bit4 using, bit5 await using - the lexical
+    // heads. Only reads in this frame are decided (compile_ident); a closure
+    // made here that reads the name later is the runtime check this engine
+    // does not make.
+    if ((n.d & 2) != 0 || (n.d & 57) == 0) {
+        compile_expr(n.b, dst);
+        return;
+    }
+    std::vector<std::string> saved = tdz_names_;
+    const std::size_t saved_frame = tdz_frame_;
+    if (tdz_frame_ != frames_.size() - 1) {
+        tdz_names_.clear();
+        tdz_frame_ = frames_.size() - 1;
+    }
+    const vp::node & target = at(n.a);
+    if (target.b >= 0) {
+        pattern_names(target.b, tdz_names_);
+    } else {
+        tdz_names_.emplace_back(target.text);
+    }
+    compile_expr(n.b, dst);
+    tdz_names_ = std::move(saved);
+    tdz_frame_ = saved_frame;
+}
+
 // `for await (x of y)`, 14.7.5.6 with iteratorKind async. Unlike the sync
 // loop below, which MATERIALISES its source through op::iterable, this one
 // runs the real protocol: GetIterator(async) through the builtin's hidden
@@ -223,7 +249,7 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     proto().emit(instruction::with_bx(op::get_global, iterator,
                                       intern_name(std::string{async_iterator_name})));
     const std::uint16_t source = alloc_reg();
-    compile_expr(n.b, source);
+    compile_for_head_source(n, source);
     proto().emit(instruction{op::call, iterator, 1});
 
     const vp::node & target = at(n.a);
@@ -326,7 +352,7 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     const std::uint32_t mark = reg_mark();
 
     const std::uint16_t source = alloc_reg();
-    compile_expr(n.b, source);
+    compile_for_head_source(n, source);
     const bool of = n.text != "in";
     // `for (x of ...)` RUNS THE ITERATOR PROTOCOL for a generator or a page's
     // own iterable - one `next()` per iteration, `return()` on `break` - and

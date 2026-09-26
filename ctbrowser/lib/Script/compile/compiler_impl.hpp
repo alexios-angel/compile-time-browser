@@ -493,6 +493,9 @@ public:
     // undefined when none does at run time - and answers whether any `with`
     // applies to the name at all (nothing is emitted when none does).
     [[nodiscard]] bool emit_with_object(std::string_view name, std::uint16_t obj);
+    // Before a write through the with-object `obj`: in strict code, the
+    // ReferenceError when it no longer has `name` (see the definition).
+    void emit_with_still_bound(std::uint16_t obj, std::string_view name);
     [[nodiscard]] std::vector<const with_scope *> applicable_with_scopes(std::string_view name);
     // Does this call need a receiver register: a member callee, or a plain
     // name inside a `with` (the object that binds it is the `this`, 13.3.6.2
@@ -750,6 +753,10 @@ public:
     // dispatches through Symbol.iterator.
     void compile_for_of(const vp::node & n);
     void compile_for_await(const vp::node & n);
+    // The `of`/`in` operand, with a lexical head's names in their dead zone
+    // (14.7.5.6 ForIn/OfHeadEvaluation step 2): `for (let x of [x])` reads the
+    // new, uninitialised `x`.
+    void compile_for_head_source(const vp::node & n, std::uint16_t dst);
 
     // switch.
     //

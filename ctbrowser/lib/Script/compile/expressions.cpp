@@ -227,6 +227,7 @@ void compiler_impl::emit_write(std::string_view name_text, std::uint16_t src) {
         emit_plain_write(name_text, src);
         const std::size_t done = proto().emit(instruction{op::jump});
         patch_here(bound);
+        emit_with_still_bound(obj, name_text);
         proto().emit(instruction{op::set_prop, obj, name_operand(std::string{name_text}), src});
         patch_here(done);
         release_to(mark);
@@ -646,6 +647,9 @@ void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
         emit_store(plain, src);
         const std::size_t done = proto().emit(instruction{op::jump});
         patch_here(bound);
+        // A COPY: the check interns strings, which can grow `names`.
+        const std::string name = proto().names[ref.with_name];
+        emit_with_still_bound(ref.with_reg, name);
         proto().emit(instruction{op::set_prop, ref.with_reg, ref.with_name, src});
         patch_here(done);
         return;
