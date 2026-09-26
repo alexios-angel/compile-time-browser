@@ -117,6 +117,10 @@ inline constexpr std::string_view define_accessor_name = "__ctbrowser_define_acc
 // `name` or `length` needs, since those are own properties of every function
 // already and a set_prop to them in strict (class) code is the TypeError.
 inline constexpr std::string_view define_own_name = "__ctbrowser_define_own";
+// ToPropertyKey (7.1.19): a symbol, or the string ToPrimitive(hint string)
+// makes - what a class field's computed name is evaluated to, once, when the
+// class is defined (15.7.10).
+inline constexpr std::string_view to_property_key_name = "__ctbrowser_to_property_key";
 
 // Install the standard library into a context.
 //

@@ -38,6 +38,26 @@ void test_class_fields_are_per_instance() {
     // it may capture an enclosing local
     expect_result(
         "function build(v) { class A { val = v; } return new A().val; } return build(42);", "42");
+    // A COMPUTED NAME IS THE CLASS'S, evaluated once when it is defined and
+    // in order with the methods' keys (15.7.10) - only the initialiser runs
+    // per instance.
+    expect_result("let x = 1; class C { [x++] = x++; [x++] = x++; } const a = new C();"
+                  " const b = new C(); return [a[1], a[2], b[1], b[2]].join();",
+                  "3,4,5,6");
+    expect_result("let log = []; class C { [(log.push('f'), 'f')] = 1;"
+                  " [(log.push('m'), 'm')]() {} } return log.join() + new C().f;",
+                  "f,m1");
+    expect_result("try { class C { [{ [Symbol.toPrimitive]: {} }] = 1; } } catch (e) {"
+                  " return e.constructor.name; } return 'none';",
+                  "TypeError");
+    expect_result("try { class C { static ['prototype'] = 1; } } catch (e) {"
+                  " return e.constructor.name; } return 'none';",
+                  "TypeError");
+    expect_result("const k = Symbol('k'); class C { [k] = 7; } return new C()[k];", "7");
+    // an instance field's home object is the prototype: `super` reads the parent
+    expect_result("class A { get g() { return 'a'; } } class B extends A { v = super.g; }"
+                  " return new B().v;",
+                  "a");
     // fields arrive before the constructor body, which may then use them
     expect_result("class A { n = 2; constructor() { this.n = this.n * 5; } } return new A().n;",
                   "10");

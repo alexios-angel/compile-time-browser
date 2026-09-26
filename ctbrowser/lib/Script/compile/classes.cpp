@@ -165,9 +165,11 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
             proto().emit(instruction{op::load_undef, v});
         }
         if ((m.d & 2) != 0 && m.a >= 0) { // a computed key: `[expr] = init`
+            // Evaluated when the class was defined (field_key_name), and
+            // DEFINED like any public field.
             const std::uint16_t key = alloc_reg();
-            compile_expr(m.a, key);
-            proto().emit(instruction{op::set_index, self, key, v});
+            emit_plain_read(field_key_name(member), key);
+            emit_define_own_key(self, key, v, true);
         } else if (m.text.starts_with('#')) {
             // A PRIVATE FIELD IS ADDED, NOT SET (7.3.28 PrivateFieldAdd): a
             // set_prop would be the brand check store_property makes, on an
@@ -204,6 +206,11 @@ void compiler_impl::declare_class_name(std::string name, bool force) {
     }
 }
 
+std::string compiler_impl::field_key_name(std::int32_t member) const {
+    return "@fieldkey:" + std::to_string(private_scopes_.back().klass) + ":" +
+           std::to_string(member);
+}
+
 void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as_declaration,
                                   std::string_view inferred_name) {
     // The name is DECLARED first, before any method body is compiled, so a
@@ -238,6 +245,17 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         }
     }
     const boost::scope::scope_exit closing{[&]() noexcept { private_scopes_.pop_back(); }};
+    // The computed field names' cells - see field_key_name. Boxed whatever
+    // the capture index says: only the initialisers, compiled below, read
+    // them, and nothing in the source names them.
+    for (const std::int32_t member : members) {
+        const vp::node & m = at(member);
+        if (m.c != 0 || (m.d & 2) == 0 || m.a < 0) { continue; }
+        const std::uint16_t cell = declare_local(field_key_name(member));
+        fn().locals.back().boxed = true;
+        proto().emit(instruction{op::load_undef, cell});
+        proto().emit(instruction{op::new_cell, cell});
+    }
     const std::uint32_t mark = reg_mark();
     const std::uint16_t prototype_reg = alloc_reg();
     proto().emit(instruction{op::new_object, prototype_reg});
@@ -409,6 +427,18 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
         if (m.text == "constructor" && m.c == 1) { continue; }
+        if (m.c == 0 && (m.d & 2) != 0 && m.a >= 0) {
+            // A computed field name: evaluated and made a key HERE, in order
+            // with the methods' - see field_key_name.
+            const std::uint32_t at_key = reg_mark();
+            const std::uint16_t key = alloc_reg();
+            compile_expr(m.a, key);
+            emit_iterator_native(to_property_key_name, key, key);
+            const local * cell = find_local_entry(fn(), field_key_name(member));
+            if (cell != nullptr) { proto().emit(instruction{op::cell_set, cell->reg, key}); }
+            release_to(at_key);
+            continue;
+        }
         if (m.c == 0 || m.c == 3) { continue; } // fields and static blocks: below
         const bool computed = (m.d & 2) != 0 && m.a >= 0;
         if (m.c == 2) {

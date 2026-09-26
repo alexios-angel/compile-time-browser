@@ -344,7 +344,8 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     // in register i: taking a register ahead of them would shift every
     // argument by one. A parameter of the same name legitimately shadows
     // this binding, so one is only made when no parameter claimed the name.
-    if (n.kind == vp::nk::func_expr && !out_.functions[index].name.empty() &&
+    if (n.kind == vp::nk::func_expr && idx != default_function_ &&
+        !out_.functions[index].name.empty() &&
         find_local_in_current_scope(out_.functions[index].name) == nullptr) {
         const std::uint16_t self = declare_local(out_.functions[index].name);
         // CreateImmutableBinding(name, false) (15.2.5 step 4): `me = 1` in

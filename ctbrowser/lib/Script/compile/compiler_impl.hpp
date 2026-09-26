@@ -452,6 +452,9 @@ public:
     // Set by compile_class for the constructor it is about to compile; the
     // body consumes it (see frame::derived_flag).
     bool derived_ctor_pending_ = false;
+    // THE FUNCTION NODE of `export default function f() {}`, a declaration
+    // the parser hands over as an expression - so it binds no own name.
+    std::int32_t default_function_ = -1;
     // Set for a method, accessor or constructor about to be compiled - one
     // whose home object is wired; the body consumes it (frame::has_home).
     bool method_pending_ = false;
@@ -934,6 +937,12 @@ public:
                                                           std::string brand = {});
     // `__ctbrowser_private_add(target, key, v)` - PrivateFieldAdd, or the brand.
     void emit_private_add(std::uint16_t target, std::string_view key, std::uint16_t v);
+    // THE HIDDEN LOCAL HOLDING A CLASS FIELD'S COMPUTED NAME. The name is
+    // evaluated once, when the class is defined, in member order with the
+    // methods' keys (15.7.10 ClassFieldDefinitionEvaluation step 1) - not by
+    // the initialiser, which runs per instance - and the initialiser reads it
+    // back as an upvalue. Not a name source text can spell.
+    [[nodiscard]] std::string field_key_name(std::int32_t member) const;
 
     // Bind a class's own name to the class value, by whichever route this
     // frame uses. Harmless for a `class Foo {}` DECLARATION, which binds the

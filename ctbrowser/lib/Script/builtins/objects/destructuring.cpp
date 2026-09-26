@@ -261,6 +261,16 @@ void install_destructuring_iteration(context & cx) {
         }
         return value::undefined();
     });
+    // See to_property_key_name.
+    cx.define_native(std::string{to_property_key_name}, [](context & c, std::span<value> a) {
+        value key = a.empty() ? value::undefined() : a[0];
+        if (key.is_object_like() && !c.to_primitive_hint(key, "string", key)) {
+            return value::undefined();
+        }
+        if (key.is_kind(heap_kind::symbol)) { return key; }
+        std::string text = c.to_string(key);
+        return c.throw_pending() ? value::undefined() : c.string(std::move(text));
+    });
     // See class_heritage_name.
     cx.define_native(std::string{class_heritage_name}, [](context & c, std::span<value> a) {
         if (a.size() < 3 || !a[0].is_kind(heap_kind::function)) { return value::undefined(); }

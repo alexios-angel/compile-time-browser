@@ -53,6 +53,13 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             }
             const std::uint32_t mark = reg_mark();
             const std::uint16_t r = alloc_reg();
+            // `export default function f() {}` DECLARES f (16.2.3.7): inside
+            // it, `f` is that module binding, which `f = 2` writes - not the
+            // own name a function expression binds.
+            if (const std::int32_t named = default_export_name(idx);
+                named >= 0 && at(named).kind == vp::nk::func_expr) {
+                default_function_ = named;
+            }
             compile_expr(n.a, r);
             proto().emit(instruction{op::cell_set, static_cast<std::uint16_t>(slot), r});
             // A named default also initialises the binding its name makes
