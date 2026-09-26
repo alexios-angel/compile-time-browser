@@ -853,6 +853,105 @@ constexpr pair_grammar pair_grammars[] = {
     return std::nullopt;
 }
 
+// `<easing-function>#` (CSS Easing 1 §2 and 2 §2), each written canonically:
+// `step-start` is `steps(1, start)`, `step-end` and an `end`/`jump-end` step
+// position are left unwritten, a cubic-bezier()'s x values lie in [0, 1], and
+// a steps() count is a positive integer - two or more for `jump-none`.
+// linear() is kept as written. Anything else - `auto`, `ease-in ease-out`,
+// `steps(2, ())` - is invalid (transition-timing-function-invalid).
+[[nodiscard]] std::optional<std::string> easing_list(const token_stream & ts, const scan & found) {
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return std::nullopt; }
+    std::string out;
+    for (const std::vector<std::size_t> & item : *items) {
+        const css_token & first = ts.tokens[item[0]];
+        std::string one;
+        if (item.size() == 1 && first.type == token_type::ident) {
+            const std::string word = ascii_lower_copy(ts.text_of(first));
+            if (word == "step-start") {
+                one = "steps(1, start)";
+            } else if (word == "step-end") {
+                one = "steps(1)";
+            } else if (has_keyword("linear ease ease-in ease-out ease-in-out", word)) {
+                one = word;
+            } else {
+                return std::nullopt;
+            }
+        } else if (first.type == token_type::function) {
+            const std::string name = ascii_lower_copy(ts.text_of(first));
+            // The function's arguments: the tokens after it, up to its `)`.
+            std::vector<std::vector<std::size_t>> args{{}};
+            std::size_t k = 1;
+            int depth = 1;
+            for (; k < item.size(); ++k) {
+                const css_token & t = ts.tokens[item[k]];
+                if (t.type == token_type::function || t.type == token_type::open_paren) {
+                    ++depth;
+                } else if (t.type == token_type::close_paren && --depth == 0) {
+                    break;
+                }
+                if (depth == 1 && t.type == token_type::comma) {
+                    args.emplace_back();
+                    continue;
+                }
+                args.back().push_back(item[k]);
+            }
+            if (k + 1 != item.size() && !(k == item.size() && depth > 0)) { return std::nullopt; }
+            const std::string_view whole = run_text(ts, item);
+            if (name == "linear(") {
+                one = std::string{whole};
+            } else if (name == "cubic-bezier(") {
+                if (args.size() != 4) { return std::nullopt; }
+                std::string numbers;
+                for (std::size_t i = 0; i < 4; ++i) {
+                    if (args[i].size() != 1) { return std::nullopt; }
+                    const css_token & n = ts.tokens[args[i][0]];
+                    if (n.type != token_type::number) { return std::nullopt; }
+                    if ((i == 0 || i == 2) && (n.number < 0 || n.number > 1)) {
+                        return std::nullopt;
+                    }
+                    numbers += (i == 0 ? "" : ", ") + serialize_number(n.number);
+                }
+                one = "cubic-bezier(" + numbers + ")";
+            } else if (name == "steps(") {
+                if (args.empty() || args.size() > 2 || args[0].empty()) { return std::nullopt; }
+                std::string position = "end";
+                if (args.size() == 2) {
+                    if (args[1].size() != 1 || ts.tokens[args[1][0]].type != token_type::ident) {
+                        return std::nullopt;
+                    }
+                    position = ascii_lower_copy(ts.text_of(ts.tokens[args[1][0]]));
+                    if (!has_keyword("start end jump-start jump-end jump-none jump-both",
+                                     position)) {
+                        return std::nullopt;
+                    }
+                }
+                std::string count;
+                const css_token & n = ts.tokens[args[0][0]];
+                if (args[0].size() == 1 && n.type == token_type::number) {
+                    const double least = position == "jump-none" ? 2 : 1;
+                    if ((n.flags & flag_integer) == 0 || n.number < least) { return std::nullopt; }
+                    count = serialize_number(n.number);
+                } else if (n.type == token_type::function) {
+                    // A math function or a tree-counting one: its value is the
+                    // computed value's business.
+                    count = std::string{run_text(ts, args[0])};
+                } else {
+                    return std::nullopt;
+                }
+                const bool omitted = position == "end" || position == "jump-end";
+                one = "steps(" + count + (omitted ? "" : ", " + position) + ")";
+            } else {
+                return std::nullopt;
+            }
+        } else {
+            return std::nullopt;
+        }
+        out += (out.empty() ? "" : ", ") + one;
+    }
+    return out;
+}
+
 // `<length [0,∞]>{1,2}` (CSS Tables 3 §border-spacing): the horizontal
 // spacing and the vertical one, which is the horizontal when omitted - kept as
 // written, one value or two (border-spacing-valid).
@@ -1094,6 +1193,11 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
         })) {
         handled = true;
         answer = font_family(ts, found);
+    }
+    if (!handled &&
+        ascii_iequals_any(property, {"transition-timing-function", "animation-timing-function"})) {
+        handled = true;
+        answer = easing_list(ts, found);
     }
     if (!handled && ascii_iequals(property, "font-feature-settings")) {
         handled = true;
