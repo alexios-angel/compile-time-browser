@@ -193,6 +193,29 @@ void test_a_frame_submitting_while_it_loads_navigates_itself() {
     CHECK_EQ(got.logged, std::string{"POST text/plain\nx=y\n|"});
 }
 
+void test_an_image_submitter_in_a_frame_sends_its_coordinate() {
+    // submit-entity-body.html's image cases: the clicked image button's
+    // `name.x`/`name.y` entries, and nothing for the other image button or
+    // the submit button that was not clicked.
+    const run got =
+        submit("<iframe id=t src=blank.html></iframe>"
+               "<script>addEventListener('load', function () {"
+               " var t = document.getElementById('t');"
+               " t.onload = function () { console.log(t.contentDocument.body.textContent); };"
+               " t.contentDocument.body.innerHTML = '<form id=testform method=post"
+               "  action=\"echo.py?expected_body=foo.x%3D0%26foo.y%3D0\""
+               "  enctype=\"application/x-www-form-urlencoded\"><input type=image name=bar>"
+               "  <input type=submit name=notclicked value=nope/>"
+               "  <input id=inputsubmit type=image name=foo></form>';"
+               " t.contentDocument.getElementById('inputsubmit').click(); });</script>");
+    CHECK_EQ(got.seen.size(), std::size_t{1});
+    if (!got.seen.empty()) {
+        CHECK_EQ(got.seen[0].url,
+                 std::string{"file:///pages/echo.py?expected_body=foo.x%3D0%26foo.y%3D0"});
+        CHECK_EQ(got.seen[0].body, std::string{"foo.x=0&foo.y=0"});
+    }
+}
+
 } // namespace
 
 int main() {
@@ -203,5 +226,6 @@ int main() {
     test_a_button_in_a_frame_submits_its_form();
     test_a_disabled_fieldset_disables_a_frames_button();
     test_a_frame_submitting_while_it_loads_navigates_itself();
+    test_an_image_submitter_in_a_frame_sends_its_coordinate();
     REPORT("forms_submission");
 }
