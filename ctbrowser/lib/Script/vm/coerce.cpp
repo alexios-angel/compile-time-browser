@@ -388,9 +388,14 @@ value context::binary_op(op kind, value lhs, value rhs) {
     // returns - throw_pending cannot see it - so converting the right operand
     // anyway ran it a second time and threw over no handler at all:
     // `try { o < o } catch {}` was uncaught (Temporal's valueOf/basic.js).
-    // unwinds() is the counter that sees it.
+    // unwinds() is the counter that sees it. A throw ALREADY pending is not
+    // the operand's: IteratorClose calls a `return()` whose `n += 1` runs
+    // while the TypeError that closed the iterator is still in flight.
     const std::size_t unwound = unwinds();
-    const auto threw = [this, unwound] { return throw_pending() || unwinds() != unwound; };
+    const bool pending = throw_pending();
+    const auto threw = [this, unwound, pending] {
+        return (!pending && throw_pending()) || unwinds() != unwound;
+    };
     if (kind == op::concat) {
         std::string left = to_string(lhs);
         if (threw()) { return value::undefined(); }
@@ -515,10 +520,14 @@ std::partial_ordering context::compare_relational(value a, value b) {
     // the order they were written.
     // The left operand's throw stops the comparison - see binary_op.
     const std::size_t unwound = unwinds();
+    const bool pending = throw_pending();
+    const auto threw = [this, unwound, pending] {
+        return (!pending && throw_pending()) || unwinds() != unwound;
+    };
     const value pa = to_primitive(a);
-    if (throw_pending() || unwinds() != unwound) { return std::partial_ordering::unordered; }
+    if (threw()) { return std::partial_ordering::unordered; }
     const value pb = to_primitive(b);
-    if (throw_pending() || unwinds() != unwound) { return std::partial_ordering::unordered; }
+    if (threw()) { return std::partial_ordering::unordered; }
     // A BIGINT COMPARES AGAINST A NUMBER even though it cannot be added to one:
     // `1n < 2` is true. The comparison is EXACT rather than going through a
     // double, because a bigint past 2^53 must not round into equality with the

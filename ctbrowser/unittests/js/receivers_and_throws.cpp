@@ -146,5 +146,15 @@ int main() {
               "Object.defineProperties({}, new Proxy({a: {value: 0}, b: {value: 1}}, logger));"
               "return log.join(); })()",
               "ownKeys,getOwnPropertyDescriptor,get,getOwnPropertyDescriptor,get");
+    // An operator's left operand stops it only on its OWN throw: a
+    // `return()` IteratorClose calls while the TypeError that closed the
+    // iterator is in flight still adds (Array/from/iter-set-elem-prop-err.js).
+    js_expect("(function(){ var n = 0; var it = {[Symbol.iterator]() { return {"
+              " next() { return {done: false, value: 1}; },"
+              " return() { n += 1; return {}; } }; }};"
+              " try { Array.from.call(function () { Object.defineProperty(this, '0',"
+              " {writable: true, configurable: false}); }, it); } catch (e) {}"
+              " return n; })()",
+              "1");
     REPORT("receivers_and_throws");
 }
