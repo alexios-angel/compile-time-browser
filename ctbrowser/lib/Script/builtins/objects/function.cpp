@@ -150,7 +150,7 @@ void install_function(context & cx) {
                // a constructor exactly when its target is (10.4.1.3 step 5).
                fn->define(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"), self, attr_none);
                fn->is_constructor = is_constructor(self);
-               fn->proto_link = proto;
+               fn->proto_link = proto.is_null() ? value::undefined() : proto; // explicit
                // 20.2.3.2: a bound function's `length` is the target's less the
                // arguments already supplied, floored at zero, and its `name` is
                // "bound " prefixed to the target's - both { false, false, true }. It
