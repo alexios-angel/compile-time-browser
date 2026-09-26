@@ -71,9 +71,21 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             const auto * known = style::css::find_property(property);
             std::optional<std::string> inherited;
             const auto resolved_color = [&](std::string_view value) {
-                return property == "color" || current_color.empty()
-                           ? std::string{value}
-                           : style::with_currentcolor(value, current_color);
+                if (property == "color" || current_color.empty()) { return std::string{value}; }
+                // A DROP-SHADOW'S OMITTED COLOUR IS currentcolor too (Filter
+                // Effects 1 §12.2), which no word in the text says: the
+                // computed filter writes it out, so `drop-shadow(0px 0px)`
+                // interpolates with a coloured one (filter-interpolation-004).
+                if ((property == "filter" || property == "backdrop-filter") &&
+                    value.find("drop-shadow") != std::string_view::npos) {
+                    style::css::color_context cc;
+                    cc.current_color = current_color;
+                    if (std::string computed = style::css::computed_filter(value, cc);
+                        !computed.empty()) {
+                        return computed;
+                    }
+                }
+                return style::with_currentcolor(value, current_color);
             };
             for (const animation_keyframe & k : e.keyframes) {
                 for (const auto & [name, text] : k.values) {
