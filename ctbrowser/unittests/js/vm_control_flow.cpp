@@ -809,6 +809,11 @@ void test_with() {
     expect_result("try { with (null) {} } catch (e) { return e.name; } return 'no throw';",
                   "TypeError");
     expect_result("function f(o) { with (o) { return arguments.length; } } return f({});", "1");
+    // a `var`'s initialiser writes the name as the with resolves it - the
+    // object's property when it has one - and `var v;` alone writes nothing
+    expect_result("var o = {v: 1}; with (o) { var v = 2; var w = 3; var q; }"
+                  " return o.v + ':' + typeof v + ':' + w;",
+                  "2:undefined:3");
     CHECK(!compiler::compile("'use strict'; with ({}) {}").ok);
 }
 

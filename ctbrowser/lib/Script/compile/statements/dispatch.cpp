@@ -166,6 +166,17 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                         proto().emit(
                             instruction{op::set_upvalue, static_cast<std::uint16_t>(up), r});
                     }
+                } else if (!with_scopes_.empty()) {
+                    // INSIDE A `with` the initialiser is a PutValue on the name
+                    // as the with resolves it (14.3.2.1 step 1: ResolveBinding
+                    // from the running environment) - the object's property
+                    // when it has one - and `var x;` alone writes nothing.
+                    if (decl.a >= 0) {
+                        const bool outer_declaring = declaring_;
+                        declaring_ = true;
+                        emit_write(decl.text, r);
+                        declaring_ = outer_declaring;
+                    }
                 } else {
                     const std::uint16_t name = name_operand(std::string{decl.text});
                     proto().emit(instruction::with_bx(op::set_global, r, name));
