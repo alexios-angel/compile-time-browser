@@ -729,5 +729,11 @@ int main() {
               "String.prototype.trimRight.name",
               "trimEnd");
 
+    // A template reads a raw CRLF or CR as LF, cooked and raw alike; a
+    // backslash before U+2028 is a line continuation in a string too.
+    js_expect("`a\r\nb\rc` === 'a\\nb\\nc'", "true");
+    js_expect("(function (s) { return s.raw[0] === 'a\\nb'; })`a\r\nb`", "true");
+    js_expect("'a\\ b'", "ab");
+
     REPORT("string_basics");
 }
