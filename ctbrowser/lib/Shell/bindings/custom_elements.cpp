@@ -32,10 +32,11 @@
 // a candidate parsed into a DETACHED subtree is upgraded when it connects or
 // when the native that made it says so (upgrade_created_subtree). Both hold
 // until a page shows the cost.
-// ponytail: a customized built-in's "is value" is its `is` ATTRIBUTE. A
-// browser keeps the two apart (the value is immutable, the attribute is not);
-// the serialiser and `:defined` read the attribute here, and setting `is`
-// afterwards changes the definition lookup where it should not.
+// ponytail: a customized built-in's "is value" is kept (`is_values_`) for what
+// createElement, the HTML element constructor, the parser's construction and
+// a clone make; a candidate the parser made before its definition existed
+// still answers from its `is` ATTRIBUTE, and the serialiser and
+// `:defined` read the attribute for every element.
 
 #include <ctbrowser/shell/bindings.hpp>
 
@@ -181,8 +182,14 @@ std::size_t dom_bindings::custom_definition_for(const read_txn & txn, node_id id
         const custom_element_definition & def = defs[i];
         if (def.registry != registry || def.local_name != tag) { continue; }
         if (def.name == def.local_name) { return i; }
-        // A customized built-in is named by its `is` attribute.
-        if (txn.attribute_value(id, atoms_->intern("is")) == def.name) { return i; }
+        // A customized built-in is named by its IS VALUE - kept from its
+        // creation - or, for one nothing recorded (the parser's), its `is`
+        // attribute.
+        const auto held = is_values_.find(id.key());
+        const std::string_view is = held != is_values_.end()
+                                        ? std::string_view{held->second}
+                                        : txn.attribute_value(id, atoms_->intern("is"));
+        if (is == def.name) { return i; }
     }
     return npos;
 }
@@ -577,6 +584,7 @@ value dom_bindings::construct_html_element(context & c, value self,
     const node_id made = owner.doc_->create_element(atoms_->intern(def.local_name));
     if (def.local_name != def.name) {
         (void)owner.doc_->set_attribute(made, atoms_->intern("is"), def.name);
+        owner.is_values_.insert_or_assign(made.key(), def.name);
     }
     owner.set_node_registry(owner.doc_->read(), made, registry);
     // THE RECEIVER BECOMES THE WRAPPER - what wrap() does to a fresh object,
@@ -719,6 +727,7 @@ value dom_bindings::create_html_element(context & cx, const std::string & name, 
         if (ns == node_ns::html && !is.empty() && is_valid_custom_element_name(is) &&
             !lowered.contains('-')) {
             (void)doc_->set_attribute(made, atoms_->intern("is"), is);
+            is_values_.insert_or_assign(made.key(), is);
         }
         set_node_registry(doc_->read(), made, registry);
         return wrap(cx, made);
@@ -750,6 +759,11 @@ value dom_bindings::construct_custom_element(context & cx, std::size_t index,
     const value made = construct_fenced(cx, constructor, threw, thrown);
     reg.active_constructors_.pop_back();
     const context::rooted keep_made{cx, made};
+    // "Clean up after running script": constructed from the PARSER, no script
+    // is left on the stack, so the microtasks the constructor queued run now -
+    // before the checks below, which they may fail (microtasks-and-
+    // constructors.html). From createElement the calling script is still there.
+    if (cx.current_stack().empty()) { cx.drain_microtasks(); }
     std::string failure;
     std::string failure_name = "NotSupportedError";
     if (!threw) {
@@ -861,6 +875,7 @@ node_id dom_bindings::parser_create_custom_element(
         // that throws leaves the element it already is, prototype and all,
         // and one that appends children appends them.
         made = doc_->create_element(atoms_->intern_lower(local_name));
+        is_values_.insert_or_assign(made.key(), std::string{is});
         set_node_registry(doc_->read(), made, registry);
         custom_element_state state;
         state.definition = index;

@@ -443,6 +443,9 @@ private:
     // mutated()'s write log (custom_element_reactions.cpp).
     void note_attribute_writes(const std::vector<document::write_note> & writes);
     flat_map<std::uint64_t, std::vector<atom>> written_attributes_;
+    // An element's "is value" (DOM 4.9), fixed at creation - not its `is`
+    // attribute, which a page may change afterwards.
+    flat_map<std::uint64_t, std::string> is_values_;
     flat_map<std::uint64_t, custom_element_registry *> node_registries_;
     flat_map<std::uint64_t, custom_element_registry *> shadow_registries_; // by host
     flat_map<std::uint64_t, bool> inert_roots_;

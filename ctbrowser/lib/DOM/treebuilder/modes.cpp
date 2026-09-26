@@ -238,11 +238,6 @@ bool tree_builder::declarative_shadow_root(const token & t) {
                       .null_registry = null_registry});
     if (root) {
         doc_->set_template_content(element, *root);
-        // What is parsed into a root with a null registry has a null one
-        // too: the template is the current node while it is, so marking it
-        // is what create_element reads (13.2.6.4.4, "shadowrootcustomelement
-        // registry" - the root's registry is null and kept null).
-        if (null_registry) { doc_->set_null_custom_element_registry(element); }
     } else {
         doc_->set_template_content(element, doc_->create_fragment());
         insert_at(where, element);

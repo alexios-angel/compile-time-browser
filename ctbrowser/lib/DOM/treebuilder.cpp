@@ -736,16 +736,24 @@ node_id tree_builder::create_element(const std::string & tag,
     const node_id parent = open_.empty() ? node_id{} : open_.back().id;
     const bool own_null = std::ranges::find(attributes, std::string_view{"customelementregistry"},
                                             &token_attribute::name) != attributes.end();
-    const bool null_registry = own_null || (doc_->has_null_custom_element_registries() && parent &&
-                                            doc_->null_custom_element_registry(parent));
+    // A DECLARATIVE SHADOW ROOT'S <template> on the stack stands for the root,
+    // whose registry is null only when written with
+    // `shadowrootcustomelementregistry` - whatever the template's own.
+    const document::shadow_tree * shadow = [&]() -> const document::shadow_tree * {
+        if (!parent || open_.back().tag != "template" || !doc_->has_shadow_roots()) {
+            return nullptr;
+        }
+        const node_id contents = doc_->template_content(parent);
+        return contents ? doc_->shadow_tree_of(contents) : nullptr;
+    }();
+    const bool null_registry =
+        own_null || (shadow != nullptr ? shadow->null_registry
+                                       : doc_->has_null_custom_element_registries() && parent &&
+                                             doc_->null_custom_element_registry(parent));
     // A CUSTOM ELEMENT IS CONSTRUCTED, NOT CREATED - see set_custom_element_hooks.
     // Asked under a null-registry declarative shadow root too: a script in it
     // may have initialize()d the root since, which only the shell knows.
-    const auto into_shadow_root = [&] {
-        const node_id contents = parent ? doc_->template_content(parent) : node_id{};
-        return contents && doc_->shadow_tree_of(contents) != nullptr;
-    };
-    if (ns == node_ns::html && on_element_ && !own_null && (!null_registry || into_shadow_root())) {
+    if (ns == node_ns::html && on_element_ && !own_null && (!null_registry || shadow != nullptr)) {
         if (const node_id made = on_element_(tag, attributes, parent)) {
             constructed_ = made;
             return made;

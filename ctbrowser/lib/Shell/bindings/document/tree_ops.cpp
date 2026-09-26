@@ -154,6 +154,11 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
             }
             set_node_registry(doc_->read(), made, registry);
         }
+        // DOM 4.4 "clone a single node": the copy is created with the
+        // source's IS VALUE (see custom_elements.cpp).
+        if (const auto held = src.is_values_.find(source.key()); held != src.is_values_.end()) {
+            is_values_.insert_or_assign(made.key(), held->second);
+        }
         // HTML 4.12.1's cloning steps: the copy's `already started` is the
         // source's - a script that never ran clones into one that will.
         if (std::ranges::find(src.unstarted_scripts_, source) != src.unstarted_scripts_.end()) {
@@ -183,7 +188,10 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
     };
     if (deep) {
         for (const node_id child : from.children(source)) {
-            adopt_copy(made, clone_node(from, child, true, owner, fallback));
+            // The SAME fallback all the way down - "none" stays none rather
+            // than turning into the document's at the next level.
+            adopt_copy(made, clone_node(from, child, true, owner,
+                                        fallback == nullptr ? &no_fallback_registry : fallback));
         }
         // HTML 4.12.3, the cloning steps for a template: its CONTENTS clone
         // with it, into the copy's own contents fragment. They are not
@@ -406,13 +414,14 @@ node_id dom_bindings::node_from(context & cx, value v, bool whole_fragment) {
 // caller leaves the element as it was (the specification throws SyntaxError).
 namespace {
 [[nodiscard]] node_id parse_fragment_for(const document & doc, document & scratch, node_id context,
-                                         std::string_view markup, std::string_view context_ns) {
+                                         std::string_view markup, std::string_view context_ns,
+                                         bool scripting = true) {
     const auto txn = doc.read();
     const bool element = txn.kind(context).value_or(node_kind::element) == node_kind::element;
     if (!doc.xml()) {
         return parse_html_fragment(
             scratch, markup, element ? txn.local_name(context) : std::string_view{"body"},
-            element ? txn.element_ns(context) : node_ns::html, doc.scripting());
+            element ? txn.element_ns(context) : node_ns::html, doc.scripting() && scripting);
     }
     const atom_table & atoms = doc.atoms();
     const auto quoted = [](std::string_view value) {
@@ -472,7 +481,10 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
     node_id context = target;
     if (const shadow_tree * tree = shadow_tree_of(target)) { context = tree->host; }
     document scratch{*atoms_};
-    const node_id body = parse_fragment_for(*doc_, scratch, context, markup, namespace_of(context));
+    // A TEMPLATE'S CONTENTS belong to its inert document, which has no
+    // browsing context and so no scripting: a `<noscript>` there is markup.
+    const node_id body =
+        parse_fragment_for(*doc_, scratch, context, markup, namespace_of(context), into == target);
     if (!body) {
         // The XML fragment parsing algorithm (HTML 13.4) on markup that is
         // not well-formed: a SyntaxError, and the element is left as it was.
@@ -632,6 +644,11 @@ std::string dom_bindings::serialize_html(node_id target, bool outer, bool serial
         for (const node_id child : txn.children(target)) { out += serialize_xml(child, ""); }
         return out;
     }
+    // "Scripting is enabled for the node" - a <noscript>'s question: not under
+    // template contents, whose inert document has none.
+    const auto scripting_for = [&](node_id node) {
+        return doc_->scripting() && !doc_->template_of(txn.root_of_tree(node, true));
+    };
     // Skip the per-element shadow-root lookup entirely when nothing asked for
     // one, so `innerHTML`/`outerHTML` stay byte identical and pay nothing.
     const bool want_shadow = serializable_shadow_roots || !shadow_roots.empty();
@@ -735,7 +752,8 @@ std::string dom_bindings::serialize_html(node_id target, bool outer, bool serial
         out += ">";
         if (html && serializes_as_void(tag)) { return; }
         emit_shadow(node, [&](node_id c) { self(self, c, false); });
-        const bool raw_below = html && serializes_raw(tag, doc_->scripting());
+        const bool raw_below =
+            html && serializes_raw(tag, tag != "noscript" || scripting_for(node));
         for (const node_id child : children_of(node)) { self(self, child, raw_below); }
         out += "</";
         out += tag;
@@ -753,7 +771,8 @@ std::string dom_bindings::serialize_html(node_id target, bool outer, bool serial
                              txn.element_ns(target) == node_ns::html;
     const std::string_view target_tag = atoms_->text(txn.tag(target).value_or(atom{}));
     if (target_html && serializes_as_void(target_tag)) { return out; }
-    const bool raw = target_html && serializes_raw(target_tag, doc_->scripting());
+    const bool raw = target_html &&
+                     serializes_raw(target_tag, target_tag != "noscript" || scripting_for(target));
     emit_shadow(target, [&](node_id c) { write(write, c, false); });
     for (const node_id child : children_of(target)) { write(write, child, raw); }
     return out;

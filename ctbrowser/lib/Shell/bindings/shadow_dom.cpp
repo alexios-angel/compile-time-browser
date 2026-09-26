@@ -500,12 +500,14 @@ void dom_bindings::set_html_unsafe(node_id target, std::string_view markup, bool
     document scratch{*atoms_};
     // The fragment case with the ELEMENT as its context (HTML 12.4 step 5:
     // "with context element"), not a body's - `table.setHTMLUnsafe("<tr>")`
-    // keeps its row - and the document's own scripting flag.
+    // keeps its row - and the document's own scripting flag (none for a
+    // template's contents, which are its inert document's).
     node_id body;
     {
         const auto txn = doc_->read();
-        body = parse_html_fragment(scratch, markup, txn.local_name(context),
-                                   txn.element_ns(context), doc_->scripting(), true);
+        body =
+            parse_html_fragment(scratch, markup, txn.local_name(context), txn.element_ns(context),
+                                doc_->scripting() && !is_template, true);
     }
     const auto from = scratch.read();
     const std::span<const node_id> kids = from.children(body);
