@@ -77,6 +77,7 @@ enum class Kind {
     number,
     string,
     boolean,
+    optionalBoolean, // Boolean or null, never undefined.
     null,
     undefined
 };

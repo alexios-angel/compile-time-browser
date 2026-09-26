@@ -945,6 +945,11 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         arguments.erase(arguments.begin(), arguments.begin() + 2);
         arguments.insert(arguments.begin(), receiver.getResult(0));
     } else {
+        if (edge.kind == HostDOMMethod::setAttribute &&
+            isNullableCarrier(arguments.back().getType())) {
+            arguments.back() =
+                convertScalar(at, where, arguments.back(), carrierType(context, carrier::string));
+        }
         for (mlir::Value & argument : arguments) { argument = rawText(argument); }
     }
     static const llvm::DenseMap<HostDOMMethod, llvm::StringRef> callees{

@@ -426,6 +426,8 @@ struct DOMAttributeProof {
         }
         return false;
     }
+    // Boolean/String origins may include null: these sets prove nonthrowing
+    // primitive conversion, not an exact runtime tag.
     llvm::DenseSet<mlir::Value> booleanReads;
     llvm::DenseSet<mlir::Value> stringReads;
     llvm::DenseSet<mlir::Value> numberReads;
@@ -444,7 +446,7 @@ struct DOMAttributeProof {
         // Prove the exact read, leaving producer effects and initial method
         // identity to the complete final DOM proof.
         if (booleanReads.contains(value) ||
-            (constant && llvm::isa<ctjs::BooleanAttr>(constant.getValue())) ||
+            (constant && llvm::isa<ctjs::BooleanAttr, ctjs::NullAttr>(constant.getValue())) ||
             (call && attributeRead(call) && attributeCall(call))) {
             return true;
         }

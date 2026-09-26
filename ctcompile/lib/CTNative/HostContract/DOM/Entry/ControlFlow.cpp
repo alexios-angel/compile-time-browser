@@ -271,9 +271,10 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                     return false;
                 }
                 const Kind kind = found->second;
-                if (kind != Kind::boolean && kind != Kind::number && kind != Kind::string &&
-                    kind != Kind::null && kind != Kind::optionalString && kind != Kind::undefined &&
-                    kind != Kind::json && kind != Kind::jsonAggregate && kind != Kind::symbol &&
+                if (kind != Kind::boolean && kind != Kind::optionalBoolean &&
+                    kind != Kind::number && kind != Kind::string && kind != Kind::null &&
+                    kind != Kind::optionalString && kind != Kind::undefined && kind != Kind::json &&
+                    kind != Kind::jsonAggregate && kind != Kind::symbol &&
                     kind != Kind::undefinedString && kind != Kind::element) {
                     refusal = "DOM entry branch cannot carry a borrowed or callable value";
                     return false;
@@ -286,6 +287,13 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                     continue;
                 }
                 if (joined[index] == kind) { continue; }
+                const auto booleanOrNull = [](Kind k) {
+                    return k == Kind::boolean || k == Kind::null || k == Kind::optionalBoolean;
+                };
+                if (booleanOrNull(joined[index]) && booleanOrNull(kind)) {
+                    joined[index] = Kind::optionalBoolean;
+                    continue;
+                }
                 const auto json = [](Kind k) {
                     return k == Kind::json || k == Kind::jsonAggregate;
                 };

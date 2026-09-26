@@ -5013,11 +5013,12 @@ static void testSelectedAttributeStrings(mlir::MLIRContext & context) {
     }
 }
 
-static void testSavedAttributePredicates(mlir::MLIRContext & context) {
+static void testSavedAttributePredicates(mlir::MLIRContext & context, bool nullable) {
     using namespace ctcompile::ctnative;
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
         for (unsigned control = 0; control < 30; ++control) {
+            if (nullable && (control == 1 || control == 4)) { continue; }
             std::string source = R"js(function guarded(anchor) {
                 const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : false;
                 try {
@@ -5075,6 +5076,12 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context) {
             }
             if (control == 28) { replace(": false", ": (anchor = false, false)"); }
             if (control == 29) { replace("const saved =", "unknown(); const saved ="); }
+            if (nullable) {
+                for (auto offset = source.find("false"); offset != std::string::npos;
+                     offset = source.find("false", offset + 4)) {
+                    source.replace(offset, 5, "null");
+                }
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }
             auto function = guarded(*candidate);
@@ -5118,8 +5125,8 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context) {
                 continue;
             }
             if (!check(!error, "saved Boolean predicate completes its protected write")) {
-                llvm::errs() << "saved predicate control " << control << ": "
-                             << llvm::toString(std::move(error)) << '\n';
+                llvm::errs() << "saved predicate control " << control << " nullable=" << nullable
+                             << ": " << llvm::toString(std::move(error)) << '\n';
                 continue;
             }
             DOMEntryAnalysis proof(*candidate, request);
@@ -5156,7 +5163,8 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context) {
 }
 
 void testDOMURITransaction(mlir::MLIRContext & context) {
-    testSavedAttributePredicates(context);
+    testSavedAttributePredicates(context, false);
+    testSavedAttributePredicates(context, true);
     testSelectedAttributeStrings(context);
     testSavedAttributeStrings(context);
     testProtectedNumberStrings(context);

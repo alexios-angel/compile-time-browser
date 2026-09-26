@@ -21,15 +21,23 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         value = ec::LoadOp::create(b, where, lvalue.getValueType(), value);
     }
     if (value.getType() == target) { return value; }
-    // Host null uses optional String storage. Its exact constant still converts
-    // to positive zero before negation; other optional values need their own proof.
-    if (isNumberCarrier(target) &&
+    // Host null uses optional String storage. Preserve its exact null tag in
+    // scalar joins, or convert it to positive zero for numeric consumers.
+    // Region edges are converted before ctjs constants become EmitC constants.
+    if ((isNumberCarrier(target) || isNullableCarrier(target)) &&
         value.getType() == ec::OpaqueType::get(context, kDOMOptionalStringType)) {
         auto constant = value.getDefiningOp<ec::ConstantOp>();
+        auto source = value.getDefiningOp<ctjs::ConstantOp>();
         auto literal =
             constant ? llvm::dyn_cast<ec::OpaqueAttr>(constant.getValue()) : ec::OpaqueAttr{};
-        if (literal && literal.getValue() == "std::nullopt") {
-            return numberConstant(b, where, 0.0);
+        // The host join excludes undefined; an absent-only lattice excludes String.
+        auto optional = llvm::dyn_cast_or_null<OptType>(typeOf(value));
+        const bool nullJoin = domOptionalStrings.contains(value) && optional &&
+                              llvm::isa<BottomType>(optional.getElementType());
+        if ((literal && literal.getValue() == "std::nullopt") ||
+            (source && llvm::isa<ctjs::NullAttr>(source.getValue())) || nullJoin) {
+            return isNullableCarrier(target) ? absentConstant(b, where, true)
+                                             : numberConstant(b, where, 0.0);
         }
     }
     const auto string = carrierType(context, carrier::string);
