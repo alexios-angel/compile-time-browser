@@ -456,9 +456,9 @@ void install_dynamic_function(context & cx) {
                 const value callee = a.size() > 2 ? a[2] : value::undefined();
                 const value self = a.size() > 3 ? a[3] : value::undefined();
                 const std::string descriptor = a.size() > 4 ? c.to_string(a[4]) : std::string{};
-                const auto * caller = callee.is_kind(heap_kind::function)
-                                          ? static_cast<closure_object *>(callee.as_heap())
-                                          : nullptr;
+                auto * caller = callee.is_kind(heap_kind::function)
+                                    ? static_cast<closure_object *>(callee.as_heap())
+                                    : nullptr;
                 std::vector<std::string> names;
                 std::vector<immutability> readonly;
                 std::vector<value> cells;
@@ -472,7 +472,7 @@ void install_dynamic_function(context & cx) {
                                        : mode == "sloppy" ? immutability::sloppy
                                                           : immutability::none);
                 };
-                bool strict = false;
+                eval_site site;
                 std::size_t next = 5;
                 std::size_t at = 0;
                 bool first = true;
@@ -481,7 +481,14 @@ void install_dynamic_function(context & cx) {
                     const std::string_view line{descriptor.data() + at, end - at};
                     at = end + 1;
                     if (first) {
-                        strict = line == "strict";
+                        // "strict|sloppy [function] [method] [field]" - eval_site.
+                        const auto says = [&](std::string_view word) {
+                            return line.find(word) != std::string_view::npos;
+                        };
+                        site.strict = line.starts_with("strict");
+                        site.in_function = says(" function");
+                        site.in_method = says(" method");
+                        site.in_class_field_initializer = says(" field");
                         first = false;
                         continue;
                     }
@@ -507,7 +514,7 @@ void install_dynamic_function(context & cx) {
                     }
                 }
                 program compiled =
-                    compiler::compile_for_direct_eval(c.to_string(source), names, strict, readonly);
+                    compiler::compile_for_direct_eval(c.to_string(source), names, site, readonly);
                 if (!compiled.ok) {
                     c.throw_error("SyntaxError", compiled.error);
                     return value::undefined();
@@ -519,6 +526,14 @@ void install_dynamic_function(context & cx) {
                 entry->realm = caller != nullptr && caller->realm != nullptr ? caller->realm
                                                                              : &c.current_realm();
                 entry->upvalues = std::move(cells);
+                // `super.x` in the source is the caller's (19.2.1.1 step 7.a:
+                // the eval runs with the caller's this environment, whose
+                // function holds the home object) - see op::load_home.
+                if (caller != nullptr) {
+                    if (const value * home = caller->find("__home")) {
+                        entry->set("__home", *home);
+                    }
+                }
                 return c.call(value::object(entry), {}, self);
             });
         native->retained.push_back(intrinsic);
@@ -534,7 +549,11 @@ void install_dynamic_function(context & cx) {
                 const value current = c.global("eval");
                 if (current.bits() != intrinsic.bits()) { return c.call(current, {&source, 1}); }
                 if (!source.is_string()) { return source; }
-                program compiled = compiler::compile_for_eval(c.to_string(source));
+                // In a function's parameters - so `new.target` is allowed, as
+                // it always was here.
+                eval_site site;
+                site.in_function = true;
+                program compiled = compiler::compile_for_eval(c.to_string(source), site);
                 if (!compiled.ok) {
                     c.throw_error("SyntaxError", compiled.error);
                     return value::undefined();

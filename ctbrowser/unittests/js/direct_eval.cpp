@@ -47,5 +47,31 @@ int main() {
     // A pattern parameter's register is nobody's binding, and is not boxed.
     js_expect("(function(...[a = 1]){ eval(''); return a; })()", "1");
     js_expect("(function({k}){ eval(''); return k; })({k: 'k'})", "k");
+    // WHERE THE EVAL IS decides what its source may say (19.2.1.1 steps 4-7):
+    // a strict caller's eval is strict code from its first line...
+    js_expect("(function(){ 'use strict'; try { eval('var public = 1'); } catch (e) {"
+              " return e.constructor.name; } return 'none'; })()",
+              "SyntaxError");
+    js_expect("(function(){ try { eval('var public = 1'); } catch (e) {"
+              " return e.constructor.name; } return 'none'; })()",
+              "none");
+    // ...`new.target` needs a function, `return` is never the eval's...
+    js_expect("(function(){ return eval('typeof new.target'); })()", "undefined");
+    js_expect("(function(){ try { (0, eval)('new.target'); } catch (e) {"
+              " return e.constructor.name; } return 'none'; })()",
+              "SyntaxError");
+    js_expect("(function(){ try { eval('return 1'); } catch (e) {"
+              " return e.constructor.name; } return 'none'; })()",
+              "SyntaxError");
+    // ...`super.x` a method, whose home object the eval shares...
+    js_expect("({ __proto__: { q: 5 }, m() { return eval('super.q'); } }).m()", "5");
+    js_expect("(function(){ class A { get x() { return 1; } } class B extends A {"
+              " y = eval('super.x'); z = () => super.x; } var b = new B();"
+              " return b.y + b.z(); })()",
+              "2");
+    // ...and a class field initialiser may not say `arguments`.
+    js_expect("(function(){ class C { x = eval('arguments'); } try { new C(); } catch (e) {"
+              " return e.constructor.name; } return 'none'; })()",
+              "SyntaxError");
     REPORT("direct_eval");
 }

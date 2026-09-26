@@ -42,20 +42,6 @@
 
 namespace ctbrowser::script {
 
-// WHICH KIND OF SCRIPT THIS IS, which decides where its top-level declarations
-// go.
-//
-// A CLASSIC script's `var x = 1` at top level becomes a GLOBAL - that is the
-// whole reason two <script> tags can see each other's variables, and why this
-// engine could concatenate them all into one program and be right.
-//
-// A MODULE's does not. Its top level is a scope of its own; `globalThis.x = 1`
-// still reaches the global object because that is an explicit write, but a bare
-// declaration is the module's own. Getting this wrong is how "modules work"
-// while every module on a page silently shares state with every other.
-//
-// `script_kind` itself is declared in bytecode.hpp, beside `program`, because a
-// compiled program carries which one it is.
 // A BINDING THAT CANNOT BE ASSIGNED, and what an assignment to one does
 // (9.1.1.1.5 SetMutableBinding step 5). Decided where the write is compiled:
 // the compiler knows which binding a name resolves to, so the refusal costs
@@ -72,6 +58,35 @@ enum class immutability : std::uint8_t {
     sloppy,
 };
 
+// WHERE AN EVAL'S SOURCE RUNS (19.2.1.1 PerformEval steps 4-7 and 12):
+// what it may say that a program may not, and whether it is strict before
+// any directive of its own. An indirect eval is all false. A direct eval
+// answers for the function whose `this` it shares - the nearest one that is
+// not an arrow - so `new.target` is refused outside a function, `super.x`
+// outside a method, `super()` outside a derived constructor and `arguments`
+// in a class field initialiser.
+struct eval_site {
+    bool strict = false;
+    bool in_function = false;
+    bool in_method = false;
+    bool in_derived_constructor = false;
+    bool in_class_field_initializer = false;
+};
+
+// WHICH KIND OF SCRIPT THIS IS, which decides where its top-level declarations
+// go.
+//
+// A CLASSIC script's `var x = 1` at top level becomes a GLOBAL - that is the
+// whole reason two <script> tags can see each other's variables, and why this
+// engine could concatenate them all into one program and be right.
+//
+// A MODULE's does not. Its top level is a scope of its own; `globalThis.x = 1`
+// still reaches the global object because that is an explicit write, but a bare
+// declaration is the module's own. Getting this wrong is how "modules work"
+// while every module on a page silently shares state with every other.
+//
+// `script_kind` itself is declared in bytecode.hpp, beside `program`, because a
+// compiled program carries which one it is.
 class compiler {
 public:
     // Compile `source` to a program. On a parse error the program comes back
@@ -81,13 +96,15 @@ public:
     // `eval`'s shape: the program RETURNS the value of a trailing expression
     // statement (its completion value, 16.1.6 step 12 for the common case),
     // so `eval("1 + 1")` is 2. Otherwise the same classic script.
-    [[nodiscard]] static program compile_for_eval(std::string_view source);
+    // `site` is an indirect eval's - all false - unless the caller says.
+    [[nodiscard]] static program compile_for_eval(std::string_view source,
+                                                  const eval_site & site = {});
     // A DIRECT eval's source (19.2.1.1 PerformEval with direct = true): as
     // compile_for_eval, with the caller's bindings `outer` visible as the
-    // entry function's upvalues, in that order, and the caller's strictness.
+    // entry function's upvalues, in that order, and where it was written.
     // `readonly` is parallel to `outer` (empty: every binding is mutable).
     [[nodiscard]] static program compile_for_direct_eval(
-        std::string_view source, std::span<const std::string> outer, bool strict,
+        std::string_view source, std::span<const std::string> outer, const eval_site & site,
         std::span<const immutability> readonly = {});
 };
 

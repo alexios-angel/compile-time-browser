@@ -150,6 +150,9 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         if (frames_.back().what == frame_kind::static_block) {
             report("`return` is not allowed in a class static block", idx);
         }
+        // Nor is an EVAL'S top level: its source is a Script from script,
+        // not an embedder's program, so the contract above does not reach it.
+        if (eval_ != nullptr && frames_.size() == 1) { report("`return` outside a function", idx); }
         walk_expression(n.a);
         return;
 

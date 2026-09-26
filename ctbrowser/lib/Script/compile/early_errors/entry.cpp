@@ -19,6 +19,18 @@ void checker::run() {
     const vp::node & root = at(ast_.root);
     if (root.kind != nk::program) { return; }
     frames_.back().strict = strict_root_ || has_use_strict_directive(ast_.root);
+    // AN EVAL'S TOP LEVEL is where the eval was (19.2.1.1 steps 4-7): strict
+    // when its caller is (step 12's strictCaller), and a method's, a field
+    // initialiser's or a function's for `super`, `arguments` and
+    // `new.target` - which run() then answers as it would there.
+    if (eval_ != nullptr) {
+        frames_.back().strict = frames_.back().strict || eval_->strict;
+        frames_.back().what = eval_->in_class_field_initializer ? frame_kind::field_init
+                              : eval_->in_method                ? frame_kind::method
+                              : eval_->in_function              ? frame_kind::function
+                                                                : frame_kind::script;
+        frames_.back().super_call_ok = eval_->in_derived_constructor;
+    }
     // A module's top level is [+Await] (16.2.1): `await` is not a name there.
     frames_.back().is_async = strict_root_;
     // A `using` declaration at the top level of a classic SCRIPT is not in
@@ -41,9 +53,9 @@ void checker::run() {
 using early::checker;
 
 std::optional<early_error> find_early_error(const ctjs::vp::ast & tree, std::string_view source,
-                                            bool strict_root) {
+                                            bool strict_root, const eval_site * eval) {
     if (!tree.ok || tree.root < 0) { return std::nullopt; }
-    checker walk{tree, source, strict_root};
+    checker walk{tree, source, strict_root, eval};
     walk.run();
     return walk.result();
 }

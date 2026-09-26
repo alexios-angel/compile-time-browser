@@ -128,8 +128,9 @@ struct frame {
 
 class checker {
 public:
-    checker(const vp::ast & tree, std::string_view source, bool strict_root)
-        : ast_(tree), source_(source), strict_root_(strict_root) {}
+    checker(const vp::ast & tree, std::string_view source, bool strict_root,
+            const eval_site * eval = nullptr)
+        : ast_(tree), source_(source), strict_root_(strict_root), eval_(eval) {}
 
     void run();
 
@@ -359,7 +360,10 @@ private:
     std::string_view source_;
     int depth_ = 0;
     std::vector<frame> frames_;
-    bool strict_root_ = false;    // a module: strict code from the first line
+    bool strict_root_ = false; // a module: strict code from the first line
+    // AN EVAL'S SOURCE, and where the eval was (19.2.1.1 steps 4-7): its top
+    // level is that place's, not a script's - see run(). Null otherwise.
+    const eval_site * eval_ = nullptr;
     std::size_t class_depth_ = 0; // inside a class body: strict code (15.7.1)
     std::vector<std::vector<std::string_view>> private_names_; // see check_private_reference
     // WALKING A FORMAL PARAMETER LIST of the innermost frame: `yield` and

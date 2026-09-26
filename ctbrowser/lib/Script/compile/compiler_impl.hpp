@@ -452,6 +452,12 @@ public:
     // Set by compile_class for the constructor it is about to compile; the
     // body consumes it (see frame::derived_flag).
     bool derived_ctor_pending_ = false;
+    // Set for a method, accessor or constructor about to be compiled - one
+    // whose home object is wired; the body consumes it (frame::has_home).
+    bool method_pending_ = false;
+    // Does the subtree say `eval(...)` - a direct eval, which may say `super`
+    // for the function it is in (the same walk as mentions_super).
+    [[nodiscard]] bool mentions_direct_eval(std::int32_t idx, bool root) const;
     // The flag of the derived constructor `this` resolves to from here, or
     // nothing: this frame's, or through any number of arrows, the nearest
     // non-arrow frame's.
@@ -1057,10 +1063,15 @@ public:
     // The enclosing function ticks of every direct eval, sorted - see tour.
     std::vector<std::int32_t> eval_ticks_;
     // COMPILING A DIRECT EVAL'S SOURCE: the caller's bindings, in the order
-    // the entry function's upvalues hold them, and whether the caller was
-    // strict. Empty for every other program.
+    // the entry function's upvalues hold them. Empty for every other program.
     std::vector<std::string> eval_outer_names_;
-    bool eval_outer_strict_ = false;
+    // COMPILING AN EVAL'S SOURCE: where it was written (all false for any
+    // other program) - strictness, and what a direct eval nested at this
+    // program's top level inherits (see eval_site_here).
+    eval_site eval_site_{};
+    // The site a direct eval written HERE has: the function whose `this` it
+    // shares, found through the arrows around it.
+    [[nodiscard]] eval_site eval_site_here();
     // Parallel to eval_outer_names_ (or empty): which of them are immutable.
     std::vector<immutability> eval_outer_readonly_;
     // THE TOP LEVEL IS A SCOPE, not the global one: a module's, and a STRICT

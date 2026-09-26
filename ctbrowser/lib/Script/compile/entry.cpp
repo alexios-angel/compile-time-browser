@@ -19,7 +19,7 @@ void compiler_impl::compile_program() {
 
     const vp::node & root = at(ast_.root);
     // A module is strict code; a script is when it says so (11.2.1, 16.2.1).
-    fn().is_strict = module_scope_ || has_use_strict_directive(ast_.root) || eval_outer_strict_;
+    fn().is_strict = module_scope_ || has_use_strict_directive(ast_.root) || eval_site_.strict;
     out_.functions[script].is_strict = fn().is_strict;
     // An eval program is the one that returns its completion value.
     top_level_is_scope_ = module_scope_ || (completion_value_ && fn().is_strict);

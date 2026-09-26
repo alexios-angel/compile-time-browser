@@ -26,7 +26,9 @@ void compiler_impl::emit_computed_accessor(std::uint16_t target, std::int32_t ke
     const std::uint16_t getter = alloc_reg();
     const std::uint16_t setter_reg = alloc_reg();
     proto().emit(instruction{op::load_undef, setter ? getter : setter_reg});
+    method_pending_ = true; // see frame::has_home
     compile_expr(fn_node, setter ? setter_reg : getter);
+    method_pending_ = false;
     // Its home object, as a named accessor gets one below.
     proto().emit(
         instruction{op::set_prop, setter ? setter_reg : getter, name_operand("__home"), target});
@@ -94,6 +96,7 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
     frames_.emplace_back();
     frames_.back().proto = index;
     frames_.back().is_strict = true;
+    frames_.back().has_home = true; // the prototype, or the class for `<static>`
     // A BODY IS NOT THE DECLARATION THAT HOLDS IT: `const f = function () {
     // typo = 1; }` writes `typo` as an assignment, whatever `f` is.
     const not_declaring body_is_not_a_write{*this};
@@ -131,6 +134,9 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
     }
     for (const std::int32_t member : fields) {
         const vp::node & m = at(member);
+        // A static block is a method's body, not a field's initialiser
+        // (15.7.11: no [[ClassFieldInitializerName]]) - see eval_site.
+        fn().field_initializer = m.c != 3;
         if (m.c == 3) {
             // `static { ... }`: a body of its own, with its own lexical scope
             // and its function declarations hoisted to its top (15.7.11
@@ -263,6 +269,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         // it had no name of its own and every stack trace through one said
         // `<anonymous>` - which in a 4.5 MB bundle is no answer at all.
         derived_ctor_pending_ = n.a >= 0; // see frame::derived_flag
+        method_pending_ = true;
         const std::uint32_t index = compile_function_body(constructor_body, std::string{n.text});
         derived_ctor_pending_ = false;
         proto().emit(instruction::with_bx(op::closure, dst, index));
@@ -356,6 +363,15 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         const std::uint16_t init = alloc_reg();
         proto().emit(instruction::with_bx(op::closure, init, fields));
         proto().emit(instruction{op::set_prop, dst, name_operand("__fields"), init});
+        // AN INSTANCE FIELD'S HOME OBJECT IS THE PROTOTYPE (15.7.10
+        // ClassFieldDefinitionEvaluation: MakeMethod(initializer, homeObject)),
+        // so `x = super.y` reads the parent's - wired, as an object literal's
+        // method is, only when an initialiser says `super` or `eval(`.
+        if (std::ranges::any_of(instance_fields, [&](std::int32_t f) {
+                return mentions_super(at(f).b, false) || mentions_direct_eval(at(f).b, false);
+            })) {
+            proto().emit(instruction{op::set_prop, init, name_operand("__home"), prototype_reg});
+        }
     }
     if (static_brand) {
         const std::uint32_t inner = reg_mark();
@@ -409,7 +425,9 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
                 emit_computed_accessor(target, m.a, m.b, (m.d & 4) != 0);
                 continue;
             }
+            method_pending_ = true;
             compile_expr(m.b, slot);
+            method_pending_ = false;
             const std::uint16_t name = member_operand(m.text);
             proto().emit(instruction{(m.d & 4) != 0 ? op::define_setter : op::define_getter, target,
                                      name, slot});
@@ -437,6 +455,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             const std::uint32_t mark = reg_mark();
             const std::uint16_t key = alloc_reg();
             compile_expr(m.a, key);
+            method_pending_ = true;
             const std::uint32_t index = compile_function_body(m.b, "");
             proto().emit(instruction::with_bx(op::closure, slot, index));
             if ((m.d & 1) != 0) {
@@ -453,6 +472,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             continue;
         }
         if (m.c == 1) {
+            method_pending_ = true;
             const std::uint32_t index = compile_function_body(m.b, std::string{m.text});
             proto().emit(instruction::with_bx(op::closure, slot, index));
         } else {

@@ -186,6 +186,8 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     frames_.emplace_back();
     frames_.back().proto = index;
     frames_.back().is_strict = strict;
+    frames_.back().has_home = method_pending_;
+    method_pending_ = false;
     out_.functions[index].is_strict = strict;
     // A BODY IS NOT THE DECLARATION THAT HOLDS IT: `const f = function () {
     // typo = 1; }` writes `typo` as an assignment, whatever `f` is.

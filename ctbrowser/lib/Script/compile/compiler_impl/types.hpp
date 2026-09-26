@@ -91,6 +91,11 @@ struct frame {
     // 13.3.7.1 / 9.2.1.2. Empty for every other function. An arrow inside
     // the constructor asks its nearest non-arrow frame (derived_flag()).
     std::string derived_flag;
+    // A FUNCTION WITH A [[HomeObject]] - a method, an accessor, a constructor
+    // or a class's field initialiser (field_initializer) - which is what a
+    // direct eval in it may say `super.x` in (see compiler_impl::eval_site_here).
+    bool has_home = false;
+    bool field_initializer = false;
     // WHERE A NAME OR STRING ALREADY WENT. `function_proto::add_name` and
     // `add_string` deduplicate by LINEAR SCAN, quadratic in the distinct
     // names a function mentions. The index lives HERE rather than on the

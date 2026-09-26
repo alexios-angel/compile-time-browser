@@ -146,6 +146,20 @@ bool compiler_impl::mentions_super(std::int32_t idx, bool root) const {
     return false;
 }
 
+bool compiler_impl::mentions_direct_eval(std::int32_t idx, bool root) const {
+    if (idx < 0) { return false; }
+    const vp::node & n = at(idx);
+    if (is_direct_eval_call(n)) { return true; }
+    if (!root && (n.kind == vp::nk::func_decl || n.kind == vp::nk::func_expr)) { return false; }
+    for (const std::int32_t slot : child_slots(n)) {
+        if (mentions_direct_eval(slot, false)) { return true; }
+    }
+    for (const std::int32_t k : kids(n)) {
+        if (mentions_direct_eval(k, false)) { return true; }
+    }
+    return false;
+}
+
 bool compiler_impl::is_captured(std::string_view name) const {
     const interval where = frames_.back().captures;
     if (where.empty()) { return false; }
