@@ -15,7 +15,10 @@
 //   * THE EVENT. `load` fires at the `<iframe>` on a LATER turn, drained by the
 //     event loop beside the image loads, because
 //     `document.body.appendChild(frame)` is followed by `frame.onload = f`
-//     often enough that firing from the insertion would fire at nothing.
+//     often enough that firing from the insertion would fire at nothing -
+//     EXCEPT for a frame inserted with no `src`, whose about:blank fires its
+//     `load` during the insertion, as HTML's insertion steps say, and so at
+//     nothing listening yet (connect_blank_frame).
 //
 // WHAT IT IS MEASURED AGAINST. Thirty-two `dom/nodes` files timed out at 10 or
 // 60 seconds each waiting for an iframe's `load` that could never come, and
@@ -189,6 +192,73 @@ void dom_bindings::reconcile_frames() {
     // frame, and a removed frame put back gets a NEW document, which is what
     // the DOM says happens.
     frames_.swap(still);
+}
+
+// AN <iframe> CONNECTED WITH NO `src` - HTML 4.8.5's insertion steps ("create
+// a new child navigable", then "process the iframe attributes" with
+// initialInsertion): its navigable exists at once, and the about:blank it
+// starts on fires `load` SYNCHRONOUSLY, during the insertion - so a listener
+// added after the insertion never hears it. The Range tests append two blank
+// frames, then set `onload` and a `src`, and waited for the navigation's
+// `load`; queued for the next tick, the about:blank one arrived instead and
+// the test ran against an empty frame (dom/ranges/Range-insertNode.html).
+//
+// A frame WITH a src keeps loading lazily (reconcile_frames): what it shows is
+// fetched, and its `load` is a later task however it arrives.
+//
+// The lazy reconcile is held off while the `load` runs, as it is while an
+// inserted script runs (execute_script_element): a later frame of the same
+// insertion has not had its insertion steps yet, and reading its
+// `contentWindow` from this one's `load` must answer null.
+void dom_bindings::connect_blank_frame(node_id id) {
+    if (cx_ == nullptr) { return; }
+    if (std::ranges::any_of(frames_, [id](const frame_entry & e) { return e.element == id; })) {
+        return;
+    }
+    dom_bindings * made = load_frame(*cx_, id, std::string{});
+    frames_.push_back(frame_entry{id, std::string{}, made});
+    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+    dom_bindings * const owner = &top == this ? nullptr : this;
+    std::erase_if(top.frame_loads_, [&](const pending_frame & waiting) {
+        return !waiting.resource && waiting.id == id && waiting.owner == owner;
+    });
+    const bool were_dirty = frames_dirty_;
+    frames_dirty_ = false;
+    settle_frame(*cx_, pending_frame{id, true, false, nullptr});
+    frames_dirty_ = frames_dirty_ || were_dirty;
+}
+
+// The insertion steps of the <iframe>s a mutation connected, in tree order:
+// each blank one gets its navigable and its synchronous `load`
+// (connect_blank_frame). Only a document with a browsing context has nested
+// navigables - createHTMLDocument's does not.
+void dom_bindings::connect_inserted_frames(const std::vector<document::write_note> & writes) {
+    if (cx_ == nullptr || doc_ == nullptr || (secondary_ && realm_ == nullptr)) { return; }
+    std::vector<node_id> blank;
+    {
+        const auto txn = doc_->read();
+        const atom iframe_tag = atoms_->intern_lower("iframe");
+        const atom src = atoms_->intern("src");
+        const auto walk = [&](const auto & self, node_id at) -> void {
+            if (txn.tag(at).value_or(atom{}) == iframe_tag && txn.element_ns(at) == node_ns::html &&
+                txn.attribute_value(at, src).empty() &&
+                std::ranges::find(blank, at) == blank.end()) {
+                blank.push_back(at);
+            }
+            for (const node_id child : txn.children(at)) { self(self, child); }
+        };
+        for (const document::write_note & note : writes) {
+            if (note.kind == document::write_note::edit::inserted && note.child &&
+                txn.contains(note.child)) {
+                walk(walk, note.child);
+            }
+        }
+    }
+    for (const node_id id : blank) {
+        // Connected - and still, after a `load` an earlier frame fired, which
+        // can have moved or removed this one.
+        if (is_connected(id)) { connect_blank_frame(id); }
+    }
 }
 
 // A FRAME HAS ITS DOCUMENT THE MOMENT IT IS INSERTED, not at the next tick.

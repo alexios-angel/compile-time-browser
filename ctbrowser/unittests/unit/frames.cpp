@@ -540,6 +540,31 @@ void test_the_location_object_navigates() {
     if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"inner?y=2"}); }
 }
 
+// HTML 4.8.5's insertion steps: a frame inserted with no `src` fires its
+// about:blank `load` DURING the insertion - heard by a listener added before
+// it, never by one added after - and a `src` given afterwards is the only
+// `load` a later listener hears (dom/ranges' Range-test-iframe setup).
+void test_a_blank_frame_loads_during_its_insertion() {
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///pages/the-page.html");
+    page.assets().add("inner.html", bytes_of(inner_html));
+    page.load_html("<!DOCTYPE html><html><body><script>"
+                   "var heard = [];"
+                   "addEventListener('load', function () {"
+                   " var f = document.createElement('iframe');"
+                   " f.onload = function () { heard.push('before'); };"
+                   " document.body.appendChild(f); heard.push('appended');"
+                   " var g = document.body.appendChild(document.createElement('iframe'));"
+                   " g.onload = function () { heard.push(g.contentDocument.title); };"
+                   " g.src = 'inner.html';"
+                   " setTimeout(function () { console.log(heard.join()); }, 40);"
+                   "});</script></body></html>");
+    for (int i = 0; i < 6; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"before,appended,inner"}); }
+}
+
 int main() {
     test_a_frame_document_is_laid_out_at_the_size_of_its_box();
     test_the_frames_are_indexed_on_the_window();
@@ -564,5 +589,6 @@ int main() {
     test_a_form_submits_into_a_named_frame();
     test_window_open_follows_the_window_open_steps();
     test_the_location_object_navigates();
+    test_a_blank_frame_loads_during_its_insertion();
     REPORT("frames");
 }

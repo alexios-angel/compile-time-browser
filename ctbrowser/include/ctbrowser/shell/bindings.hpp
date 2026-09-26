@@ -736,6 +736,8 @@ private:
     dom_bindings * load_frame(context & cx, node_id id, const std::string & src,
                               const resource_request * request = nullptr);
     void settle_frame(context & cx, const pending_frame & waiting);
+    void connect_blank_frame(node_id id);
+    void connect_inserted_frames(const std::vector<document::write_note> & writes);
     [[nodiscard]] static std::string_view mime_for_path(std::string_view path);
 
     using read_kind = binding_detail::read_kind;

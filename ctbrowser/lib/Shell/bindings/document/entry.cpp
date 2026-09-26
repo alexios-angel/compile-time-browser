@@ -354,6 +354,10 @@ void dom_bindings::mutated() {
     // steps, then the custom element reactions - a connectedCallback may mutate
     // again and arrive back here - and everything above it is bookkeeping.
     run_inserted_scripts();
+    // ...and the insertion steps of the blank <iframe>s it connected, which a
+    // script of the same insertion that PRECEDED them did not see
+    // (frames.cpp, connect_inserted_frames).
+    connect_inserted_frames(writes);
     react_custom_elements();
 }
 
@@ -520,7 +524,11 @@ void dom_bindings::execute_script_element(context & cx, node_id id, const std::s
                 walk(walk, txn.root());
             }
             for (const auto & [frame, src] : preceding) {
-                frames_.push_back(frame_entry{frame, src, load_frame(cx, frame, src)});
+                if (src.empty()) {
+                    connect_blank_frame(frame); // its `load` at once (frames.cpp)
+                } else {
+                    frames_.push_back(frame_entry{frame, src, load_frame(cx, frame, src)});
+                }
             }
         }
         const bool frames_were_dirty = frames_dirty_;
