@@ -5011,7 +5011,150 @@ static void testSelectedAttributeStrings(mlir::MLIRContext & context) {
     }
 }
 
+static void testSavedAttributePredicates(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 30; ++control) {
+            std::string source = R"js(function guarded(anchor) {
+                const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : false;
+                try {
+                    anchor.setAttribute('data-written', saved);
+                    return true;
+                } catch (error) { return error === anchor; }
+            })js";
+            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
+                source.replace(source.find(from.str()), from.size(), to.str());
+            };
+            if (control == 1) {
+                replace("anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : false",
+                        "anchor.hasAttribute('data-number')");
+            }
+            if (control == 2) {
+                replace("anchor.hasAttribute('data-number') : false",
+                        "false : anchor.hasAttribute('data-number')");
+            }
+            if (control == 3 || control == 11) {
+                replace(
+                    "anchor.hasAttribute('data-number')",
+                    "(anchor.hasAttribute('inner') ? anchor.hasAttribute('data-number') : false)");
+                if (control == 11) { replace(": false)", ": anchor)"); }
+            }
+            if (control == 4) { replace(": false", ": anchor.hasAttribute('other')"); }
+            if (control == 5) {
+                replace("try {", "try { anchor.setAttribute('data-number', '99');");
+            }
+            if (control == 6) {
+                replace("try {", "anchor.setAttribute('data-number', '99'); try {");
+            }
+            if (control == 7) {
+                replace("try {", "const alias = anchor; "
+                                 "alias.setAttribute('data-number', '99'); try {");
+            }
+            if (control == 8) { replace("return true;", "throw anchor;"); }
+            if (control == 9) { replace("anchor.hasAttribute('data-number')", "anchor"); }
+            if (control == 10) { replace(": false", ": anchor"); }
+            if (control == 12) { replace("anchor.hasAttribute('flag')", "unknown()"); }
+            if (control == 13) {
+                replace("anchor.hasAttribute('data-number')",
+                        "(unknown(), anchor.hasAttribute('data-number'))");
+            }
+            if (control == 14) { replace(": false", ": (unknown(), false)"); }
+            if (control == 15) { replace("try {", "try { unknown();"); }
+            if (control == 16) {
+                replace("const saved =", "anchor.hasAttribute = anchor; const saved =");
+            }
+            if (control == 17) { replace("data-written", "bad name"); }
+            if (control == 18) {
+                replace("anchor.hasAttribute('data-number')", "anchor.unknown('data-number')");
+            }
+            if (control == 19) {
+                replace("anchor.hasAttribute('data-number')", "anchor.hasAttribute(anchor)");
+            }
+            if (control == 28) { replace(": false", ": (anchor = false, false)"); }
+            if (control == 29) { replace("const saved =", "unknown(); const saved ="); }
+            auto candidate = import(context, source, true);
+            if (!candidate) { continue; }
+            auto function = guarded(*candidate);
+            llvm::SmallVector<ctjs::CallOp> calls;
+            function.walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            if (!check(calls.size() >= 2, "saved predicate source retains producer and write")) {
+                continue;
+            }
+            auto anchor = function.getBody().front().getArgument(ctjs::implicit_arguments);
+            if (control == 20) {
+                calls[1].getReceiverMutable().assign(function.getBody().front().getArgument(0));
+            }
+            if (control == 21) { calls[1].getCalleeMutable().assign(anchor); }
+            if (control == 22) { calls[1].getArgsMutable().append(anchor); }
+            if (control == 23) { calls[1].getArgsMutable().clear(); }
+            mlir::Builder builder(&context);
+            for (auto call : calls) {
+                call->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+            }
+            HostContract request;
+            request.provider = provider;
+            request.entry = function.getSymName().str();
+            if (control != 24) { request.elementParameters = {0}; }
+            request.moduleSha256 = hostContractFingerprint(*candidate);
+            if (control == 25) { request.moduleSha256 = "stale"; }
+            const auto originalContract = request;
+            const auto original = printed(*candidate);
+            auto error = prepareDOMEntry(*candidate, request,
+                                         control == 26   ? 0
+                                         : control == 27 ? 500
+                                                         : 100000);
+            if (control >= 9) {
+                check(static_cast<bool>(error) && printed(*candidate) == original &&
+                          request.moduleSha256 == originalContract.moduleSha256 &&
+                          request.initialIntrinsics == originalContract.initialIntrinsics &&
+                          request.elementParameters == originalContract.elementParameters &&
+                          request.provider == originalContract.provider &&
+                          request.entry == originalContract.entry,
+                      "saved predicate refusal preserves both arms and the whole transaction");
+                if (error) { llvm::consumeError(std::move(error)); }
+                continue;
+            }
+            if (!check(!error, "saved Boolean predicate completes its protected write")) {
+                llvm::errs() << "saved predicate control " << control << ": "
+                             << llvm::toString(std::move(error)) << '\n';
+                continue;
+            }
+            DOMEntryAnalysis proof(*candidate, request);
+            check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                  "saved predicate requires fresh complete DOM proof");
+            llvm::SmallVector<ctjs::CallOp> predicates, writes;
+            guarded(*candidate).walk([&](ctjs::CallOp call) {
+                const auto * method = proof.call(call);
+                if (!check(method != nullptr, "every retained predicate call has DOM proof")) {
+                    return;
+                }
+                if (method->kind == HostDOMMethod::hasAttribute) { predicates.push_back(call); }
+                if (method->kind == HostDOMMethod::setAttribute) { writes.push_back(call); }
+            });
+            const bool mutation = control >= 5 && control <= 7;
+            if (!check(predicates.size() == (control == 1                   ? 1u
+                                             : control == 3 || control == 4 ? 3u
+                                                                            : 2u) &&
+                           writes.size() == (mutation ? 2u : 1u),
+                       "each predicate and ordered write occurs exactly once")) {
+                continue;
+            }
+            auto saved = writes.back().getArgs()[1];
+            auto selected = saved.getDefiningOp<mlir::scf::IfOp>();
+            auto * origin =
+                control == 1 ? predicates.front().getOperation() : selected.getOperation();
+            check((control == 1 ? saved == predicates.front().getResult() : bool(selected)) &&
+                      origin && origin->getBlock() == writes.front()->getBlock() &&
+                      origin->isBeforeInBlock(writes.front()) &&
+                      (!mutation || writes.front()->isBeforeInBlock(writes.back())),
+                  "write consumes the saved Boolean before direct and alias DOM mutations");
+        }
+    }
+}
+
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    testSavedAttributePredicates(context);
     testSelectedAttributeStrings(context);
     testSavedAttributeStrings(context);
     testProtectedNumberStrings(context);

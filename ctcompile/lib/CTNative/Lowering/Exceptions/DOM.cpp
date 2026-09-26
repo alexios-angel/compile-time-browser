@@ -429,7 +429,9 @@ struct DOMAttributeProof {
     llvm::DenseSet<mlir::Value> booleanReads;
     llvm::DenseSet<mlir::Value> stringReads;
     llvm::DenseSet<mlir::Value> numberReads;
-    bool booleanValue(mlir::Value value) const {
+    bool booleanValue(mlir::Value value, unsigned depth = 0) {
+        if (!remaining || depth == 64) { return false; }
+        --remaining;
         if (auto compare = value.getDefiningOp<ctjs::CompareOp>()) {
             return compare.getKind() == ctjs::CompareKind::StrictEq;
         }
@@ -437,8 +439,28 @@ struct DOMAttributeProof {
             return unary.getKind() == ctjs::UnaryKind::Not;
         }
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        return booleanReads.contains(value) ||
-               (constant && llvm::isa<ctjs::BooleanAttr>(constant.getValue()));
+        auto call = value.getDefiningOp<ctjs::CallOp>();
+        // A saved predicate retains its Boolean value across later DOM writes.
+        // Prove the exact read, leaving producer effects and initial method
+        // identity to the complete final DOM proof.
+        if (booleanReads.contains(value) ||
+            (constant && llvm::isa<ctjs::BooleanAttr>(constant.getValue())) ||
+            (call && attributeRead(call) && attributeCall(call))) {
+            return true;
+        }
+        auto result = llvm::dyn_cast<mlir::OpResult>(value);
+        auto branch =
+            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+        if (!branch) { return false; }
+        for (auto & region : branch->getRegions()) {
+            if (!region.hasOneBlock()) { return false; }
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+            if (!yield || yield.getNumOperands() != branch.getNumResults() ||
+                !booleanValue(yield.getOperand(result.getResultNumber()), depth + 1)) {
+                return false;
+            }
+        }
+        return true;
     }
     bool stringValue(mlir::Value value, unsigned depth = 0) {
         if (!remaining || depth == 64) { return false; }
