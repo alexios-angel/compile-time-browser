@@ -78,6 +78,7 @@ value context::module_namespace(module_record & of) {
                             value::undefined(), attr_enumerable);
     }
     ns->define(CTBROWSER_SYMBOL_KEY("toStringTag"), string("Module"), attr_none);
+    ns->define(module_namespace_key, value::boolean(true), attr_none);
     ns->extensible = false;
     return of.namespace_object;
 }

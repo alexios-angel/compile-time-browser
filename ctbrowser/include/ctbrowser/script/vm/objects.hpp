@@ -51,6 +51,11 @@ struct closure_object;
 // where a browser has two. The binding table starts as a copy of the page's
 // template (see context::create_realm), so a frame sees the same constructors;
 // what it does not see is the page's own `var`s.
+// THE MARK OF A MODULE NAMESPACE OBJECT (context::module_namespace): its
+// exports are getters over the cells, which [[GetOwnProperty]] and
+// [[DefineOwnProperty]] answer as the data properties 10.4.6 says they are.
+inline constexpr std::string_view module_namespace_key = CTBROWSER_PRIVATE_KEY("ModuleNamespace");
+
 struct realm_record {
     string_flat_map<value> globals;
     // THE NAMES A SCRIPT DECLARED - `var`, and a block function's Annex B var:
