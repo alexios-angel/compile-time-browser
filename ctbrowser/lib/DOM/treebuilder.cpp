@@ -788,6 +788,7 @@ node_id tree_builder::insert_element(const std::string & tag,
     constructed_ = node_id{};
     if (const insertion_point where = appropriate_place();
         where.parent != doc_->document_node() && !(constructed && doc_->read().parent(element))) {
+        associate_with_form(element, where.parent, tag, attributes, ns);
         insert_at(where, element);
         if (constructed && on_inserted_) { on_inserted_(element); }
     }
@@ -799,6 +800,43 @@ node_id tree_builder::insert_element(const std::string & tag,
 
 node_id tree_builder::insert_element(const token & t, node_ns ns) {
     return insert_element(t.name, t.attributes, ns);
+}
+
+// THE FORM ELEMENT POINTER'S ONE CONSUMER (13.2.6.1 "create an element for a
+// token", step 12): a form-associated element made while the pointer is set -
+// no <template> open, no `form` attribute if it is a listed one, and headed
+// into the pointer's tree - belongs to that form even when it is not inside
+// it. `<table><form><tr><td><input>` pops the form the moment it is
+// inserted, and the input is still its control. One whose NEAREST form
+// ancestor is the pointer's records nothing: its ancestors already say so,
+// and every removal would otherwise have one more pair to look at
+// (document::parser_form). A script that put another form between them made
+// that one nearest, so then the pointer's is recorded. Not a form-associated
+// custom element, which the specification leaves out - an autonomous one's
+// tag is not in the list.
+void tree_builder::associate_with_form(node_id element, node_id intended_parent,
+                                       std::string_view tag,
+                                       const std::vector<token_attribute> & attributes,
+                                       node_ns ns) {
+    if (!form_ || ns != node_ns::html || !intended_parent || template_on_stack()) { return; }
+    const bool listed =
+        one_of(tag, {"button", "fieldset", "input", "object", "output", "select", "textarea"});
+    if (!listed && tag != "img") { return; }
+    if (listed && std::ranges::find(attributes, std::string_view{"form"}, &token_attribute::name) !=
+                      attributes.end()) {
+        return;
+    }
+    {
+        const auto txn = doc_->read();
+        if (txn.root_of_tree(intended_parent) != txn.root_of_tree(form_)) { return; }
+        for (node_id at = intended_parent; at; at = txn.parent(at)) {
+            if (txn.element_ns(at) == node_ns::html && txn.local_name(at) == "form") {
+                if (at == form_) { return; }
+                break;
+            }
+        }
+    }
+    doc_->set_parser_form(element, form_);
 }
 
 // "Generic raw text element parsing algorithm" and its RCDATA twin.

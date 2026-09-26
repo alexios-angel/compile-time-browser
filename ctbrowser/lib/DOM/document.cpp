@@ -494,6 +494,51 @@ void document::detach(node * child_node, node_id child) {
     const auto gone = std::ranges::remove(parent_node->children, child);
     parent_node->children.erase(gone.begin(), gone.end());
     child_node->parent = node_id{};
+    if (!parser_forms_.empty()) { sever_parser_forms(); }
+}
+
+// "When a form-associated element or one of its ancestors is removed": a
+// control and the form the parser gave it that are no longer in the same
+// tree part company, whichever of the two moved. Asked right after the
+// removal, before any insertion - `appendChild` of the control elsewhere in
+// the SAME document still ends it (form_owner_and_table_3.html).
+// ponytail: every detach walks every pair to its root, O(pairs * depth). Only
+// a control OUTSIDE its form is recorded (tree_builder::associate_with_form),
+// so a page has none or a table's worth; if that ever measures, look only at
+// the pairs with an end under the detached child.
+void document::sever_parser_forms() {
+    const auto top = [this](node_id at) {
+        for (const node * n = find(at); n != nullptr && n->parent; n = find(at)) { at = n->parent; }
+        return at;
+    };
+    std::erase_if(parser_forms_,
+                  [&](const auto & entry) { return top(entry.first) != top(entry.second); });
+}
+
+// The null-namespace `form` content attribute of a LISTED element: set,
+// changed or removed, it resets the form owner (4.10.17.3), which ends the
+// parser's association. An <img> has no such attribute; the callers pass only
+// null-namespace writes.
+void document::forget_parser_form(node_id element, atom attribute_name) {
+    if (parser_forms_.empty() || atoms_->text(attribute_name) != "form") { return; }
+    if (const node * n = find(element); n == nullptr || atoms_->text(n->tag) == "img") { return; }
+    std::erase_if(parser_forms_, [element](const auto & entry) { return entry.first == element; });
+}
+
+// The element is always one the parser has just made, so it has no entry yet.
+void document::set_parser_form(node_id element, node_id form) {
+    parser_forms_.emplace_back(element, form);
+}
+
+node_id document::parser_form(node_id element) const noexcept {
+    for (const auto & [control, form] : parser_forms_) {
+        if (control == element) { return form; }
+    }
+    return node_id{};
+}
+
+node_id read_txn::parser_form(node_id id) const noexcept {
+    return doc_->parser_form(id);
 }
 
 std::expected<void, dom_error> document::append_child(node_id parent, node_id child) {
@@ -574,6 +619,7 @@ std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
         n->attributes.push_back(attribute{name, std::string{value}});
     }
     update_pi_data(id, *n);
+    forget_parser_form(id, name);
     bump_version();
     note_write(id, name, false, existed);
     return {};
@@ -597,6 +643,7 @@ std::expected<void, dom_error> document::set_attribute_ns(node_id id, atom ns, a
     } else {
         n->attributes.push_back(attribute{name, ns, std::string{value}});
     }
+    if (uri.empty()) { forget_parser_form(id, name); }
     bump_version();
     note_write(id, name, false, existed);
     return {};
@@ -621,6 +668,7 @@ std::expected<void, dom_error> document::remove_attribute(node_id id, atom name)
     // subtests check, in both orders.
     n->attributes.erase(gone);
     update_pi_data(id, *n);
+    forget_parser_form(id, name);
     bump_version();
     note_write(id, name, false, true, true);
     return {};
@@ -635,6 +683,7 @@ std::expected<void, dom_error> document::remove_attribute_ns(node_id id, std::st
     if (gone == n->attributes.end()) { return {}; }
     const atom name = gone->name;
     n->attributes.erase(gone);
+    if (ns.empty()) { forget_parser_form(id, name); }
     bump_version();
     note_write(id, name, false, true, true);
     return {};

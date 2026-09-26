@@ -355,6 +355,53 @@ void test_parse_html() {
     CHECK(elements >= 5); // div, h1, ul, li, li at minimum
 }
 
+// THE FORM ELEMENT POINTER (HTML 13.2.6.1 step 12): a form inside a table is
+// popped as soon as it is inserted, and the controls after it are still its
+// own - until a removal separates them or their `form` attribute changes
+// (form_owner_and_table.html, form_owner_and_table_3.html).
+void test_the_parser_associates_controls_with_the_form_pointer() {
+    atom_table atoms;
+    document doc{atoms};
+    (void)parse_html(doc, R"(<!DOCTYPE html><body><table><form id=f><tr><td>
+<input id=i><input id=a form=x><img id=g><input id=n><input id=m></td></tr></table>
+<div id=d></div><form id=ignored><input id=k></form>)");
+    const auto by_id = [&](std::string_view id) {
+        const auto r = doc.read();
+        node_id found{};
+        const auto walk = [&](auto && self, node_id at) -> void {
+            if (r.attribute_value(at, atoms.intern("id")) == id) { found = at; }
+            for (const node_id c : r.children(at)) { self(self, c); }
+        };
+        walk(walk, r.root());
+        return found;
+    };
+    const node_id form = by_id("f");
+    const auto owner = [&](std::string_view id) { return doc.read().parser_form(by_id(id)); };
+    CHECK(static_cast<bool>(form));
+    CHECK(owner("i") == form);
+    CHECK(!owner("a"));        // a listed element with a `form` attribute
+    CHECK(owner("g") == form); // form-associated, though not listed
+    CHECK(owner("k") == form); // the second <form> was ignored: the pointer was set
+    // The table moves with both inside it: still one tree, still associated.
+    const node_id table = doc.read().parent(form);
+    CHECK(doc.remove_child(table).has_value());
+    CHECK(doc.append_child(by_id("d"), table).has_value());
+    CHECK(owner("i") == form);
+    // The `form` content attribute resets the owner - in no namespace only.
+    CHECK(doc.set_attribute_ns(by_id("n"), atoms.intern("urn:x"), atoms.intern("form"), "v")
+              .has_value());
+    CHECK(owner("n") == form);
+    CHECK(doc.set_attribute(by_id("m"), atoms.intern("form"), "v").has_value());
+    CHECK(!owner("m"));
+    // An <img>'s `form` attribute is nothing to it.
+    CHECK(doc.set_attribute(by_id("g"), atoms.intern("form"), "v").has_value());
+    CHECK(owner("g") == form);
+    // The input alone leaves: another tree, the association is over.
+    const node_id input = by_id("i");
+    CHECK(doc.remove_child(input).has_value());
+    CHECK(!doc.read().parser_form(input));
+}
+
 } // namespace
 
 int main() {
@@ -369,5 +416,6 @@ int main() {
     test_parsed_foreign_attributes();
     test_version_advances_on_writes();
     test_parse_html();
+    test_the_parser_associates_controls_with_the_form_pointer();
     REPORT("dom_basics");
 }
