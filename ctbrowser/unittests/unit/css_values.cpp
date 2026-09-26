@@ -656,6 +656,51 @@ void test_basic_shapes() {
         std::string{"path(\"M 0 0 H 15\")"});
 }
 
+// CSS Shapes 2's shape(): the default fill rule, anchor, sweep, size and
+// rotation left out; computed with its positions resolved; blended command by
+// command, a path() as the shape() it draws.
+void test_the_shape_function() {
+    ok("clip-path", "shape(EvenOdd from 0 0Px, CLOSE)", "shape(evenodd from 0px 0px, close)");
+    ok("clip-path", "shape(nonzero from 1px 2px, line to 10px 10px)",
+       "shape(from 1px 2px, line to 10px 10px)");
+    ok("clip-path", "shape(from 1px 2px, arc to 5px 1pt of 10px small rotate 0deg)",
+       "shape(from 1px 2px, arc to 5px 1pt of 10px)");
+    ok("clip-path", "shape(from 1px 2px, arc by 5px 1pt of 20% 5px rotate 25deg large cw)",
+       "shape(from 1px 2px, arc by 5px 1pt of 20% 5px cw large rotate 25deg)");
+    ok("offset-path", "shape(from 1px 2px, curve to 5px 5px with 1px 2px from origin / 3px 4px)",
+       "shape(from 1px 2px, curve to 5px 5px with 1px 2px / 3px 4px)");
+    ok("offset-path", "shape(from 1px 2px, smooth by 5px 5px with 1px 2px from end)",
+       "shape(from 1px 2px, smooth by 5px 5px with 1px 2px from end)");
+    CHECK(supports_declaration("shape-outside", "shape(from 0px 0px, hline to center, close)"));
+    bad("clip-path", "shape(from 0px 0px)");
+    bad("clip-path", "shape(nonzero, from 0px 0px, close)");
+    bad("clip-path", "shape(from 0px 0px, close,)");
+    bad("clip-path", "shape(from 0px 0px, hline to top)");
+    bad("clip-path", "shape(from 0px 0px, arc cw to 5px 5px of 1px)");
+    bad("clip-path", "shape(from 0px 0px, arc to 5px 5px of 1px small large)");
+    bad("clip-path", "shape(from 0px 0px, curve by 1px 1px with center 1px)");
+    using ctbrowser::style::css::blend_basic_shapes;
+    using ctbrowser::style::css::computed_basic_shape;
+    ctbrowser::style::css::length_context ctx;
+    ctx.font_size = 16;
+    CHECK_EQ(computed_basic_shape("clip-path", "shape(from 1em center, smooth to right 20%)", ctx),
+             std::string{"shape(from 16px 50%, smooth to 100% 20%)"});
+    CHECK_EQ(blend_basic_shapes("clip-path", "shape(from 5px 5px, hline to 5px, close)",
+                                "shape(from -5px 5px, hline to 15px, close)", 0.5, 0.5)
+                 .value_or(""),
+             std::string{"shape(from 0px 5px, hline to 10px, close)"});
+    CHECK_EQ(blend_basic_shapes("clip-path", "path(\"M 5 5 a 30 30 30 1 0 15 -5\")",
+                                "shape(from 15px 15px, arc by 25px -15px of 20px cw)", 0.5, 0.5)
+                 .value_or(""),
+             std::string{"shape(from 10px 10px, arc by 20px -10px of 25px 25px cw large rotate "
+                         "15deg)"});
+    CHECK(!blend_basic_shapes("clip-path", "shape(from 0px 0px, move to 1px 1px)",
+                              "shape(from 0px 0px, move by 1px 1px)", 0.5, 0.5));
+    CHECK(!blend_basic_shapes("clip-path", "shape(from 0px 0px, smooth to 1px 1px with 1px 1px)",
+                              "shape(from 0px 0px, smooth to 1px 1px with 2px 2px from start)", 0.5,
+                              0.5));
+}
+
 } // namespace
 
 int main() {
@@ -687,5 +732,6 @@ int main() {
     test_the_position_grammar();
     test_gap_rule_lists_and_their_neighbours();
     test_basic_shapes();
+    test_the_shape_function();
     REPORT("css_values");
 }

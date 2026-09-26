@@ -83,7 +83,7 @@ inline constexpr std::array<std::string_view, 6> performed_substitutions{
 // whole, so a value calling them is one the engine keeps. The ten filter
 // functions are filter.cpp's and the basic shapes shapes.cpp's: parsed,
 // computed and interpolated whole.
-inline constexpr std::array<std::string_view, 66> value_functions{"cross-origin",
+inline constexpr std::array<std::string_view, 67> value_functions{"cross-origin",
                                                                   "repeat",
                                                                   "minmax",
                                                                   "fit-content",
@@ -148,7 +148,8 @@ inline constexpr std::array<std::string_view, 66> value_functions{"cross-origin"
                                                                   "polygon",
                                                                   "path",
                                                                   "xywh",
-                                                                  "ray"};
+                                                                  "ray",
+                                                                  "shape"};
 
 [[nodiscard]] bool is_length_unit(std::string_view unit);
 

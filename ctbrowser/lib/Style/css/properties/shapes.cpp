@@ -10,8 +10,9 @@
 //   path( <fill-rule>? , <string> )
 //
 // beside the box it is drawn in: clip-path's <geometry-box> (`border-box`
-// by default) or shape-outside's <shape-box> (`margin-box`). Nothing here
-// draws; a shape() is kept as written.
+// by default) or shape-outside's <shape-box> (`margin-box`) - and CSS Shapes
+// 2's shape(), whose grammar is set out above parse_shape_command. Nothing
+// here draws.
 //
 // The COMPUTED shape has its lengths absolute, its position in percentages
 // and calc()s from the top left, and xywh() and rect() as the inset() they
@@ -21,24 +22,44 @@
 
 #include "internal.hpp"
 
+#include <cctype>
+#include <numbers>
+#include <utility>
+
 namespace ctbrowser::style::css {
 
 using namespace detail;
 
 namespace {
 
+// One command of a shape(), CSS Shapes 2 §3.2.
+struct shape_command {
+    std::string verb; // move line hline vline curve smooth arc close, lowercased
+    bool by = false;  // `by` - relative to the command's start - rather than `to`
+    std::string end;  // `to`'s <position>, `by`'s pair, or an hline's or vline's one value
+    // curve's and smooth's control points, each with its anchor - `start`,
+    // `end` or `origin` - empty for the command's default: `origin` after
+    // `to`, `start` after `by`.
+    std::vector<std::pair<std::string, std::string>> controls;
+    std::vector<std::string> radii; // arc's one or two
+    bool cw = false;                // arc's sweep; `ccw` is the default
+    bool large = false;             // arc's size; `small` is the default
+    std::string rotate;             // arc's angle, empty for none
+};
+
 struct shape_parts {
-    std::string function;            // lowercased name; empty when not a shape
-    std::vector<std::string> args;   // radial sizes, inset sides, xywh / rect components
-    std::string position;            // after `at`; empty when omitted
-    std::vector<std::string> radii;  // `round`'s eight corners, or empty
-    std::string fill_rule;           // `evenodd`, or empty for the default
-    std::string round;               // polygon's `round <length>`, or empty
-    std::vector<std::string> points; // polygon: x, y, x, y ...
-    std::string path;                // path's string, serialised
-    std::string box;                 // the box beside it, or empty for the default
-    std::string size;                // ray()'s size, or empty for `closest-side`
-    bool contain = false;            // ray()'s `contain`
+    std::string function;                // lowercased name; empty when not a shape
+    std::vector<std::string> args;       // radial sizes, inset sides, xywh / rect components
+    std::string position;                // after `at`; empty when omitted
+    std::vector<std::string> radii;      // `round`'s eight corners, or empty
+    std::string fill_rule;               // `evenodd`, or empty for the default
+    std::string round;                   // polygon's `round <length>`, or empty
+    std::vector<std::string> points;     // polygon: x, y, x, y ...
+    std::string path;                    // path's string, serialised
+    std::string box;                     // the box beside it, or empty for the default
+    std::string size;                    // ray()'s size, or empty for `closest-side`
+    bool contain = false;                // ray()'s `contain`
+    std::vector<shape_command> commands; // shape(), whose `from` is `position`
 };
 
 // --- SVG path data (SVG 2 §9.3.9), for path() -------------------------------
@@ -283,6 +304,223 @@ constexpr std::string_view geometry_boxes =
     return true;
 }
 
+// --- shape(), CSS Shapes 2 §3.2 ----------------------------------------------
+//
+//   shape( <fill-rule>? from <position> , <shape-command># )
+//   <shape-command> = move <end> | line <end> | close
+//     | hline [ to [ <lp> | left | center | right | x-start | x-end ] | by <lp> ]
+//     | vline [ to [ <lp> | top | center | bottom | y-start | y-end ] | by <lp> ]
+//     | curve [ to <position> with <control> [ / <control> ]?
+//             | by <pair> with <relative-control> [ / <relative-control> ]? ]
+//     | smooth [ to <position> [ with <control> ]? | by <pair> [ with <relative-control> ]? ]
+//     | arc <end> [ of <lp [0,∞]>{1,2} && [ cw | ccw ]? && [ large | small ]?
+//                 && [ rotate <angle> ]? ]
+//   <end> = to <position> | by <pair>        <pair> = <lp>{2}
+//   <control> = <position> | <relative-control>
+//   <relative-control> = <pair> [ from [ start | end | origin ] ]?
+
+[[nodiscard]] std::string joined_words(std::span<const std::string_view> words) {
+    std::string out;
+    for (const std::string_view w : words) { out += (out.empty() ? "" : " ") + std::string{w}; }
+    return out;
+}
+
+// Exactly two <length-percentage>s.
+[[nodiscard]] bool coordinate_pair(std::span<const std::string_view> words, std::string & out) {
+    if (words.size() != 2) { return false; }
+    const std::optional<std::string> x = length_percentage(words[0], false);
+    const std::optional<std::string> y = length_percentage(words[1], false);
+    if (!x || !y) { return false; }
+    out = *x + " " + *y;
+    return true;
+}
+
+// `to <position>` or `by <pair>`, the words after the `to` or `by`.
+[[nodiscard]] bool end_point(std::span<const std::string_view> words, bool by, std::string & out) {
+    if (words.empty()) { return false; }
+    if (by) { return coordinate_pair(words, out); }
+    std::optional<std::string> position = canonical_position(joined_words(words));
+    if (!position) { return false; }
+    out = std::move(*position);
+    return true;
+}
+
+// One control point. A <position> is allowed after `to` only, and anchors at
+// the origin; the anchor a command defaults to is left unwritten, which is
+// how `with 1px 2px from origin` after `to` serialises as `with 1px 2px`.
+[[nodiscard]] bool control_point(std::span<const std::string_view> words, bool by,
+                                 std::pair<std::string, std::string> & out) {
+    std::string anchor;
+    if (words.size() >= 2 && ascii_iequals(words[words.size() - 2], "from")) {
+        anchor = ascii_lower_copy(words.back());
+        if (!has_keyword("start end origin", anchor)) { return false; }
+        if (!coordinate_pair(words.first(words.size() - 2), out.first)) { return false; }
+    } else if (!coordinate_pair(words, out.first)) {
+        if (by || words.empty()) { return false; }
+        std::optional<std::string> position = canonical_position(joined_words(words));
+        if (!position) { return false; }
+        out.first = std::move(*position);
+    }
+    if (anchor == (by ? "start" : "origin")) { anchor.clear(); }
+    out.second = std::move(anchor);
+    return true;
+}
+
+// An angle in degrees: the computed form of arc's `rotate`.
+[[nodiscard]] std::optional<double> degrees_of(std::string_view text) {
+    std::size_t unit = 0;
+    while (unit < text.size() &&
+           (std::isdigit(static_cast<unsigned char>(text[unit])) || text[unit] == '.' ||
+            text[unit] == '-' || text[unit] == '+' || text[unit] == 'e' || text[unit] == 'E')) {
+        ++unit;
+    }
+    // `1e3deg`'s `e` is the exponent; `1deg`'s is not reached. A trailing `e`
+    // before the unit belongs to the unit, which only `deg` would begin with.
+    if (unit > 0 && (text[unit - 1] == 'e' || text[unit - 1] == 'E')) { --unit; }
+    double value = 0;
+    const auto [end, ec] = std::from_chars(text.data(), text.data() + unit, value);
+    if (ec != std::errc{} || end != text.data() + unit) { return std::nullopt; }
+    const std::string_view name = text.substr(unit);
+    if (ascii_iequals(name, "deg")) { return value; }
+    if (ascii_iequals(name, "rad")) { return value * 180 / std::numbers::pi; }
+    if (ascii_iequals(name, "grad")) { return value * 0.9; }
+    if (ascii_iequals(name, "turn")) { return value * 360; }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<shape_command> parse_shape_command(std::string_view item) {
+    const std::vector<std::string_view> words = words_of(item);
+    if (words.empty()) { return std::nullopt; }
+    shape_command c;
+    c.verb = ascii_lower_copy(words[0]);
+    if (c.verb == "close") {
+        if (words.size() != 1) { return std::nullopt; }
+        return c;
+    }
+    if (words.size() < 3) { return std::nullopt; }
+    if (ascii_iequals(words[1], "by")) {
+        c.by = true;
+    } else if (!ascii_iequals(words[1], "to")) {
+        return std::nullopt;
+    }
+    const std::span<const std::string_view> rest = std::span{words}.subspan(2);
+    if (c.verb == "move" || c.verb == "line") {
+        if (!end_point(rest, c.by, c.end)) { return std::nullopt; }
+        return c;
+    }
+    if (c.verb == "hline" || c.verb == "vline") {
+        if (rest.size() != 1) { return std::nullopt; }
+        const std::string_view sides = c.verb == "hline" ? "left center right x-start x-end"
+                                                         : "top center bottom y-start y-end";
+        if (!c.by && has_keyword(sides, rest[0])) {
+            c.end = ascii_lower_copy(rest[0]);
+            return c;
+        }
+        std::optional<std::string> one = length_percentage(rest[0], false);
+        if (!one) { return std::nullopt; }
+        c.end = std::move(*one);
+        return c;
+    }
+    if (c.verb == "curve" || c.verb == "smooth") {
+        std::size_t with = 0;
+        while (with < rest.size() && !ascii_iequals(rest[with], "with")) { ++with; }
+        if (!end_point(rest.first(with), c.by, c.end)) { return std::nullopt; }
+        if (with == rest.size()) {
+            if (c.verb == "curve") { return std::nullopt; }
+            return c;
+        }
+        std::size_t from = with + 1;
+        for (std::size_t i = from; i <= rest.size(); ++i) {
+            if (i < rest.size() && rest[i] != "/") { continue; }
+            std::pair<std::string, std::string> point;
+            if (!control_point(rest.subspan(from, i - from), c.by, point)) { return std::nullopt; }
+            c.controls.push_back(std::move(point));
+            from = i + 1;
+        }
+        if (c.controls.size() > (c.verb == "curve" ? 2u : 1u)) { return std::nullopt; }
+        return c;
+    }
+    if (c.verb == "arc") {
+        const auto keyword = [](std::string_view w) {
+            return has_keyword("of cw ccw large small rotate", w);
+        };
+        std::size_t at = 0;
+        while (at < rest.size() && !keyword(rest[at])) { ++at; }
+        if (!end_point(rest.first(at), c.by, c.end)) { return std::nullopt; }
+        bool of = false, sweep = false, size = false, rotate = false;
+        while (at < rest.size()) {
+            const std::string word = ascii_lower_copy(rest[at++]);
+            if (word == "of" && !of) {
+                of = true;
+                while (at < rest.size() && c.radii.size() < 2 && !keyword(rest[at])) {
+                    std::optional<std::string> radius = length_percentage(rest[at++], true);
+                    if (!radius) { return std::nullopt; }
+                    c.radii.push_back(std::move(*radius));
+                }
+                if (c.radii.empty()) { return std::nullopt; }
+            } else if ((word == "cw" || word == "ccw") && !sweep) {
+                sweep = true;
+                c.cw = word == "cw";
+            } else if ((word == "large" || word == "small") && !size) {
+                size = true;
+                c.large = word == "large";
+            } else if (word == "rotate" && !rotate && at < rest.size()) {
+                rotate = true;
+                static const property_syntax angle{"", value_kind::angle, "", "", false, false};
+                if (!typed_component(rest[at++], angle, c.rotate)) { return std::nullopt; }
+                if (const std::optional<double> d = degrees_of(c.rotate); d && *d == 0) {
+                    c.rotate.clear();
+                }
+            } else {
+                return std::nullopt;
+            }
+        }
+        if (!of) { return std::nullopt; }
+        return c;
+    }
+    return std::nullopt;
+}
+
+// `<fill-rule>? from <position>`, then one command per comma - at least one.
+[[nodiscard]] bool parse_shape_body(std::string_view body, shape_parts & out) {
+    const std::vector<std::string_view> items = split_top_level(body, ",");
+    if (items.size() < 2) { return false; }
+    const std::vector<std::string_view> head = words_of(items.front());
+    std::size_t k = 0;
+    if (!head.empty() && ascii_iequals_any(head[0], {"nonzero", "evenodd"})) {
+        out.fill_rule = ascii_lower_copy(head[0]);
+        k = 1;
+    }
+    if (k + 1 >= head.size() || !ascii_iequals(head[k], "from")) { return false; }
+    std::optional<std::string> from =
+        canonical_position(joined_words(std::span{head}.subspan(k + 1)));
+    if (!from) { return false; }
+    out.position = std::move(*from);
+    if (out.fill_rule == "nonzero") { out.fill_rule.clear(); }
+    for (std::size_t i = 1; i < items.size(); ++i) {
+        std::optional<shape_command> c = parse_shape_command(trim(items[i], html_whitespace));
+        if (!c) { return false; }
+        out.commands.push_back(std::move(*c));
+    }
+    return true;
+}
+
+[[nodiscard]] std::string command_text(const shape_command & c) {
+    if (c.verb == "close") { return "close"; }
+    std::string out = c.verb + (c.by ? " by " : " to ") + c.end;
+    for (std::size_t i = 0; i < c.controls.size(); ++i) {
+        out += (i == 0 ? " with " : " / ") + c.controls[i].first;
+        if (!c.controls[i].second.empty()) { out += " from " + c.controls[i].second; }
+    }
+    if (c.verb == "arc") {
+        out += " of " + joined(c.radii);
+        if (c.cw) { out += " cw"; }
+        if (c.large) { out += " large"; }
+        if (!c.rotate.empty()) { out += " rotate " + c.rotate; }
+    }
+    return out;
+}
+
 [[nodiscard]] std::optional<shape_parts> parse_function(std::string_view text) {
     shape_parts out;
     const std::size_t open = text.find('(');
@@ -355,6 +593,10 @@ constexpr std::string_view geometry_boxes =
         }
         if (out.args.empty()) { return std::nullopt; }
         if (out.size == "closest-side") { out.size.clear(); }
+        return out;
+    }
+    if (out.function == "shape") {
+        if (!parse_shape_body(body, out)) { return std::nullopt; }
         return out;
     }
     if (out.function == "polygon" || out.function == "path") {
@@ -444,6 +686,9 @@ constexpr std::string_view geometry_boxes =
         if (!s.position.empty()) { out += " at " + s.position; }
     } else if (s.function == "path") {
         out += (s.fill_rule.empty() ? "" : s.fill_rule + ", ") + string_text(s.path);
+    } else if (s.function == "shape") {
+        out += (s.fill_rule.empty() ? "" : s.fill_rule + " ") + "from " + s.position;
+        for (const shape_command & c : s.commands) { out += ", " + command_text(c); }
     }
     out += ")";
     if (!s.box.empty()) { out += " " + s.box; }
@@ -511,6 +756,80 @@ constexpr std::string_view geometry_boxes =
     return serialize_calc(out);
 }
 
+// A path() AS THE shape() IT DRAWS, which is how the two interpolate (CSS
+// Shapes 2 §3.3): its moveto the `from`, each later command the shape
+// command of the same meaning - an absolute one `to`, a relative one `by` -
+// and every number a length in pixels. A quadratic is a one-control curve,
+// `T` a smooth with none, and an arc's flags its `large` and `cw`.
+[[nodiscard]] std::optional<shape_parts> shape_of_path(const shape_parts & path) {
+    const std::optional<std::vector<path_segment>> data = parse_path_data(path.path);
+    if (!data) { return std::nullopt; }
+    shape_parts out;
+    out.function = "shape";
+    out.fill_rule = path.fill_rule;
+    out.box = path.box;
+    const auto px = [](double v) { return serialize_number(v) + "px"; };
+    const auto pair = [&px](double x, double y) { return px(x) + " " + px(y); };
+    for (const path_segment & s : *data) {
+        const std::vector<double> & n = s.numbers;
+        const char verb = static_cast<char>(s.command | 0x20);
+        if (out.position.empty()) {
+            out.position = pair(n[0], n[1]); // parse_path_data refuses any other first command
+            continue;
+        }
+        shape_command c;
+        c.by = s.command == verb && verb != 'z';
+        switch (verb) {
+        case 'm':
+            c.verb = "move";
+            c.end = pair(n[0], n[1]);
+            break;
+        case 'l':
+            c.verb = "line";
+            c.end = pair(n[0], n[1]);
+            break;
+        case 'h':
+            c.verb = "hline";
+            c.end = px(n[0]);
+            break;
+        case 'v':
+            c.verb = "vline";
+            c.end = px(n[0]);
+            break;
+        case 'c':
+            c.verb = "curve";
+            c.end = pair(n[4], n[5]);
+            c.controls = {{pair(n[0], n[1]), ""}, {pair(n[2], n[3]), ""}};
+            break;
+        case 'q':
+            c.verb = "curve";
+            c.end = pair(n[2], n[3]);
+            c.controls = {{pair(n[0], n[1]), ""}};
+            break;
+        case 's':
+            c.verb = "smooth";
+            c.end = pair(n[2], n[3]);
+            c.controls = {{pair(n[0], n[1]), ""}};
+            break;
+        case 't':
+            c.verb = "smooth";
+            c.end = pair(n[0], n[1]);
+            break;
+        case 'a':
+            c.verb = "arc";
+            c.end = pair(n[5], n[6]);
+            c.radii = {px(n[0]), px(n[1])};
+            if (n[2] != 0) { c.rotate = serialize_number(n[2]) + "deg"; }
+            c.large = n[3] != 0;
+            c.cw = n[4] != 0;
+            break;
+        default: c.verb = "close"; break;
+        }
+        out.commands.push_back(std::move(c));
+    }
+    return out;
+}
+
 } // namespace
 
 namespace detail {
@@ -528,9 +847,9 @@ bool match_basic_shape(std::string_view property, std::string_view text, std::st
     if (!any_function) { return false; }
     std::optional<shape_parts> shape = parse_shape_value(text, default_box_of(property));
     if (!shape) {
-        // A url(), an image or a shape() is not this file's.
+        // A url() or an image is not this file's.
         for (const std::string_view part : parts) {
-            if (ascii_istarts_with(part, "url(") || ascii_istarts_with(part, "shape(") ||
+            if (ascii_istarts_with(part, "url(") ||
                 part.find("gradient(") != std::string_view::npos ||
                 ascii_istarts_with(part, "image(") || ascii_istarts_with(part, "image-set(") ||
                 ascii_istarts_with(part, "cross-fade(")) {
@@ -566,6 +885,36 @@ std::string computed_basic_shape(std::string_view property, std::string_view tex
             s->position = std::move(resolved);
         }
     }
+    // A shape()'s points compute as the positions they name - `center` is 50%
+    // - and its lengths as pixels (CSS Shapes 2 §3.2.2).
+    const auto computed_point = [&ctx](std::string & text) {
+        const std::string physical = computed_position(text, "", "");
+        std::string resolved;
+        for (const std::string_view half : words_of(physical.empty() ? text : physical)) {
+            resolved += (resolved.empty() ? "" : " ") + computed_component(half, ctx, false);
+        }
+        text = std::move(resolved);
+    };
+    for (shape_command & c : s->commands) {
+        if (c.verb == "hline" || c.verb == "vline") {
+            if (has_keyword("left top x-start y-start", c.end)) {
+                c.end = "0%";
+            } else if (c.end == "center") {
+                c.end = "50%";
+            } else if (has_keyword("right bottom x-end y-end", c.end)) {
+                c.end = "100%";
+            } else {
+                c.end = computed_component(c.end, ctx, false);
+            }
+        } else if (c.verb != "close") {
+            computed_point(c.end);
+        }
+        for (auto & control : c.controls) { computed_point(control.first); }
+        for (std::string & r : c.radii) { r = computed_component(r, ctx, true); }
+        if (const std::optional<double> d = degrees_of(c.rotate)) {
+            c.rotate = serialize_number(*d) + "deg";
+        }
+    }
     // xywh() and rect() compute to the inset() they describe (§3.2).
     if (s->function == "xywh" && s->args.size() == 4) {
         const std::optional<std::string> right = remainder(s->args[0], s->args[2]);
@@ -593,6 +942,8 @@ std::optional<std::string> blend_basic_shapes(std::string_view property, std::st
                                               std::string_view b, double wa, double wb) {
     std::optional<shape_parts> x = parse_shape_value(a, default_box_of(property));
     std::optional<shape_parts> y = parse_shape_value(b, default_box_of(property));
+    if (x && y && x->function == "path" && y->function == "shape") { x = shape_of_path(*x); }
+    if (x && y && y->function == "path" && x->function == "shape") { y = shape_of_path(*y); }
     if (!x || !y || x->function != y->function || x->box != y->box ||
         x->fill_rule != y->fill_rule || x->size != y->size || x->contain != y->contain) {
         return std::nullopt;
@@ -676,6 +1027,52 @@ std::optional<std::string> blend_basic_shapes(std::string_view property, std::st
             }
         }
         x->path = path_text(*p);
+    }
+    if (x->function == "shape") {
+        // CSS Shapes 2 §3.3: the same commands, `to` or `by` alike, and each
+        // control point anchored alike - then every value blends. An arc's
+        // flags are booleans, set in between wherever either end sets them.
+        if (x->commands.size() != y->commands.size()) { return std::nullopt; }
+        const auto point = [&](std::string_view p, std::string_view q) {
+            const std::vector<std::string_view> u = words_of(p), v = words_of(q);
+            if (u.size() != 2 || v.size() != 2) {
+                ok = false;
+                return std::string{};
+            }
+            return mix(u[0], v[0], false) + " " + mix(u[1], v[1], false);
+        };
+        const bool interpolating = std::abs(wa + wb - 1) < 1e-9; // not an addition
+        const auto flag = [&](bool from, bool to) {
+            if (interpolating && wb <= 0) { return from; }
+            if (interpolating && wb >= 1) { return to; }
+            return from || to;
+        };
+        for (std::size_t i = 0; i < x->commands.size(); ++i) {
+            shape_command & c = x->commands[i];
+            const shape_command & d = y->commands[i];
+            if (c.verb != d.verb || c.by != d.by || c.controls.size() != d.controls.size()) {
+                return std::nullopt;
+            }
+            if (c.verb == "close") { continue; }
+            c.end = c.verb == "hline" || c.verb == "vline" ? mix(c.end, d.end, false)
+                                                           : point(c.end, d.end);
+            for (std::size_t k = 0; k < c.controls.size(); ++k) {
+                if (c.controls[k].second != d.controls[k].second) { return std::nullopt; }
+                c.controls[k].first = point(c.controls[k].first, d.controls[k].first);
+            }
+            if (c.verb != "arc") { continue; }
+            std::vector<std::string> radii = d.radii;
+            if (c.radii.size() != radii.size()) {
+                if (c.radii.size() == 1) { c.radii.push_back(c.radii.front()); }
+                if (radii.size() == 1) { radii.push_back(radii.front()); }
+            }
+            mix_all(c.radii, radii, true);
+            const double turn =
+                wa * degrees_of(c.rotate).value_or(0) + wb * degrees_of(d.rotate).value_or(0);
+            c.rotate = turn == 0 ? std::string{} : serialize_number(turn) + "deg";
+            c.cw = flag(c.cw, d.cw);
+            c.large = flag(c.large, d.large);
+        }
     }
     if (x->function == "polygon") {
         mix_all(x->points, y->points, false);
