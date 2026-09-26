@@ -147,6 +147,14 @@ void install_proxy(context & cx) {
         context::property_descriptor own;
         bool found = false;
         for (int hops = 0; hops < 10000 && walk.is_object_like(); ++hops) {
+            // A MODULE NAMESPACE'S [[Set]] is false, always (10.4.6.9) - it
+            // never reaches the [[DefineOwnProperty]] that answers true for
+            // a value the export already holds.
+            if (walk.is_object() &&
+                static_cast<object_object *>(walk.as_heap())->find(module_namespace_key) !=
+                    nullptr) {
+                return value::boolean(false);
+            }
             if (walk.is_kind(heap_kind::proxy)) {
                 // The proxy's own [[Set]] - its trap - with the store path
                 // this engine has, which carries no receiver.

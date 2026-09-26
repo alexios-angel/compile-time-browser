@@ -249,5 +249,11 @@ int main() {
     throws("BigInt.asIntN(8, 1)", "TypeError");
     throws("BigInt.asIntN(-1, 1n)", "RangeError");
 
+    // Against a string the comparison is StringToBigInt's: exact, and false
+    // every way round for a string that is no integer.
+    js_expect("'9007199254740993' > 9007199254740992n", "true");
+    js_expect("9007199254740992n < '9007199254740993'", "true");
+    js_expect("(1n > '0.') + ',' + (1n <= '0.') + ',' + ('0.' < 1n)", "false,false,false");
+
     REPORT("bigint_basics");
 }

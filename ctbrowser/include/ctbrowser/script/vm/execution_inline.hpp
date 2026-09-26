@@ -71,7 +71,10 @@ inline auto context::define_builtin_global(std::string name, value v) -> void {
 
 inline auto context::mark_globals_builtin() -> void {
     realm_record & realm = current_realm();
-    for (const auto & [name, held] : realm.globals) { realm.builtin[name] = true; }
+    for (const auto & [name, held] : realm.globals) {
+        realm.builtin[name] = true;
+        intrinsic_names_[name] = true;
+    }
 }
 
 inline auto context::declare_global_var(std::string name, bool configurable) -> void {
@@ -101,6 +104,66 @@ inline auto context::declare_global_var(std::string name, bool configurable) -> 
         }
     }
     realm.globals[std::move(name)] = value::undefined();
+}
+
+// A GLOBAL ASSIGNMENT TO A PROPERTY THE GLOBAL OBJECT OWNS (9.1.1.4.5
+// SetMutableBinding: the object record's Set). A data property that
+// `Object.defineProperty(globalThis, ...)` made lives on the proxy's target,
+// and writing the binding table instead left the two disagreeing - the
+// descriptor kept the old value, and a bare read found the new one. Only a
+// DATA property, and only when the table has no binding of the name: an
+// accessor keeps the table's shadow as before, and the table is still where
+// every other global lives.
+inline auto context::store_global_property(realm_record & realm, const std::string & name, value v,
+                                           bool strict) -> bool {
+    value holder = realm.global_this;
+    if (holder.is_kind(heap_kind::proxy)) {
+        holder = static_cast<proxy_object *>(holder.as_heap())->target;
+    }
+    if (!holder.is_object()) { return false; }
+    auto * target = static_cast<object_object *>(holder.as_heap());
+    value * slot = target->find(name);
+    if (slot == nullptr) { return false; }
+    if ((target->attrs_of(name) & attr_writable) == 0) {
+        if (strict) {
+            throw_error("TypeError",
+                        "Cannot assign to read only property '" + name + "' of object");
+        }
+        return true;
+    }
+    *slot = v;
+    return true;
+}
+
+inline auto context::declare_global_function(std::string name, bool configurable) -> void {
+    realm_record & realm = current_realm();
+    if (realm.declared.contains(name)) { return; }
+    value holder = realm.global_this;
+    if (holder.is_kind(heap_kind::proxy)) {
+        holder = static_cast<proxy_object *>(holder.as_heap())->target;
+    }
+    property_descriptor own;
+    if (configurable) {
+        // D true: { writable, enumerable, configurable } is the table's own
+        // description of a binding, so a configurable property of the target
+        // steps aside for it (the value is the one the eval's hoisted
+        // declaration writes); a non-configurable one keeps its storage.
+        if (holder.is_object() && own_property(holder, name, own) && own.configurable) {
+            (void)static_cast<object_object *>(holder.as_heap())->erase(name);
+            (void)static_cast<object_object *>(holder.as_heap())->erase_accessor(name);
+        }
+        if (!realm.globals.contains(name)) { realm.globals[std::move(name)] = value::undefined(); }
+        return;
+    }
+    if (!holder.is_object() || own_property(holder, name, own)) { return; }
+    // A configurable table binding - a page's assignment, an intrinsic - is
+    // redefined, which here is the declared mark and its placeholder (see
+    // declare_global_var); the value is the one the script's hoisted
+    // declaration writes before its first statement.
+    realm.declared[name] = true;
+    static_cast<object_object *>(holder.as_heap())
+        ->define(name, value::undefined(), attr_writable | attr_enumerable);
+    if (!realm.globals.contains(name)) { realm.globals[std::move(name)] = value::undefined(); }
 }
 
 // `delete globalThis.x`: the binding is a table entry, and every global
@@ -264,6 +327,9 @@ inline auto context::set_module_evaluator(std::function<bool(context &, module_r
     // Its `var`s exist before it starts, as run() gives a script's
     // (19.2.1.3 EvalDeclarationInstantiation binds them the same way).
     for (const std::string & name : prog.hoisted_vars) { declare_global_var(name, prog.eval_code); }
+    for (const std::string & name : prog.function_names) {
+        declare_global_function(name, prog.eval_code);
+    }
     auto * entry = allocate<closure_object>(&prog.functions[0]);
     entry->owner = &prog;
     entry->realm = &current_realm();
@@ -383,7 +449,11 @@ inline auto context::rethrow_pending() -> bool {
     has_pending_throw_ = false;
     thrown_ = pending_throw_;
     pending_throw_ = value::undefined();
-    if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
+    // Thrown where `call` caught it, not at this native's call site.
+    const throw_site began = throw_site_;
+    const bool landed = unwind_to_handler();
+    throw_site_ = began;
+    if (!landed) { raise("uncaught " + describe_thrown(thrown_)); }
     return true;
 }
 

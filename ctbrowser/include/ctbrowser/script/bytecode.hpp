@@ -541,11 +541,18 @@ struct program {
     // (19.2.1.3 step 17: CreateGlobalVarBinding(vn, true)), where a script's
     // are not (16.1.7 step 17, `false`) - see context::declare_global_var.
     bool eval_code = false;
+    // AN EVAL WHOSE VARIABLE ENVIRONMENT IS THE GLOBAL ONE - indirect, or
+    // direct from global code, and sloppy (19.2.1.1 steps 16-17): its `var`s
+    // and top-level functions are globals, checked and made by
+    // EvalDeclarationInstantiation (context::global_declaration_instantiation,
+    // context::eval_declaration_instantiation).
+    bool eval_global = false;
     // A CLASSIC SCRIPT'S TOP-LEVEL LEXICAL NAMES - `let`, `const`, `class` -
     // and its top-level FUNCTION declarations: with hoisted_vars, what
     // 16.1.7 GlobalDeclarationInstantiation checks against the bindings
     // earlier scripts made before this one may run (context::run). Data, like
-    // hoisted_vars. Empty for a module and an eval.
+    // hoisted_vars. Empty for a module; an eval_global eval lists its
+    // functions (and no lexical names - those are the eval's own).
     std::vector<std::string> lexical_names;
     std::vector<std::string> function_names;
     // THE SOURCE THIS WAS COMPILED FROM, kept so a function can be printed.
@@ -555,6 +562,10 @@ struct program {
     script_kind kind = script_kind::classic;
     bool ok = true;
     std::string error;
+    // WHERE THE SOURCE FAILED TO PARSE, 1-based as `error`'s " - at L:C"
+    // spells it; 0 when the failure has no position.
+    std::uint32_t error_line = 0;
+    std::uint32_t error_column = 0;
 };
 
 } // namespace ctbrowser::script

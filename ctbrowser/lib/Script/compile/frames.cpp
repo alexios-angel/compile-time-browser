@@ -279,7 +279,13 @@ void compiler_impl::export_bindings(std::int32_t outer,
     const vp::node & n = at(outer);
     if (n.kind != vp::nk::export_decl || !n.text.empty() || n.c == 2) { return; }
     if (n.c == 1) {
-        out.emplace_back(std::string{default_binding}, "default");
+        // A NAMED default exports ITS binding (16.2.3 ExportEntries: the
+        // [[LocalName]] of `export default function f() {}` is "f"), so
+        // `f = 2` inside the module is what an importer's `default` reads.
+        // Only an anonymous one has the hidden `*default*`.
+        const std::int32_t named = default_export_name(outer);
+        out.emplace_back(named >= 0 ? std::string{at(named).text} : std::string{default_binding},
+                         "default");
         return;
     }
     if (n.a >= 0) {

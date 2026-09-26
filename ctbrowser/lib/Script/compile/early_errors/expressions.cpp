@@ -650,7 +650,9 @@ void checker::walk_expression(std::int32_t idx) {
         // step 7.a (inFunction false, and the body Contains NewTarget).
         // Nor does it reach a MODULE: no embedder hands one a function body
         // (16.2.1.1: a ModuleItemList may not Contain NewTarget).
-        if ((eval_ != nullptr || module_()) && enclosing_non_arrow() == frame_kind::script) {
+        // A Script said to be one (script_goal_) is refused as `return` is.
+        if ((eval_ != nullptr || module_() || script_goal_) &&
+            enclosing_non_arrow() == frame_kind::script) {
             report("`new.target` outside a function", idx);
         }
         return;

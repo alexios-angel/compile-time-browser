@@ -34,7 +34,23 @@ public:
     void define_builtin_global(std::string name, value v);
     // Every name the current realm has becomes a platform name: the last step
     // of install_builtins, whose intrinsics are all ECMA-262 clause 19's.
+    // The names are remembered as the INTRINSICS, so a builtin global marked
+    // after them is the host's - a platform interface (is_intrinsic_name).
     void mark_globals_builtin();
+    [[nodiscard]] bool is_intrinsic_name(std::string_view name) const {
+        return intrinsic_names_.contains(name);
+    }
+    // THE HOST'S SERIALIZABLE INTERFACES (HTML 2.7.2 [Serializable]): an
+    // instance of one of these structuredClone copies - its own properties,
+    // internal ones included, onto a fresh object of the same interface
+    // prototype. An instance of any OTHER platform interface - a builtin
+    // global's prototype that is not an intrinsic's - is a DataCloneError.
+    void set_serializable_interfaces(std::vector<std::string> names) {
+        for (std::string & name : names) { serializable_interfaces_[std::move(name)] = true; }
+    }
+    [[nodiscard]] bool serializable_interface(std::string_view name) const {
+        return serializable_interfaces_.contains(name);
+    }
 
     // CreateGlobalVarBinding (9.1.1.4.17): a script's or an eval's `var` - a
     // new binding is undefined, and a name the global object already owns,
@@ -43,6 +59,20 @@ public:
     // A SCRIPT's `var` (`configurable` false) is also enumerable and cannot be
     // deleted; an eval's (true) can.
     void declare_global_var(std::string name, bool configurable = true);
+    // CreateGlobalFunctionBinding (9.1.1.4.18) for a SCRIPT's top-level
+    // function: { writable, enumerable, !configurable }, whatever a configurable
+    // binding of that name said before - a name the global object's target
+    // owns keeps its own storage. An EVAL's (`configurable`, D true) is a
+    // table binding with all three, and a configurable property the target
+    // owned gives way to it.
+    void declare_global_function(std::string name, bool configurable = false);
+    // EvalDeclarationInstantiation (19.2.1.3) for an eval whose variable
+    // environment is the global one (program::eval_global): a `var` or
+    // function colliding with a global lexical is the SyntaxError of step
+    // 3.a, one CanDeclareGlobalFunction / CanDeclareGlobalVar refuses the
+    // TypeError of steps 8-10 - both before anything exists - and then each
+    // binding is made (steps 15-17). False with the error thrown.
+    bool eval_declaration_instantiation(const program & prog);
     // GlobalDeclarationInstantiation's refusals (16.1.7 steps 3-6): a
     // classic script whose lexical name is already a var, a lexical or a
     // non-configurable global property, or whose var or function name is
@@ -255,6 +285,20 @@ public:
 
     [[nodiscard]] std::size_t unwinds() const noexcept;
 
+    // WHERE THE LAST THROW HAPPENED: the program whose `source` the byte
+    // `offset` indexes, taken from the innermost interpreted frame's
+    // instruction (function_proto::code_offsets) as the throw began to unwind.
+    // What "report an exception" needs for an ErrorEvent's lineno and colno
+    // (HTML 8.1.4.7) - line_table turns it into both. `source` is null when
+    // nothing was recorded: a compiled frame, a build without the offset
+    // table, a throw with no frame at all. A parked throw rethrown at a
+    // native's call site keeps the site it was thrown at.
+    struct throw_site {
+        const program * source = nullptr;
+        std::uint32_t offset = 0;
+    };
+    [[nodiscard]] throw_site last_throw_site() const noexcept { return throw_site_; }
+
     [[nodiscard]] value last_thrown() const noexcept;
 
     [[nodiscard]] std::string take_error();
@@ -305,6 +349,11 @@ public:
     [[nodiscard]] value bit_not_value(value v);
 
     [[nodiscard]] value numeric_operand(value v);
+    // ToNumeric of both operands of a numeric binary operator, LEFT FIRST
+    // (13.15.3 steps 3-4): the left's conversion - its valueOf, a Symbol's
+    // TypeError - finishes before the right's starts, and a throw from it is
+    // the operator's. False with that throw landed or in flight.
+    [[nodiscard]] bool numeric_operands(value lhs, value rhs, value & l, value & r);
 
     enum class proto_kind : std::uint8_t {
         object,
@@ -411,6 +460,12 @@ public:
     [[nodiscard]] value own_keys(value source);
 
     [[nodiscard]] value get_prototype(value target);
+    // GetSuperBase (9.1.1.3.5): the home object's [[GetPrototypeOf]], what
+    // op::get_proto answers. get_prototype's null - an object whose link was
+    // never set - is the IMPLICIT Object.prototype here, so `super.m()` in a
+    // class with no `extends` finds Object.prototype's; an explicit null
+    // (undefined in the field) stays nothing.
+    [[nodiscard]] value super_base(value home);
     void set_prototype(value target, value proto);
 
     [[nodiscard]] bool has_property(value target, value key);
@@ -845,6 +900,13 @@ private:
     void raise(std::string message);
 
     [[nodiscard]] bool unwind_to_handler();
+    // Records throw_site_ for the throw unwind_to_handler is starting.
+    void note_throw_site() noexcept;
+    // op::set_global for a name the binding table does not have: true when
+    // the global object's target owns it as a data property, which took the
+    // store (see the definition).
+    [[nodiscard]] bool store_global_property(realm_record & realm, const std::string & name,
+                                             value v, bool strict);
 
     void mark(value v);
     // Marks `o` and everything reachable from it. Iterative - see
@@ -882,6 +944,7 @@ private:
     // The program being executed, so a call from C++ can find the string
     // tables a nested frame needs.
     const program * program_ = nullptr;
+    throw_site throw_site_; // see last_throw_site
     std::vector<std::unique_ptr<program>> owned_programs_;
     flat_map<const void *, flat_map<std::uint32_t, value>> string_cache_;
     // The same for BigInt literals, keyed and swept the same way.
@@ -950,6 +1013,8 @@ private:
     // See set_realm_template.
     string_flat_map<value> realm_template_;
     string_flat_map<bool> realm_template_builtin_;
+    string_flat_map<bool> intrinsic_names_;         // see mark_globals_builtin
+    string_flat_map<bool> serializable_interfaces_; // see set_serializable_interfaces
     std::vector<value> registers_;
     std::vector<call_frame> frames_;
     // WHERE THE TYPE ORACLE'S OBSERVATIONS GO, or null - and null selects the

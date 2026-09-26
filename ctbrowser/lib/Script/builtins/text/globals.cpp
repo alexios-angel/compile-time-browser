@@ -254,9 +254,10 @@ void install_uri(context & cx) {
 //
 // The error is a DOMException when the host defined one (lib/Shell does), so
 // `assert_throws_dom("DataCloneError", ...)` sees `code` 25; without a host it
-// is an Error named DataCloneError. Platform objects (Blob, File, ImageData)
-// are the host's: this engine cannot tell one from a plain object and copies
-// it as one.
+// is an Error named DataCloneError. A platform object is told by its chain: an
+// instance of an interface the host installed (a builtin global that is not an
+// intrinsic) is copied when the host named that interface serializable
+// (context::set_serializable_interfaces) and refused otherwise.
 namespace {
 
 void throw_data_clone_error(context & c, std::string message) {
@@ -271,6 +272,85 @@ struct cloner {
     value held;
     std::vector<std::pair<heap_object *, value>> memory;
     std::size_t depth = 0;
+    // THE HOST'S INTERFACES: each builtin global that is not an intrinsic
+    // (context::is_intrinsic_name) and has a `prototype`, keyed by that
+    // prototype. Built the first time an object with an unusual prototype is
+    // met, so an array of numbers - p5's colours - never pays for it.
+    struct interface_entry {
+        heap_object * key;
+        value prototype;
+        std::string name;
+    };
+    std::vector<interface_entry> interfaces;
+    bool interfaces_built = false;
+
+    void build_interfaces() {
+        interfaces_built = true;
+        realm_record & realm = c.current_realm();
+        std::vector<std::string> names;
+        for (const auto & [name, marked] : realm.builtin) {
+            if (marked && !c.is_intrinsic_name(name)) { names.push_back(name); }
+        }
+        for (const std::string & name : names) {
+            const auto it = realm.globals.find(name);
+            if (it == realm.globals.end() || !it->second.is_callable()) { continue; }
+            const value prototype = c.lookup_property(it->second, "prototype");
+            if (c.throw_pending()) { return; }
+            if (!prototype.is_object()) { continue; }
+            // Another name for an interface already seen (File's prototype is
+            // Blob's here): the first one keeps it.
+            if (std::ranges::any_of(interfaces, [&](const interface_entry & known) {
+                    return known.key == prototype.as_heap();
+                })) {
+                continue;
+            }
+            interfaces.push_back(interface_entry{prototype.as_heap(), prototype, name});
+            static_cast<array_object *>(held.as_heap())->items.push_back(prototype);
+        }
+    }
+
+    // The interface of the nearest host interface prototype on `v`'s chain.
+    [[nodiscard]] const interface_entry * platform_interface(value v) {
+        value up = static_cast<object_object *>(v.as_heap())->prototype;
+        const object_object * plain = c.prototype(context::proto_kind::object);
+        if (!up.is_object() || up.as_heap() == plain) { return nullptr; }
+        if (!interfaces_built) { build_interfaces(); }
+        for (int level = 0; level < 64 && up.is_object() && up.as_heap() != plain; ++level) {
+            for (const interface_entry & entry : interfaces) {
+                if (entry.key == up.as_heap()) { return &entry; }
+            }
+            up = static_cast<object_object *>(up.as_heap())->prototype;
+        }
+        return nullptr;
+    }
+
+    // A [Serializable] platform object's serialization steps, the host's
+    // state being its own properties - internal ones included, which is where
+    // a binding keeps what a script cannot see (a Blob's bytes, a FileList's
+    // files). Each value is cloned in turn; a function or an accessor is the
+    // platform's own and is shared, not copied.
+    [[nodiscard]] value copy_platform(value v, object_object * source, value prototype) {
+        const value made = c.make_object();
+        auto * out = static_cast<object_object *>(made.as_heap());
+        out->prototype = prototype;
+        (void)remember(v, made);
+        std::vector<std::pair<std::string, std::uint8_t>> keys;
+        source->each_own_entry_in_order(
+            [&](const std::string & key, std::uint8_t a) { keys.emplace_back(key, a); });
+        for (const auto & [key, a] : keys) {
+            if (accessor_entry * pair = source->find_accessor(key)) {
+                out->define_accessor(key, pair->getter, pair->setter, a);
+                continue;
+            }
+            const value * item = source->find(key);
+            if (item == nullptr) { continue; }
+            const value copied = item->is_callable() ? *item : copy(*item);
+            if (c.throw_pending()) { return value::undefined(); }
+            out->define(key, copied, a);
+        }
+        out->extensible = source->extensible;
+        return made;
+    }
 
     [[nodiscard]] value fail(std::string what) {
         throw_data_clone_error(c, "structuredClone cannot copy " + std::move(what));
@@ -314,6 +394,17 @@ struct cloner {
             return copy_array(v, source);
         }
         auto * source = static_cast<object_object *>(v.as_heap());
+        // A PLATFORM OBJECT (steps 25-26), FIRST: an instance of one of the
+        // host's interfaces is copied when the interface is [Serializable], as
+        // the closest serializable interface on its chain, and is the
+        // DataCloneError otherwise - a Response, a Node, an AbortSignal. First
+        // because a host object may carry a slot an intrinsic is recognised by
+        // below: a Blob keeps its bytes under `__bytes`, which is what an
+        // ArrayBuffer's store is found by (buffer_store).
+        if (const interface_entry * platform = platform_interface(v)) {
+            if (!c.serializable_interface(platform->name)) { return fail("a " + platform->name); }
+            return copy_platform(v, source, platform->prototype);
+        }
         // A primitive wrapper: Boolean, Number, String, BigInt. A Symbol
         // wrapper is the error a symbol is.
         if (const value * slot = primitive_slot(v)) {
@@ -493,13 +584,23 @@ struct cloner {
                            ? static_cast<array_object *>(held->as_heap())
                            : nullptr;
         if (store == nullptr || store_detached(store)) { return fail("a detached DataView"); }
+        const value * offset = source->find(data_view_offset_key);
+        const value * length = source->find(data_view_length_key);
+        // IsViewOutOfBounds (25.3.1.5): a resizable buffer shrunk below the
+        // view's window is the DataCloneError of step 13.c, not the
+        // RangeError the DataView constructor would throw below.
+        const double start = offset != nullptr && offset->is_number() ? offset->as_number() : 0;
+        const double end =
+            start + (length != nullptr && length->is_number() ? length->as_number() : 0);
+        if (start > static_cast<double>(store->items.size()) ||
+            end > static_cast<double>(store->items.size())) {
+            return fail("an out-of-bounds DataView");
+        }
         const value * buffer_slot = source->find(data_view_buffer_key);
         const value buffer =
             copy(buffer_slot != nullptr ? *buffer_slot : buffer_of_store(c, store));
         if (c.throw_pending()) { return value::undefined(); }
         const context::rooted keep{c, buffer};
-        const value * offset = source->find(data_view_offset_key);
-        const value * length = source->find(data_view_length_key);
         const value off = offset != nullptr ? *offset : value::number(0);
         if (length == nullptr || length->is_undefined()) {
             const value args[2] = {buffer, off};
@@ -512,11 +613,73 @@ struct cloner {
 
 } // namespace
 
+// StructuredSerializeWithTransfer (HTML 2.7.6) and the deserialization after
+// it, for `structuredClone(value, { transfer })`. Every transferable is
+// checked first - an ArrayBuffer, not detached, not listed twice; this engine
+// has no transferable platform object, so anything else is the
+// DataCloneError - and its copy is made up front and put in the memory map,
+// so a reference to it anywhere in `value` is a reference to the one copy.
+// The bytes move and the original is detached only once the walk succeeded.
 void install_structured_clone(context & cx) {
     cx.define_native("structuredClone", [](context & c, std::span<value> a) {
-        cloner walk{c, c.make_array(), {}, 0};
+        cloner walk{c, c.make_array(), {}, 0, {}, false};
         const context::rooted keep{c, walk.held};
-        return walk.copy(a.empty() ? value::undefined() : a[0]);
+        std::vector<std::pair<array_object *, array_object *>> moved;
+        const value options = arg_at(a, 1);
+        if (!options.is_nullish() && !options.is_object_like()) {
+            c.throw_error("TypeError", "structuredClone: the options are not an object");
+            return value::undefined();
+        }
+        const value list =
+            options.is_nullish() ? value::undefined() : c.lookup_property(options, "transfer");
+        if (c.throw_pending()) { return value::undefined(); }
+        if (!list.is_undefined()) {
+            // sequence<object> (WebIDL 3.2.28): an iterable of objects.
+            if (!list.is_object_like()) {
+                c.throw_error("TypeError", "structuredClone: `transfer` is not iterable");
+                return value::undefined();
+            }
+            const context::stack_mark before = c.mark_stack();
+            const value items = c.iterable_values(list);
+            if (c.throw_pending() || detail::threw_since(c, before)) { return value::undefined(); }
+            static_cast<array_object *>(walk.held.as_heap())->items.push_back(items);
+            for (const value & each : static_cast<array_object *>(items.as_heap())->items) {
+                if (!each.is_object_like()) {
+                    c.throw_error("TypeError", "structuredClone: a transferable is not an object");
+                    return value::undefined();
+                }
+                // A platform object - a Blob answers buffer_store too - has
+                // no transfer steps here: no interface of this host is
+                // [Transferable].
+                array_object * store = each.is_object() && walk.platform_interface(each) != nullptr
+                                           ? nullptr
+                                           : buffer_store(each);
+                if (store == nullptr) { return walk.fail("a transfer of this object"); }
+                if (std::ranges::any_of(walk.memory, [&](const auto & known) {
+                        return known.first == each.as_heap();
+                    })) {
+                    return walk.fail("the same ArrayBuffer twice in a transfer list");
+                }
+                if (store_detached(store)) { return walk.fail("a detached ArrayBuffer"); }
+                const value made = make_array_buffer(c, static_cast<double>(store->items.size()),
+                                                     store_max_byte_length(store));
+                if (c.throw_pending() || !made.is_object()) { return value::undefined(); }
+                (void)walk.remember(each, made);
+                moved.emplace_back(store, buffer_store(made));
+            }
+        }
+        const value out = walk.copy(a.empty() ? value::undefined() : a[0]);
+        if (c.throw_pending()) { return value::undefined(); }
+        const context::rooted keep_out{c, out};
+        for (const auto & [from, to] : moved) {
+            if (store_detached(from)) { return walk.fail("a detached ArrayBuffer"); }
+        }
+        for (const auto & [from, to] : moved) {
+            if (to->items.size() != from->items.size()) { resize_store(c, to, from->items.size()); }
+            std::copy(from->items.begin(), from->items.end(), to->items.begin());
+            detach_store(c, from);
+        }
+        return out;
     });
 }
 

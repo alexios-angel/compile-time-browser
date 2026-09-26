@@ -334,6 +334,7 @@ namespace {
     // (20.5.6.2), which is why it is consulted before the table.
     if (of.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(of.as_heap());
+        if (closure->proto_link.is_undefined()) { return value::null(); } // an explicit null
         if (!closure->proto_link.is_null()) { return closure->proto_link; }
         // A generator or async function's is its own intrinsic (27.3.3 etc.).
         const context::proto_kind own = context::function_proto_kind(of);
@@ -342,6 +343,7 @@ namespace {
     }
     if (of.is_kind(heap_kind::native)) {
         auto * fn = static_cast<native_object *>(of.as_heap());
+        if (fn->proto_link.is_undefined()) { return value::null(); } // an explicit null
         if (!fn->proto_link.is_null()) { return fn->proto_link; }
         return table(context::proto_kind::function);
     }
@@ -436,9 +438,15 @@ namespace {
         static_cast<array_object *>(of.as_heap())->prototype =
             proto.is_null() ? value::undefined() : proto;
     } else if (of.is_kind(heap_kind::function)) {
-        static_cast<closure_object *>(of.as_heap())->proto_link = proto;
+        // A function's too: a null link is the UNSET one, which means
+        // %Function.prototype% (context::get_prototype), so `setPrototypeOf(C,
+        // null)` left C inheriting from it - and `super.x = v` in C's static
+        // method stored through Function.prototype instead of throwing.
+        static_cast<closure_object *>(of.as_heap())->proto_link =
+            proto.is_null() ? value::undefined() : proto;
     } else if (of.is_kind(heap_kind::native)) {
-        static_cast<native_object *>(of.as_heap())->proto_link = proto;
+        static_cast<native_object *>(of.as_heap())->proto_link =
+            proto.is_null() ? value::undefined() : proto;
     }
     return true;
 }

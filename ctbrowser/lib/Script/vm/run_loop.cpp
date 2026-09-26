@@ -229,7 +229,15 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 }
                 break;
             }
-            vm_frame->realm->globals[name] = reg(in.a);
+            string_flat_map<value> & globals = vm_frame->realm->globals;
+            if (const auto it = globals.find(name); it != globals.end()) {
+                it->second = reg(in.a);
+                break;
+            }
+            if (store_global_property(*vm_frame->realm, name, reg(in.a), vm_proto->is_strict)) {
+                break;
+            }
+            globals[name] = reg(in.a);
             break;
         }
         while (0);
@@ -364,36 +372,47 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(bit_and) do {
-            reg(in.a) = binary_op_static(op::bit_and, numeric_operand(reg(in.b)),
-                                         numeric_operand(reg(in.c)));
+            if (value l, r; numeric_operands(reg(in.b), reg(in.c), l, r)) {
+                reg(in.a) = binary_op_static(op::bit_and, l, r);
+            }
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(bit_or) do {
-            reg(in.a) = binary_op_static(op::bit_or, numeric_operand(reg(in.b)),
-                                         numeric_operand(reg(in.c)));
+            if (value l, r; numeric_operands(reg(in.b), reg(in.c), l, r)) {
+                reg(in.a) = binary_op_static(op::bit_or, l, r);
+            }
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(bit_xor) do {
-            reg(in.a) = binary_op_static(op::bit_xor, numeric_operand(reg(in.b)),
-                                         numeric_operand(reg(in.c)));
+            if (value l, r; numeric_operands(reg(in.b), reg(in.c), l, r)) {
+                reg(in.a) = binary_op_static(op::bit_xor, l, r);
+            }
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(shl) do {
-            reg(in.a) =
-                binary_op_static(op::shl, numeric_operand(reg(in.b)), numeric_operand(reg(in.c)));
+            // BOTH OPERANDS IN ORDER: as two arguments of one call, the C++
+            // compiler chose which conversion ran first - the right one, here
+            // - and a throw from the left did not stop the right's.
+            if (value l, r; numeric_operands(reg(in.b), reg(in.c), l, r)) {
+                reg(in.a) = binary_op_static(op::shl, l, r);
+            }
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(shr) do {
-            reg(in.a) =
-                binary_op_static(op::shr, numeric_operand(reg(in.b)), numeric_operand(reg(in.c)));
+            // BOTH OPERANDS IN ORDER: as two arguments of one call, the C++
+            // compiler chose which conversion ran first - the right one, here
+            // - and a throw from the left did not stop the right's.
+            if (value l, r; numeric_operands(reg(in.b), reg(in.c), l, r)) {
+                reg(in.a) = binary_op_static(op::shr, l, r);
+            }
             break;
         }
         while (0);
@@ -402,8 +421,9 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
             // The BigInt arm REFUSES this one: an unsigned shift needs a WIDTH
             // to fill from and a BigInt has none. binary_op_static carries that
             // refusal, which is where it belongs.
-            reg(in.a) =
-                binary_op_static(op::ushr, numeric_operand(reg(in.b)), numeric_operand(reg(in.c)));
+            if (value l, r; numeric_operands(reg(in.b), reg(in.c), l, r)) {
+                reg(in.a) = binary_op_static(op::ushr, l, r);
+            }
             break;
         }
         while (0);
@@ -860,7 +880,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
             // the running method was written in - not above `this`, which in a
             // three-deep hierarchy is a different object and would call the
             // method again forever. So each method carries its home object.
-            reg(in.a) = get_prototype(reg(in.b));
+            reg(in.a) = super_base(reg(in.b));
             break;
         }
         while (0);

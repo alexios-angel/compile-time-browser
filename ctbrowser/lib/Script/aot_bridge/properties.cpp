@@ -161,7 +161,7 @@ std::int32_t aot_bridge::set_index(aot::ct_aot_frame * f, std::uint64_t obj, std
 // after load_home, so a and b are the same register there.
 std::uint64_t aot_bridge::get_proto(aot::ct_aot_frame * f, std::uint64_t target) {
     context & cx = *frame_of(f).ctx;
-    return cx.get_prototype(value::from_bits(target)).bits();
+    return cx.super_base(value::from_bits(target)).bits();
 }
 
 void aot_bridge::set_proto(aot::ct_aot_frame * f, std::uint64_t target, std::uint64_t proto) {

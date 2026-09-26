@@ -435,6 +435,12 @@ void compiler_impl::compile_throw(const vp::node & n) {
     const std::uint32_t mark = reg_mark();
     const std::uint16_t r = alloc_reg();
     compile_expr(n.a, r);
+    // THE THROW IS WHERE ITS OPERAND WAS WRITTEN. A `throw` node carries no
+    // lexeme of its own (offset_of), so the instruction took the enclosing
+    // position - a function's first byte, or a script's, which is the line an
+    // uncaught throw was reported at (context::last_throw_site). Positions
+    // only: this moves an entry of code_offsets, not an instruction.
+    const at_source here{*this, n.a};
     emit_rethrow(r);
     release_to(mark);
 }

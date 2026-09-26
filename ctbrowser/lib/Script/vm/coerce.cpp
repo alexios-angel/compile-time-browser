@@ -360,6 +360,26 @@ value context::numeric_operand(value v) {
     return out;
 }
 
+bool context::numeric_operands(value lhs, value rhs, value & l, value & r) {
+    // See binary_op for why a landed throw is asked of unwinds() as well.
+    const std::size_t unwound = unwinds();
+    const bool pending = throw_pending();
+    const auto threw = [this, unwound, pending] {
+        return (!pending && throw_pending()) || unwinds() != unwound;
+    };
+    const auto numeric = [&](value from, value & to) {
+        to = numeric_operand(from);
+        if (threw()) { return false; }
+        // 7.1.4 ToNumber step 2: a Symbol is never implicitly a number.
+        if (to.is_kind(heap_kind::symbol)) {
+            throw_error("TypeError", "Cannot convert a Symbol value to a number");
+            return false;
+        }
+        return true;
+    };
+    return numeric(lhs, l) && numeric(rhs, r);
+}
+
 value context::bit_not_value(value v) {
     // ~1n is -2n, on the unbounded two's-complement value - there is no ToInt32
     // step, because a BigInt has no width to truncate to.
@@ -444,11 +464,9 @@ value context::binary_op(op kind, value lhs, value rhs) {
     // the BigInt/Number decision. `{valueOf() { return 2n; }} - 1n` is 1n; it
     // was the mixing TypeError, because the object reached bigint_binary
     // unconverted.
-    const value l = numeric_operand(lhs);
-    if (threw()) { return value::undefined(); }
-    const value r = numeric_operand(rhs);
-    if (threw()) { return value::undefined(); }
-    if (refuse_symbol(l, r, "number")) { return value::undefined(); }
+    value l = value::undefined();
+    value r = value::undefined();
+    if (!numeric_operands(lhs, rhs, l, r)) { return value::undefined(); }
     if (value made; bigint_binary(kind, l, r, made)) { return made; }
     // `to_number_value`, NOT `to_number`: ToNumber runs valueOf/toString on
     // an object - none is left here - and a Symbol is its TypeError.
@@ -561,10 +579,27 @@ std::partial_ordering context::compare_relational(value a, value b) {
         const bool b_big = pb.is_kind(heap_kind::bigint);
         if (a_big || b_big) {
             std::optional<int> order;
+            // AGAINST A STRING, the string becomes a BigInt (StringToBigInt,
+            // 7.2.13 steps 3.a-3.b): exactly - "9007199254740993" is not the
+            // double 2^53 - and a string that is no integer ("0.", "1e3") makes
+            // the comparison undefined, which is false every way round.
+            const auto exact = [](const bigint & x, const bigint & y) {
+                return x < y ? -1 : (x > y ? 1 : 0);
+            };
+            const auto parsed = [](value s) {
+                return bigint_from_string(static_cast<string_object *>(s.as_heap())->text);
+            };
             if (a_big && b_big) {
-                const bigint & x = static_cast<bigint_object *>(pa.as_heap())->digits;
-                const bigint & y = static_cast<bigint_object *>(pb.as_heap())->digits;
-                order = x < y ? -1 : (x > y ? 1 : 0);
+                order = exact(static_cast<bigint_object *>(pa.as_heap())->digits,
+                              static_cast<bigint_object *>(pb.as_heap())->digits);
+            } else if (a_big && pb.is_string()) {
+                if (const std::optional<bigint> y = parsed(pb)) {
+                    order = exact(static_cast<bigint_object *>(pa.as_heap())->digits, *y);
+                }
+            } else if (b_big && pa.is_string()) {
+                if (const std::optional<bigint> x = parsed(pa)) {
+                    order = exact(*x, static_cast<bigint_object *>(pb.as_heap())->digits);
+                }
             } else if (a_big) {
                 order = bigint_compare_double(static_cast<bigint_object *>(pa.as_heap())->digits,
                                               to_number(pb));
