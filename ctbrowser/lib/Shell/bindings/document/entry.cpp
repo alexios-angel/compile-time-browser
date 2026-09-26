@@ -520,9 +520,8 @@ void dom_bindings::execute_script_element(context & cx, node_id id, const std::s
                 walk(walk, txn.root());
             }
             for (const auto & [frame, src] : preceding) {
-                if (src.empty()) {
-                    connect_blank_frame(frame); // its `load` at once (frames.cpp)
-                } else {
+                // A blank one has its `load` at once (frames.cpp).
+                if (!connect_blank_frame(frame, src)) {
                     frames_.push_back(frame_entry{frame, src, start_frame(frame, src)});
                 }
             }

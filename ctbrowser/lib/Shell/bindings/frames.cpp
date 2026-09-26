@@ -121,6 +121,15 @@ constexpr std::string_view markup_key{"\0markup:", 8};
     return ascii_istarts_with(source, "javascript:");
 }
 
+// A source that is about:blank (HTML's "matches about:blank": the about
+// scheme and the path `blank`, a query or fragment allowed) - or none at all.
+[[nodiscard]] bool is_blank_source(std::string_view source) {
+    source = trim(source, " \t\n\f\r");
+    if (source.empty()) { return true; }
+    if (!ascii_istarts_with(source, "about:blank")) { return false; }
+    return source.size() == 11 || source[11] == '?' || source[11] == '#';
+}
+
 // `text` as a JavaScript string literal.
 [[nodiscard]] std::string js_string_literal(std::string_view text) {
     std::string out = "\"";
@@ -263,10 +272,11 @@ void dom_bindings::reconcile_frames() {
     frames_.swap(still);
 }
 
-// AN <iframe> CONNECTED WITH NO `src` - HTML 4.8.5's insertion steps ("create
-// a new child navigable", then "process the iframe attributes" with
-// initialInsertion): its navigable exists at once, and the about:blank it
-// starts on fires `load` SYNCHRONOUSLY, during the insertion - so a listener
+// AN <iframe> CONNECTED WITH NO `src`, OR ONE THAT IS about:blank - HTML
+// 4.8.5's insertion steps ("create a new child navigable", then "process the
+// iframe attributes" with initialInsertion; false for any other source): its
+// navigable exists at once, and the about:blank it starts on fires `load`
+// SYNCHRONOUSLY, during the insertion - so a listener
 // added after the insertion never hears it. The Range tests append two blank
 // frames, then set `onload` and a `src`, and waited for the navigation's
 // `load`; queued for the next tick, the about:blank one arrived instead and
@@ -308,18 +318,19 @@ dom_bindings * dom_bindings::start_frame(node_id id, const std::string & source)
     return made;
 }
 
-void dom_bindings::connect_blank_frame(node_id id) {
-    if (cx_ == nullptr) { return; }
+bool dom_bindings::connect_blank_frame(node_id id, const std::string & source) {
+    if (cx_ == nullptr || !is_blank_source(source)) { return false; }
     if (std::ranges::any_of(frames_, [id](const frame_entry & e) { return e.element == id; })) {
-        return;
+        return true;
     }
-    dom_bindings * made = load_frame(*cx_, id, std::string{});
-    frames_.push_back(frame_entry{id, std::string{}, made});
+    dom_bindings * made = load_frame(*cx_, id, source);
+    frames_.push_back(frame_entry{id, source, made});
     forget_frame_load(id);
     const bool were_dirty = frames_dirty_;
     frames_dirty_ = false;
     settle_frame(*cx_, pending_frame{id, true, false, nullptr});
     frames_dirty_ = frames_dirty_ || were_dirty;
+    return true;
 }
 
 // The insertion steps of the <iframe>s a mutation connected, in tree order:
@@ -328,14 +339,16 @@ void dom_bindings::connect_blank_frame(node_id id) {
 // navigables - createHTMLDocument's does not.
 void dom_bindings::connect_inserted_frames(const std::vector<document::write_note> & writes) {
     if (cx_ == nullptr || doc_ == nullptr || (secondary_ && realm_ == nullptr)) { return; }
-    std::vector<node_id> blank;
+    std::vector<std::pair<node_id, std::string>> blank;
     {
         const auto txn = doc_->read();
         const atom iframe_tag = atoms_->intern_lower("iframe");
         const auto walk = [&](const auto & self, node_id at) -> void {
             if (txn.tag(at).value_or(atom{}) == iframe_tag && txn.element_ns(at) == node_ns::html &&
-                frame_source(txn, at).empty() && std::ranges::find(blank, at) == blank.end()) {
-                blank.push_back(at);
+                std::ranges::none_of(blank, [at](const auto & one) { return one.first == at; })) {
+                if (std::string source = frame_source(txn, at); is_blank_source(source)) {
+                    blank.emplace_back(at, std::move(source));
+                }
             }
             for (const node_id child : txn.children(at)) { self(self, child); }
         };
@@ -346,10 +359,10 @@ void dom_bindings::connect_inserted_frames(const std::vector<document::write_not
             }
         }
     }
-    for (const node_id id : blank) {
+    for (const auto & [id, source] : blank) {
         // Connected - and still, after a `load` an earlier frame fired, which
         // can have moved or removed this one.
-        if (is_connected(id)) { connect_blank_frame(id); }
+        if (is_connected(id)) { (void)connect_blank_frame(id, source); }
     }
 }
 

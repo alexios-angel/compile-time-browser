@@ -736,7 +736,7 @@ private:
     dom_bindings * load_frame(context & cx, node_id id, const std::string & src,
                               const resource_request * request = nullptr);
     void settle_frame(context & cx, const pending_frame & waiting);
-    void connect_blank_frame(node_id id);
+    bool connect_blank_frame(node_id id, const std::string & source);
     void forget_frame_load(node_id id);
     dom_bindings * start_frame(node_id id, const std::string & source);
     [[nodiscard]] std::string frame_source(const read_txn & txn, node_id id) const;
