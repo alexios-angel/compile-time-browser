@@ -35,6 +35,8 @@ void dom_bindings::each_live_boundary(const std::function<void(const live_bounda
     // A copy: a callback may register a range (wrap() does not, but the
     // list is the primary's and `fn` is not audited).
     const std::vector<value> ranges = primary().live_ranges_;
+    // ROOTED: the list is weak (register_roots), and `fn` may allocate.
+    const context::rooted_values keep{*cx_, ranges};
     for (const value & held : ranges) {
         auto * range = static_cast<script::object_object *>(held.as_heap());
         for (const auto & [node_slot, offset_slot] : {std::pair{start_node_slot, start_offset_slot},
@@ -80,6 +82,7 @@ void dom_bindings::settle_live_ranges(const std::vector<document::write_note> & 
     // previous sibling's last inclusive descendant, or the parent.
     const auto settle_iterators = [&](const document::write_note & note) {
         const std::vector<value> held = primary().live_ranges_;
+        const context::rooted_values keep{*cx_, held};
         for (const value & one : held) {
             auto * iterator = static_cast<script::object_object *>(one.as_heap());
             if (iterator->find(iterator_reference_slot) == nullptr) { continue; }

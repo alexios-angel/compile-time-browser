@@ -53,6 +53,14 @@ void dom_bindings::observe_location(std::string href, std::string hash) {
 // document it has made; a secondary never registers.
 void dom_bindings::register_roots(context & cx) {
     cx.set_external_roots([this](const context::root_visitor & mark) { mark_roots(mark); });
+    // THE LIVE RANGES ARE WEAK (DOM 5.5: a live range is updated while it
+    // exists, and nothing keeps it existing). As roots, every Range and
+    // NodeIterator a page ever made lived for good and every mutation walked
+    // them all: dom/ranges/Range-surroundContents.html made thousands and
+    // reached the 4 GB cap in 22 seconds.
+    cx.set_weak_prune([this](const context::survives_fn & survives) {
+        std::erase_if(live_ranges_, [&](const value & range) { return !survives(range); });
+    });
 }
 
 dom_bindings::~dom_bindings() = default;
@@ -131,7 +139,6 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
         mark(a.finished);
     }
     for (const keyframe_effect_record & e : effects_) { mark(e.self); }
-    for (const value & range : live_ranges_) { mark(range); }
     for (const value & list : pending_media_changes_) { mark(list); }
     for (const value & promise : rejections_to_notify_) { mark(promise); }
     for (const value & promise : outstanding_rejections_) { mark(promise); }

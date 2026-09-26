@@ -493,6 +493,14 @@ public:
     using root_visitor = std::function<void(value)>;
 
     void set_external_roots(std::function<void(const root_visitor &)> enumerate);
+    // THE HOST'S WEAK LISTS, pruned by every collection after it has marked
+    // and before it sweeps: `prune` is handed whether a value survived and
+    // drops the ones that did not, so a list the host must keep current while
+    // script can see its members - a document's live Ranges - never keeps one
+    // alive and never reads a freed one. One callback per realm, like the
+    // external roots.
+    using survives_fn = std::function<bool(value)>;
+    void set_weak_prune(std::function<void(const survives_fn &)> prune);
 
     class rooted {
     public:
@@ -993,6 +1001,7 @@ private:
     std::size_t string_bytes_ = 0;
     std::size_t string_budget_ = minimum_string_budget;
     std::function<void(const root_visitor &)> external_roots_;
+    std::function<void(const survives_fn &)> weak_prune_;
     bool failed_ = false;
     std::string error_;
 };
