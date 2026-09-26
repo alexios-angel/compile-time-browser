@@ -113,6 +113,8 @@ public:
     [[nodiscard]] bool null_custom_element_registry(node_id) const noexcept;
     // See document::custom_element_defined - for `:defined`.
     [[nodiscard]] std::optional<bool> custom_element_defined(node_id) const;
+    // See document::parser_form.
+    [[nodiscard]] node_id parser_form(node_id) const noexcept;
 
     [[nodiscard]] node_id root() const noexcept;
     [[nodiscard]] node_id document_node() const noexcept;
@@ -169,6 +171,10 @@ public:
     // `prefixed`: whether a colon in `tag` is a prefix - see node::prefixed.
     [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html,
                                          bool prefixed = false);
+    // DOM 4.9 "create an element" step 6.1.3.9: a custom element's namespace
+    // prefix is set AFTER its constructor returned, so `this.prefix` is null
+    // inside it. `qualified` is the prefixed tag the element takes on.
+    void set_element_prefix(node_id element, atom qualified);
     [[nodiscard]] node_id create_text(std::string_view value);
     [[nodiscard]] node_id create_comment(std::string_view value);
     // A DocumentFragment. Detached like everything else here, and it stays
@@ -275,6 +281,25 @@ public:
     [[nodiscard]] bool has_null_custom_element_registries() const noexcept {
         return !null_registries_.empty();
     }
+
+    // THE FORM THE PARSER ASSOCIATED A CONTROL WITH (HTML 13.2.6.1 "create an
+    // element for a token", and 4.10.17.3's "parser inserted flag"): a
+    // form-associated element the tree builder made while its form element
+    // pointer was set belongs to that form even when it is not inside it -
+    // which is what `<table><form><tr><td><input>` builds, since a form in a
+    // table is popped the moment it is inserted. Only those are kept; a
+    // control whose nearest form ancestor is that form answers the question
+    // by its ancestors. The association ends when a removal leaves the two in
+    // different trees and when the element's `form` attribute changes, as the
+    // form owner is reset then; an insertion never ends it, which is the
+    // flag's whole point. Empty for every element nothing recorded. A form
+    // owner is this, when set, BEFORE the walk up to the nearest <form>.
+    // ponytail: a control parsed INSIDE its form and then moved out of it
+    // within the same tree keeps that form per the specification, and here
+    // falls back to its ancestors; recording every control fixes it, at the
+    // cost of a pair per control for every detach to look at.
+    void set_parser_form(node_id element, node_id form);
+    [[nodiscard]] node_id parser_form(node_id element) const noexcept;
 
     // Shadow roots are detached fragments with sparse host/mode metadata.
     // Closed mode affects exposure to script, not these native tree queries.
@@ -449,6 +474,9 @@ private:
 
     // detach `child` from whatever parent it has
     void detach(node * child_node, node_id child);
+    // The parser associations a detach or a `form` attribute write ends.
+    void sever_parser_forms();
+    void forget_parser_form(node_id element, atom attribute_name);
 
     // A ProcessingInstruction's attribute map and its data, kept in step both
     // ways (DOM §4.13) - see the parser above them in document.cpp.
@@ -517,6 +545,9 @@ private:
     // because a page holds a few and a lookup happens once per `.content`
     // read.
     std::vector<std::pair<node_id, node_id>> template_contents_;
+    // (control, form) - see parser_form. A vector for the same reason: most
+    // pages have none, which is what every detach asks first.
+    std::vector<std::pair<node_id, node_id>> parser_forms_;
     flat_map<std::uint64_t, atom> element_namespaces_;
     flat_map<std::uint64_t, bool> null_registries_;
     flat_map<std::uint64_t, node_id> shadow_roots_;

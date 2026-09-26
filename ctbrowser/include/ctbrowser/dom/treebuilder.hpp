@@ -442,6 +442,11 @@ private:
                                          const std::vector<token_attribute> & attributes,
                                          node_ns ns = node_ns::html);
     [[nodiscard]] node_id insert_element(const token & t, node_ns ns = node_ns::html);
+    // 13.2.6.1 "create an element for a token" step 12: a listed form control
+    // made while the form element pointer is set belongs to that form - see
+    // document::parser_form.
+    void associate_with_form(node_id element, node_id intended_parent, std::string_view tag,
+                             const std::vector<token_attribute> & attributes, node_ns ns);
     [[nodiscard]] node_id insert_element(const std::string & tag,
                                          const std::vector<token_attribute> & attributes,
                                          node_ns ns = node_ns::html);

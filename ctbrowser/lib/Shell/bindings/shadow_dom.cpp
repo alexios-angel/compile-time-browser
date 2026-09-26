@@ -933,6 +933,41 @@ void dom_bindings::install_shadow_dom(context & cx) {
                           return root_of_tree(txn, candidate, false) == root ? wrap(c, candidate)
                                                                              : value::null();
                       });
+        // --- elementFromPoint / elementsFromPoint, DocumentOrShadowRoot ------
+        //
+        // The document's hit test, retargeted against THIS root rather than
+        // the document (geometry.cpp, elements_from_point): what is in this
+        // tree answers as itself, a host inside it for anything deeper. The
+        // coordinates are `double`s, and a non-finite one is a TypeError.
+        auto & shadow_proto = *static_cast<script::object_object *>(root_proto.as_heap());
+        for (const bool all : {false, true}) {
+            const char * name = all ? "elementsFromPoint" : "elementFromPoint";
+            set_method(
+                cx, shadow_proto, name, [this, name, all](context & c, std::span<value> args) {
+                    dom_bindings * owner = owner_of(c.current_this());
+                    const node_id root =
+                        owner == nullptr ? node_id{} : owner->handle_of(c.current_this());
+                    if (owner == nullptr || owner->shadow_tree_of(root) == nullptr) {
+                        c.throw_error("TypeError", "Illegal invocation");
+                        return value::undefined();
+                    }
+                    const double x = args.empty() ? std::nan("") : context::to_number(args[0]);
+                    const double y = args.size() < 2 ? std::nan("") : context::to_number(args[1]);
+                    if (!std::isfinite(x) || !std::isfinite(y)) {
+                        c.throw_error("TypeError",
+                                      std::string{name} + ": the coordinates must be finite");
+                        return value::undefined();
+                    }
+                    const std::vector<node_id> found = owner->elements_from_point(x, y, all, root);
+                    if (!all) {
+                        return found.empty() ? value::null() : owner->wrap(c, found.front());
+                    }
+                    const value out = c.make_array();
+                    auto * items = static_cast<script::array_object *>(out.as_heap());
+                    for (const node_id id : found) { items->items.push_back(owner->wrap(c, id)); }
+                    return out;
+                });
+        }
     }
 
     // --- getHTML / setHTMLUnsafe, on an Element and on a ShadowRoot ------------

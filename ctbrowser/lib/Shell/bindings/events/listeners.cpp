@@ -502,6 +502,46 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
         const bool handled = global->dispatch_error_value(fault, thrown);
         if (!handled && callback_error_.empty()) { callback_error_ = fault; }
     };
+    // `window.event`, DOM 2.10 "inner invoke" steps 8-11: THE CURRENT EVENT OF
+    // THE LISTENER CALLBACK'S GLOBAL - the window of the realm the function
+    // was made in, not the target's and not the dispatching document's: a
+    // frame's function listening in the page sets the frame's `event`, and the
+    // page's own is untouched (event-global-extra.window.js, event-global-is-
+    // still-set-when-reporting-exception-onerror.html). Set for the call -
+    // left as it was when the step is inside a shadow tree - and put back
+    // after it, AFTER the fault is reported, which step 10 does with the event
+    // still current. Put back rather than cleared, because a listener may
+    // dispatch (window-event-restored-after-throwing-onerror.html).
+    //
+    // BOTH STORAGES, SAVED SEPARATELY: the window object's own `event` and the
+    // realm's global - `event.stopPropagation()` with no receiver reads the
+    // bare name (Event-stopPropagation-cancel-bubbling.html) - and a page's
+    // top-level `var event` is a global while `window.event` is a property.
+    const auto invoking = [&](value callback, const auto & call) {
+        context & cx = *cx_;
+        dom_bindings & global = global_of(callback, *this);
+        script::realm_record & realm = global.realm_ != nullptr ? *global.realm_ : cx.main_realm();
+        script::object_object * window = global.window_object();
+        value saved_window = value::undefined();
+        value saved_global = value::undefined();
+        {
+            const context::realm_scope in_realm{cx, realm};
+            if (window != nullptr) {
+                if (const value * held = window->find("event")) { saved_window = *held; }
+            }
+            if (cx.has_global("event")) { saved_global = cx.global("event"); }
+            if (!step_in_shadow_) {
+                if (window != nullptr) { window->set("event", event); }
+                cx.define_global("event", event);
+            }
+        }
+        const context::rooted keep_window{cx, saved_window};
+        const context::rooted keep_global{cx, saved_global};
+        call();
+        const context::realm_scope in_realm{cx, realm};
+        if (window != nullptr) { window->set("event", saved_window); }
+        cx.define_global("event", saved_global);
+    };
     // THE LIST IS COPIED BEFORE ANY OF IT RUNS, which is what the DOM says and
     // is not the same thing as walking it carefully.
     //
@@ -561,8 +601,10 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
                 const value target = object_of_step(*cx_, step);
                 const value handler = cx_->lookup_property(target, "on" + ascii_lower_copy(type));
                 const context::rooted keep_handler{*cx_, handler};
-                const bool threw = fire_handler_property(target, type, event, &thrown);
-                report_fault(threw, thrown, handler);
+                invoking(handler, [&] {
+                    const bool threw = fire_handler_property(target, type, event, &thrown);
+                    report_fault(threw, thrown, handler);
+                });
                 continue;
             }
             if (entry->once) { entry->spent = true; }
@@ -581,15 +623,17 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
             if (passive) { carrier->set(std::string{passive_property}, value::boolean(true)); }
             value thrown = value::undefined();
             value returned = value::undefined();
-            const bool threw = invoke_listener(*cx_, callback, object_of_step(*cx_, step), event,
-                                               thrown, returned);
-            if (passive) { carrier->set(std::string{passive_property}, value::boolean(false)); }
-            // PER LISTENER, not per dispatch. A throw from the first of three must
-            // not stop the other two - which it did twice over, first because every
-            // later `call` declines while the VM's failure flag is up and then
-            // because the throw left the dispatch entirely - and each one that
-            // throws is its own report.
-            report_fault(threw, thrown, callback);
+            invoking(callback, [&] {
+                const bool threw = invoke_listener(*cx_, callback, object_of_step(*cx_, step),
+                                                   event, thrown, returned);
+                if (passive) { carrier->set(std::string{passive_property}, value::boolean(false)); }
+                // PER LISTENER, not per dispatch. A throw from the first of three
+                // must not stop the other two - which it did twice over, first
+                // because every later `call` declines while the VM's failure flag
+                // is up and then because the throw left the dispatch entirely - and
+                // each one that throws is its own report.
+                report_fault(threw, thrown, callback);
+            });
         }
         // A HANDLER NOBODY REGISTERED A LISTENER FOR - a parsed attribute the
         // write log never saw, a name whose event type is not its lowercase
@@ -608,11 +652,14 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
             const value target = object_of_step(*cx_, step);
             const value handler = cx_->lookup_property(target, "on" + ascii_lower_copy(type));
             const context::rooted keep_handler{*cx_, handler};
-            const bool threw = fire_handler_property(target, type, event, &thrown);
+            bool threw = false;
+            invoking(handler, [&] {
+                threw = fire_handler_property(target, type, event, &thrown);
+                report_fault(threw, thrown, handler);
+            });
             found = found || threw ||
                     cx_->lookup_property(object_of_step(*cx_, step), "on" + ascii_lower_copy(type))
                         .is_callable();
-            report_fault(threw, thrown, handler);
         }
         return found;
     };

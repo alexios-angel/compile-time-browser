@@ -264,7 +264,11 @@ bool dom_bindings::insert_node(node_id parent, node_id child, node_id before) {
             (void)doc_->append_child(parent, one);
         }
     }
+    // moveBefore's node, for the custom element scan this mutation runs: every
+    // shadow-including descendant of it moved, custom or not.
+    if (moving_) { move_root_ = child; }
     mutated();
+    move_root_ = node_id{};
     return true;
 }
 

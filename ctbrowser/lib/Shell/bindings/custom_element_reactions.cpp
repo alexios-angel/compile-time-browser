@@ -166,7 +166,10 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
     while (!pending.empty()) {
         const frame here = pending.back();
         pending.pop_back();
-        bool moved = here.moved;
+        // Below the node moveBefore moved - a plain host whose shadow tree
+        // holds the custom element, say - everything moved with it
+        // (custom-element-move-reactions.html, "nested within a shadow root").
+        bool moved = here.moved || (moving_ && here.at && here.at == move_root_);
         node_id shadow;
         if (txn.kind(here.at).value_or(node_kind::text) == node_kind::element &&
             txn.element_ns(here.at) == node_ns::html) {

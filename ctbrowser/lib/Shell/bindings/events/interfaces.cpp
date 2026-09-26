@@ -25,6 +25,19 @@ dom_bindings & dom_bindings::target_owner(value self) {
 
 namespace {
 
+// `dispatchEvent()` step 2: an event a SCRIPT dispatches is not trusted, even
+// the one the engine fired a moment ago (Event-dispatch-redispatch.html) -
+// but only past step 1's two refusals, which dispatch_to makes: a trusted
+// `click` a listener tries to dispatch again throws, and stays trusted.
+void untrust_for_dispatch(context & cx, value event) {
+    if (!event.is_object() || flag_of(cx, event, dispatch_property) ||
+        !flag_of(cx, event, initialised_property)) {
+        return;
+    }
+    static_cast<script::object_object *>(event.as_heap())
+        ->set(std::string{trusted_property}, value::boolean(false));
+}
+
 // Does `self`'s prototype chain reach `wanted`?
 //
 // THIS IS THE "WAS I CALLED WITH `new`?" TEST, and it has to be a prototype
@@ -963,6 +976,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
             }
             if (!self.is_object_like()) { return value::boolean(true); }
             dom_bindings & owner = target_owner(self);
+            untrust_for_dispatch(c, event);
             return value::boolean(!owner.dispatch_to(event, owner.step_of(self)));
         },
         script::attr_builtin);
@@ -1010,6 +1024,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
                                                "parameter 1 is not of type 'Event'.");
                     return value::boolean(false);
                 }
+                untrust_for_dispatch(c, event);
                 return value::boolean(!dispatch_to(event, path_step{node_id{}, listen_on::window}));
             }));
         window->set("dispatchEvent", window_dispatch);

@@ -131,7 +131,10 @@ void dom_bindings::settle_live_ranges(const std::vector<document::write_note> & 
     };
     for (const document::write_note & note : writes) {
         if (note.kind == edit::attribute) { continue; }
-        if (note.kind == edit::removed) { settle_iterators(note); }
+        if (note.kind == edit::removed) {
+            settle_iterators(note);
+            forget_selection_under(note.child);
+        }
         const auto txn = doc_->read();
         each_live_boundary([&](const live_boundary & at) {
             switch (note.kind) {

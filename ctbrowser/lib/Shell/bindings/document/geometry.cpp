@@ -24,7 +24,17 @@ using namespace detail;
 // ponytail: no `z-index`, `pointer-events: none` or transform here; the
 // stacking-context order the recorder computes is the upgrade when a test
 // wants it.
-std::vector<node_id> dom_bindings::elements_from_point(double x, double y, bool all) {
+//
+// AND THE HITS ARE RETARGETED AGAINST THE ASKER (the Shadow DOM extension of
+// DocumentOrShadowRoot, ending in DOM "retarget"): a hit inside a shadow tree
+// whose root is not a shadow-including inclusive ancestor of `asker` climbs to
+// that tree's host - so the document (`asker` empty) sees hosts and nothing
+// inside them, and a shadow root sees its own tree and the light tree around
+// it. A text run straight under a shadow root names the host its box is in.
+// A duplicate the climb makes goes, the first standing
+// (DocumentOrShadowRoot-prototype-elementFromPoint.html).
+std::vector<node_id> dom_bindings::elements_from_point(double x, double y, bool all,
+                                                       node_id asker) {
     std::vector<node_id> out;
     flush_layout();
     if (fragments_ == nullptr || !std::isfinite(x) || !std::isfinite(y) || x < 0 || y < 0 ||
@@ -43,6 +53,7 @@ std::vector<node_id> dom_bindings::elements_from_point(double x, double y, bool 
     std::vector<hit> hits;
     std::size_t order = 0;
     const auto txn = doc_->read();
+    const bool has_shadow = doc_->has_shadow_roots();
     const auto walk = [&](auto && self, const layout::fragment & f, float dx, float dy, bool fixed,
                           int rank, std::optional<rect> clip) -> void {
         const bool is_fixed =
@@ -60,6 +71,10 @@ std::vector<node_id> dom_bindings::elements_from_point(double x, double y, bool 
             node_id named = f.source;
             if (txn.kind(named).value_or(node_kind::element) != node_kind::element) {
                 named = txn.parent(named);
+                if (const shadow_tree * tree =
+                        named && has_shadow ? shadow_tree_of(named) : nullptr) {
+                    named = tree->host;
+                }
             }
             if (named && txn.kind(named).value_or(node_kind::element) == node_kind::element) {
                 hits.push_back(hit{own_rank, here, named});
@@ -88,8 +103,29 @@ std::vector<node_id> dom_bindings::elements_from_point(double x, double y, bool 
     std::ranges::stable_sort(hits, [](const hit & a, const hit & b) {
         return a.rank != b.rank ? a.rank > b.rank : a.order > b.order;
     });
+    // Is `root` a shadow-including inclusive ancestor of the asker?
+    const auto holds = [&](node_id root) {
+        for (node_id b = asker; b;) {
+            if (b == root) { return true; }
+            const node_id up = txn.parent(b);
+            const shadow_tree * above = up ? nullptr : shadow_tree_of(b);
+            b = up ? up : above == nullptr ? node_id{} : above->host;
+        }
+        return false;
+    };
+    // Each step climbs to a host, strictly up the shadow-including tree, so
+    // the loop ends without a bound.
+    const auto retarget = [&](node_id a) {
+        for (;;) {
+            const node_id root = root_of_tree(txn, a, false);
+            const shadow_tree * tree = shadow_tree_of(root);
+            if (tree == nullptr || holds(root)) { return a; }
+            a = tree->host;
+        }
+    };
     for (const hit & h : hits) {
-        if (std::ranges::find(out, h.node) == out.end()) { out.push_back(h.node); }
+        const node_id seen = has_shadow ? retarget(h.node) : h.node;
+        if (std::ranges::find(out, seen) == out.end()) { out.push_back(seen); }
         if (!all) { break; }
     }
     const node_id root = txn.root();

@@ -414,40 +414,12 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     };
     if (!path.empty()) { object->set(std::string{path_property}, composed_path_for(0)); }
 
-    // `window.event`, WHICH IS SET FOR THE WHOLE DISPATCH AND RESTORED AFTER IT.
-    //
-    // It is the oldest event API there is and pages still reach for it - and not
-    // only old ones: dom/events/Event-stopPropagation-cancel-bubbling.html
-    // calls `event.stopPropagation()` with no receiver at all, which only works
-    // because the bare name is a global. So it is written to BOTH the window
-    // object and the globals table, which are separate storage here.
-    //
-    // SAVED AND RESTORED rather than cleared, because a listener may dispatch:
-    // the inner dispatch must leave the outer one's event visible when it
-    // returns, which is exactly what window-event-restored-after-throwing-
-    // onerror.html checks by throwing from the middle of the nested one.
-    //
-    // THE TWO STORAGES ARE SAVED SEPARATELY, which is not tidiness: a page may
-    // have a top-level `var event` of its own, and that is a GLOBAL while
-    // `window.event` is an own property of the window object. Restoring one
-    // from the other would silently overwrite the page's variable with
-    // undefined the first time anything was dispatched.
+    // `window.event` IS THE LISTENER'S GLOBAL'S, set around each call by
+    // fire_at (DOM 2.10 "inner invoke"); what a step contributes is whether it
+    // is inside a shadow tree, fixed with the path. Saved for the dispatch this
+    // one may be nested in.
     const context::rooted keep_event{cx, event};
-    script::object_object * window = window_object();
-    value outer_window_event = value::undefined();
-    if (window != nullptr) {
-        if (const value * held = window->find("event")) { outer_window_event = *held; }
-        window->set("event", event);
-    }
-    const value outer_global_event =
-        cx.has_global("event") ? cx.global("event") : value::undefined();
-    const context::rooted keep_outer_window{cx, outer_window_event};
-    const context::rooted keep_outer_global{cx, outer_global_event};
-    const auto expose = [&](value shown) {
-        if (window != nullptr) { window->set("event", shown); }
-        cx.define_global("event", shown);
-    };
-    expose(event);
+    const bool outer_in_shadow = step_in_shadow_;
 
     const auto stopped = [&] { return flag_of(cx, event, cancel_bubble_property); };
     // ONE STEP'S BOOKKEEPING, DOM 2.9 "invoke" steps 1-5: `target` is the
@@ -459,6 +431,7 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // hears a non-bubbling event.
     const auto visit = [&](std::size_t index, double otherwise) {
         const path_step & step = path[index];
+        step_in_shadow_ = shadows && hops[index].in_shadow;
         if (shadows) {
             std::size_t shown = index;
             while (shown > 0 && !hops[shown].adjusted) { --shown; }
@@ -466,7 +439,6 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
                 hops[shown].target ? wrap(cx, hops[shown].target) : target_object;
             object->set("target", shown_object);
             object->set("srcElement", shown_object);
-            expose(hops[index].in_shadow ? value::undefined() : event);
             if (related) { object->set("relatedTarget", wrap(cx, hops[index].related)); }
             if (closed_anywhere) {
                 object->set(std::string{path_property}, composed_path_for(index));
@@ -539,8 +511,7 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     object->set(std::string{cancel_bubble_property}, value::boolean(false));
     object->set(std::string{stop_immediate_property}, value::boolean(false));
     object->set(std::string{path_property}, cx.make_array());
-    if (window != nullptr) { window->set("event", outer_window_event); }
-    cx.define_global("event", outer_global_event);
+    step_in_shadow_ = outer_in_shadow;
     // A `once` listener is removed AFTER the dispatch, not during it: erasing
     // from the vector being walked is how a later listener gets skipped. And not
     // after a NESTED dispatch either - a listener may dispatch, and the inner
