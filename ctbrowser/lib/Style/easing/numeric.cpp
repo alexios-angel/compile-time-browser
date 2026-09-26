@@ -368,6 +368,41 @@ namespace ctbrowser::style::easing_detail {
             return computed;
         }
     }
+    // ...and so are transform-origin's, horizontal first whichever order they
+    // were written in, a z offset after them (CSS Transforms 1 §6): `top left`
+    // pairs with `100% 100%` (transform-origin-interpolation).
+    if (property == "transform-origin") {
+        std::vector<std::string_view> words;
+        for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+            if (!trim(raw, html_whitespace).empty()) {
+                words.push_back(trim(raw, html_whitespace));
+            }
+        }
+        const auto keyword = [](std::string_view w) {
+            return ascii_iequals_any(w, {"left", "right", "top", "bottom", "center"});
+        };
+        if (!words.empty() && words.size() <= 3 && std::ranges::any_of(words, keyword)) {
+            const auto vertical = [](std::string_view w) {
+                return ascii_iequals_any(w, {"top", "bottom"});
+            };
+            const auto percent = [](std::string_view w) {
+                if (ascii_iequals_any(w, {"left", "top"})) { return std::string{"0%"}; }
+                if (ascii_iequals_any(w, {"right", "bottom"})) { return std::string{"100%"}; }
+                if (ascii_iequals(w, "center")) { return std::string{"50%"}; }
+                return std::string{w};
+            };
+            std::string x = "50%", y = "50%";
+            if (words.size() == 1) {
+                (vertical(words[0]) ? y : x) = percent(words[0]);
+            } else {
+                const bool swapped =
+                    vertical(words[0]) || ascii_iequals_any(words[1], {"left", "right"});
+                x = percent(words[swapped ? 1 : 0]);
+                y = percent(words[swapped ? 0 : 1]);
+            }
+            return x + ' ' + y + (words.size() == 3 ? ' ' + std::string{words[2]} : "");
+        }
+    }
     // An <absolute-size> is the length it names (CSS Fonts 4 §2.5's table
     // at the 16px medium): `large` adds to `100px` as 18px
     // (font-size-composition).

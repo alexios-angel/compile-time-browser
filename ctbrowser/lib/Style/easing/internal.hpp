@@ -190,6 +190,9 @@ void promote(transform_fn & fn);
                                                            const std::vector<transform_fn> & b,
                                                            double p);
 
+[[nodiscard]] std::optional<std::string> blend_lists(const std::vector<transform_fn> & a,
+                                                     const std::vector<transform_fn> & b, double p);
+
 [[nodiscard]] std::string function_text(const transform_fn & fn);
 
 [[nodiscard]] transform_fn identity_like(const transform_fn & fn);

@@ -481,8 +481,10 @@ void promote(transform_fn & fn) {
     std::string out{"matrix("};
     for (std::size_t i = 0; i < 6; ++i) {
         if (i != 0) { out += ", "; }
-        // Six decimals, which is where the computed serialiser rounds anyway.
-        out += css::serialize_number(std::round(m[i] * 1e6) / 1e6);
+        // Six decimals, which is where the computed serialiser rounds anyway,
+        // and no negative zero - a scale through 0 leaves one.
+        const double v = std::round(m[i] * 1e6) / 1e6;
+        out += css::serialize_number(v == 0 ? 0.0 : v);
     }
     return out + ')';
 }
@@ -534,7 +536,7 @@ void promote(transform_fn & fn) {
 }
 
 [[nodiscard]] transform_fn identity_like(const transform_fn & fn) {
-    transform_fn out{fn.name, {}, {}};
+    transform_fn out{fn.name, {}, {}, fn.spelled};
     if (fn.name == "matrix") {
         out.args = {1, 0, 0, 1, 0, 0};
     } else if (fn.name == "matrix3d") {
@@ -564,10 +566,56 @@ void promote(transform_fn & fn) {
     return matrix_text(recompose3d(blend3d(*u, *v, p)));
 }
 
-// §15-16: function by function while the lists match - the shorter padded
-// with the identity of its partner - else the whole lists as matrices,
-// decomposed: in 2D when both are, in 3D otherwise. `none` on both sides
-// stays `none`.
+// Two lists blended as matrices (§15-16), decomposed as 4x4 matrices - the
+// decomposition that keeps a 2D pair's skew too: `matrix(1, 0, 0, 7, 0, 0)`
+// to `matrix(7, 0, 1, 1, 0, 0)` passes through `matrix(4, 0, 2, 4, 0, 0)` in
+// every engine (transform-interpolation-005) - and by the 2D algorithm when a
+// flat one is singular. nullopt, which is discrete, for a percentage, which
+// has no matrix until the box exists, and for a singular 3D matrix.
+[[nodiscard]] std::optional<std::string> blend_lists(const std::vector<transform_fn> & a,
+                                                     const std::vector<transform_fn> & b,
+                                                     double p) {
+    for (const std::vector<transform_fn> * list : {&a, &b}) {
+        for (const transform_fn & fn : *list) {
+            if (std::ranges::any_of(fn.pct, [](double v) { return v != 0; })) {
+                return std::nullopt;
+            }
+        }
+    }
+    const matrix3d x = matrix3d_of(a), y = matrix3d_of(b);
+    const std::optional<decomposed3d> u = decompose3d(x);
+    const std::optional<decomposed3d> v = decompose3d(y);
+    if (u && v) { return matrix_text(recompose3d(blend3d(*u, *v, p))); }
+    if (!flat(x) || !flat(y)) { return std::nullopt; }
+    const auto lerp = [p](double f, double t) { return (1 - p) * f + p * t; };
+    decomposed2d f = decompose(matrix2d{x[0], x[1], x[4], x[5], x[12], x[13]});
+    const decomposed2d t = decompose(matrix2d{y[0], y[1], y[4], y[5], y[12], y[13]});
+    // The rotation goes the short way round, and a flip of scale on one
+    // side is undone on the other (§12.2).
+    if ((f.sx < 0 && t.sy < 0) || (f.sy < 0 && t.sx < 0)) {
+        f.sx = -f.sx, f.sy = -f.sy;
+        f.angle += f.angle < 0 ? 180 : -180;
+    }
+    if (std::fabs(f.angle - t.angle) > 180) {
+        if (f.angle > t.angle) {
+            f.angle -= 360;
+        } else {
+            f.angle += 360;
+        }
+    }
+    const decomposed2d z{lerp(f.tx, t.tx),   lerp(f.ty, t.ty),       lerp(f.sx, t.sx),
+                         lerp(f.sy, t.sy),   lerp(f.angle, t.angle), lerp(f.m11, t.m11),
+                         lerp(f.m12, t.m12), lerp(f.m21, t.m21),     lerp(f.m22, t.m22)};
+    return matrix_text(recompose(z));
+}
+
+// §15-16: function by function over the lists' longest common prefix of
+// functions that pair - a list that has ended pairing as the identity of the
+// other's function, which is how `none` and a shorter list are padded - and
+// whatever follows it, on both sides, blended as matrices. So
+// `rotate(0deg) translate(100px)` to `rotate(720deg) scale(2) translate(200px)`
+// turns the rotation through 720 degrees and blends only the rest
+// (list-interpolation). A matrix() pair is a pair of matrices, blended so.
 [[nodiscard]] std::optional<std::string> interpolate_transform(std::string_view from,
                                                                std::string_view to, double p) {
     std::optional<std::vector<transform_fn>> a = parse_transforms(from);
@@ -580,134 +628,99 @@ void promote(transform_fn & fn) {
     if (p == 1 && !b->empty()) { return std::string{to}; }
     const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
     const std::size_t shorter = std::min(a->size(), b->size());
-    bool matched = true;
-    for (std::size_t i = 0; i < shorter && matched; ++i) {
-        // Two matrix() functions interpolate by decomposition (§12.1), not
-        // term by term: they send the whole lists down the matrix path.
-        const std::string & x = (*a)[i].name;
-        const std::string & y = (*b)[i].name;
-        matched = primitive_of(x) == primitive_of(y) &&
-                  (x != "matrix" || (*a)[i].args == (*b)[i].args) &&
-                  ((x == "matrix3d") == (y == "matrix3d")) &&
-                  (x != "matrix3d" || (*a)[i].args == (*b)[i].args);
+    std::size_t prefix = 0;
+    while (prefix < shorter && primitive_of((*a)[prefix].name) == primitive_of((*b)[prefix].name)) {
+        ++prefix;
     }
-    if (matched) {
+    if (prefix == shorter) {
         for (std::size_t i = a->size(); i < b->size(); ++i) {
             a->push_back(identity_like((*b)[i]));
         }
         for (std::size_t i = b->size(); i < a->size(); ++i) {
             b->push_back(identity_like((*a)[i]));
         }
-        std::string out;
-        for (std::size_t i = 0; i < a->size(); ++i) {
-            transform_fn x = (*a)[i];
-            transform_fn y = (*b)[i];
-            if (is_3d(x) != is_3d(y)) {
-                promote(x);
-                promote(y);
+        prefix = a->size();
+    }
+    std::string out;
+    for (std::size_t i = 0; i < prefix; ++i) {
+        transform_fn x = (*a)[i];
+        transform_fn y = (*b)[i];
+        if (i != 0) { out += ' '; }
+        if (x.name == "matrix" || x.name == "matrix3d") {
+            const std::optional<std::string> m = blend_lists({x}, {y}, p);
+            if (!m) { return std::nullopt; }
+            out += *m;
+            continue;
+        }
+        if (is_3d(x) != is_3d(y)) {
+            promote(x);
+            promote(y);
+        }
+        if (x.name == "rotate3d") {
+            // One axis for both - the other's when an angle is zero - and
+            // the angle interpolates; two axes are blended as matrices.
+            const auto unit = [](transform_fn & r) {
+                const double n = std::hypot(r.args[0], r.args[1], r.args[2]);
+                if (n == 0) { return false; }
+                for (std::size_t k = 0; k < 3; ++k) { r.args[k] /= n; }
+                return true;
+            };
+            const bool ux = unit(x), uy = unit(y);
+            if (!ux || x.args[3] == 0) {
+                std::copy_n(y.args.begin(), 3, x.args.begin());
+            } else if (!uy || y.args[3] == 0) {
+                std::copy_n(x.args.begin(), 3, y.args.begin());
             }
-            if (i != 0) { out += ' '; }
-            if (x.name == "rotate3d") {
-                // One axis for both - the other's when an angle is zero - and
-                // the angle interpolates; two axes are blended as matrices.
-                const auto unit = [](transform_fn & r) {
-                    const double n = std::hypot(r.args[0], r.args[1], r.args[2]);
-                    if (n == 0) { return false; }
-                    for (std::size_t k = 0; k < 3; ++k) { r.args[k] /= n; }
-                    return true;
-                };
-                const bool ux = unit(x), uy = unit(y);
-                if (!ux || x.args[3] == 0) {
-                    std::copy_n(y.args.begin(), 3, x.args.begin());
-                } else if (!uy || y.args[3] == 0) {
-                    std::copy_n(x.args.begin(), 3, y.args.begin());
-                }
-                const auto near = [](double u, double v) { return std::fabs(u - v) < 1e-6; };
-                if (!(near(x.args[0], y.args[0]) && near(x.args[1], y.args[1]) &&
-                      near(x.args[2], y.args[2]))) {
-                    const std::optional<std::string> m = blend_as_matrices({x}, {y}, p);
-                    if (!m) { return std::nullopt; }
-                    out += *m;
-                    continue;
-                }
-                x.args[3] = lerp(x.args[3], y.args[3]);
-                out += function_text(x);
+            const auto near = [](double u, double v) { return std::fabs(u - v) < 1e-6; };
+            if (!(near(x.args[0], y.args[0]) && near(x.args[1], y.args[1]) &&
+                  near(x.args[2], y.args[2]))) {
+                const std::optional<std::string> m = blend_as_matrices({x}, {y}, p);
+                if (!m) { return std::nullopt; }
+                out += *m;
                 continue;
             }
-            transform_fn fn = x;
-            for (std::size_t k = 0; k < fn.args.size(); ++k) {
-                fn.args[k] = lerp(x.args[k], y.args[k]);
-                fn.pct[k] = lerp(x.pct[k], y.pct[k]);
-            }
-            // A perspective's reciprocal depth past `none` is `none`.
-            if (fn.name == "perspective") { fn.args[0] = std::max(fn.args[0], 0.0); }
-            // Two one-axis functions of one name stay that function (CSS
-            // Transforms 1 §12: a pair of the same function interpolates its
-            // arguments), `translateY(70%)` to `translateY(90%)` passing
-            // through `translateY(80%)` rather than its two-argument spelling.
-            const std::string & spelled = x.spelled;
-            const bool one_axis = spelled == "translatex" || spelled == "translatey" ||
-                                  spelled == "scalex" || spelled == "scaley";
-            if (one_axis && spelled == y.spelled && !is_3d(fn)) {
-                const std::size_t axis = spelled.ends_with('y') ? 1 : 0;
-                transform_fn single{fn.name, {fn.args[axis]}, {fn.pct[axis]}, {}};
-                std::string text = function_text(single);
-                const std::size_t open = text.find('(');
-                const std::string name = spelled.starts_with("translate")
-                                             ? (axis == 0 ? "translateX" : "translateY")
-                                             : (axis == 0 ? "scaleX" : "scaleY");
-                out += name + text.substr(open);
-                continue;
-            }
-            out += function_text(fn);
+            x.args[3] = lerp(x.args[3], y.args[3]);
+            out += function_text(x);
+            continue;
         }
-        return out;
-    }
-    // A percentage has no matrix until the box exists: such a pair that does
-    // not match function by function stays discrete.
-    for (const std::vector<transform_fn> * list : {&*a, &*b}) {
-        for (const transform_fn & fn : *list) {
-            if (std::ranges::any_of(fn.pct, [](double v) { return v != 0; })) {
-                return std::nullopt;
-            }
+        transform_fn fn = x;
+        for (std::size_t k = 0; k < fn.args.size(); ++k) {
+            fn.args[k] = lerp(x.args[k], y.args[k]);
+            fn.pct[k] = lerp(x.pct[k], y.pct[k]);
         }
-    }
-    // THE 4x4 DECOMPOSITION FOR A 2D PAIR TOO. It keeps the skew the 2D
-    // algorithm below orthogonalises away - `matrix(1, 0, 0, 7, 0, 0)` to
-    // `matrix(7, 0, 1, 1, 0, 0)` passes through `matrix(4, 0, 2, 4, 0, 0)`
-    // in every engine (transform-interpolation-005) - and it is the one that
-    // answers for 3D. A matrix it cannot decompose - a singular one - falls
-    // back to the 2D algorithm when both are 2D, and is discrete otherwise.
-    {
-        const matrix3d x = matrix3d_of(*a), y = matrix3d_of(*b);
-        const std::optional<decomposed3d> u = decompose3d(x);
-        const std::optional<decomposed3d> v = decompose3d(y);
-        if (u && v) { return matrix_text(recompose3d(blend3d(*u, *v, p))); }
-        if (!flat(x) || !flat(y)) { return std::nullopt; }
-        a = std::vector<transform_fn>{
-            transform_fn{"matrix", {x[0], x[1], x[4], x[5], x[12], x[13]}, {0, 0, 0, 0, 0, 0}}};
-        b = std::vector<transform_fn>{
-            transform_fn{"matrix", {y[0], y[1], y[4], y[5], y[12], y[13]}, {0, 0, 0, 0, 0, 0}}};
-    }
-    decomposed2d x = decompose(matrix_of(*a));
-    const decomposed2d y = decompose(matrix_of(*b));
-    // The rotation goes the short way round, and a flip of scale on one
-    // side is undone on the other (§12.2).
-    if ((x.sx < 0 && y.sy < 0) || (x.sy < 0 && y.sx < 0)) {
-        x.sx = -x.sx, x.sy = -x.sy;
-        x.angle += x.angle < 0 ? 180 : -180;
-    }
-    if (std::fabs(x.angle - y.angle) > 180) {
-        if (x.angle > y.angle) {
-            x.angle -= 360;
-        } else {
-            x.angle += 360;
+        // A perspective's reciprocal depth past `none` is `none`.
+        if (fn.name == "perspective") { fn.args[0] = std::max(fn.args[0], 0.0); }
+        // Two one-axis functions of one name stay that function (CSS
+        // Transforms 1 §12: a pair of the same function interpolates its
+        // arguments), `translateY(70%)` to `translateY(90%)` passing
+        // through `translateY(80%)` rather than its two-argument spelling,
+        // and `scaleZ(1)` to `scaleZ(2)` through `scaleZ(1.5)`.
+        const std::string & spelled = x.spelled;
+        const char last = spelled.empty() ? '\0' : spelled.back();
+        const bool one_axis = (spelled.starts_with("translate") || spelled.starts_with("scale")) &&
+                              (last == 'x' || last == 'y' || last == 'z');
+        if (one_axis && spelled == y.spelled && is_3d(fn) == (last == 'z')) {
+            const std::size_t axis = last == 'x' ? 0 : last == 'y' ? 1 : 2;
+            transform_fn single{fn.name, {fn.args[axis]}, {fn.pct[axis]}, {}};
+            std::string text = function_text(single);
+            const std::size_t open = text.find('(');
+            const std::string name =
+                std::string{spelled.starts_with("translate") ? "translate" : "scale"} +
+                static_cast<char>(std::toupper(static_cast<unsigned char>(last)));
+            out += name + text.substr(open);
+            continue;
         }
+        out += function_text(fn);
     }
-    const decomposed2d z{lerp(x.tx, y.tx),   lerp(x.ty, y.ty),       lerp(x.sx, y.sx),
-                         lerp(x.sy, y.sy),   lerp(x.angle, y.angle), lerp(x.m11, y.m11),
-                         lerp(x.m12, y.m12), lerp(x.m21, y.m21),     lerp(x.m22, y.m22)};
-    return matrix_text(recompose(z));
+    if (prefix < a->size() || prefix < b->size()) {
+        const std::optional<std::string> rest = blend_lists(
+            std::vector<transform_fn>(a->begin() + static_cast<std::ptrdiff_t>(prefix), a->end()),
+            std::vector<transform_fn>(b->begin() + static_cast<std::ptrdiff_t>(prefix), b->end()),
+            p);
+        if (!rest) { return std::nullopt; }
+        out += (out.empty() ? "" : " ") + *rest;
+    }
+    return out;
 }
 
 // A filter list in computed form - percentages as numbers, lengths in px -

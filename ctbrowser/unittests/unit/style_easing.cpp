@@ -294,6 +294,17 @@ void test_composition() {
           "translateY(80%)");
     CHECK(interpolate_text("transform", "translate(12px, 70%)", "translate(13px, 90%)", 0.25,
                            context) == "translate(12.25px, 75%)");
+    // `none` pads a matrix() with the identity matrix, and the pair blends as
+    // matrices; past a pair that does not match, the rest blends as matrices.
+    CHECK(interpolate_text("transform", "none", "matrix(7, 0, 2, 2, 6, 0)", -1, context) ==
+          "matrix(-5, 0, 0, 0, -6, 0)");
+    CHECK(interpolate_text("transform", "rotate(0deg) translate(100px)",
+                           "rotate(720deg) scale(2) translate(200px)", 0.25,
+                           context) == "rotate(180deg) matrix(1.25, 0, 0, 1.25, 175, 0)");
+    CHECK(interpolate_text("transform", "translateY(70%)", "translateY(90%) scaleZ(2)", 0.25,
+                           context) == "translateY(75%) scaleZ(1.25)");
+    CHECK(interpolate_text("transform-origin", "top left", "bottom right", 0.5, context) ==
+          "50% 50%");
     CHECK(composite_text("transform", "rotate(30deg)", "scale(2)", composite_op::add, context) ==
           "rotate(30deg) scale(2)");
     CHECK(composite_text("transform", "matrix(0, 1, -1, 0, 100, 0)", "matrix(1, 0, 0, 1, 50, 0)",
