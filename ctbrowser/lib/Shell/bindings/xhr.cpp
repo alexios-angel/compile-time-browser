@@ -77,6 +77,10 @@ constexpr int done = 4;
     return std::string{encoding_from_label(encoding_from_meta_content(mime.substr(semicolon + 1)))};
 }
 
+} // namespace
+
+namespace detail {
+
 // "Decode" (Encoding 6) a body by the encoding `name`, UTF-8 when it is empty:
 // a BOM decides first, and UTF-8 is its decoder (4.2) - each ill-formed
 // subsequence one U+FFFD - so a page reads scalar values, never raw bytes
@@ -138,7 +142,7 @@ constexpr int done = 4;
     return out;
 }
 
-} // namespace
+} // namespace detail
 
 void dom_bindings::install_xhr(context & cx) {
     // XMLHttpRequestEventTarget.prototype, then XMLHttpRequest.prototype on it.
