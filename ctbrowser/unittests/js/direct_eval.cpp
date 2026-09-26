@@ -23,6 +23,9 @@ int main() {
     // A `var` of a name the caller binds is that binding; `var n;` alone keeps it.
     js_expect("(function(){ var n = 1; eval('var n = 9'); return n; })()", "9");
     js_expect("(function(){ var n = 1; eval('var n;'); return n; })()", "1");
+    // ...and so is a function it declares, at its top or (B.3.2.3) in a block.
+    js_expect("(function(){ var g = 1; eval('function g() { return 2; }'); return g(); })()", "2");
+    js_expect("(function(f){ eval('{ function f() {} }'); return typeof f; })(1)", "function");
     // `this` and `arguments` are the caller's.
     js_expect("(function(){ return eval('this.tag'); }).call({tag: 'me'})", "me");
     js_expect("(function(){ return eval('arguments.length'); })(1, 2, 3)", "3");

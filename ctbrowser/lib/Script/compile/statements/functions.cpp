@@ -142,8 +142,19 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
     // module's helpers into one namespace - and, more visibly, make
     // `export function f() {}` unpublishable, because find_local would not
     // know the name.
+    // THE SCRIPT'S VAR, a global - unless this is a direct eval's program
+    // and its caller binds the name: the eval's var-scoped function is that
+    // binding (19.2.1.3 step 8, B.3.2.3), as its `var` is (compile_stmt).
+    const auto write_script_var = [&] {
+        if (const int up = resolve_upvalue(0, n.text); up >= 0) {
+            proto().emit(instruction{op::set_upvalue, static_cast<std::uint16_t>(up), r});
+        } else {
+            proto().emit(
+                instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
+        }
+    };
     if (script_top_level) {
-        proto().emit(instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
+        write_script_var();
     } else {
         emit_write(n.text, r);
         // B.3.3.1 step 1.a.ii.3 / B.3.3.2 step 1.a.ii.3: when the declaration
@@ -155,8 +166,7 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
             std::find(fn().annex_b_decls.begin(), fn().annex_b_decls.end(), idx) !=
                 fn().annex_b_decls.end()) {
             if (script_scope) {
-                proto().emit(
-                    instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
+                write_script_var();
             } else if (const auto it = fn().local_index.find(n.text);
                        it != fn().local_index.end() && it->second.size() >= 2) {
                 const local & outer = fn().locals[it->second.front()];
