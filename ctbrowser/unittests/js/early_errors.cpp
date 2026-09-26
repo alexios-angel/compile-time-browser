@@ -145,6 +145,11 @@ int main() {
     refused("var a; a?.b() = 1;");
     // A binding the parser took leniently from a token that is no name.
     refused("var 1 = 1;");
+    // A module's top level is [~Return], and a default-exported declaration
+    // ends at its `}`; parenthesised it is an expression and may be called.
+    module_refused("return 1;");
+    module_refused("export default function () {}();");
+    module_accepted("export default (function () { return 1; })();");
     // B.3.1: a label's item may be a (labelled) function declaration in
     // sloppy code - never in strict code, nor as an `if` body.
     accepted("label1: label2: function f() {}");
