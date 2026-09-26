@@ -11,6 +11,35 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## The outage batch — 2026-09-26
+
+Full `css/` at `6011bf8d`: **2,187/3,014 runnable files PASS, 99,154
+subtests PASS**, from 2,168/2,926 and 98,450 at `5ca8e8a1` - zero files
+lost at any of the batch's steps (`wpt.md` has the per-commit table):
+
+- `acc14107` (GC pins, ASan fixes, WebIDL globals): +1 file, +544
+  subtests. 520 are the five idlharness files the corpus re-fetch made
+  runnable (`css/cssom` 277, `css/cssom-view` 167, `css/css-conditional`
+  35, `css/css-cascade` 26, `container-queries` 15 - all still FAIL on
+  their remaining members), 21 of those from interface objects no longer
+  being enumerable globals; 24 are `css/css-values/viewport-units-
+  keyframes.html`, which passes. The ASan sweep found `lone_value`
+  (`lib/Style/css/calc/units.cpp`) reading past `eof` on empty text in 257
+  pages, and a frame's CSS animation records marked nowhere; after the
+  fixes `css/` ran under ASan with no report.
+- `6f4d39b8` (`::before`/`::after` generate boxes): +1 file
+  (`css/css-conditional`), +63 subtests. Six subtests went PASS → FAIL in
+  files that already failed, each an accidental pass: with no pseudo box a
+  test element's `auto` height was 0, so a `0px` → `auto` transition
+  (`height-composition`, `interpolate-size-height-interpolation`) read
+  0px whatever the engine did. Bootstrap's geometry baseline moved and was
+  read line by line; it exposed a float's padding counted twice in its
+  item's max-content width (a breadcrumb item grows 24px, not 16px).
+- `db57406e` (testdriver runs): 88 files became runnable; +17 PASS
+  (`css/selectors` 13 - ten `focus-visible-*`, `active-after-relayouts`,
+  two `:has()` invalidations - and `css/css-conditional` 4
+  `scroll-state-scrolled-*`), +97 subtests.
+
 ## Round eleven — 2026-09-26
 
 Full `css/` at `5ca8e8a1`: **2,168/2,926 runnable files PASS, 98,450

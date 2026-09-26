@@ -139,3 +139,5 @@ The following sections retain the complete original text and measurements.
 - [Direct eval — 2026-09-25](test262/03-measured-2026-09-25.md#direct-eval--2026-09-25)
 <a id="round-eleven-and-the-module-host--2026-09-26"></a>
 - [Round eleven, and the module host — 2026-09-26](test262/03-measured-2026-09-25.md#round-eleven-and-the-module-host--2026-09-26)
+<a id="the-gc-pin-and-utf-16-strings--2026-09-26"></a>
+- [The GC pin, and UTF-16 strings — 2026-09-26](test262/03-measured-2026-09-25.md#the-gc-pin-and-utf-16-strings--2026-09-26)
