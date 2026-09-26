@@ -18,6 +18,27 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
     // §interpolate-size, interpolate-size-which-value).
     ctx.interpolate_keywords =
         ascii_iequals(trim(underlying("interpolate-size"), html_whitespace), "allow-keywords");
+    // `rem` is the root element's font size, and `em` in font-size itself the
+    // parent's (CSS Values 4 §6.1.1), each as the cascade folded it to px
+    // (font-size-composition).
+    float parent_font_size = font_size;
+    if (styles_ != nullptr) {
+        const auto txn = doc_->read();
+        const atom font_key = atoms_->intern_lower("font-size");
+        const auto font_of = [&](node_id node) -> std::optional<float> {
+            const auto found = styles_->find(style::engine::key_of(node));
+            if (found == styles_->end() || !found->second) { return std::nullopt; }
+            return style::css::length_text_to_px(found->second->get(font_key), {});
+        };
+        node_id top = id;
+        for (node_id up = txn.parent(top); up && up != txn.root(); up = txn.parent(up)) {
+            top = up;
+        }
+        if (const std::optional<float> root = font_of(top)) { ctx.root_font_size = *root; }
+        if (const node_id up = txn.parent(id); up && up != txn.root()) {
+            parent_font_size = font_of(up).value_or(font_size);
+        }
+    }
     // THE CONTAINERS A KEYFRAME'S `cq*` UNITS MEASURE (CSS Conditional 5
     // §4), as the cascade finds them: the nearest ancestor size container on
     // each axis, its content box as last laid out.
@@ -66,6 +87,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
         // `color` itself (whose currentcolor is the parent's).
         const std::string current_color{trim(underlying("color"), html_whitespace)};
         for (const std::string & property : properties) {
+            style::css::length_context own = ctx;
+            if (property == "font-size") { own.font_size = parent_font_size; }
             struct point {
                 double offset;
                 std::string text;
@@ -163,6 +186,16 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             std::string base = seen != out.end()
                                    ? seen->second
                                    : resolved_color(trim(underlying(property), html_whitespace));
+            // ...A LOGICAL PROPERTY'S is its physical one's, which is the
+            // name the cascade stored the value under: `inline-size` is
+            // `width` here (interpolate-size-logical-properties).
+            if (base.empty() && seen == out.end()) {
+                const std::string physical = style::css::physical_property_of(
+                    property, underlying("writing-mode"), underlying("direction"));
+                if (!physical.empty() && physical != property) {
+                    base = resolved_color(trim(underlying(physical), html_whitespace));
+                }
+            }
             if (base.empty() && known != nullptr) { base = std::string{known->initial}; }
             if (points.front().offset != 0) {
                 // The neutral keyframe's easing is linear (§5.4.3) - unless
@@ -198,7 +231,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                                                                 : style::composite_op::add)
                                              : op == "accumulate" ? style::composite_op::accumulate
                                                                   : style::composite_op::replace,
-                                             ctx);
+                                             own);
             };
             // ...AND THEN THE ITERATION COMPOSITE (Web Animations 2, "the
             // effect value of a keyframe effect"): with `accumulate`, each
@@ -211,7 +244,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             if (e.iteration_composite == "accumulate" && sample.iteration >= 1) {
                 const auto accumulate = [&](const std::string & a, const std::string & b) {
                     return style::composite_text(property, a, b, style::composite_op::accumulate,
-                                                 ctx);
+                                                 own);
                 };
                 std::string power = composited_once(points.back());
                 for (auto n = static_cast<std::uint64_t>(std::min(sample.iteration, 1e18)); n != 0;
@@ -227,7 +260,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 std::string text = composited_once(pt);
                 if (iteration_offset.empty()) { return text; }
                 return style::composite_text(property, iteration_offset, text,
-                                             style::composite_op::accumulate, ctx);
+                                             style::composite_op::accumulate, own);
             };
             std::size_t start = 0;
             std::size_t stop = 0;
@@ -272,7 +305,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 const style::easing keyframe_easing =
                     style::parse_easing(points[start].easing).value_or(style::easing{});
                 text = interpolate_value(as, composited(points[start]), composited(points[stop]),
-                                         keyframe_easing(distance, false), ctx);
+                                         keyframe_easing(distance, false), own);
             }
             if (seen == out.end()) {
                 out.emplace_back(property, std::move(text));
