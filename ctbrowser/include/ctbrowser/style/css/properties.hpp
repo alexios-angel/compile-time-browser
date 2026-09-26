@@ -238,6 +238,11 @@ struct color_context {
 // writes it; without, it is written out, as an interpolation pairs it. Empty
 // for text that is not a value of it.
 [[nodiscard]] std::string computed_offset_rotate(std::string_view specified, bool keep_auto);
+// zoom's computed value (CSS Viewport 1 §5): the number it is, a percentage
+// as its number and `normal` as 1 - and the legacy `0` as 1, which is also
+// where an interpolation clamped at nought lands. Empty for text that is not
+// a value of it.
+[[nodiscard]] std::string computed_zoom(std::string_view specified, const length_context & ctx);
 [[nodiscard]] std::string computed_basic_shape(std::string_view property, std::string_view text,
                                                const length_context & ctx);
 // Two COMPUTED basic shapes of one function, blended component by

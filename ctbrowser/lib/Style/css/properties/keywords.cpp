@@ -1612,6 +1612,25 @@ std::string computed_offset_rotate(std::string_view specified, bool keep_auto) {
     return "auto " + angle;
 }
 
+std::string computed_zoom(std::string_view specified, const length_context & ctx) {
+    const std::string_view text = trim(specified, html_whitespace);
+    double factor = 1;
+    if (!ascii_iequals(text, "normal")) {
+        const math_answer answer = evaluate_math(text, ctx);
+        if (answer.outcome != math_outcome::resolved) { return {}; }
+        const calc_result & v = answer.value;
+        if (v.is_number) {
+            factor = v.px;
+        } else if (v.has_percent && v.px == 0) {
+            factor = v.percent / 100;
+        } else {
+            return {};
+        }
+    }
+    if (!(factor > 0)) { factor = 1; }
+    return serialize_number(factor);
+}
+
 std::optional<std::string_view> font_width_percentage(std::string_view keyword) {
     static constexpr std::pair<std::string_view, std::string_view> table[] = {
         {"ultra-condensed", "50%"},  {"extra-condensed", "62.5%"}, {"condensed", "75%"},

@@ -724,6 +724,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 return number_text(std::min(1.0f, std::max(0.0f, number)));
             }
         }
+        // 4b'''. ZOOM IS A NUMBER once computed, `normal` and the legacy `0`
+        //       being 1 (CSS Viewport 1 §5, zoom-interpolation).
+        if (property == "zoom") {
+            if (std::string computed = style::css::computed_zoom(text, {}); !computed.empty()) {
+                return computed;
+            }
+        }
         // 4b'. A BASIC SHAPE (lib/Style/css/properties/shapes.cpp).
         if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
             property == "object-view-box") {

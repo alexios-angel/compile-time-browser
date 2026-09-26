@@ -26,6 +26,11 @@ constexpr property_syntax modules[] = {
     {"animation-range-start", k::freeform, "", "normal", false, false},
     {"animation-range-end", k::freeform, "", "normal", false, false},
     {"transition-behavior", k::keyword_only, "normal allow-discrete", "normal", false, false},
+    // --- CSS Viewport 1 ------------------------------------------------------
+    // ponytail: zoom parses, computes and animates, and layout does not yet
+    // scale by it; multiply a box's lengths by the effective zoom when a
+    // page needs the picture to change.
+    {"zoom", k::number_percentage, "normal", "1", false, true},
     // --- CSS Transforms 2 ----------------------------------------------------
     {"backface-visibility", k::keyword_only, "visible hidden", "visible", false, false},
     {"perspective", k::length, "none", "none", false, true},
