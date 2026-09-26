@@ -286,6 +286,17 @@ public:
         ctbrowser::script::module_record & record = registry[key];
         record.specifier = key;
 
+        // A JSON MODULE - `import v from './x.json' with { type: 'json' }`
+        // (16.2.1.8 ParseJSONModule, CreateDefaultExportSyntheticModule): the
+        // text parsed as JSON NOW, so text that is not JSON is the graph's
+        // SyntaxError while it loads, and the value its one export, `default`.
+        // By the file's extension, which is how the suite names them; the
+        // attribute itself does not reach the program.
+        if (file.extension() == ".json") {
+            instantiate_json(record, key, source);
+            return;
+        }
+
         auto compiled = std::make_unique<program>(
             ctbrowser::script::compiler::compile(source, ctbrowser::script::script_kind::module_));
         if (!compiled->ok) {
@@ -311,6 +322,31 @@ public:
         for (const std::filesystem::path & target : needed) { instantiate(target); }
         --depth_;
         if (depth_ == 0) { wire_reexports(); }
+    }
+
+    void instantiate_json(ctbrowser::script::module_record & record, const std::string & key,
+                          const std::string & source) {
+        const value json = cx_.global("JSON");
+        const value parse = cx_.lookup_property(json, "parse");
+        const value text = cx_.string(source);
+        bool threw = false;
+        value thrown = value::undefined();
+        const value parsed =
+            cx_.call_fenced(parse, std::span<const value>{&text, 1}, json, threw, thrown);
+        if (threw || cx_.failed()) {
+            (void)cx_.take_error();
+            note("`" + key + "` is not a JSON text");
+            return;
+        }
+        // An empty module program, for evaluate() to run; the export is the
+        // record's own cell.
+        auto compiled = std::make_unique<program>(
+            ctbrowser::script::compiler::compile("", ctbrowser::script::script_kind::module_));
+        for (ctbrowser::script::function_proto & fn : compiled->functions) { fn.module = key; }
+        cx_.instantiate_module(*compiled, record);
+        record.exports["default"] =
+            value::object(cx_.allocate<ctbrowser::script::cell_object>(parsed));
+        owned_.push_back(std::move(compiled));
     }
 
     // `export { a } from './m.js'` AND `export * from './m.js'` - 16.2.1.6.3
@@ -385,6 +421,34 @@ public:
                     continue;
                 }
                 note("`" + edge.from + "` has no export named `" + edge.source + "`");
+            }
+        }
+        check_imports();
+    }
+
+    // AND EVERY NAMED IMPORT, the same way (16.2.1.6.4 InitializeEnvironment
+    // step 7: ResolveExport of each ImportEntry, null or ambiguous a
+    // SyntaxError) - which the VM only found at the import's first read, as a
+    // "has no export named" raise at run time. The program records specifiers,
+    // not import entries; they are the module entry's `load_import`s (names[b]
+    // the export, names[c] the specifier), which is what the VM reads too.
+    void check_imports() {
+        auto & registry = cx_.modules();
+        for (const auto & [key, record] : registry) {
+            if (record.compiled == nullptr || record.compiled->functions.empty()) { continue; }
+            const ctbrowser::script::function_proto & entry = record.compiled->functions[0];
+            for (const ctbrowser::script::instruction & in : entry.code) {
+                if (in.code != ctbrowser::script::op::load_import) { continue; }
+                if (in.b >= entry.names.size() || in.c >= entry.names.size()) { continue; }
+                const std::string & name = entry.names[in.b];
+                const std::string & written = entry.names[in.c];
+                const auto mapped = record.resolved.find(written);
+                const auto source =
+                    registry.find(mapped == record.resolved.end() ? written : mapped->second);
+                if (source == registry.end() || source->second.compiled == nullptr) { continue; }
+                if (source->second.exports.find(name) == source->second.exports.end()) {
+                    note("`" + written + "` has no export named `" + name + "`");
+                }
             }
         }
     }
