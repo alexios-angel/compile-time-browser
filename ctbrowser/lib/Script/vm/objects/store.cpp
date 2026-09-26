@@ -274,7 +274,19 @@ void context::store_index(value target, value key, value v) {
         }
         return;
     }
-    store_property(target, to_string(key), v);
+    // ToObject(base) before ToPropertyKey, as lookup_index (PutValue step 3.a).
+    if (target.is_nullish()) [[unlikely]] {
+        const bool plain = key.is_string() || key.is_number() || key.is_boolean();
+        throw_error("TypeError", "Cannot set properties of " +
+                                     std::string{target.is_null() ? "null" : "undefined"} +
+                                     (plain ? " (setting '" + to_string(key) + "')" : ""));
+        return;
+    }
+    const std::size_t unwound = unwinds();
+    const bool pending = throw_pending();
+    const std::string name = to_string(key);
+    if ((!pending && throw_pending()) || unwinds() != unwound) { return; }
+    store_property(target, name, v);
 }
 
 void context::pass_new_target(value from) {

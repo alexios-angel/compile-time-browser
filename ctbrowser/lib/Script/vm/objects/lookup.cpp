@@ -229,7 +229,22 @@ value context::lookup_index(value target, value key) {
         const auto i = static_cast<std::size_t>(key.as_number());
         return i < text.size() ? string(std::string{text[i]}) : value::undefined();
     }
-    return lookup_property(target, to_string(key));
+    // ToObject(base) BEFORE the key's ToPropertyKey (GetValue step 3.a; 13.3.3
+    // hands the key over unconverted): `null[k]` is the TypeError without
+    // running k's toString - whose own throw, left pending under this one,
+    // made the pair uncatchable.
+    if (target.is_nullish()) [[unlikely]] {
+        const bool plain = key.is_string() || key.is_number() || key.is_boolean();
+        throw_error("TypeError", "Cannot read properties of " +
+                                     std::string{target.is_null() ? "null" : "undefined"} +
+                                     (plain ? " (reading '" + to_string(key) + "')" : ""));
+        return value::undefined();
+    }
+    const std::size_t unwound = unwinds();
+    const bool pending = throw_pending();
+    const std::string name = to_string(key);
+    if ((!pending && throw_pending()) || unwinds() != unwound) { return value::undefined(); }
+    return lookup_property(target, name);
 }
 
 value context::lookup_property(value target, const std::string & name) {
