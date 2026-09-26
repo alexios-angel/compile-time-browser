@@ -2,6 +2,7 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/style/css/calc.hpp>
+#include <ctbrowser/style/css/token.hpp>
 
 #include <cmath>
 
@@ -20,6 +21,21 @@ css::declaration_block split_via_block(std::string_view name, std::string_view t
     (void)css::set_declaration(block, name, text, false);
     if (block.size() == 1 && ascii_iequals(block[0].name, name)) { block.clear(); }
     return block;
+}
+
+bool has_viewport_unit(std::string_view text) {
+    if (text.find_first_of("vV") == std::string_view::npos) { return false; }
+    const css::token_stream ts = css::tokenize(text);
+    for (const css::css_token & t : ts.tokens) {
+        if (t.type == css::token_type::eof) { break; }
+        if (t.type != css::token_type::dimension) { continue; }
+        std::string_view unit = ts.unit_of(t);
+        if (unit.size() > 2 && ascii_iequals_any(unit.substr(0, 1), {"s", "l", "d"})) {
+            unit.remove_prefix(1);
+        }
+        if (ascii_iequals_any(unit, {"vw", "vh", "vi", "vb", "vmin", "vmax"})) { return true; }
+    }
+    return false;
 }
 
 std::string fold_value(std::string text, std::string_view name,

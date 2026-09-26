@@ -468,6 +468,9 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         measure_ ? zero_advance_of(face_family, face_weight, face_style, parent_font_size) : 0.0f;
     float own_font_size = parent_font_size;
     std::vector<atom> cyclic_registered;
+    // The root's registered custom properties that measured the viewport
+    // before they were computed to pixels - see the root's overflow below.
+    std::vector<atom> viewport_registered;
     std::vector<atom> read; // what the font-size's substitution looked at
     // Whether the WINNING font-size declaration actually resolved to a length.
     // `font-size: larger` and the other relative keywords are not modelled, and
@@ -735,6 +738,9 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 if (!held.empty()) { computed = std::string{held}; }
             } else if (substituted && !ascii_iequals(word, "initial") &&
                        !ascii_iequals(word, "unset") && !ascii_iequals(word, "revert")) {
+                if (self.is_root && cascade_detail::has_viewport_unit(text)) {
+                    viewport_registered.push_back(name);
+                }
                 computed = css::compute_registered(text, registration.syntax, registered_lengths);
             }
         } else if (own == nullptr && registration.inherits && parent) {
@@ -786,6 +792,30 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         if (d.property == font_size_ && !cyclic_registered.empty() && had_var) {
             unset();
             return;
+        }
+        // THE ROOT'S OVERFLOW MAY NOT HANG ON THE VIEWPORT'S SIZE: it decides
+        // the viewport's scrollbars, which decide what a viewport unit
+        // measures, so a substitution there that reads one - in its own
+        // text, or in a custom property it names - is a cycle, and invalid
+        // at computed-value time (csswg-drafts#13189,
+        // viewport-units-scroll-no-cycles).
+        if (had_var && self.is_root && !pseudo_wanted_ &&
+            ascii_iequals_any(property, {"overflow", "overflow-x", "overflow-y"})) {
+            bool cycle = cascade_detail::has_viewport_unit(value);
+            const css::token_stream ts = css::tokenize(value);
+            for (const css::css_token & t : ts.tokens) {
+                if (cycle || t.type == css::token_type::eof) { break; }
+                const std::string_view name = ts.text_of(t);
+                if (t.type != css::token_type::ident || !name.starts_with("--")) { continue; }
+                const atom key = atoms_->intern(name);
+                const std::optional<std::string_view> held = lookup(key);
+                cycle = std::ranges::find(viewport_registered, key) != viewport_registered.end() ||
+                        (held && cascade_detail::has_viewport_unit(*held));
+            }
+            if (cycle) {
+                unset();
+                return;
+            }
         }
         if (had_var) {
             conditions.lengths = lengths_for(d.property);
