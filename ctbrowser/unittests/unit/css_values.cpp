@@ -674,6 +674,8 @@ void test_basic_shapes() {
                  .value_or(""),
              std::string{"circle(54% at 13% 27%)"});
     CHECK(!blend_basic_shapes("clip-path", "circle(10px)", "inset(10px)", 0.5, 0.5));
+    CHECK(!blend_basic_shapes("clip-path", "circle(farthest-side at 25px 75%)",
+                              "circle(farthest-side at 50px center)", 0.5, 0.5));
     CHECK_EQ(computed_basic_shape("offset-path", "ray(0.25turn closest-corner contain)", ctx),
              std::string{"ray(90deg closest-corner contain)"});
     CHECK_EQ(

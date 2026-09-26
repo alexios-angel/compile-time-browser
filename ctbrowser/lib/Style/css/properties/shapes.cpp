@@ -1037,8 +1037,14 @@ std::optional<std::string> blend_basic_shapes(std::string_view property, std::st
     }
     bool ok = true;
     const auto mix = [&](std::string_view p, std::string_view q, bool nonnegative) {
-        if (p == q && ascii_iequals_any(p, {"auto", "closest-side", "farthest-side"})) {
-            return std::string{p};
+        if (p == q && ascii_iequals(p, "auto")) { return std::string{p}; }
+        // A radius keyword makes a circle or an ellipse discrete, the same
+        // keyword on both sides included (CSS Shapes 1 §3.3's "none of the
+        // radii use the closest-side or farthest-side keywords").
+        if (ascii_iequals_any(p, {"closest-side", "farthest-side"}) ||
+            ascii_iequals_any(q, {"closest-side", "farthest-side"})) {
+            ok = false;
+            return std::string{};
         }
         const std::optional<calc_result> u = amount(p.empty() ? "0px" : p);
         const std::optional<calc_result> v = amount(q.empty() ? "0px" : q);
