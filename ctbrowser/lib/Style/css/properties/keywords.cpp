@@ -618,13 +618,21 @@ constexpr pair_grammar pair_grammars[] = {
     return simplify_math(text);
 }
 
-// The comma-separated items of a value, each a run of significant tokens.
+// The comma-separated items of a value, each a run of significant tokens -
+// a comma inside a function's or a block's parentheses is the item's own.
 // `nullopt` for an empty item - a leading, trailing or doubled comma.
 [[nodiscard]] std::optional<std::vector<std::vector<std::size_t>>> comma_items(
     const token_stream & ts, const scan & found) {
     std::vector<std::vector<std::size_t>> items{{}};
+    int depth = 0;
     for (const std::size_t i : found.significant) {
-        if (ts.tokens[i].type == token_type::comma) {
+        const token_type type = ts.tokens[i].type;
+        if (type == token_type::function || type == token_type::open_paren) {
+            ++depth;
+        } else if (type == token_type::close_paren && depth > 0) {
+            --depth;
+        }
+        if (depth == 0 && type == token_type::comma) {
             if (items.back().empty()) { return std::nullopt; }
             items.emplace_back();
             continue;
@@ -1185,12 +1193,13 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
         handled = true;
         answer = border_spacing(ts, found);
     }
-    // ...a family list with a function in it - `random-item()` - is the
-    // function's to check, and the free-form path below keeps it.
-    if (!handled && ascii_iequals(property, "font-family") &&
-        std::ranges::none_of(found.significant, [&ts](std::size_t i) {
-            return ts.tokens[i].type == token_type::function;
-        })) {
+    // ...a family list or a tag list with a function in it - `random-item()`,
+    // `"liga" calc(10.1)` - is the function's to check, and the free-form path
+    // below keeps it.
+    const bool has_function = std::ranges::any_of(found.significant, [&ts](std::size_t i) {
+        return ts.tokens[i].type == token_type::function;
+    });
+    if (!handled && ascii_iequals(property, "font-family") && !has_function) {
         handled = true;
         answer = font_family(ts, found);
     }
@@ -1199,11 +1208,11 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
         handled = true;
         answer = easing_list(ts, found);
     }
-    if (!handled && ascii_iequals(property, "font-feature-settings")) {
+    if (!handled && !has_function && ascii_iequals(property, "font-feature-settings")) {
         handled = true;
         answer = font_feature_settings(ts, found);
     }
-    if (!handled && ascii_iequals(property, "font-variation-settings")) {
+    if (!handled && !has_function && ascii_iequals(property, "font-variation-settings")) {
         handled = true;
         answer = font_variation_settings(ts, found);
     }
