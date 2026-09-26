@@ -326,6 +326,14 @@ struct gap_shape {
     from = trim(from, html_whitespace);
     to = trim(to, html_whitespace);
     interpolable = true;
+    // `display: none` holds only at its own end (CSS Display 4 §2.9): from
+    // `none`, the other value shows past 0; to `none`, until 1
+    // (display-interpolation-none).
+    if (property == "display" && ascii_iequals(from, "none") != ascii_iequals(to, "none")) {
+        interpolable = false;
+        if (ascii_iequals(from, "none")) { return std::string{p <= 0 ? from : to}; }
+        return std::string{p >= 1 ? to : from};
+    }
     // A gap rule LIST, which a single value is not: that pairs as the lone
     // length or colour it is, below. A comma at the TOP LEVEL makes a list -
     // `rgb(170, 70, 70)` is one colour, and taking its inner commas for a list
