@@ -59,6 +59,12 @@ void test_class_fields_are_per_instance() {
         "const o = { m() { return super.hasOwnProperty === Object.prototype.hasOwnProperty; } };"
         " o.hasOwnProperty = null; return o.m();",
         "true");
+    // `super[k]()` calls the parent's method with `this`
+    expect_result(
+        "class P { m() { return 'p' + this.t; } }"
+        " class C extends P { go() { this.t = 1; return super['m']() + super['m'](...[]); } }"
+        " return new C().go();",
+        "p1p1");
     // `static constructor() {}` is a static method, not the class's constructor
     expect_result("class C { static constructor() { return 's'; } constructor() { this.v = 1; } }"
                   " return C.constructor() + new C().v;",

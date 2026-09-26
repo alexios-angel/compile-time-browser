@@ -336,6 +336,17 @@ void compiler_impl::compile_call_target(const vp::node & n, std::uint16_t target
         const std::string name = super_method ? std::string{callee.text} : "constructor";
         proto().emit(instruction{op::get_prop, target, target, name_operand(name)});
         proto().emit(instruction{op::load_this, self});
+    } else if (callee.kind == vp::nk::index && callee.a >= 0 &&
+               at(callee.a).kind == vp::nk::super_lit) {
+        // `super[k]()` (13.3.7.1, 13.3.6.1): the key, then the method off the
+        // home object's prototype, called with `this`. It was a refusal of
+        // the whole script - compile_expr has no value for `super` alone.
+        const std::uint32_t mark = reg_mark();
+        const std::uint16_t key = alloc_reg();
+        compile_expr(callee.b, key);
+        emit_super_get(key, target);
+        release_to(mark);
+        proto().emit(instruction{op::load_this, self});
     } else if (callee.kind == vp::nk::ident && emit_with_object(callee.text, self)) {
         // `f()` inside a `with`: the object that binds f is the receiver,
         // and undefined when none does - which is what a plain call passes.
