@@ -210,6 +210,9 @@ bool dom_bindings::dispatch_hash_change(const std::string & old_url, const std::
 
 bool dom_bindings::dispatch_key(std::string_view type, node_id target, const input_event & input) {
     if (cx_ == nullptr) { return false; }
+    // An ACTIVATION-TRIGGERING input event (HTML 6.4.3): a keydown that is not
+    // Escape notifies before it is dispatched.
+    if (type == "keydown" && input.key != "Escape") { notify_activation(); }
     value event = make_event(*cx_, type, target);
     auto * object = static_cast<script::object_object *>(event.as_heap());
     object->set("code", cx_->string(input.key));
@@ -317,6 +320,8 @@ value dom_bindings::make_mouse_event(context & cx, std::string_view type, node_i
 bool dom_bindings::dispatch_mouse(std::string_view type, node_id target,
                                   const input_event & input) {
     if (cx_ == nullptr) { return false; }
+    // ...and a mousedown (its pointerdown is a mouse's, which the list names too).
+    if (type == "mousedown") { notify_activation(); }
     // A POINTER EVENT FIRES TOO, and first.
     //
     // pointerdown/move/up are what a modern library listens for - they are the

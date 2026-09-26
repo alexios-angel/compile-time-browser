@@ -56,6 +56,14 @@ public:
     bool dispatch(std::string_view type, node_id target);
 
     bool dispatch_key(std::string_view type, node_id target, const input_event & input);
+    // USER ACTIVATION (HTML 6.4.3), window/activation.cpp: a trusted
+    // activation-triggering input event notifies; transient activation lasts a
+    // few seconds after it, sticky activation for good; consuming ends the
+    // transient part in every window of the tree.
+    void notify_activation();
+    [[nodiscard]] bool has_transient_activation() const;
+    [[nodiscard]] bool has_sticky_activation() const;
+    void consume_activation();
 
     bool dispatch_error(std::string_view message);
     bool dispatch_error(std::string_view message, std::string_view script_src);
@@ -172,6 +180,7 @@ private:
     void install_control_numbers_validation(context & cx);
     void install_control_form_data(context & cx);
     void install_control_text_selection(context & cx);
+    void install_control_pickers(context & cx);
     friend struct detail::control_helpers;
 
     using operation = binding_detail::operation;
@@ -741,6 +750,10 @@ private:
 
     void install_timers(context & cx);
     void install_image_bitmap(context & cx); // window/image_bitmap.cpp
+    // User activation (HTML 6.4.3) - window/activation.cpp.
+    void install_user_activation(context & cx, script::object_object & navigator);
+    void each_window_in_tree(const std::function<void(dom_bindings &)> & visit);
+    double last_activation_ = std::numeric_limits<double>::infinity();
 
     [[nodiscard]] std::uint32_t add_timer(value callback, double delay_ms, bool repeating);
 

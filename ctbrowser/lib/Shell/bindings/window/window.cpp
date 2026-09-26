@@ -611,6 +611,7 @@ void dom_bindings::install_window(context & cx) {
         navigator->set("onLine", value::boolean(network_allowed_));
         navigator->set("maxTouchPoints", value::number(0));
         navigator->set("hardwareConcurrency", value::number(1));
+        install_user_activation(cx, *navigator);
         auto * languages = static_cast<script::array_object *>(cx.make_array().as_heap());
         languages->items.push_back(cx.string("en-US"));
         navigator->set("languages", value::object(languages));
