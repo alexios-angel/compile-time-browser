@@ -43,6 +43,11 @@ public:
     // A SCRIPT's `var` (`configurable` false) is also enumerable and cannot be
     // deleted; an eval's (true) can.
     void declare_global_var(std::string name, bool configurable = true);
+    // CreateGlobalFunctionBinding (9.1.1.4.18) for a SCRIPT's top-level
+    // function: { writable, enumerable, !configurable }, whatever a configurable
+    // binding of that name said before - a name the global object's target
+    // owns keeps its own storage.
+    void declare_global_function(std::string name);
     // GlobalDeclarationInstantiation's refusals (16.1.7 steps 3-6): a
     // classic script whose lexical name is already a var, a lexical or a
     // non-configurable global property, or whose var or function name is
@@ -833,6 +838,13 @@ private:
     void raise(std::string message);
 
     [[nodiscard]] bool unwind_to_handler();
+    // Records throw_site_ for the throw unwind_to_handler is starting.
+    void note_throw_site() noexcept;
+    // op::set_global for a name the binding table does not have: true when
+    // the global object's target owns it as a data property, which took the
+    // store (see the definition).
+    [[nodiscard]] bool store_global_property(realm_record & realm, const std::string & name,
+                                             value v, bool strict);
 
     void mark(value v);
     // Marks `o` and everything reachable from it. Iterative - see

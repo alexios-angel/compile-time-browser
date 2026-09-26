@@ -100,6 +100,41 @@ bool context::global_declaration_instantiation(const program & prog) {
     for (const std::string & name : prog.function_names) {
         if (realm.lexical.contains(name)) { return refuse(name); }
     }
+    // CanDeclareGlobalFunction and CanDeclareGlobalVar (9.1.1.4.15-16, 16.1.7
+    // steps 8-12): a function may replace a configurable property or a
+    // writable, enumerable data one; any other name needs the global object
+    // extensible unless it already owns one. A TypeError otherwise, before a
+    // single binding exists. Read from the two stores behind the traps - the
+    // target, then the table - because the traps' own invariant check refuses
+    // a table name once the target is not extensible.
+    const bool extensible = !holder.is_heap() || is_extensible(holder);
+    const auto global_own = [&](const std::string & name, property_descriptor & out) {
+        if (holder.is_object() && own_property(holder, name, out)) { return true; }
+        const auto it = realm.globals.find(name);
+        if (it == realm.globals.end() || realm.lexical.contains(name)) { return false; }
+        out = property_descriptor::data(it->second, realm.builtin.contains(name)
+                                                        ? attr_writable | attr_configurable
+                                                        : attr_default);
+        return true;
+    };
+    const auto cannot = [&](const std::string & name) {
+        throw_error("TypeError", "Cannot declare global '" + name + "'");
+        return false;
+    };
+    for (const std::string & name : prog.function_names) {
+        property_descriptor existing;
+        if (!global_own(name, existing)) {
+            if (!extensible) { return cannot(name); }
+        } else if (!existing.configurable &&
+                   !(existing.is_data() && existing.writable && existing.enumerable)) {
+            return cannot(name);
+        }
+    }
+    for (const std::string & name : prog.hoisted_vars) {
+        if (property_descriptor existing; !extensible && !global_own(name, existing)) {
+            return cannot(name);
+        }
+    }
     for (const std::string & name : prog.lexical_names) { realm.lexical[name] = true; }
     for (const std::string & name : prog.hoisted_vars) { realm.var_names[name] = true; }
     for (const std::string & name : prog.function_names) { realm.var_names[name] = true; }
@@ -125,6 +160,7 @@ run_result context::run(const program & prog) {
         for (const std::string & name : prog.hoisted_vars) {
             declare_global_var(name, prog.eval_code);
         }
+        for (const std::string & name : prog.function_names) { declare_global_function(name); }
         result.returned = execute(prog, prog.functions[0]);
     }
     // THE END OF THE TURN. A script's promise handlers run after its last

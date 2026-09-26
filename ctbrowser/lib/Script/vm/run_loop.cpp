@@ -229,7 +229,15 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 }
                 break;
             }
-            vm_frame->realm->globals[name] = reg(in.a);
+            string_flat_map<value> & globals = vm_frame->realm->globals;
+            if (const auto it = globals.find(name); it != globals.end()) {
+                it->second = reg(in.a);
+                break;
+            }
+            if (store_global_property(*vm_frame->realm, name, reg(in.a), vm_proto->is_strict)) {
+                break;
+            }
+            globals[name] = reg(in.a);
             break;
         }
         while (0);

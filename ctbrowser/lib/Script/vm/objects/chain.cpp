@@ -27,7 +27,36 @@ value context::own_keys(value source) {
     // own_property and Object.keys already take. `for (k in el.dataset)`
     // walked nothing while `Object.keys(el.dataset)` walked the store.
     if (source.is_kind(heap_kind::proxy)) {
-        return own_keys(static_cast<proxy_object *>(source.as_heap())->target);
+        const value keys = own_keys(static_cast<proxy_object *>(source.as_heap())->target);
+        // A REALM'S GLOBAL OBJECT OWNS ITS BINDINGS TOO, which live in the
+        // table rather than on the target: `for (k in globalThis)` names an
+        // eval's `var` and a plain assignment's global as its traps describe
+        // them - enumerable unless an intrinsic or an interface object, and
+        // never a `let`. A declared name has a placeholder on the target
+        // already, and one the target owns was answered above.
+        for (const auto & realm : realms_) {
+            if (realm->global_this.bits() != source.bits()) { continue; }
+            const value target = static_cast<proxy_object *>(source.as_heap())->target;
+            auto * held =
+                target.is_object() ? static_cast<object_object *>(target.as_heap()) : nullptr;
+            auto * listed = static_cast<array_object *>(keys.as_heap());
+            string_flat_map<bool> seen;
+            for (const value & key : listed->items) {
+                if (key.is_string()) { seen[to_string(key)] = true; }
+            }
+            for (const auto & [name, bound] : realm->globals) {
+                if (realm->lexical.contains(name) || realm->builtin.contains(name) ||
+                    realm->declared.contains(name) || seen.contains(name) ||
+                    (!name.empty() && name.front() == internal_key_lead) ||
+                    (held != nullptr &&
+                     (held->find(name) != nullptr || held->find_accessor(name) != nullptr))) {
+                    continue;
+                }
+                listed->items.push_back(string(name));
+            }
+            break;
+        }
+        return keys;
     }
     value out = make_array();
     auto * keys = static_cast<array_object *>(out.as_heap());
