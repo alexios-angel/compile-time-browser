@@ -73,6 +73,16 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
     // records whether the branch reverses the exact input's truthiness.
     auto truthy = condition.getDefiningOp<ctjs::TruthyOp>();
     if (!truthy) { return {condition, false}; }
+    const auto directBoolean = [](mlir::Value value) {
+        auto comparison = value.getDefiningOp<ctjs::CompareOp>();
+        auto conversion = value.getDefiningOp<ctjs::ConvertOp>();
+        auto unary = value.getDefiningOp<ctjs::UnaryOp>();
+        auto literal = value.getDefiningOp<ctjs::ConstantOp>();
+        return (comparison && comparison.getKind() == ctjs::CompareKind::StrictEq) ||
+               (conversion && conversion.getKind() == ctjs::ConvertKind::ToBoolean) ||
+               (unary && unary.getKind() == ctjs::UnaryKind::Not) ||
+               (literal && llvm::isa<ctjs::BooleanAttr>(literal.getValue()));
+    };
     const auto stripBoolean = [&](mlir::Value value) -> std::pair<mlir::Value, bool> {
         bool negated = false;
         while (true) {
@@ -91,16 +101,34 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                                        .getDefiningOp<ctjs::ConstantOp>();
                     auto boolean = literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
                                            : ctjs::BooleanAttr{};
-                    auto comparison = input.getDefiningOp<ctjs::CompareOp>();
-                    auto conversion = input.getDefiningOp<ctjs::ConvertOp>();
-                    auto unary = input.getDefiningOp<ctjs::UnaryOp>();
+                    if (!boolean) { continue; }
+                    bool exactBoolean = directBoolean(input);
+                    if (auto selected = input.getDefiningOp<mlir::scf::IfOp>();
+                        selected && !exactBoolean) {
+                        const auto position = llvm::cast<mlir::OpResult>(input).getResultNumber();
+                        exactBoolean = true;
+                        for (mlir::Region & region : selected->getRegions()) {
+                            if (!spend(1)) { return {}; }
+                            if (!llvm::hasSingleElement(region) || region.front().empty() ||
+                                region.front().getNumArguments() != 0) {
+                                exactBoolean = false;
+                                break;
+                            }
+                            auto yield =
+                                llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                            if (!yield || yield.getNumOperands() != selected.getNumResults() ||
+                                !directBoolean(yield.getOperand(position))) {
+                                exactBoolean = false;
+                                break;
+                            }
+                        }
+                    }
                     // Equality with a Boolean preserves or reverses truthiness
                     // only when the other operand is already exactly Boolean.
                     // An opaque value, Number or read cannot borrow that tag.
-                    if (boolean &&
-                        ((comparison && comparison.getKind() == ctjs::CompareKind::StrictEq) ||
-                         (conversion && conversion.getKind() == ctjs::ConvertKind::ToBoolean) ||
-                         (unary && unary.getKind() == ctjs::UnaryKind::Not))) {
+                    // Only immediate Boolean yields prove a carrier's tag;
+                    // correspondence and all arm effects are checked separately.
+                    if (exactBoolean) {
                         value = input;
                         negated ^= !boolean.getValue();
                         break;

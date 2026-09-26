@@ -915,6 +915,23 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                          "scf.yield %one, %no : !ctjs.value, !ctjs.value");
     literalTuple.replace(literalTuple.find("ctjs.truthy %forwarded"),
                          std::string{"ctjs.truthy %forwarded"}.size(), "ctjs.truthy %forwarded#1");
+    const auto strictCarrier = [&](std::string forwarding, const std::string & value = "%forwarded",
+                                   const std::string & literal = "#ctjs.boolean<true>",
+                                   bool reversed = false) {
+        forwarding.erase(forwarding.find("    %secondFlag ="));
+        return strictBooleanFlag(value, literal, forwarding, reversed);
+    };
+    const auto carrierFlag = strictCarrier(booleanYields);
+    const auto carrierKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", carrierFlag));
+    const auto carrierGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", carrierFlag));
+    auto carrierReads = strictBooleanReads;
+    carrierReads.replace(carrierReads.find("    %booleanLiteral ="),
+                         carrierReads.find("    %secondKey =") -
+                             carrierReads.find("    %booleanLiteral ="),
+                         strictCarrier(forwardedFlag("%boolean", "%boolean")));
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -3017,6 +3034,111 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(strictBooleanKeys) + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "strict true tests follow both exact Boolean carrier yields",
+         .body = loopValues + allocationLoop(carrierKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "strict false carrier tests preserve opposite branch polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     strictCarrier(booleanYields, "%forwarded", "#ctjs.boolean<false>"), true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "a left Boolean literal follows the selected Boolean tuple result",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(siblingInput(
+                 "%zero", "%one", "%secondFlag",
+                 strictCarrier(booleanYieldTuple, "%forwarded#1", "#ctjs.boolean<true>", true)))) +
+             done,
+         .confinedNested = "fresh"},
+        {.what = "strict Boolean tests follow a carrier of complementary literals",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput("%zero", "%one", "%secondFlag",
+                                                           strictCarrier(literalSelection())))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "strict Boolean carrier tests preserve matching comparison snapshots",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(representativeInput(strictCarrier(comparisonYields())))) +
+             done,
+         .confinedNested = "fresh"},
+        {.what = "strict Boolean carrier tests preserve an independent guard read gap",
+         .body =
+             loopValues + allocationLoop(carrierGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "an opaque carrier yield cannot borrow its sibling Boolean tag",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     strictCarrier(forwardedFlag("%thenBoolean", "%p", thenBoolean))))) +
+                 done,
+         .complete = false},
+        {.what = "a Number tuple result cannot borrow a sibling Boolean result tag",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  strictCarrier(booleanYieldTuple, "%forwarded#0")))) +
+                 done,
+         .complete = false},
+        {.what = "different Boolean carrier inputs prove no correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  strictCarrier(forwardedFlag(
+                                      "%thenBoolean", "%elseBoolean", thenBoolean,
+                                      "      %elseBoolean = ctjs.convert to_boolean %q\n"))))) +
+                 done,
+         .complete = false},
+        {.what = "a strict false carrier test requires swapped selected arms",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     strictCarrier(booleanYields, "%forwarded", "#ctjs.boolean<false>")))) +
+                 done,
+         .complete = false},
+        {.what = "Boolean carrier tests retain separate mutable read snapshots",
+         .body = loopValues + allocationLoop(carrierReads) + done,
+         .complete = false},
+        {.what = "Boolean carrier tests cannot hide an unsupported arm effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     strictCarrier(forwardedFlag("%thenBoolean", "%elseEven",
+                                                 "      %called = ctjs.call %p(%q)\n" + thenBoolean,
+                                                 elseBoolean))))) +
+                 done,
+         .complete = false},
+        {.what = "Boolean carrier tests cannot overwrite their guard dependency",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(
+                     "      %read = ctjs.get_property %guard[%zero]\n" +
+                     siblingInput("%read", "%two", "%secondFlag", carrierFlag))) +
+                 done,
+         .complete = false},
+        {.what = "Boolean carrier tests still require finite retained Number values",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%nan", "%secondFlag", carrierFlag))) +
+                 done,
+         .complete = false},
+        {.what = "a returned Boolean carrier holder retains its selected child",
+         .body = loopValues + allocationLoop(carrierKeys) + "  ctjs.return %guard\n"},
+        {.what = "clearing a Boolean carrier holder releases its selected child",
+         .body = loopValues + allocationLoop(carrierKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved Boolean carrier child survives clearing its holder",
+         .body = loopValues + allocationLoop(carrierKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "Boolean carrier tests cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(carrierKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "Boolean carrier tests still require initialized solver inputs",
+         .body = loopValues + allocationLoop(carrierKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "ToBoolean preserves the exact input truthiness choice",
          .body = loopValues + allocationLoop(booleanKeys) + done,
          .confinedNested = "fresh"},
@@ -4455,6 +4577,95 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  .expected = ""},
              "the strict Boolean test mutation fixture did not parse");
     }
+    retention_row carrierMutation{
+        .what = "strict Boolean carriers reprove live yields, tags, polarity and guards",
+        .body =
+            loopValues + allocationLoop(carrierGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto carrierModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + carrierMutation.body + "}\n", &context);
+    if (carrierModule) {
+        ctjs::FuncOp function = *carrierModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto compare = second.getCondition()
+                           .getDefiningOp<ctjs::TruthyOp>()
+                           .getValue()
+                           .getDefiningOp<ctjs::CompareOp>();
+        auto carrier = compare.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto literal = compare.getRhs().getDefiningOp<ctjs::ConstantOp>();
+        auto * carrierThen = carrier.getThenRegion().front().getTerminator();
+        auto * carrierElse = carrier.getElseRegion().front().getTerminator();
+        auto conversion = carrierThen->getOperand(0).getDefiningOp<ctjs::ConvertOp>();
+        auto even = carrierElse->getOperand(0).getDefiningOp<ctjs::UnaryOp>();
+        auto odd = even.getOperand().getDefiningOp<ctjs::UnaryOp>();
+        auto * thenYield = second.getThenRegion().front().getTerminator();
+        auto * elseYield = second.getElseRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = conversion.getOperand();
+        const mlir::Value originalThen = thenYield->getOperand(0);
+        const mlir::Value originalElse = elseYield->getOperand(0);
+        const mlir::Value originalPosition = load.getKey();
+        mlir::Value zero;
+        for (auto constant : function.getBody().front().getOps<ctjs::ConstantOp>()) {
+            if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue());
+                number && number.getBits() == 0) {
+                zero = constant;
+            }
+        }
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*carrierModule))) {
+            fail(row{.what = carrierMutation.what, .body = carrierMutation.body, .expected = ""},
+                 "the Boolean carrier stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 15; ++state) {
+            conversion->setOperand(0, state == 1 ? function.getBody().front().getArgument(4)
+                                                 : originalInput);
+            conversion.setKindAttr(ctjs::ConvertKindAttr::get(
+                &context, state == 2 ? ctjs::ConvertKind::ToNumber : ctjs::ConvertKind::ToBoolean));
+            carrierThen->setOperand(0, state == 12 ? zero : conversion.getResult());
+            carrierElse->setOperand(0, state == 3   ? odd.getResult()
+                                       : state == 4 ? originalInput
+                                                    : even.getResult());
+            odd.setKindAttr(ctjs::UnaryKindAttr::get(&context, state == 13 ? ctjs::UnaryKind::Void
+                                                                           : ctjs::UnaryKind::Not));
+            compare.setKindAttr(ctjs::CompareKindAttr::get(
+                &context, state == 5 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+            literal.setValueAttr(
+                state == 7
+                    ? mlir::Attribute(ctjs::NumberAttr::get(&context, 4607182418800017408ULL))
+                    : mlir::Attribute(ctjs::BooleanAttr::get(&context, state != 6 && state != 9)));
+            compare->setOperand(0, state == 8 ? literal.getResult() : carrier.getResult(0));
+            compare->setOperand(1, state == 8 ? carrier.getResult(0) : literal.getResult());
+            const bool swapped = state == 9 || state == 10;
+            thenYield->setOperand(0, swapped ? originalElse : originalThen);
+            elseYield->setOperand(0, swapped ? originalThen : originalElse);
+            load->setOperand(1, state == 11 ? zero : originalPosition);
+            carrierMutation.complete = state == 0 || state == 8 || state == 9 || state == 14;
+            carrierMutation.confinedNested = carrierMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*carrierModule, carrierMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                carrierMutation.complete) {
+                fail(
+                    row{.what = carrierMutation.what, .body = carrierMutation.body, .expected = ""},
+                    "a stale solver or forged marker supplied Boolean carrier correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = carrierMutation.what, .body = carrierMutation.body, .expected = ""},
+             "the Boolean carrier mutation fixture did not parse");
+    }
     retention_row booleanMutation{
         .what =
             "ToBoolean correspondence reproves live conversion inputs, kinds, yields and guards",
@@ -4971,7 +5182,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         }
     }
     std::printf(
-        "array retention: %zu rows, two hundred thirty-seven live states, %zu budget cutoffs\n",
+        "array retention: %zu rows, two hundred fifty-two live states, %zu budget cutoffs\n",
         rows.size(), budgets);
 }
 
