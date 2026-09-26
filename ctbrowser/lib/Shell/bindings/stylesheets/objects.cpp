@@ -280,6 +280,18 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
     // asks for it in the prototype chain and not as an own property. The
     // receiver names the node; a wrapper is only made after the interfaces
     // are, so the fallback below is for an embedder that built none.
+    //
+    // AND ROUTED TO THE NODE'S OWN BINDINGS. The prototype is SHARED with every
+    // frame (frames.cpp: one set of interfaces), so these getters capture the
+    // page's bindings - and a frame's `<style>` looked up in the PAGE's sheets
+    // found nothing: `style.sheet` was null in every frame, which is 326
+    // subtests of attribute-case/semantics.html and 176 of syntax.html. The
+    // node's owner answers, and the page's for anything that is not a node of
+    // the page or a frame.
+    const auto owning = [this](value node) -> dom_bindings & {
+        dom_bindings * owner = bindings_owning(node);
+        return owner != nullptr ? *owner : *this;
+    };
     bool installed = false;
     for (const std::string_view name : {"HTMLStyleElement", "HTMLLinkElement"}) {
         script::object_object * proto = as_object(interface_prototype(name));
@@ -288,8 +300,9 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
         if (proto->find_accessor("sheet") != nullptr) { continue; }
         define_getter(
             cx, *proto, "sheet",
-            [this](context & c, std::span<value>) {
-                return sheet_object_of(c, handle_of(c.current_this()));
+            [owning](context & c, std::span<value>) {
+                dom_bindings & owner = owning(c.current_this());
+                return owner.sheet_object_of(c, owner.handle_of(c.current_this()));
             },
             {}, script::attr_configurable);
         if (name == "HTMLStyleElement") {
@@ -297,13 +310,16 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
             // false while the element has no sheet, and a write then does
             // nothing (style-sheet-interfaces-001, "disabled attribute
             // getter/setter").
-            const auto owned = [this](context & c) -> css_sheet_record * {
-                sync_style_sheets(c);
-                const auto it = css_sheet_by_owner_.find(handle_of(c.current_this()).key());
-                if (it == css_sheet_by_owner_.end() || it->second >= css_sheets_.size()) {
+            const auto owned = [owning](context & c) -> css_sheet_record * {
+                dom_bindings & owner = owning(c.current_this());
+                owner.sync_style_sheets(c);
+                const auto it =
+                    owner.css_sheet_by_owner_.find(owner.handle_of(c.current_this()).key());
+                if (it == owner.css_sheet_by_owner_.end() ||
+                    it->second >= owner.css_sheets_.size()) {
                     return nullptr;
                 }
-                css_sheet_record * sheet = css_sheets_[it->second].get();
+                css_sheet_record * sheet = owner.css_sheets_[it->second].get();
                 return sheet->attached ? sheet : nullptr;
             };
             proto->define_accessor("disabled",
@@ -316,12 +332,12 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
                                        })),
                                    value::object(cx.allocate<script::native_object>(
                                        "set disabled",
-                                       [this, owned](context & c, std::span<value> a) {
+                                       [owning, owned](context & c, std::span<value> a) {
                                            css_sheet_record * sheet = owned(c);
                                            const bool wanted = !a.empty() && context::truthy(a[0]);
                                            if (sheet != nullptr && sheet->disabled != wanted) {
                                                sheet->disabled = wanted;
-                                               style_sheets_changed();
+                                               owning(c.current_this()).style_sheets_changed();
                                            }
                                            return value::undefined();
                                        })),
@@ -338,31 +354,34 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
         proto->define_accessor("disabled",
                                value::object(cx.allocate<script::native_object>(
                                    "get disabled",
-                                   [this](context & c, std::span<value>) {
-                                       const node_id id = handle_of(c.current_this());
+                                   [owning](context & c, std::span<value>) {
+                                       dom_bindings & owner = owning(c.current_this());
+                                       const node_id id = owner.handle_of(c.current_this());
                                        if (!id) { return value::boolean(false); }
-                                       const auto txn = doc_->read();
-                                       return value::boolean(
-                                           txn.has_attribute(id, atoms_->intern_lower("disabled")));
+                                       const auto txn = owner.doc_->read();
+                                       return value::boolean(txn.has_attribute(
+                                           id, owner.atoms_->intern_lower("disabled")));
                                    })),
                                value::object(cx.allocate<script::native_object>(
                                    "set disabled",
-                                   [this](context & c, std::span<value> a) {
-                                       const node_id id = handle_of(c.current_this());
+                                   [owning](context & c, std::span<value> a) {
+                                       dom_bindings & owner = owning(c.current_this());
+                                       const node_id id = owner.handle_of(c.current_this());
                                        if (!id) { return value::undefined(); }
                                        const bool wanted = !a.empty() && context::truthy(a[0]);
-                                       const atom name = atoms_->intern_lower("disabled");
-                                       const bool present = doc_->read().has_attribute(id, name);
+                                       const atom name = owner.atoms_->intern_lower("disabled");
+                                       const bool present =
+                                           owner.doc_->read().has_attribute(id, name);
                                        if (wanted == present) { return value::undefined(); }
                                        if (wanted) {
-                                           (void)doc_->set_attribute(id, name, "");
+                                           (void)owner.doc_->set_attribute(id, name, "");
                                        } else {
-                                           (void)doc_->remove_attribute(id, name);
-                                           if (!link_explicitly_enabled(id)) {
-                                               enabled_links_.push_back(id.key());
+                                           (void)owner.doc_->remove_attribute(id, name);
+                                           if (!owner.link_explicitly_enabled(id)) {
+                                               owner.enabled_links_.push_back(id.key());
                                            }
                                        }
-                                       mutated();
+                                       owner.mutated();
                                        return value::undefined();
                                    })),
                                script::attr_configurable);
@@ -373,36 +392,35 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
         proto != nullptr && proto->find_accessor("styleSheets") == nullptr) {
         define_getter(
             cx, *proto, "styleSheets",
-            [this](context & c, std::span<value>) {
-                return shadow_sheet_list(c, handle_of(c.current_this()));
+            [owning](context & c, std::span<value>) {
+                dom_bindings & owner = owning(c.current_this());
+                return owner.shadow_sheet_list(c, owner.handle_of(c.current_this()));
             },
             {}, script::attr_configurable);
-        proto->define_accessor("adoptedStyleSheets",
-                               value::object(cx.allocate<script::native_object>(
-                                   "get adoptedStyleSheets",
-                                   [](context & c, std::span<value>) {
-                                       script::object_object * self = as_object(c.current_this());
-                                       if (self == nullptr) { return value::undefined(); }
-                                       if (const value * held = self->find("__ctbrowser_adopted")) {
-                                           return *held;
-                                       }
-                                       const value made = c.make_array();
-                                       self->define("__ctbrowser_adopted", made, script::attr_none);
-                                       return made;
-                                   })),
-                               value::object(cx.allocate<script::native_object>(
-                                   "set adoptedStyleSheets",
-                                   [this](context & c, std::span<value> a) {
-                                       script::object_object * self = as_object(c.current_this());
-                                       if (self == nullptr) { return value::undefined(); }
-                                       const value made = adopted_sheets_array(c, a);
-                                       if (!made.is_undefined()) {
-                                           self->define("__ctbrowser_adopted", made,
-                                                        script::attr_none);
-                                       }
-                                       return value::undefined();
-                                   })),
-                               script::attr_configurable);
+        proto->define_accessor(
+            "adoptedStyleSheets",
+            value::object(cx.allocate<script::native_object>(
+                "get adoptedStyleSheets",
+                [](context & c, std::span<value>) {
+                    script::object_object * self = as_object(c.current_this());
+                    if (self == nullptr) { return value::undefined(); }
+                    if (const value * held = self->find("__ctbrowser_adopted")) { return *held; }
+                    const value made = c.make_array();
+                    self->define("__ctbrowser_adopted", made, script::attr_none);
+                    return made;
+                })),
+            value::object(cx.allocate<script::native_object>(
+                "set adoptedStyleSheets",
+                [owning](context & c, std::span<value> a) {
+                    script::object_object * self = as_object(c.current_this());
+                    if (self == nullptr) { return value::undefined(); }
+                    const value made = owning(c.current_this()).adopted_sheets_array(c, a);
+                    if (!made.is_undefined()) {
+                        self->define("__ctbrowser_adopted", made, script::attr_none);
+                    }
+                    return value::undefined();
+                })),
+            script::attr_configurable);
     }
     if (installed) { return; }
     obj.define_accessor(
