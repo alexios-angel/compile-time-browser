@@ -112,6 +112,14 @@ std::size_t browser::tick(double elapsed_ms) {
     if (load_event_pending_) {
         load_event_pending_ = false;
         bindings_->set_ready_state("interactive");
+        // THE TASKS THE PARSE QUEUED run before the two its end queues (HTML
+        // 13.2.7 "the end" queues DOMContentLoaded, then load, as tasks):
+        // the `unhandledrejection` a parser-run script's checkpoint queued
+        // comes between `interactive` and `complete`
+        // (promise-rejection-event-during-parse.html), and a script a
+        // script inserted - which delays the load event - has run. Not the
+        // page's own setTimeouts, a task source of their own.
+        (void)bindings_->run_timers(true);
         (void)bindings_->dispatch("DOMContentLoaded", node_id{});
         bindings_->set_ready_state("complete");
         (void)bindings_->dispatch("load", node_id{});

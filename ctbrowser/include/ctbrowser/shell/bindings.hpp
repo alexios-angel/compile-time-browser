@@ -88,6 +88,7 @@ public:
     [[nodiscard]] bool is_connected(node_id target) const;
 
     std::size_t run_due_callbacks();
+    std::size_t run_timers(bool queued_tasks_only); // window/callbacks.cpp
 
     void reconcile_frames();
     bool navigate_form_target(node_id form, form_navigation navigation);

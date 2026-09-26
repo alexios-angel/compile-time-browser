@@ -55,6 +55,88 @@ void dom_bindings::set_current_script(node_id script) {
     }
 }
 
+// THE DUE TIMERS, each a task: every one, or - `queued_tasks_only` - only the
+// tasks the host queued (a notification, an event, a script's load) and none
+// of the page's setTimeout/setInterval. The second is the browser's before
+// `DOMContentLoaded`: those are tasks the parse queued ahead of it, where the
+// page's timers are a task source of their own (browser::tick).
+std::size_t dom_bindings::run_timers(bool queued_tasks_only) {
+    if (cx_ == nullptr) { return 0; }
+    std::size_t ran = 0;
+    // Copied before running: a callback may add or cancel timers, and
+    // iterating the live list while it does is how a timer that
+    // re-registers itself becomes an infinite loop inside one tick.
+    std::vector<timer> due;
+    for (timer & t : timers_) {
+        if (!t.cancelled && t.due_ms <= now_ms_ && !(queued_tasks_only && t.page_timer)) {
+            due.push_back(t);
+        }
+    }
+    for (const timer & t : due) {
+        const auto still = std::ranges::find_if(
+            timers_, [&](const timer & x) { return x.id == t.id && !x.cancelled; });
+        if (still == timers_.end()) { continue; }
+        // A REMOVED FRAME'S TIMER is dropped, not run: its task's document is
+        // no longer fully active (settimeout-detached-iframe.html).
+        if (still->window.is_heap() && find_bindings_of(still->window) == nullptr) {
+            still->cancelled = true;
+            continue;
+        }
+        if (still->repeating) {
+            still->due_ms = now_ms_ + still->interval_ms;
+        } else {
+            still->cancelled = true;
+        }
+        // BEHIND A FENCE, and REPORTED TO THE PAGE: HTML 8.6's timer task
+        // "reports the exception" - `window.onerror` hears a throw in a
+        // setTimeout callback (window-runtime-error.html), where before it
+        // was an engine fault the embedder alone saw. A STRING handler
+        // (initialisation steps 8.2) is compiled as a classic script and run
+        // the same way; one that does not parse is a SyntaxError reported
+        // likewise (compile-error-in-setTimeout.html).
+        bool threw = false;
+        value thrown = value::undefined();
+        if (t.callback.is_string()) {
+            script::program compiled = script::compiler::compile(cx_->to_string(t.callback));
+            if (!compiled.ok) {
+                (void)dispatch_error("uncaught SyntaxError: " + compiled.error);
+            } else {
+                const script::program & held = cx_->own_program(std::move(compiled));
+                for (const std::string & name : held.hoisted_vars) {
+                    cx_->declare_global_var(name, false);
+                }
+                auto * entry = cx_->allocate<script::closure_object>(&held.functions[0]);
+                entry->owner = &held;
+                (void)cx_->call_fenced(value::object(entry), {}, cx_->global_this(), threw, thrown);
+            }
+        } else {
+            (void)cx_->call_fenced(t.callback, t.arguments, cx_->global_this(), threw, thrown);
+        }
+        if (threw || cx_->failed()) {
+            const context::rooted keep_thrown{*cx_, thrown};
+            const std::string fault = cx_->failed()
+                                          ? cx_->take_error()
+                                          : "uncaught " + detail::describe_thrown(*cx_, thrown);
+            // At the CALLBACK's global ("report the exception" in the timer
+            // task): a frame's function handed to the page's setTimeout
+            // reports in the frame (settimeout-cross-realm-callback-...).
+            const bool handled =
+                bindings_of(callback_global(*cx_, t.callback)).dispatch_error_value(fault, thrown);
+            if (!handled && callback_error_.empty()) {
+                callback_error_ = "setTimeout callback: " + fault;
+            }
+        }
+        note_callback_fault("setTimeout");
+        ++ran;
+        // A TIMER IS A TASK, and every task ends in a microtask checkpoint:
+        // a promise the callback settled runs its reactions before the NEXT
+        // timer, not after the whole batch.
+        cx_->drain_microtasks();
+    }
+    std::erase_if(timers_, [](const timer & t) { return t.cancelled; });
+    return ran;
+}
+
 std::size_t dom_bindings::run_due_callbacks() {
     if (cx_ == nullptr) { return 0; }
     time_reads_ = 0; // a new tick: the clock has moved, the observations start over
@@ -131,75 +213,7 @@ std::size_t dom_bindings::run_due_callbacks() {
             ++ran;
         }
     }
-    // Copied before running: a callback may add or cancel timers, and
-    // iterating the live list while it does is how a timer that
-    // re-registers itself becomes an infinite loop inside one tick.
-    std::vector<timer> due;
-    for (timer & t : timers_) {
-        if (!t.cancelled && t.due_ms <= now_ms_) { due.push_back(t); }
-    }
-    for (const timer & t : due) {
-        const auto still = std::ranges::find_if(
-            timers_, [&](const timer & x) { return x.id == t.id && !x.cancelled; });
-        if (still == timers_.end()) { continue; }
-        // A REMOVED FRAME'S TIMER is dropped, not run: its task's document is
-        // no longer fully active (settimeout-detached-iframe.html).
-        if (still->window.is_heap() && find_bindings_of(still->window) == nullptr) {
-            still->cancelled = true;
-            continue;
-        }
-        if (still->repeating) {
-            still->due_ms = now_ms_ + still->interval_ms;
-        } else {
-            still->cancelled = true;
-        }
-        // BEHIND A FENCE, and REPORTED TO THE PAGE: HTML 8.6's timer task
-        // "reports the exception" - `window.onerror` hears a throw in a
-        // setTimeout callback (window-runtime-error.html), where before it
-        // was an engine fault the embedder alone saw. A STRING handler
-        // (initialisation steps 8.2) is compiled as a classic script and run
-        // the same way; one that does not parse is a SyntaxError reported
-        // likewise (compile-error-in-setTimeout.html).
-        bool threw = false;
-        value thrown = value::undefined();
-        if (t.callback.is_string()) {
-            script::program compiled = script::compiler::compile(cx_->to_string(t.callback));
-            if (!compiled.ok) {
-                (void)dispatch_error("uncaught SyntaxError: " + compiled.error);
-            } else {
-                const script::program & held = cx_->own_program(std::move(compiled));
-                for (const std::string & name : held.hoisted_vars) {
-                    cx_->declare_global_var(name, false);
-                }
-                auto * entry = cx_->allocate<script::closure_object>(&held.functions[0]);
-                entry->owner = &held;
-                (void)cx_->call_fenced(value::object(entry), {}, cx_->global_this(), threw, thrown);
-            }
-        } else {
-            (void)cx_->call_fenced(t.callback, t.arguments, cx_->global_this(), threw, thrown);
-        }
-        if (threw || cx_->failed()) {
-            const context::rooted keep_thrown{*cx_, thrown};
-            const std::string fault = cx_->failed()
-                                          ? cx_->take_error()
-                                          : "uncaught " + detail::describe_thrown(*cx_, thrown);
-            // At the CALLBACK's global ("report the exception" in the timer
-            // task): a frame's function handed to the page's setTimeout
-            // reports in the frame (settimeout-cross-realm-callback-...).
-            const bool handled =
-                bindings_of(callback_global(*cx_, t.callback)).dispatch_error_value(fault, thrown);
-            if (!handled && callback_error_.empty()) {
-                callback_error_ = "setTimeout callback: " + fault;
-            }
-        }
-        note_callback_fault("setTimeout");
-        ++ran;
-        // A TIMER IS A TASK, and every task ends in a microtask checkpoint:
-        // a promise the callback settled runs its reactions before the NEXT
-        // timer, not after the whole batch.
-        cx_->drain_microtasks();
-    }
-    std::erase_if(timers_, [](const timer & t) { return t.cancelled; });
+    ran += run_timers(false);
     // AFTER THE TIMERS, BEFORE THE ANIMATION FRAMES. That is where a browser
     // puts its microtask checkpoint, and the ordering is observable: a promise
     // resolved by a timer must have run its handlers before the frame that
@@ -346,6 +360,7 @@ void dom_bindings::install_timers(context & cx) {
         }
         const double timeout = context::to_int32(arg(args, 1));
         const std::uint32_t id = add_timer(handler, timeout, repeating);
+        timers_.back().page_timer = true;
         if (args.size() > 2 && handler.is_callable()) {
             timers_.back().arguments.assign(args.begin() + 2, args.end());
         }
@@ -439,7 +454,8 @@ std::uint32_t dom_bindings::add_timer(value callback, double delay_ms, bool repe
                             std::max(0.0, delay_ms),
                             repeating,
                             false,
-                            value::undefined()});
+                            value::undefined(),
+                            false});
     return id;
 }
 
