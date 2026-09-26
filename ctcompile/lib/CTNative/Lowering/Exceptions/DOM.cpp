@@ -542,6 +542,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
         return mlir::WalkResult::advance();
     });
     if (rewritten.wasInterrupted()) { return refuse("DOM caught throw work budget exhausted"); }
+    if (auto error = structureRecoveredPrefix(function, remaining)) { return std::move(error); }
     if (!function.getBody().hasOneBlock()) {
         return refuse("DOM caught throw requires a structured local prefix");
     }

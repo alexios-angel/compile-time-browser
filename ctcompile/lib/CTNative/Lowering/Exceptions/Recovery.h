@@ -20,6 +20,11 @@ namespace ctcompile::ctnative::lowering_detail {
 // the caller must withhold it. This grants no exception or effect authority.
 llvm::Error normalizeStructuredExits(ctjs::FuncOp function, unsigned & remaining);
 
+// On a disposable DOM candidate after recovery proved its acyclic prefix.
+// Lift that remaining CFG without granting any effect or handler authority;
+// generic exception recovery still preserves the original prefix verbatim.
+llvm::Error structureRecoveredPrefix(ctjs::FuncOp function, unsigned & remaining);
+
 // Only on the fingerprinted private DOM candidate. Preserve the original
 // function on refusal; success still requires complete fresh DOM identity,
 // String ownership and invocation proof before publication or native lowering.

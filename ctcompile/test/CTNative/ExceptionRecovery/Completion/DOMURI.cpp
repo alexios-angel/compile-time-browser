@@ -3831,7 +3831,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     testObservedIteratorRecovery(context);
     testInertHelperCompletion(context);
     testHelperCatchSource(context);
-    for (unsigned control = 0; control < 50; ++control) {
+    for (unsigned control = 0; control < 57; ++control) {
         std::string source = "function guarded(element) { try { throw element; } "
                              "catch (error) { return error === element; } }";
         if (control == 1) {
@@ -3977,6 +3977,21 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                               "if (element.hasAttribute('flag')) element = false; ");
             }
         }
+        if (control >= 50) {
+            source = "function guarded(element) { "
+                     "const saved = element.hasAttribute('data-closed') ? 7.5 : -0; "
+                     "try { element.setAttribute('data-closed', 42); "
+                     "element.setAttribute('data-written', saved); throw element; "
+                     "} catch (error) { return error === element && saved === 7.5; } }";
+            if (control == 53) {
+                source.insert(source.find("try {"), "if (element) return false; ");
+            }
+            if (control == 54) { source.replace(source.find(" : -0"), 5, " : element"); }
+            if (control == 55) { source.insert(source.find("try {"), "element.unknown(); "); }
+            if (control == 56) {
+                source.insert(source.find("try {"), "if (saved) element = false; ");
+            }
+        }
         auto candidate = import(context, source, true);
         if (!candidate) { continue; }
         const auto original = printed(*candidate);
@@ -3987,15 +4002,17 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
         if (control == 32 || control == 38 || control == 47) { request.elementParameters.clear(); }
         request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
         const auto fingerprint = request.moduleSha256;
-        auto error = ctnative::prepareDOMEntry(
-            *candidate, request,
-            control == 6 || control == 19 || control == 26 || control == 39 || control == 48 ? 0
-            : control == 27 ? 500
-                            : 100000);
+        auto error =
+            ctnative::prepareDOMEntry(*candidate, request,
+                                      control == 6 || control == 19 || control == 26 ||
+                                              control == 39 || control == 48 || control == 51
+                                          ? 0
+                                      : control == 27 || control == 52 ? 500
+                                                                       : 100000);
         if (control >= 3 && control != 5 && control != 7 && control != 8 && control != 9 &&
             !(control >= 12 && control <= 15) && !(control >= 20 && control <= 23) &&
             control != 28 && !(control >= 33 && control <= 35) &&
-            !(control >= 40 && control <= 42) && control != 44) {
+            !(control >= 40 && control <= 42) && control != 44 && control != 50) {
             check(static_cast<bool>(error), "confined catch needs complete effects and lifetime");
             llvm::consumeError(std::move(error));
             check(printed(*candidate) == original && request.moduleSha256 == fingerprint,
