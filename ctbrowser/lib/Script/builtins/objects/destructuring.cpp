@@ -261,6 +261,13 @@ void install_destructuring_iteration(context & cx) {
         }
         return value::undefined();
     });
+    // See set_function_name_name.
+    cx.define_native(std::string{set_function_name_name}, [](context & c, std::span<value> a) {
+        if (a.size() < 2) { return value::undefined(); }
+        detail::set_function_name(c, a[0], a[1],
+                                  a.size() > 2 && a[2].is_string() ? c.to_string(a[2]) : "");
+        return value::undefined();
+    });
     // See to_property_key_name.
     cx.define_native(std::string{to_property_key_name}, [](context & c, std::span<value> a) {
         value key = a.empty() ? value::undefined() : a[0];
@@ -397,6 +404,9 @@ void install_destructuring_iteration(context & cx) {
         // is the throw of the class definition.
         const std::string key = c.to_string(a[1]);
         if (c.throw_pending()) { return value::undefined(); }
+        // Each half named for its key (15.4.5 step 6 / 15.4.6 step 6).
+        detail::set_function_name(c, a[2], c.key_value(key), "get");
+        detail::set_function_name(c, a[3], c.key_value(key), "set");
         c.define_accessor(a[0], key, a[2], a[3]);
         return value::undefined();
     });

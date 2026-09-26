@@ -232,6 +232,24 @@ namespace detail {
     auto * obj = static_cast<object_object *>(self.as_heap());
     return obj->props.empty() && !obj->accessors.any;
 }
+// SetFunctionName (10.2.9) with a property key: a symbol's name is its
+// description in brackets - "" with none - and `prefix` ("get", "set") goes
+// in front. A function with an own `name` already keeps it: a class whose
+// static member is called `name` defined that one itself.
+inline void set_function_name(context & cx, value fn, value key, std::string_view prefix) {
+    if (!fn.is_kind(heap_kind::function)) { return; }
+    auto * closure = static_cast<closure_object *>(fn.as_heap());
+    if (closure->find("name") != nullptr) { return; }
+    std::string name;
+    if (key.is_kind(heap_kind::symbol)) {
+        const auto described = static_cast<symbol_object *>(key.as_heap())->description_value();
+        name = described ? "[" + std::string{*described} + "]" : "";
+    } else {
+        name = cx.to_string(key);
+    }
+    if (!prefix.empty()) { name = std::string{prefix} + " " + name; }
+    closure->define("name", cx.string(std::move(name)), attr_configurable);
+}
 // GetPrototypeFromConstructor (10.1.14) FOR A NATIVE THAT MAKES ITS OWN
 // OBJECT. `class A extends Array` reaches Array through super() with `this`
 // the instance [[Construct]] made from A.prototype; Array answers an array of

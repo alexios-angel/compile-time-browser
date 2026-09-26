@@ -277,6 +277,22 @@ void test_class_expressions() {
 // Symbol as the key. Every one compiled to a member named "" before
 // 2026-09-12, so `new C()[k]` was undefined.
 void test_computed_member_keys() {
+    // A KEY NAMES THE FUNCTION IT HOLDS (SetFunctionName, 10.2.9): a symbol
+    // in brackets, an accessor with its prefix, a literal key at compile time.
+    expect_result(
+        "const s = Symbol('t'), e = Symbol(); const o = { [s]: function () {},"
+        " [e]: () => 0, ['k' + 1]() {}, get [s]() {}, 'q': class {}, 2: function () {} };"
+        " return [o[s].name, o[e].name, o.k1.name,"
+        " Object.getOwnPropertyDescriptor(o, s).get.name, o.q.name, o[2].name].join('|');",
+        "[t]||k1|get [t]|q|2");
+    expect_result("const s = Symbol('m'); class C { [s]() {} get g() {} static set h(v) {} }"
+                  " return [C.prototype[s].name,"
+                  " Object.getOwnPropertyDescriptor(C.prototype, 'g').get.name,"
+                  " Object.getOwnPropertyDescriptor(C, 'h').set.name].join('|');",
+                  "[m]|get g|set h");
+    expect_result("let n = 0; const k = { toString() { n++; return 'z'; } };"
+                  " const o = { [k]: function () {} }; return o.z.name + n;",
+                  "z1");
     expect_result(
         "const k = 'dyn'; class C { [k]() { return 1; } static ['s' + 1]() { return 2; } }"
         "return new C().dyn() + C.s1();",

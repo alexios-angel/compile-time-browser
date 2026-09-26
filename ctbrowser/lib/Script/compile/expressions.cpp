@@ -361,6 +361,44 @@ void compiler_impl::compile_named_expr(std::int32_t idx, std::uint16_t dst, std:
     compile_expr(idx, dst);
 }
 
+bool compiler_impl::is_anonymous_function_definition(std::int32_t idx) const {
+    if (idx < 0) { return false; }
+    const vp::node & n = at(idx);
+    return (n.kind == vp::nk::func_expr || n.kind == vp::nk::arrow ||
+            n.kind == vp::nk::class_decl) &&
+           n.text.empty();
+}
+
+std::optional<std::string> compiler_impl::literal_key_name(std::int32_t key) const {
+    const vp::node & k = at(key);
+    if (k.kind == vp::nk::str) { return decode_string_literal(k.text); }
+    // A BigInt literal (`1n`) is left to run time: its ToString is not the
+    // double's.
+    if (k.kind == vp::nk::num && !k.text.empty() && k.text.back() != 'n') {
+        return number_to_string(number_literal(k.text));
+    }
+    return std::nullopt;
+}
+
+void compiler_impl::emit_set_function_name(std::uint16_t fn, std::uint16_t key,
+                                           std::string_view prefix) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(instruction::with_bx(op::get_global, callee,
+                                      intern_name(std::string{set_function_name_name})));
+    const std::uint16_t target = alloc_reg();
+    proto().emit(instruction{op::move, target, fn});
+    const std::uint16_t name = alloc_reg();
+    proto().emit(instruction{op::move, name, key});
+    std::uint16_t argc = 2;
+    if (!prefix.empty()) {
+        emit_string(alloc_reg(), std::string{prefix});
+        argc = 3;
+    }
+    proto().emit(instruction{op::call, callee, argc});
+    release_to(mark);
+}
+
 void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
     const std::uint32_t mark = reg_mark();
     const vp::node & target = at(n.a);

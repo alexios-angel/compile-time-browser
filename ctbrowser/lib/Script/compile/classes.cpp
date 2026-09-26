@@ -157,18 +157,21 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
         const std::uint16_t self = alloc_reg();
         proto().emit(instruction{op::load_this, self});
         const std::uint16_t v = alloc_reg();
+        const bool computed = (m.d & 2) != 0 && m.a >= 0;
         // `class A { x; }` declares x and gives it undefined - a field
         // without an initialiser is still a field.
         if (m.b >= 0) {
-            compile_named_expr(m.b, v, (m.d & 2) != 0 ? "" : m.text);
+            compile_named_expr(m.b, v, computed ? "" : m.text);
         } else {
             proto().emit(instruction{op::load_undef, v});
         }
-        if ((m.d & 2) != 0 && m.a >= 0) { // a computed key: `[expr] = init`
+        if (computed) { // a computed key: `[expr] = init`
             // Evaluated when the class was defined (field_key_name), and
-            // DEFINED like any public field.
+            // DEFINED like any public field - naming an anonymous function
+            // it holds (15.7.10 step 3.b, NamedEvaluation with the key).
             const std::uint16_t key = alloc_reg();
             emit_plain_read(field_key_name(member), key);
+            if (is_anonymous_function_definition(m.b)) { emit_set_function_name(v, key); }
             emit_define_own_key(self, key, v, true);
         } else if (m.text.starts_with('#')) {
             // A PRIVATE FIELD IS ADDED, NOT SET (7.3.28 PrivateFieldAdd): a
@@ -456,7 +459,8 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
                 continue;
             }
             method_pending_ = true;
-            compile_expr(m.b, slot);
+            // An accessor is named for its key, "get id" (15.4.5 step 6).
+            compile_named_expr(m.b, slot, ((m.d & 4) != 0 ? "set " : "get ") + std::string{m.text});
             method_pending_ = false;
             const std::uint16_t name = member_operand(m.text);
             proto().emit(instruction{(m.d & 4) != 0 ? op::define_setter : op::define_getter, target,
@@ -485,9 +489,15 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             const std::uint32_t mark = reg_mark();
             const std::uint16_t key = alloc_reg();
             compile_expr(m.a, key);
+            // Made a key ONCE, and it names the method (15.4.4 DefineMethod,
+            // then SetFunctionName) - known now when it is a literal.
+            const std::optional<std::string> literal_key = literal_key_name(m.a);
+            if (!literal_key) { emit_iterator_native(to_property_key_name, key, key); }
             method_pending_ = true;
             const std::uint32_t index = compile_function_body(m.b, "");
+            if (literal_key) { out_.functions[index].inferred_name = *literal_key; }
             proto().emit(instruction::with_bx(op::closure, slot, index));
+            if (!literal_key) { emit_set_function_name(slot, key); }
             if ((m.d & 1) != 0) {
                 // A STATIC one is DEFINED (15.4.4 DefineMethodProperty), not
                 // set: a [[Set]] on the constructor asks Function.prototype,

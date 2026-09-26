@@ -971,6 +971,15 @@ public:
     // parameter or pattern element it initialises. Anything else is
     // compile_expr.
     void compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name);
+    // IsAnonymousFunctionDefinition (8.4.3): a function, arrow or class
+    // expression with no name of its own - what NamedEvaluation names.
+    [[nodiscard]] bool is_anonymous_function_definition(std::int32_t idx) const;
+    // The property name of a string or number literal key, which the parser
+    // routes as computed (`{"a": f}`, `{1: f}`) - or nothing for a real
+    // computed key, whose name is only known at run time.
+    [[nodiscard]] std::optional<std::string> literal_key_name(std::int32_t key) const;
+    // SetFunctionName(fn, key[, prefix]) at run time - set_function_name_name.
+    void emit_set_function_name(std::uint16_t fn, std::uint16_t key, std::string_view prefix = {});
     void emit_call_target_error(std::int32_t call, std::uint16_t dst);
     // `yield* expr` - see the definition.
     void compile_yield_delegate(const vp::node & n, std::uint16_t dst);

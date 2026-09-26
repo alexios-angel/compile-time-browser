@@ -864,7 +864,10 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             const std::uint16_t fnreg = alloc_reg();
             const bool homed = mentions_super(prop.b, true) || mentions_direct_eval(prop.b, true);
             method_pending_ = homed; // see frame::has_home
-            compile_expr(prop.b, fnreg);
+            // An accessor is named for its key, "get id" (15.4.5 step 6).
+            compile_named_expr(prop.b, fnreg,
+                               ((prop.d & 4) != 0 ? "set " : "get ") +
+                                   decode_string_literal(prop.text));
             method_pending_ = false;
             const std::uint16_t name = name_operand(decode_string_literal(prop.text));
             proto().emit(instruction{(prop.d & 4) != 0 ? op::define_setter : op::define_getter, dst,
@@ -890,6 +893,28 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             release_to(mark);
             return;
         }
+        // A COMPUTED KEY NAMES THE FUNCTION IT HOLDS too (13.2.5.5, 15.4.4
+        // DefineMethod): known now for a literal key, and otherwise only once
+        // the key is evaluated - which then comes first, made a key once
+        // (13.2.5.5 steps 1-2, before the value), and names the value at run
+        // time. Only a computed key holding a function changes shape.
+        const std::optional<std::string> literal_key =
+            (prop.d & 1) != 0 && prop.a >= 0 ? literal_key_name(prop.a) : std::nullopt;
+        const bool named_at_run_time = (prop.d & 1) != 0 && prop.a >= 0 && !literal_key &&
+                                       (prop.c == 1 || is_anonymous_function_definition(prop.b));
+        if (named_at_run_time) {
+            const std::uint16_t key = alloc_reg();
+            compile_expr(prop.a, key);
+            emit_iterator_native(to_property_key_name, key, key);
+            method_pending_ = homed;
+            compile_expr(prop.b, v);
+            method_pending_ = false;
+            if (homed) { emit_define_own(v, "__home", dst, false); }
+            emit_set_function_name(v, key);
+            proto().emit(instruction{op::set_index, dst, key, v});
+            release_to(mark);
+            continue;
+        }
         method_pending_ = homed;
         if (prop.b < 0) {
             compile_ident(prop, v); // shorthand { x }
@@ -897,6 +922,8 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             // `{ f: function () {} }` names f (13.2.5.5); `__proto__: ...`
             // is a prototype assignment and names nothing.
             compile_named_expr(prop.b, v, decode_string_literal(prop.text));
+        } else if (literal_key && *literal_key != "__proto__") {
+            compile_named_expr(prop.b, v, *literal_key);
         } else {
             compile_expr(prop.b, v);
         }
