@@ -334,6 +334,16 @@ std::size_t dom_bindings::load_imported_sheet(std::size_t rule, std::string_view
     return at;
 }
 
+namespace {
+
+// HOW DEEP INSIDE A STYLE RULE the rule being parsed is: a nested style rule's
+// selector may be relative - `> .bar` - and may use `&`, where a top-level
+// one may not (CSS Nesting 1 §2.1). Per thread, because a parse re-enters
+// itself for every nested rule and nothing else shares it.
+thread_local int nested_style_depth = 0;
+
+} // namespace
+
 std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view text,
                                          std::string & error) {
     const std::string_view trimmed = trim(text, html_whitespace);
@@ -410,7 +420,11 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             flush();
             first = false;
             std::string ignored;
+            const bool in_style = css_rule_store_[owner]->type == style_rule ||
+                                  nested_in_style(css_rule_store_, owner);
+            if (in_style) { ++nested_style_depth; }
             const std::size_t child = parse_one_rule(sheet, span, ignored);
+            if (in_style) { --nested_style_depth; }
             if (child == no_index) { return; }
             css_rule_store_[child]->parent = owner;
             css_rule_store_[owner]->children.push_back(child);
@@ -686,6 +700,32 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             made.verbatim.clear();
         }
         if (made.type == keyframes_rule) {
+            // `<keyframes-name>` = <custom-ident> | <string> (CSS Animations 1
+            // §3): one identifier that is not `none`, `default` or a CSS-wide
+            // keyword, or a non-empty string - `@keyframes 12`, `one two`,
+            // `foo.bar` and `""` are no rule (keyframes-name-invalid).
+            {
+                const style::css::token_stream name = style::css::tokenize(made.prelude);
+                std::vector<const style::css::css_token *> tokens;
+                for (const style::css::css_token & t : name.tokens) {
+                    if (t.type != style::css::token_type::whitespace &&
+                        t.type != style::css::token_type::eof) {
+                        tokens.push_back(&t);
+                    }
+                }
+                const bool ok = tokens.size() == 1 &&
+                                ((tokens[0]->type == style::css::token_type::ident &&
+                                  !ascii_iequals_any(name.text_of(*tokens[0]),
+                                                     {"none", "default", "initial", "inherit",
+                                                      "unset", "revert", "revert-layer"})) ||
+                                 (tokens[0]->type == style::css::token_type::string &&
+                                  !name.value_of(*tokens[0]).empty()));
+                if (!ok) {
+                    css_rule_store_.pop_back();
+                    error = "SyntaxError";
+                    return no_index;
+                }
+            }
             // RECURSIVELY, THROUGH THIS SAME FUNCTION, rather than through the
             // sheet parser: the sheet parser drops a qualified rule with an
             // empty block, and `@media all { * {} }` is nothing but one. The
@@ -855,8 +895,12 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         return no_index;
     }
     const std::vector<style::css::namespace_declaration> namespaces = sheet_namespaces(sheet);
-    const style::css::stylesheet selectors =
-        style::css::parse_selector_text(prelude, *atoms_, bad, &namespaces);
+    // Inside a style rule, against a stand-in parent: the selector may be
+    // relative, which only a nesting context accepts.
+    const std::vector<style::compiled_selector> placeholder(1);
+    const style::css::nesting_context nesting{placeholder, false};
+    const style::css::stylesheet selectors = style::css::parse_selector_text(
+        prelude, *atoms_, bad, &namespaces, nested_style_depth > 0 ? &nesting : nullptr);
     if (bad || selectors.selectors.empty()) {
         css_rule_store_.pop_back();
         error = "SyntaxError";

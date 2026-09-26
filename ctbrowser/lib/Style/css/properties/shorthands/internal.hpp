@@ -27,10 +27,15 @@ enum class shape : std::uint8_t {
     sides,           // 1-4 values: top, right, bottom, left, in `margin`'s way
     pair,            // 1-2 values: start/end, x/y or row/column; one sets both
     background,      // comma-separated layers, with color in the final layer only
+    mask,            // CSS Masking 1 §7.1: comma-separated `<mask-layer>`s
+    position_try,    // `position-try`: `<'position-try-order'>? <'position-try-fallbacks'>`
+    text_spacing,    // `text-spacing`: `none | auto | <'text-spacing-trim'> || <'text-autospace'>`
     border_image,    // source || slice [ / width? [ / outset ]? ] || repeat
     radius,          // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
     place,           // `place-*`: an align value then a justify one, each of several words
     grid_lines,      // grid-row / grid-column / grid-area: `/`-separated grid lines
+    grid_template,   // CSS Grid 2 §7.4: rows / columns, or the areas form (grid.cpp)
+    grid,            // CSS Grid 2 §7.8: a grid-template, or one side auto-flow (grid.cpp)
     slash_pair,      // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
     bar,             // `a || b || c`: each part goes to the longhand that takes it
     columns,         // width/count and optional `/ column-height`; resets column-wrap
@@ -47,6 +52,10 @@ enum class shape : std::uint8_t {
                      // color applied to the axis's two sides (CSS Logical 1 §4.4)
     white_space,     // CSS Text 4 §3: one of six keywords, or `<'white-space-collapse'>
                      // || <'text-wrap-mode'> || <'white-space-trim'>`
+    range,           // `animation-range`: `[ <'animation-range-start'>
+                     // <'animation-range-end'>? ]#`, Scroll-driven Animations 1 §4.2
+    transition,      // `<single-transition>#`, CSS Transitions 2 §3.5: per item a
+                     // property, two times, an easing and a behaviour, in any order
     animation,       // `<single-animation>#`, CSS Animations 1 §5.9: per item, the
                      // first <time> is the duration and the second the delay, an
                      // easing, a count, and the keywords of direction, fill mode
@@ -215,12 +224,21 @@ inline constexpr shorthand_syntax table[] = {
      ""},
     {"text-emphasis", shape::bar, "text-emphasis-style text-emphasis-color", "none"},
     {"text-wrap", shape::bar, "text-wrap-mode text-wrap-style", "wrap"},
+    // CSS Rhythmic Sizing 1 §2.5: size || insert || align || round.
+    {"block-step", shape::bar,
+     "block-step-size block-step-insert block-step-align block-step-round", "none"},
     {"white-space", shape::white_space, "white-space-collapse text-wrap-mode white-space-trim",
      "normal"},
     {"grid-row", shape::grid_lines, "grid-row-start grid-row-end", ""},
     {"grid-column", shape::grid_lines, "grid-column-start grid-column-end", ""},
     {"grid-area", shape::grid_lines,
      "grid-row-start grid-column-start grid-row-end grid-column-end", ""},
+    {"grid-template", shape::grid_template,
+     "grid-template-rows grid-template-columns grid-template-areas", ""},
+    {"grid", shape::grid,
+     "grid-template-rows grid-template-columns grid-template-areas grid-auto-rows "
+     "grid-auto-columns grid-auto-flow",
+     ""},
     {"container", shape::slash_pair, "container-name container-type", ""},
     {"place-content", shape::place, "align-content justify-content", ""},
     {"place-items", shape::place, "align-items justify-items", ""},
@@ -238,6 +256,13 @@ inline constexpr shorthand_syntax table[] = {
      "font-variant-ligatures font-variant-caps font-variant-alternates font-variant-numeric "
      "font-variant-east-asian font-variant-position font-variant-emoji",
      ""},
+    {"text-spacing", shape::text_spacing, "text-spacing-trim text-autospace", "normal"},
+    {"position-try", shape::position_try, "position-try-order position-try-fallbacks", ""},
+    {"mask", shape::mask,
+     "mask-image mask-position mask-size mask-repeat mask-origin mask-clip mask-composite "
+     "mask-mode mask-border-source mask-border-slice mask-border-width mask-border-outset "
+     "mask-border-repeat",
+     ""},
     {"background", shape::background,
      "background-color background-image background-position background-size "
      "background-repeat background-attachment background-origin background-clip",
@@ -247,8 +272,11 @@ inline constexpr shorthand_syntax table[] = {
      "text-decoration-line text-decoration-thickness text-decoration-style "
      "text-decoration-color",
      "none"},
-    {"transition", shape::whole,
-     "transition-property transition-duration transition-timing-function transition-delay", ""},
+    {"animation-range", shape::range, "animation-range-start animation-range-end", ""},
+    {"transition", shape::transition,
+     "transition-property transition-duration transition-timing-function transition-delay "
+     "transition-behavior",
+     "all"},
     {"animation", shape::animation,
      "animation-duration animation-timing-function animation-delay animation-iteration-count "
      "animation-direction animation-fill-mode animation-play-state animation-name "
@@ -358,6 +386,14 @@ inline constexpr std::array<std::pair<std::string_view, std::string_view>, 8> an
 
 split split_animation(std::string_view value, std::vector<std::string> & out);
 
+split split_transition(std::string_view value, std::vector<std::string> & out);
+
+split split_range(std::string_view value, std::vector<std::string> & out);
+
+[[nodiscard]] std::string fold_range(std::span<const std::string> v);
+
+[[nodiscard]] std::string fold_transition(std::span<const std::string> v);
+
 split split_slash_pair(const expansion & e, std::string_view value, std::vector<std::string> & out);
 
 split split_value(const expansion & e, std::string_view text, std::vector<std::string> & out);
@@ -400,10 +436,18 @@ bool split_border_image(std::string_view value, std::vector<std::string> & out);
 
 bool split_background(std::string_view value, std::vector<std::string> & out);
 
+bool split_mask(std::string_view value, std::vector<std::string> & out);
+
+split split_position_try(std::string_view value, std::vector<std::string> & out);
+
+split split_text_spacing(std::string_view value, std::vector<std::string> & out);
+
 [[nodiscard]] std::string fold_radius(std::span<const std::string> values);
 
 [[nodiscard]] std::string fold_border_image(std::span<const std::string> v);
 
 [[nodiscard]] std::string fold_background(std::span<const std::string> v);
+
+[[nodiscard]] std::string fold_mask(std::span<const std::string> v);
 
 } // namespace ctbrowser::style::css::shorthand_detail

@@ -178,6 +178,21 @@ script::object_object * dom_bindings::cssom_internals(context & cx) {
     // needs no line in a file this rung does not own. A page cannot delete it
     // either, the property being non-configurable.
     doc->define(internals_key, cssom_internals_, script::attr_none);
+    // A FRAME'S CSSOM IS ITS OWN, made the first time anything asks for it -
+    // its `<style>`'s sheet, most often. A frame is built with install_document
+    // alone (frames.cpp), and every CSSOM method captures the bindings that
+    // installed it: a frame's sheet under the PAGE's CSSStyleSheet.prototype
+    // would read the page's record store at the frame's index. So the frame
+    // installs the interfaces over its own records, in its own realm - which
+    // also makes `sheet.rules[0].constructor` the frame's CSSStyleRule, as
+    // insertRule-across-context asserts. ponytail: lazily, because nothing of
+    // this directory runs when a frame is made; until a frame's CSSOM is first
+    // touched its `CSSStyleSheet` is still the page's, and `document.styleSheets`
+    // is absent. An install_style_sheets call in install_frame_realm is the fix.
+    if (realm_ != nullptr && primary_ != nullptr) {
+        const auto in_frame = enter_realm(cx);
+        install_style_sheets(cx);
+    }
     return as_object(cssom_internals_);
 }
 

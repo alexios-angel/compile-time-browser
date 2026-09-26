@@ -169,6 +169,37 @@ private:
         return !out.empty();
     }
 
+    // A view transition pseudo-element's argument (CSS View Transitions 2
+    // §3.2): `*` or a <custom-ident> - not a CSS-wide keyword, not `default` -
+    // then `.class`es, or the classes alone, with nothing between the parts:
+    // `(*.*)`, `(*. cls)`, `(foo bar)` and `(default)` are no selectors.
+    [[nodiscard]] bool view_transition_argument(const component_value & fn) const {
+        std::vector<const component_value *> parts;
+        for (const component_value & v : sheet_->children_of(fn)) { parts.push_back(&v); }
+        const auto space = [&](const component_value * v) {
+            return v->kind == cv_kind::token && token(*v).type == token_type::whitespace;
+        };
+        while (!parts.empty() && space(parts.front())) { parts.erase(parts.begin()); }
+        while (!parts.empty() && space(parts.back())) { parts.pop_back(); }
+        const auto ident = [&](std::size_t k) {
+            return k < parts.size() && parts[k]->kind == cv_kind::token &&
+                   token(*parts[k]).type == token_type::ident &&
+                   !ascii_iequals_any(text(*parts[k]), {"default", "initial", "inherit", "unset",
+                                                        "revert", "revert-layer"});
+        };
+        const auto delim = [&](std::size_t k, std::string_view d) {
+            return k < parts.size() && parts[k]->kind == cv_kind::token &&
+                   token(*parts[k]).type == token_type::delim && text(*parts[k]) == d;
+        };
+        std::size_t k = 0;
+        if (delim(0, "*") || ident(0)) { k = 1; }
+        while (k < parts.size()) {
+            if (!delim(k, ".") || !ident(k + 1)) { return false; }
+            k += 2;
+        }
+        return k > 0;
+    }
+
     [[nodiscard]] bool parse_functional(std::string_view name, const component_value & fn,
                                         building & into, bool & invalid) {
         pseudo_ref ref;
@@ -465,6 +496,9 @@ private:
         // combinator may follow it at all. `::before.a`, `::before div` and
         // `::view-transition:hover` are syntax errors.
         bool after_pe = false;
+        // ...and which one, lowercased: what may follow a pseudo-element
+        // depends on it (CSS Pseudo 4 §4.1-§4.3).
+        std::string last_pe;
         bool view_transition_pe = false;
         // ...BUT A ::part() takes any pseudo-class that is not about the tree
         // (CSS Shadow Parts 1 §4.2): `::part(x):state(y)`, `::part(x):disabled`
@@ -477,6 +511,7 @@ private:
         const auto start_compound = [&] {
             if (!compounds.empty() && after_pe) { dead = invalid_ = true; }
             after_pe = false;
+            last_pe.clear();
             view_transition_pe = false;
             part_pe = false;
             button_pe = false;
@@ -618,8 +653,14 @@ private:
                 if (!compounds.empty()) { want_new_compound = true; }
                 continue;
             case token_type::ident: {
-                if (want_new_compound || compounds.empty()) { start_compound(); }
-                if (after_pe) {
+                // A TYPE SELECTOR OPENS ITS COMPOUND or is not one: Selectors 4
+                // §4's <compound-selector> is `<type-selector>? <subclass-
+                // selector>* ...`, so `[foo='bar']i`, `.a*` and `&div` are
+                // syntax errors (attribute-case/syntax.html, CSS Nesting 1 §2)
+                // rather than a tag added to what came before.
+                const bool opens = want_new_compound || compounds.empty();
+                if (opens) { start_compound(); }
+                if (after_pe || !opens) {
                     dead = invalid_ = true;
                     continue;
                 }
@@ -630,13 +671,6 @@ private:
                     if (!read_namespaced(b, ns_prefix::named, prefix, i)) {
                         dead = invalid_ = true;
                     }
-                    continue;
-                }
-                if (b.part.tag || b.tags != 0) {
-                    // Two type selectors in one compound - `divp` cannot happen
-                    // from the tokenizer, so this means something upstream is
-                    // wrong rather than that the author wrote something odd.
-                    dead = invalid_ = true;
                     continue;
                 }
                 // Tags fold to lowercase: HTML tag names are ASCII
@@ -701,8 +735,9 @@ private:
                     continue;
                 }
                 if (d == "*") {
-                    if (want_new_compound || compounds.empty()) { start_compound(); }
-                    if (after_pe) {
+                    const bool opens = want_new_compound || compounds.empty();
+                    if (opens) { start_compound(); }
+                    if (after_pe || !opens) {
                         dead = invalid_ = true;
                         continue;
                     }
@@ -737,8 +772,9 @@ private:
                 // element in no namespace at all. The two prefixed forms were read
                 // from their prefix and never reach here.
                 if (d == "|") {
-                    if (want_new_compound || compounds.empty()) { start_compound(); }
-                    if (after_pe) {
+                    const bool opens = want_new_compound || compounds.empty();
+                    if (opens) { start_compound(); }
+                    if (after_pe || !opens) {
                         dead = invalid_ = true;
                         continue;
                     }
@@ -800,18 +836,25 @@ private:
                             continue;
                         }
                         button_pe = ascii_iequals(name, "scroll-button");
+                        if (ascii_istarts_with(name, "view-transition-") &&
+                            !view_transition_argument(next)) {
+                            dead = invalid_ = true;
+                            continue;
+                        }
                         if (ascii_iequals_any(name, functional_pseudo_elements_named) &&
                             single_ident_argument(next, argument)) {
                             b.part.pseudo_element =
                                 atoms_->intern_lower(ascii_lower_copy(name) + "(" + argument + ")");
                             ++b.tags;
                             after_pe = true;
+                            last_pe = ascii_lower_copy(name);
                             view_transition_pe = ascii_istarts_with(name, "view-transition");
                             part_pe = false;
                             if (in_argument_) { dead = invalid_ = true; }
                             continue;
                         }
                         after_pe = true;
+                        last_pe = ascii_lower_copy(name);
                         view_transition_pe = ascii_istarts_with(name, "view-transition");
                         part_pe = ascii_iequals(name, "part");
                         if (in_argument_) { invalid_ = true; }
@@ -843,10 +886,33 @@ private:
                         dead = invalid_ = true;
                         continue;
                     }
+                    // A PSEUDO-ELEMENT AFTER ANOTHER is ::marker of ::before or
+                    // ::after (CSS Pseudo 4 §4.3), or one of an element-backed
+                    // pseudo-element - ::part(), ::slotted(), ::picker() or
+                    // ::details-content; `::before::before`, `::selection::after`
+                    // and `::placeholder::marker` are no selectors.
+                    if (after_pe) {
+                        const bool marker_of = ascii_iequals(name, "marker") &&
+                                               (last_pe == "before" || last_pe == "after");
+                        if (marker_of) {
+                            b.part.pseudo_element = atoms_->intern_lower(last_pe + "::marker");
+                            last_pe = "marker";
+                            dead = true;
+                            continue;
+                        }
+                        if (!ascii_iequals_any(last_pe,
+                                               {"part", "slotted", "picker", "details-content"})) {
+                            dead = invalid_ = true;
+                            continue;
+                        }
+                    }
                     b.part.pseudo_element = atoms_->intern_lower(name);
                     ++b.tags; // a pseudo-element is type-level for specificity
                     after_pe = true;
-                    view_transition_pe = ascii_istarts_with(name, "view-transition");
+                    last_pe = ascii_lower_copy(name);
+                    // ::view-transition itself is the tree's root: `:only-child`
+                    // follows its descendants, not it (pseudo-elements-invalid).
+                    view_transition_pe = ascii_istarts_with(name, "view-transition-");
                     part_pe = ascii_iequals(name, "details-content");
                     button_pe = false;
                     if (in_argument_) { dead = invalid_ = true; }
@@ -857,13 +923,19 @@ private:
                     if (name.starts_with('-')) { dead = true; }
                     continue;
                 }
+                // A HIGHLIGHT PSEUDO-ELEMENT takes no pseudo-class after it at
+                // all (CSS Pseudo 4 §3.6): `::selection:hover` is no selector.
+                const bool highlight_pe =
+                    ascii_iequals_any(last_pe, {"selection", "target-text", "spelling-error",
+                                                "grammar-error", "search-text", "highlight"});
                 if (after_pe &&
-                    !(view_transition_pe ? ascii_iequals(name, "only-child")
-                      : part_pe
-                          ? structural_bit_of(name) == 0
-                          : ascii_iequals_any(name, {"hover", "active", "focus", "focus-visible",
-                                                     "focus-within"}) ||
-                                (button_pe && ascii_iequals_any(name, {"enabled", "disabled"})))) {
+                    (highlight_pe ||
+                     !(view_transition_pe ? ascii_iequals(name, "only-child")
+                       : part_pe ? structural_bit_of(name) == 0
+                                 : ascii_iequals_any(name, {"hover", "active", "focus",
+                                                            "focus-visible", "focus-within"}) ||
+                                       (button_pe &&
+                                        ascii_iequals_any(name, {"enabled", "disabled"}))))) {
                     dead = invalid_ = true;
                     continue;
                 }

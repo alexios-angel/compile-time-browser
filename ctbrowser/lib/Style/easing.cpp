@@ -175,6 +175,11 @@ using namespace easing_detail;
             return *sum;
         }
     }
+    // A filter list accumulates function by function, or is replaced
+    // (Filter Effects 1 §11.3) - it never appends.
+    if ((property == "filter" || property == "backdrop-filter") && op == composite_op::accumulate) {
+        return accumulate_filter(base, added, ctx).value_or(added);
+    }
     if (appends(property)) {
         // The underlying list first, then the keyframe's; `none` on either
         // side is the empty list and contributes nothing.

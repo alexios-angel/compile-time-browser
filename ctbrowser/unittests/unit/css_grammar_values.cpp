@@ -374,6 +374,8 @@ void test_filters() {
     CHECK_EQ(computed_filter("brightness(300%)", ctx), std::string{"brightness(3)"});
     CHECK_EQ(computed_filter("grayscale(calc(3))", ctx), std::string{"grayscale(1)"});
     CHECK_EQ(computed_filter("brightness(calc(-10%))", ctx), std::string{"brightness(0)"});
+    // ...and so does the negative literal the cascade folds a calc() to.
+    CHECK_EQ(computed_filter("sepia(-10%)", ctx), std::string{"sepia(0)"});
     CHECK_EQ(computed_filter("hue-rotate()", ctx), std::string{"hue-rotate(0deg)"});
     CHECK_EQ(computed_filter("drop-shadow(1px 2px)", ctx),
              std::string{"drop-shadow(rgb(0, 255, 0) 1px 2px 0px)"});

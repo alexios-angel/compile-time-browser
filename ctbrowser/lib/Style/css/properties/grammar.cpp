@@ -171,6 +171,17 @@ namespace detail {
             if (!random_item_arguments_ok(ts, i)) { return false; }
             continue;
         }
+        // `attr( <attr-name> <attr-args>? )`, CSS Values 5 §7.5: the name
+        // is not optional, so `attr()` is a syntax error (content-invalid).
+        if (ascii_iequals(fn, "attr")) {
+            std::size_t j = i + 1;
+            while (j < ts.tokens.size() && ts.tokens[j].type == token_type::whitespace) { ++j; }
+            if (j == ts.tokens.size() || ts.tokens[j].type == token_type::close_paren ||
+                ts.tokens[j].type == token_type::eof) {
+                return false;
+            }
+            continue;
+        }
         const bool is_ident = ascii_iequals(fn, "ident");
         // `var()` and `inherit()` both open with exactly one custom property
         // name (CSS Variables 1 §3: `var( <custom-property-name> ,
@@ -588,6 +599,20 @@ namespace detail {
         }
         if (t.type == token_type::function) {
             skip = default_counter_style_in(ts, i);
+            // ...and `symbols()` its `symbolic`, the default type (CSS Counter
+            // Styles 3 §6.1): `symbols(symbolic "a")` is `symbols("a")`.
+            if (ascii_iequals(function_name(ts, t), "symbols")) {
+                std::size_t j = i + 1;
+                while (j < end && ts.tokens[j].type == token_type::whitespace) { ++j; }
+                if (j < end && ts.tokens[j].type == token_type::ident &&
+                    ascii_iequals(ts.text_of(ts.tokens[j]), "symbolic")) {
+                    std::size_t after = j + 1;
+                    while (after < end && ts.tokens[after].type == token_type::whitespace) {
+                        ++after;
+                    }
+                    skip = {i + 1, after};
+                }
+            }
             ++depth;
             if (math_from == 0 && ascii_iequals_any(function_name(ts, t), math_functions)) {
                 math_from = depth;
