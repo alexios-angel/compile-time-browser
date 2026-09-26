@@ -705,10 +705,162 @@ void test_gradients_caps_and_round_corners() {
     check(at(87, 40).alpha() == 0, "by half the width and no further");
 }
 
+// THE REVIEW'S CASES (round 14): what a page can observe of each - an explicit
+// undefined maxWidth, a style object across save()/restore(), createPattern's
+// order of checks, the ImageData brand and DOMMatrix2DInit's conversion.
+void test_argument_conversions() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><canvas id=c width=100 height=60></canvas><script>
+        const ctx = document.getElementById('c').getContext('2d');
+        // fillText(text, x, y, undefined) is fillText(text, x, y).
+        ctx.font = '20px sans-serif';
+        ctx.fillStyle = '#000';
+        ctx.fillText('WW', 5, 25, undefined);
+        let inked = 0;
+        const d = ctx.getImageData(0, 0, 50, 30).data;
+        for (let i = 3; i < d.length; i += 4) { if (d[i] !== 0) { ++inked; } }
+        console.log('fillText=' + (inked > 0));
+        ctx.clearRect(0, 0, 100, 60);
+        ctx.strokeText('WW', 5, 25, undefined);
+        inked = 0;
+        const s = ctx.getImageData(0, 0, 50, 30).data;
+        for (let i = 3; i < s.length; i += 4) { if (s[i] !== 0) { ++inked; } }
+        console.log('strokeText=' + (inked > 0));
+        ctx.clearRect(0, 0, 100, 60);
+        // THE OBJECT the state holds, after a restore() brought it back.
+        const g1 = ctx.createLinearGradient(0, 0, 10, 0);
+        const g2 = ctx.createLinearGradient(0, 0, 20, 0);
+        ctx.fillStyle = g1;
+        ctx.save();
+        ctx.fillStyle = g2;
+        ctx.save();
+        ctx.fillStyle = 'red';
+        ctx.restore();
+        const inner = ctx.fillStyle === g2;
+        ctx.restore();
+        console.log('restored=' + inner + ',' + (ctx.fillStyle === g1) + ',' +
+                    (ctx.fillStyle === ctx.fillStyle));
+        const other = document.createElement('canvas');
+        const p = ctx.createPattern(other, 'repeat');
+        ctx.strokeStyle = p;
+        ctx.save(); ctx.strokeStyle = '#123456'; ctx.restore();
+        console.log('pattern=' + (ctx.strokeStyle === p));
+        ctx.save(); ctx.reset();
+        console.log('reset=' + ctx.fillStyle + ',' + ctx.strokeStyle);
+        // createPattern: an image that is not ready is null BEFORE the
+        // repetition is validated; a ready one with a bad one still throws.
+        console.log('unready=' + ctx.createPattern(new Image(), 'bogus'));
+        let bad = 'no';
+        try { ctx.createPattern(other, 'bogus'); } catch (e) { bad = e.name; }
+        console.log('bogus=' + bad);
+        // putImageData wants an ImageData by its brand: a lookalike with the
+        // right prototype is not one, and replacing the global breaks nothing.
+        const fake = { width: 1, height: 1, data: new Uint8ClampedArray(4) };
+        Object.setPrototypeOf(fake, ImageData.prototype);
+        let forged = 'no';
+        try { ctx.putImageData(fake, 0, 0); } catch (e) { forged = e.name; }
+        console.log('forged=' + forged);
+        const real = ctx.createImageData(1, 1);
+        window.ImageData = function () {};
+        let replaced = 'no';
+        try { ctx.putImageData(real, 0, 0); } catch (e) { replaced = e.name; }
+        console.log('replaced=' + replaced);
+        // DOMMatrix2DInit: members in lexicographic order, validate and fixup
+        // before the canvas ignores what is not finite.
+        const order = [];
+        const init = {};
+        for (const name of ['m42', 'f', 'm11', 'a', 'c', 'm21', 'b', 'm12', 'd', 'm22', 'e', 'm41']) {
+            Object.defineProperty(init, name, { get() { order.push(name); return undefined; } });
+        }
+        ctx.setTransform(init);
+        console.log('order=' + order.join(','));
+        let clash = 'no';
+        try { ctx.setTransform({ a: Infinity, m11: 1 }); } catch (e) { clash = e.name; }
+        console.log('clash=' + clash);
+        ctx.setTransform(2, 0, 0, 2, 0, 0);
+        ctx.setTransform({ a: Infinity });
+        ctx.setTransform({ a: NaN, m11: NaN });
+        console.log('ignored=' + ctx.getTransform().a);
+        ctx.setTransform({ m11: 3, a: 3 });
+        console.log('agree=' + ctx.getTransform().a);
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const std::vector<std::string> expected{"fillText=true",
+                                            "strokeText=true",
+                                            "restored=true,true,true",
+                                            "pattern=true",
+                                            "reset=#000000,#000000",
+                                            "unready=null",
+                                            "bogus=SyntaxError",
+                                            "forged=TypeError",
+                                            "replaced=no",
+                                            "order=a,b,c,d,e,f,m11,m12,m21,m22,m41,m42",
+                                            "clash=TypeError",
+                                            "ignored=2",
+                                            "agree=3"};
+    const auto & log = log_of(page);
+    check(log == expected, "the review's argument conversions behave as the spec says");
+    if (log != expected) {
+        for (const auto & line : log) { std::fprintf(stderr, "canvas: %s\n", line.c_str()); }
+    }
+}
+
+// WORK BOUNDED BY WHAT LANDS: a dash pattern along a line a billion pixels
+// long, a stroke of text two thousand pixels wide and a shadow thrown 1e20
+// pixels each finish at once - and still draw what reaches the canvas.
+void test_bounded_work() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><canvas id=c width=100 height=60></canvas>
+        <canvas id=t width=100 height=60></canvas><canvas id=s width=100 height=60></canvas><script>
+        const ctx = document.getElementById('c').getContext('2d');
+        ctx.strokeStyle = '#0000ff';
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath(); ctx.moveTo(0, 5.5); ctx.lineTo(1e9, 5.5); ctx.stroke();
+        // The phase far along the line is arithmetic, not walked: the dash
+        // [100000, 100002) is on and [100002, 100004) off.
+        console.log('hit=' + ctx.isPointInStroke(100001, 5.5) + ',' +
+                    ctx.isPointInStroke(100003, 5.5));
+        const text = document.getElementById('t').getContext('2d');
+        text.lineWidth = 2000;
+        text.font = '10px sans-serif';
+        text.strokeStyle = '#00ff00';
+        text.strokeText('W', 10, 58);
+        const shade = document.getElementById('s').getContext('2d');
+        shade.shadowColor = '#ff0000';
+        shade.shadowOffsetX = 1e20;
+        shade.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        shade.fillRect(40, 20, 10, 10);
+        shade.shadowOffsetX = 30;
+        shade.fillRect(-25, 40, 10, 10);   // off the canvas, its shadow on it
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const std::vector<std::string> expected{"hit=true,false"};
+    check(log_of(page) == expected, "isPointInStroke finds the dash phase far along a line");
+    const auto dashes = page.canvases().pixels_of(find_id(page, "c"));
+    const auto text = page.canvases().pixels_of(find_id(page, "t"));
+    const auto shade = page.canvases().pixels_of(find_id(page, "s"));
+    check(dashes != nullptr && text != nullptr && shade != nullptr, "the canvases have pixels");
+    if (dashes == nullptr || text == nullptr || shade == nullptr) { return; }
+    const auto at = [](const auto & pixels, int x, int y) { return color{pixels->at(x, y)}; };
+    check(at(dashes, 0, 5) == color::rgba(0, 0, 255) && at(dashes, 1, 5) == color::rgba(0, 0, 255),
+          "the first dash of a billion-pixel line is drawn");
+    check(at(dashes, 2, 5).alpha() == 0 && at(dashes, 3, 5).alpha() == 0, "and the gap after it");
+    check(at(dashes, 98, 5).alpha() == 0 && at(dashes, 97, 5) == color::rgba(0, 0, 255),
+          "and the pattern holds to the edge");
+    check(at(text, 60, 50) == color::rgba(0, 255, 0), "a 2000-wide stroke of text still paints");
+    check(at(shade, 45, 25).alpha() != 0 && at(shade, 45, 25).red() == 0,
+          "a shadow thrown off the canvas is not drawn under its shape");
+    check(at(shade, 75, 25).alpha() == 0, "nor anywhere else");
+    check(at(shade, 8, 45).red() > 200 && at(shade, 8, 45).alpha() != 0,
+          "an off-canvas shape's shadow lands");
+}
+
 } // namespace
 
 int main() {
     test_attributes_paints_and_verbs();
+    test_argument_conversions();
+    test_bounded_work();
     test_gradients_caps_and_round_corners();
     test_canvas_as_image_source();
     test_clip();
