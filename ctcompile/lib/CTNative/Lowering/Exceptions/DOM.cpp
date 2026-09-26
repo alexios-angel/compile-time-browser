@@ -514,6 +514,15 @@ struct DOMAttributeProof {
         auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
         return method && ctjs::constantKey(method.getKey()) == "hasAttribute";
     }
+    bool numberStringMethod(ctjs::GetPropertyOp method) {
+        return method && ctjs::constantKey(method.getKey()) == "toString" &&
+               numberValue(method.getObject());
+    }
+    bool numberStringCall(ctjs::CallOp call) {
+        if (!call || !call.getArgs().empty()) { return false; }
+        auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        return numberStringMethod(method) && call.getReceiver() == method.getObject();
+    }
     bool attributeCall(ctjs::CallOp call) {
         if (!call) { return false; }
         auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -524,9 +533,8 @@ struct DOMAttributeProof {
         auto name = key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
         if (!name) { return false; }
         if (!writes) { return true; }
-        auto value = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-        if ((!value || !llvm::isa<ctjs::StringAttr>(value.getValue())) &&
-            !booleanValue(call.getArgs()[1]) && !numberValue(call.getArgs()[1])) {
+        if (!stringValue(call.getArgs()[1]) && !booleanValue(call.getArgs()[1]) &&
+            !numberValue(call.getArgs()[1])) {
             return false;
         }
         if (name.getValue().size() > remaining) { return false; }
@@ -540,7 +548,7 @@ struct DOMAttributeProof {
         // Unlike result-tag evidence, suppressing an exception requires an
         // input that cannot invoke ToPrimitive or throw during Number conversion.
         // The initial global binding is checked by the complete final DOM proof.
-        return attributeCall(call) ||
+        return attributeCall(call) || numberStringCall(call) ||
                (numberCallee(call) &&
                 (stringValue(call.getArgs().front()) || booleanValue(call.getArgs().front()) ||
                  numberValue(call.getArgs().front())));
@@ -549,7 +557,8 @@ struct DOMAttributeProof {
         // Called only after the independent nonthrowing proof succeeds.
         if (attributeRead(call)) { booleanReads.insert(result); }
         auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-        if (method && ctjs::constantKey(method.getKey()) == "getAttribute") {
+        if (method && (ctjs::constantKey(method.getKey()) == "getAttribute" ||
+                       ctjs::constantKey(method.getKey()) == "toString")) {
             stringReads.insert(result);
         }
         if (numberCallee(call)) { numberReads.insert(result); }
@@ -694,13 +703,13 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 continue; // Kept in order; the final proof requires the initial intrinsic.
             }
             // The original entry contract fixes this Element and its initial
-            // method identity. Literal Strings and proved Booleans/Numbers cannot invoke
+            // method identity. Proved Strings/null/Booleans/Numbers cannot invoke
             // user coercion; valid-name writes cannot throw or reenter. Keep
             // every mutation in order and reprove the complete DOM body below.
             // ponytail: entry parameters and identical branch forwarding only;
             // other aliases need their own source identity proof.
             if (auto method = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
-                attributes.attributeMethod(method)) {
+                attributes.attributeMethod(method) || attributes.numberStringMethod(method)) {
                 continue;
             }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation);

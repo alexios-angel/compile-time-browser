@@ -4584,7 +4584,116 @@ static void testNumberNumberInputs(mlir::MLIRContext & context) {
     }
 }
 
+static void testProtectedNumberStrings(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 19; ++control) {
+            std::string source = R"js(function guarded(anchor) {
+                try {
+                    const saved = Number(anchor.getAttribute('data-number')).toString();
+                    anchor.setAttribute('data-written', saved);
+                    return true;
+                } catch (error) { return error === anchor; }
+            })js";
+            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
+                source.replace(source.find(from.str()), from.size(), to.str());
+            };
+            if (control == 1 || control == 2) {
+                replace("anchor.setAttribute('data-written', saved);",
+                        "anchor.setAttribute('data-number', '99'); "
+                        "anchor.setAttribute('data-written', saved);");
+            }
+            if (control == 2) {
+                replace("Number(anchor.getAttribute('data-number')).toString()",
+                        "anchor.getAttribute('data-number')");
+            }
+            if (control == 3) {
+                replace("Number(anchor.getAttribute('data-number'))",
+                        "(1 / Number(anchor.getAttribute('data-number')))");
+            }
+            if (control == 4) { replace("return true;", "throw anchor;"); }
+            if (control == 5) { replace(".toString()", ".toString(16)"); }
+            if (control == 6) { replace(".toString()", ".toString(anchor)"); }
+            if (control == 7) { replace("anchor.getAttribute('data-number')", "anchor"); }
+            if (control == 8) { replace("try {", "Number = anchor; try {"); }
+            if (control == 9) { replace("try {", "Number.prototype.toString = anchor; try {"); }
+            if (control == 10) { replace("const saved =", "unknown(); const saved ="); }
+            if (control == 11) { replace("data-written", "bad name"); }
+            if (control == 12) { replace("data-written', saved", "data-written', null"); }
+            auto candidate = import(context, source, true);
+            if (!candidate) { continue; }
+            auto function = guarded(*candidate);
+            llvm::SmallVector<ctjs::CallOp> calls;
+            function.walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            if (!check(calls.size() >= 3, "Number String source retains its original calls")) {
+                continue;
+            }
+            auto anchor = function.getBody().front().getArgument(ctjs::implicit_arguments);
+            if (control == 13) { calls[2].getReceiverMutable().assign(anchor); }
+            if (control == 14) { calls[2].getCalleeMutable().assign(calls[1].getCallee()); }
+            mlir::Builder builder(&context);
+            for (auto call : calls) {
+                call->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+            }
+            HostContract request;
+            request.provider = provider;
+            request.entry = function.getSymName().str();
+            request.elementParameters = {0};
+            if (control != 15) { request.initialIntrinsics = {"Number"}; }
+            request.moduleSha256 = hostContractFingerprint(*candidate);
+            if (control == 16) { request.moduleSha256 = "stale"; }
+            const auto originalContract = request;
+            const auto original = printed(*candidate);
+            auto error = prepareDOMEntry(*candidate, request,
+                                         control == 17   ? 0
+                                         : control == 18 ? 500
+                                                         : 100000);
+            if (control >= 5) {
+                check(static_cast<bool>(error) && printed(*candidate) == original &&
+                          request.moduleSha256 == originalContract.moduleSha256 &&
+                          request.initialIntrinsics == originalContract.initialIntrinsics &&
+                          request.elementParameters == originalContract.elementParameters &&
+                          request.provider == originalContract.provider &&
+                          request.entry == originalContract.entry,
+                      "Number String refusal preserves source and contract despite forged proof");
+                if (error) { llvm::consumeError(std::move(error)); }
+                continue;
+            }
+            if (!check(!error, "protected Number method and saved String complete")) {
+                llvm::errs() << "Number String control " << control << ": "
+                             << llvm::toString(std::move(error)) << '\n';
+                continue;
+            }
+            DOMEntryAnalysis proof(*candidate, request);
+            check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                  "Number String completion requires fresh complete DOM proof");
+            calls.clear();
+            guarded(*candidate).walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            if (!check(calls.size() == (control == 1   ? 5u
+                                        : control == 2 ? 3u
+                                                       : 4u),
+                       "Number String conversion and DOM writes occur exactly once")) {
+                continue;
+            }
+            bool ordered = true;
+            for (unsigned index = 1; index < calls.size(); ++index) {
+                ordered &= calls[index - 1]->getBlock() == calls[index]->getBlock() &&
+                           calls[index - 1]->isBeforeInBlock(calls[index]);
+            }
+            const unsigned saved = control == 2 ? 0 : 2;
+            const auto * savedProof = proof.call(calls[saved]);
+            check(ordered && savedProof &&
+                      savedProof->kind == (control == 2 ? HostDOMMethod::getAttribute
+                                                        : HostDOMMethod::numberToString) &&
+                      calls.back().getArgs()[1] == calls[saved].getResult(),
+                  "writes consume the saved String/null result after intervening mutations");
+        }
+    }
+}
+
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    testProtectedNumberStrings(context);
     testNumberNumberInputs(context);
     testBooleanNumberInputs(context);
     testConditionalNumberCallee(context);
@@ -4777,7 +4886,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
         if (control >= 3 && control != 5 && control != 7 && control != 8 && control != 9 &&
             !(control >= 12 && control <= 15) && !(control >= 20 && control <= 23) &&
             control != 28 && !(control >= 33 && control <= 35) &&
-            !(control >= 40 && control <= 42) && control != 44 && control != 50) {
+            !(control >= 40 && control <= 42) && control != 44 && control != 45 && control != 50) {
             check(static_cast<bool>(error), "confined catch needs complete effects and lifetime");
             llvm::consumeError(std::move(error));
             check(printed(*candidate) == original && request.moduleSha256 == fingerprint,
