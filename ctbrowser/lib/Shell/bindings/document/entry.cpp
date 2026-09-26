@@ -140,6 +140,16 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     mark(event_target_prototype_);
     mark(abort_signal_prototype_);
     mark(media_query_list_prototype_);
+    // EVERY ANIMATION'S OBJECTS, here and not only in the `retained` list of
+    // an `Animation` interface (sync_animation_roots): a frame document's CSS
+    // animations are made by a style flush whether or not its bindings have
+    // that interface, and their `finished` promises were reachable from
+    // nothing (ASan, 2026-09-26: freed, then read by cancel_record).
+    for (const animation_record & a : animations_) {
+        mark(a.self);
+        mark(a.finished);
+    }
+    for (const keyframe_effect_record & e : effects_) { mark(e.self); }
     for (const value & range : live_ranges_) { mark(range); }
     for (const value & list : pending_media_changes_) { mark(list); }
     for (const value & promise : rejections_to_notify_) { mark(promise); }
