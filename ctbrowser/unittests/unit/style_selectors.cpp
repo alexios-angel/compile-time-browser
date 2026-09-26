@@ -466,6 +466,17 @@ void test_selector_grammar_edges() {
         CHECK(f.value_of(f.find_id("a"), "height").empty());
         expect_value(f, f.find_id("a"), "border-width", "1px", "::before:hover is valid");
     }
+    {
+        // A type selector opens its compound: `[x]p`, `#a*` and `.c|p` are
+        // syntax errors, not a tag added after the fact.
+        fixture f;
+        f.load("<p id=a x class=c></p>", "[x]p, #a { color: #010101 } #a*, #a { width: 1px }"
+                                         ".c|p, #a { height: 1px } p[x], #a { border-width: 1px }");
+        CHECK(f.value_of(f.find_id("a"), "color").empty());
+        CHECK(f.value_of(f.find_id("a"), "width").empty());
+        CHECK(f.value_of(f.find_id("a"), "height").empty());
+        expect_value(f, f.find_id("a"), "border-width", "1px", "p[x] is valid");
+    }
 }
 
 } // namespace

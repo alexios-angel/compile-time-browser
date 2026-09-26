@@ -618,8 +618,14 @@ private:
                 if (!compounds.empty()) { want_new_compound = true; }
                 continue;
             case token_type::ident: {
-                if (want_new_compound || compounds.empty()) { start_compound(); }
-                if (after_pe) {
+                // A TYPE SELECTOR OPENS ITS COMPOUND or is not one: Selectors 4
+                // §4's <compound-selector> is `<type-selector>? <subclass-
+                // selector>* ...`, so `[foo='bar']i`, `.a*` and `&div` are
+                // syntax errors (attribute-case/syntax.html, CSS Nesting 1 §2)
+                // rather than a tag added to what came before.
+                const bool opens = want_new_compound || compounds.empty();
+                if (opens) { start_compound(); }
+                if (after_pe || !opens) {
                     dead = invalid_ = true;
                     continue;
                 }
@@ -630,13 +636,6 @@ private:
                     if (!read_namespaced(b, ns_prefix::named, prefix, i)) {
                         dead = invalid_ = true;
                     }
-                    continue;
-                }
-                if (b.part.tag || b.tags != 0) {
-                    // Two type selectors in one compound - `divp` cannot happen
-                    // from the tokenizer, so this means something upstream is
-                    // wrong rather than that the author wrote something odd.
-                    dead = invalid_ = true;
                     continue;
                 }
                 // Tags fold to lowercase: HTML tag names are ASCII
@@ -701,8 +700,9 @@ private:
                     continue;
                 }
                 if (d == "*") {
-                    if (want_new_compound || compounds.empty()) { start_compound(); }
-                    if (after_pe) {
+                    const bool opens = want_new_compound || compounds.empty();
+                    if (opens) { start_compound(); }
+                    if (after_pe || !opens) {
                         dead = invalid_ = true;
                         continue;
                     }
@@ -737,8 +737,9 @@ private:
                 // element in no namespace at all. The two prefixed forms were read
                 // from their prefix and never reach here.
                 if (d == "|") {
-                    if (want_new_compound || compounds.empty()) { start_compound(); }
-                    if (after_pe) {
+                    const bool opens = want_new_compound || compounds.empty();
+                    if (opens) { start_compound(); }
+                    if (after_pe || !opens) {
                         dead = invalid_ = true;
                         continue;
                     }
