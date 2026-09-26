@@ -115,10 +115,14 @@ bool browser::follow_link(node_id target) {
     {
         const auto txn = doc_->read();
         const atom anchor = atoms_.intern_lower("a");
+        const atom area = atoms_.intern_lower("area");
         const atom attribute = atoms_.intern("href");
         const atom download_attribute = atoms_.intern("download");
+        // An <area> is a hyperlink as an <a> is (HTML 4.6.1): an image map's
+        // region follows its own href.
         for (node_id at = target; at; at = txn.parent(at)) {
-            if (txn.tag(at).value_or(atom{}) != anchor) { continue; }
+            const atom tag = txn.tag(at).value_or(atom{});
+            if (tag != anchor && tag != area) { continue; }
             href = txn.attribute_value(at, attribute);
             has_download = txn.has_attribute(at, download_attribute);
             download = txn.attribute_value(at, download_attribute);
