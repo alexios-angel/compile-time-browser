@@ -239,6 +239,13 @@ void test_legacy_statics() {
                   "catch (e) { return e.name; }",
                   "TypeError");
     expect_result("return /a/.compile('b').source;", "b");
+    // Annex B (B.1.2): `\0` with octal digits is a legacy octal escape, and a
+    // class escape at the far end of a dash is no range.
+    expect_result("return [/\\07/.test('\\x07'), /\\0111/.exec('\\x091')[0].length,"
+                  " /[%-\\d]+/.exec('&%0123456789-&')[0], /[--\\d]+/.exec('.-01-.')[0]].join();",
+                  "true,2,%0123456789-,-01-");
+    expect_result("try { new RegExp('[%-\\\\d]', 'u'); return 'no'; } catch (e) { return e.name; }",
+                  "SyntaxError");
 }
 
 } // namespace

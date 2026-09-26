@@ -10,6 +10,8 @@
 
 #include "internal.hpp"
 
+#include "../collections/iterator_internal.hpp"
+
 namespace ctbrowser::script::builtins_detail {
 
 using detail::key_filter;
@@ -830,15 +832,15 @@ void install_object(context & cx) {
         const value next = c.lookup_property(iterator, "next");
         if (c.throw_pending()) { return value::undefined(); }
         // IteratorClose (7.4.11) with a THROW completion: `return` is called
-        // and whatever it does is dropped for the throw already in hand.
-        // FENCED, because a getter's or a toString's throw is parked by then
-        // and context::call runs nothing while one is.
+        // and whatever it does is dropped for the throw already in hand. The
+        // parked throw is TAKEN first and put back after: a call made while
+        // one is parked unwound it into its own fence, and the entry getter's
+        // or toString's throw was lost - fromEntries returned normally.
         const auto close = [&] {
-            const value ret = c.lookup_property(iterator, "return");
-            if (!ret.is_callable()) { return; }
-            bool threw = false;
-            value ignored = value::undefined();
-            (void)c.call_fenced(ret, std::span<const value>{}, iterator, threw, ignored);
+            const bool parked = c.throw_pending();
+            const value thrown = parked ? c.take_pending_throw() : value::undefined();
+            detail::iterator_close_quietly(c, iterator);
+            if (parked) { c.throw_value(thrown); }
         };
         for (;;) {
             bool done = false;

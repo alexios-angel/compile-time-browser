@@ -336,6 +336,17 @@ void compiler_impl::compile_call_target(const vp::node & n, std::uint16_t target
         const std::string name = super_method ? std::string{callee.text} : "constructor";
         proto().emit(instruction{op::get_prop, target, target, name_operand(name)});
         proto().emit(instruction{op::load_this, self});
+    } else if (callee.kind == vp::nk::index && callee.a >= 0 &&
+               at(callee.a).kind == vp::nk::super_lit) {
+        // `super[k]()` (13.3.7.1, 13.3.6.1): the key, then the method off the
+        // home object's prototype, called with `this`. It was a refusal of
+        // the whole script - compile_expr has no value for `super` alone.
+        const std::uint32_t mark = reg_mark();
+        const std::uint16_t key = alloc_reg();
+        compile_expr(callee.b, key);
+        emit_super_get(key, target);
+        release_to(mark);
+        proto().emit(instruction{op::load_this, self});
     } else if (callee.kind == vp::nk::ident && emit_with_object(callee.text, self)) {
         // `f()` inside a `with`: the object that binds f is the receiver,
         // and undefined when none does - which is what a plain call passes.
@@ -438,22 +449,43 @@ bool compiler_impl::compile_param_eval(const vp::node & n, std::uint16_t dst) {
 // the call hands them over by name to direct_eval_name, which compiles the
 // source with those names as its entry function's upvalues:
 //
-//   (eval, source, callee, this, descriptor, cells...)
+//   (eval, source, callee, this, descriptor, new.target, cells...)
 //
 // `eval` is the binding's current value - the call is only direct if it is
 // %eval% (step 6 of 13.3.6.1), which the native checks - `callee` the running
 // closure, whose upvalues carry the enclosing functions' bindings, and the
-// descriptor names each binding: "L name" a cell argument, "V name" a value
-// argument (a local nothing boxed), "U index name" the callee's upvalue.
-// The shape changes only in functions that contain `eval(`, which no native
-// pipeline compiles anyway.
-bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
-    // AT A PROGRAM'S TOP LEVEL only inside a direct eval's program, whose
-    // caller's bindings a nested `eval` sees too.
-    if (!is_direct_eval_call(n) || (frames_.size() < 2 && eval_outer_names_.empty()) ||
-        !with_scopes_.empty()) {
-        return false;
+// descriptor says where the eval is on its first line ("strict" or "sloppy",
+// then the eval_site words) and names each binding on one of its own: "L
+// name" a cell argument, "V name" a value argument (a local nothing boxed),
+// "U index name" the callee's upvalue - each followed by " strict" or
+// " sloppy" when the binding is immutable (see immutability), and an L or V
+// by " lexical" when it is a `let`, `const` or `class` - and "P #x key" a
+// private name in scope. The shape changes only in functions that contain
+// `eval(`, which no native pipeline compiles anyway.
+eval_site compiler_impl::eval_site_here() {
+    std::size_t level = frames_.size() - 1;
+    while (level > 0 && out_.functions[frames_[level].proto].is_arrow) { --level; }
+    // The program's own top level: a script's is in no function, and an
+    // eval's is wherever that eval was.
+    eval_site site = level == 0 ? eval_site_ : eval_site{};
+    site.strict = fn().is_strict;
+    if (level > 0) {
+        const frame & f = frames_[level];
+        site.in_function = true;
+        site.in_method = f.has_home;
+        site.in_class_field_initializer = f.field_initializer;
+        // ponytail: `super()` in a direct eval stays refused (in_derived_
+        // constructor false): the eval's frame has neither the constructor's
+        // new.target nor its derived flag to hand the call. Pass both when a
+        // test262 file needs it (language/eval-code/direct/super-call-*).
     }
+    return site;
+}
+
+bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
+    // AT A PROGRAM'S TOP LEVEL TOO: a block's `let` there is a local of the
+    // script frame, which `{ let x; eval('x') }` reads (lex-env-heritage).
+    if (!is_direct_eval_call(n) || !with_scopes_.empty()) { return false; }
     const std::size_t level = frames_.size() - 1;
     // `eval` that is a local or an upvalue is somebody else's function.
     if (find_local_entry(fn(), "eval") != nullptr || resolve_upvalue(level, "eval") >= 0) {
@@ -462,11 +494,34 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
     const std::span<const std::int32_t> args = kids(n);
     if (any_spread(args)) { return false; }
     const auto usable = eval_reachable;
-    std::string descriptor = fn().is_strict ? "strict" : "sloppy";
+    // The first line: the strictness and where the eval is (eval_site).
+    const eval_site site = eval_site_here();
+    std::string descriptor = site.strict ? "strict" : "sloppy";
+    if (site.in_function) { descriptor += " function"; }
+    if (site.in_method) { descriptor += " method"; }
+    if (site.in_class_field_initializer) { descriptor += " field"; }
+    // "P #x key": a private name in scope, innermost class first, and the key
+    // it compiles to here (member_key).
+    std::vector<std::string_view> privates;
+    for (std::size_t i = private_scopes_.size(); i-- > 0;) {
+        for (const std::string_view name : private_scopes_[i].names) {
+            if (std::ranges::find(privates, name) != privates.end()) { continue; }
+            privates.push_back(name);
+            descriptor += "\nP " + std::string{name} + " " + member_key(name);
+        }
+    }
     std::vector<std::string> seen;
     std::vector<const local *> handed; // this frame's, in descriptor order
     const auto taken = [&](std::string_view name) {
         return std::ranges::find(seen, name) != seen.end();
+    };
+    const auto readonly = [&](std::string_view name) -> std::string_view {
+        switch (binding_immutability(name)) {
+        case immutability::strict: return " strict";
+        case immutability::sloppy: return " sloppy";
+        case immutability::none: break;
+        }
+        return "";
     };
     // Sorted by name, so the descriptor does not depend on the hash map's order.
     std::vector<std::string> own;
@@ -477,6 +532,8 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
     for (const std::string & name : own) {
         const local & l = fn().locals[fn().local_index.find(name)->second.back()];
         descriptor += std::string{"\n"} + (l.boxed ? "L " : "V ") + name;
+        descriptor += readonly(name);
+        if (l.lexical) { descriptor += " lexical"; }
         seen.push_back(name);
         handed.push_back(&l);
     }
@@ -491,6 +548,7 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
             const int up = resolve_upvalue(level, name);
             if (up < 0) { continue; }
             descriptor += "\nU " + std::to_string(up) + " " + name;
+            descriptor += readonly(name);
             seen.push_back(name);
         }
     }
@@ -502,6 +560,7 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
         const int up = resolve_upvalue(level, name);
         if (up < 0) { continue; }
         descriptor += "\nU " + std::to_string(up) + " " + name;
+        descriptor += readonly(name);
         seen.push_back(name);
     }
     const std::uint32_t mark = reg_mark();
@@ -534,11 +593,15 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
     }
     const std::uint16_t names = alloc_reg();
     emit_string(names, descriptor);
+    // The eval's `new.target` is its caller's (GetNewTarget reads the this
+    // environment it shares).
+    const std::uint16_t target = alloc_reg();
+    emit_new_target(target);
     for (const local * l : handed) {
         const std::uint16_t r = alloc_reg();
         proto().emit(instruction{op::move, r, l->reg});
     }
-    proto().emit(instruction{op::call, base, static_cast<std::uint16_t>(5 + handed.size())});
+    proto().emit(instruction{op::call, base, static_cast<std::uint16_t>(6 + handed.size())});
     proto().emit(instruction{op::move, dst, base});
     release_to(mark);
     return true;
@@ -822,7 +885,13 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
                 continue;
             }
             const std::uint16_t fnreg = alloc_reg();
-            compile_expr(prop.b, fnreg);
+            const bool homed = mentions_super(prop.b, true) || contains_direct_eval(prop.b);
+            method_pending_ = homed; // see frame::has_home
+            // An accessor is named for its key, "get id" (15.4.5 step 6).
+            compile_named_expr(prop.b, fnreg,
+                               ((prop.d & 4) != 0 ? "set " : "get ") +
+                                   decode_string_literal(prop.text));
+            method_pending_ = false;
             const std::uint16_t name = name_operand(decode_string_literal(prop.text));
             proto().emit(instruction{(prop.d & 4) != 0 ? op::define_setter : op::define_getter, dst,
                                      name, fnreg});
@@ -832,11 +901,14 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             // reference from the closure back to the literal, and for the
             // 99% of methods that never use it that is a property to store
             // and a cycle the native backend's escape analysis has to refuse.
-            if (mentions_super(prop.b, true)) { emit_define_own(fnreg, "__home", dst, false); }
+            // (A direct eval in it may say `super` too.)
+            if (homed) { emit_define_own(fnreg, "__home", dst, false); }
             release_to(mark);
             continue;
         }
         const std::uint16_t v = alloc_reg();
+        const bool homed =
+            prop.c == 1 && (mentions_super(prop.b, true) || contains_direct_eval(prop.b));
         if (prop.c == 2 && prop.b >= 0) {
             // `{ a = 1 }` outside a pattern: the early-error pass refuses it
             // (13.2.5.1), so this is unreachable from a checked program.
@@ -844,21 +916,45 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             release_to(mark);
             return;
         }
+        // A COMPUTED KEY NAMES THE FUNCTION IT HOLDS too (13.2.5.5, 15.4.4
+        // DefineMethod): known now for a literal key, and otherwise only once
+        // the key is evaluated - which then comes first, made a key once
+        // (13.2.5.5 steps 1-2, before the value), and names the value at run
+        // time. Only a computed key holding a function changes shape.
+        const std::optional<std::string> literal_key =
+            (prop.d & 1) != 0 && prop.a >= 0 ? literal_key_name(prop.a) : std::nullopt;
+        const bool named_at_run_time = (prop.d & 1) != 0 && prop.a >= 0 && !literal_key &&
+                                       (prop.c == 1 || is_anonymous_function_definition(prop.b));
+        if (named_at_run_time) {
+            const std::uint16_t key = alloc_reg();
+            compile_expr(prop.a, key);
+            emit_iterator_native(to_property_key_name, key, key);
+            method_pending_ = homed;
+            compile_expr(prop.b, v);
+            method_pending_ = false;
+            if (homed) { emit_define_own(v, "__home", dst, false); }
+            emit_set_function_name(v, key);
+            proto().emit(instruction{op::set_index, dst, key, v});
+            release_to(mark);
+            continue;
+        }
+        method_pending_ = homed;
         if (prop.b < 0) {
             compile_ident(prop, v); // shorthand { x }
         } else if ((prop.d & 1) == 0 && prop.text != "__proto__") {
             // `{ f: function () {} }` names f (13.2.5.5); `__proto__: ...`
             // is a prototype assignment and names nothing.
             compile_named_expr(prop.b, v, decode_string_literal(prop.text));
+        } else if (literal_key && *literal_key != "__proto__") {
+            compile_named_expr(prop.b, v, *literal_key);
         } else {
             compile_expr(prop.b, v);
         }
+        method_pending_ = false;
         // A METHOD'S HOME OBJECT IS THE LITERAL (15.4.4 step 2): `super.m()`
         // in `{ m() { super.m(); } }` starts at Object.prototype or whatever
         // `__proto__:` set.
-        if (prop.c == 1 && mentions_super(prop.b, true)) {
-            emit_define_own(v, "__home", dst, false);
-        }
+        if (homed) { emit_define_own(v, "__home", dst, false); }
         // A computed key - `{[k]: v}`, and also `{"a": v}` and `{1: v}`,
         // which the parser routes the same way so quotes and escapes get
         // cooked by evaluating the literal.

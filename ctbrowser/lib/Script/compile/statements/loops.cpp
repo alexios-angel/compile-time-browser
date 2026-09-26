@@ -45,10 +45,33 @@ void compiler_impl::compile_break(const vp::node & n) {
     }
     // Leaving a try block by jumping out of it has to drop its handler, or
     // the catch stays reachable after the loop is gone.
-    for (std::size_t i = handler_depth_; i > loop->handler_depth; --i) {
+    const std::size_t target = static_cast<std::size_t>(loop - loops_.data());
+    for (std::size_t depth = close_crossed_iterators(target + 1);
+         depth > loops_[target].handler_depth; --depth) {
         proto().emit(instruction{op::pop_handler});
     }
-    loop->breaks.push_back(proto().emit(instruction{op::jump}));
+    loops_[target].breaks.push_back(proto().emit(instruction{op::jump}));
+}
+
+// A `break` or `continue` that leaves a for-of for an OUTER loop closes it
+// (14.7.5.7 ForIn/OfBodyEvaluation step 6.l: IteratorClose on the abrupt
+// completion) - its own break does, at patch_breaks, and one aimed further
+// out jumped straight past. Innermost first, each at its own handler depth,
+// so a catch between two loops sees the inner one's close error. Answers the
+// handler depth it popped down to.
+std::size_t compiler_impl::close_crossed_iterators(std::size_t first) {
+    std::size_t depth = handler_depth_;
+    const std::uint32_t mark = reg_mark();
+    for (std::size_t i = loops_.size(); i-- > first;) {
+        if (!loops_[i].iterator_record) { continue; }
+        for (; depth > loops_[i].handler_depth; --depth) {
+            proto().emit(instruction{op::pop_handler});
+        }
+        const std::uint16_t scratch = alloc_reg();
+        emit_iterator_native(iterator_close_name, scratch, *loops_[i].iterator_record, 0);
+        release_to(mark);
+    }
+    return depth;
 }
 
 void compiler_impl::compile_continue(const vp::node & n) {
@@ -60,10 +83,12 @@ void compiler_impl::compile_continue(const vp::node & n) {
     if (route_exit_through_finally(static_cast<std::size_t>(loop - loops_.data()), true)) {
         return;
     }
-    for (std::size_t i = handler_depth_; i > loop->handler_depth; --i) {
+    const std::size_t target = static_cast<std::size_t>(loop - loops_.data());
+    for (std::size_t depth = close_crossed_iterators(target + 1);
+         depth > loops_[target].handler_depth; --depth) {
         proto().emit(instruction{op::pop_handler});
     }
-    loop->continues.push_back(proto().emit(instruction{op::jump}));
+    loops_[target].continues.push_back(proto().emit(instruction{op::jump}));
 }
 
 void compiler_impl::compile_labeled(const vp::node & n) {
@@ -129,6 +154,18 @@ void compiler_impl::compile_do_while(const vp::node & n) {
 }
 
 void compiler_impl::compile_for(const vp::node & n) {
+    // `for (using x = r; ;)` (14.7.4.2): the resources live for the whole
+    // statement and are disposed as it completes, however it completes - one
+    // using region round the loop, where emit_using_add found no stack and
+    // refused the script.
+    if (n.a >= 0 && is_using_decl(at(n.a))) {
+        compile_using_region(at(n.a).text == "await using", [&] { compile_for_loop(n); });
+        return;
+    }
+    compile_for_loop(n);
+}
+
+void compiler_impl::compile_for_loop(const vp::node & n) {
     push_scope();
     const std::vector<std::string> label = take_labels();
     const std::size_t init_mark = fn().scope_marks.back();
@@ -198,6 +235,32 @@ void compiler_impl::compile_for(const vp::node & n) {
     pop_scope();
 }
 
+void compiler_impl::compile_for_head_source(const vp::node & n, std::uint16_t dst) {
+    // d: bit0 const, bit3 let, bit4 using, bit5 await using - the lexical
+    // heads. Only reads in this frame are decided (compile_ident); a closure
+    // made here that reads the name later is the runtime check this engine
+    // does not make.
+    if ((n.d & 2) != 0 || (n.d & 57) == 0) {
+        compile_expr(n.b, dst);
+        return;
+    }
+    std::vector<std::string> saved = tdz_names_;
+    const std::size_t saved_frame = tdz_frame_;
+    if (tdz_frame_ != frames_.size() - 1) {
+        tdz_names_.clear();
+        tdz_frame_ = frames_.size() - 1;
+    }
+    const vp::node & target = at(n.a);
+    if (target.b >= 0) {
+        pattern_names(target.b, tdz_names_);
+    } else {
+        tdz_names_.emplace_back(target.text);
+    }
+    compile_expr(n.b, dst);
+    tdz_names_ = std::move(saved);
+    tdz_frame_ = saved_frame;
+}
+
 // `for await (x of y)`, 14.7.5.6 with iteratorKind async. Unlike the sync
 // loop below, which MATERIALISES its source through op::iterable, this one
 // runs the real protocol: GetIterator(async) through the builtin's hidden
@@ -223,7 +286,7 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     proto().emit(instruction::with_bx(op::get_global, iterator,
                                       intern_name(std::string{async_iterator_name})));
     const std::uint16_t source = alloc_reg();
-    compile_expr(n.b, source);
+    compile_for_head_source(n, source);
     proto().emit(instruction{op::call, iterator, 1});
 
     const vp::node & target = at(n.a);
@@ -238,6 +301,9 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     const std::uint16_t item = (declares && !is_shape && !var_global)
                                    ? declare_local(std::string{target.text})
                                    : alloc_reg();
+    // `for (const x of xs)` and the `using` heads bind immutable names.
+    const immutability head_readonly = (n.d & 49) != 0 ? immutability::strict : immutability::none;
+    if (declares && !is_shape && !var_global) { fn().locals.back().readonly = head_readonly; }
 
     const std::size_t top = proto().code.size();
     loops_.push_back(loop_context{label, {}, {}, handler_depth_});
@@ -268,7 +334,7 @@ void compiler_impl::compile_for_await(const vp::node & n) {
             }
             declaring_ = outer_declaring;
         } else if (is_shape) {
-            compile_pattern_binding(target.b, item, declares, true);
+            compile_pattern_binding(target.b, item, declares, true, head_readonly);
         } else if (!declares) {
             emit_write(target.text, item);
         } else if (const local * l = find_local_entry(fn(), target.text);
@@ -323,7 +389,7 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     const std::uint32_t mark = reg_mark();
 
     const std::uint16_t source = alloc_reg();
-    compile_expr(n.b, source);
+    compile_for_head_source(n, source);
     const bool of = n.text != "in";
     // `for (x of ...)` RUNS THE ITERATOR PROTOCOL for a generator or a page's
     // own iterable - one `next()` per iteration, `return()` on `break` - and
@@ -373,6 +439,12 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     const std::uint16_t item = (declares && !is_shape && !var_global)
                                    ? declare_local(std::string{target.text})
                                    : alloc_reg();
+    // `for (const x of xs)` and the `using` heads bind immutable names.
+    const immutability head_readonly = (n.d & 49) != 0 ? immutability::strict : immutability::none;
+    if (declares && !is_shape && !var_global) {
+        fn().locals.back().readonly = head_readonly;
+        fn().locals.back().lexical = (n.d & 57) != 0;
+    }
 
     const std::size_t top = proto().code.size();
     loops_.push_back(loop_context{label, {}, {}, handler_depth_});
@@ -406,7 +478,7 @@ void compiler_impl::compile_for_of(const vp::node & n) {
             }
             declaring_ = outer_declaring;
         } else if (is_shape) {
-            compile_pattern_binding(target.b, item, declares, true);
+            compile_pattern_binding(target.b, item, declares, true, head_readonly);
         } else if (!declares) {
             emit_write(target.text, item);
         } else if (const local * l = find_local_entry(fn(), target.text);

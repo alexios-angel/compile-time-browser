@@ -23,26 +23,28 @@ namespace {
 } // namespace
 
 namespace {
-program compile_source(std::string_view source, script_kind kind, bool completion_value,
-                       std::span<const std::string> outer = {}, bool outer_strict = false);
+// `site` is null for a program an embedder runs, and an eval's otherwise.
+program compile_source(std::string_view source, script_kind kind, const eval_site * site,
+                       std::span<const eval_binding> outer = {});
 } // namespace
 
 program compiler::compile(std::string_view source, script_kind kind) {
-    return compile_source(source, kind, /*completion_value*/ false);
+    return compile_source(source, kind, nullptr);
 }
 
-program compiler::compile_for_eval(std::string_view source) {
-    return compile_source(source, script_kind::classic, /*completion_value*/ true);
+program compiler::compile_for_eval(std::string_view source, const eval_site & site) {
+    return compile_source(source, script_kind::classic, &site);
 }
 
 program compiler::compile_for_direct_eval(std::string_view source,
-                                          std::span<const std::string> outer, bool strict) {
-    return compile_source(source, script_kind::classic, /*completion_value*/ true, outer, strict);
+                                          std::span<const eval_binding> outer,
+                                          const eval_site & site) {
+    return compile_source(source, script_kind::classic, &site, outer);
 }
 
 namespace {
-program compile_source(std::string_view source, script_kind kind, bool completion_value,
-                       std::span<const std::string> outer, bool outer_strict) {
+program compile_source(std::string_view source, script_kind kind, const eval_site * site,
+                       std::span<const eval_binding> outer) {
     const vp::ast tree = vp::parse(source);
     program out;
     out.kind = kind;
@@ -75,7 +77,8 @@ program compile_source(std::string_view source, script_kind kind, bool completio
     // exactly that prefix to decide between phase `parse` and phase `refusal` -
     // a refusal being "the compiler does not implement this", which an early
     // error is emphatically not. See lib/Script/compile/early_errors.hpp.
-    if (const auto early = detail::find_early_error(tree, source, kind == script_kind::module_)) {
+    if (const auto early =
+            detail::find_early_error(tree, source, kind == script_kind::module_, site)) {
         out.ok = false;
         out.error = "parse error: " + early->message;
         if (early->offset != detail::early_error::nowhere) {
@@ -92,9 +95,13 @@ program compile_source(std::string_view source, script_kind kind, bool completio
     // address - so the copy is the wrong thing to subtract against. See
     // compiler_impl::offset_of.
     c.source_view_ = source;
-    c.completion_value_ = completion_value;
-    c.eval_outer_names_.assign(outer.begin(), outer.end());
-    c.eval_outer_strict_ = outer_strict;
+    c.completion_value_ = site != nullptr;
+    for (const eval_binding & binding : outer) {
+        c.eval_outer_names_.push_back(binding.name);
+        c.eval_outer_readonly_.push_back(binding.readonly);
+        c.eval_outer_lexical_.push_back(binding.lexical);
+    }
+    if (site != nullptr) { c.eval_site_ = *site; }
     c.compile_program();
     return out;
 }

@@ -124,7 +124,7 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
     // frame. Every transpiler emits it (Babel's `_classCallCheck` guard is
     // built on it) and Babylon.js uses it in its decorator metadata; it
     // reached this compiler as a PARSE error until ctjs learned it.
-    case vp::nk::new_target: proto().emit(instruction{op::load_new_target, dst}); break;
+    case vp::nk::new_target: emit_new_target(dst); break;
     // Regular expressions are DEFERRED, not overlooked: they need a regex
     // engine, and the standard library says the same about String.match and
     // the RegExp forms of replace/split. Rejecting one by name beats
@@ -227,6 +227,7 @@ void compiler_impl::emit_write(std::string_view name_text, std::uint16_t src) {
         emit_plain_write(name_text, src);
         const std::size_t done = proto().emit(instruction{op::jump});
         patch_here(bound);
+        emit_with_still_bound(obj, name_text);
         proto().emit(instruction{op::set_prop, obj, name_operand(std::string{name_text}), src});
         patch_here(done);
         release_to(mark);
@@ -358,6 +359,53 @@ void compiler_impl::compile_named_expr(std::int32_t idx, std::uint16_t dst, std:
         }
     }
     compile_expr(idx, dst);
+}
+
+void compiler_impl::emit_new_target(std::uint16_t dst) {
+    if (out_.functions[fn().proto].is_arrow &&
+        binding_position(new_target_local).first != no_binding) {
+        emit_plain_read(new_target_local, dst);
+        return;
+    }
+    proto().emit(instruction{op::load_new_target, dst});
+}
+
+bool compiler_impl::is_anonymous_function_definition(std::int32_t idx) const {
+    if (idx < 0) { return false; }
+    const vp::node & n = at(idx);
+    return (n.kind == vp::nk::func_expr || n.kind == vp::nk::arrow ||
+            n.kind == vp::nk::class_decl) &&
+           n.text.empty();
+}
+
+std::optional<std::string> compiler_impl::literal_key_name(std::int32_t key) const {
+    const vp::node & k = at(key);
+    if (k.kind == vp::nk::str) { return decode_string_literal(k.text); }
+    // A BigInt literal (`1n`) is left to run time: its ToString is not the
+    // double's.
+    if (k.kind == vp::nk::num && !k.text.empty() && k.text.back() != 'n') {
+        return number_to_string(number_literal(k.text));
+    }
+    return std::nullopt;
+}
+
+void compiler_impl::emit_set_function_name(std::uint16_t fn, std::uint16_t key,
+                                           std::string_view prefix) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(instruction::with_bx(op::get_global, callee,
+                                      intern_name(std::string{set_function_name_name})));
+    const std::uint16_t target = alloc_reg();
+    proto().emit(instruction{op::move, target, fn});
+    const std::uint16_t name = alloc_reg();
+    proto().emit(instruction{op::move, name, key});
+    std::uint16_t argc = 2;
+    if (!prefix.empty()) {
+        emit_string(alloc_reg(), std::string{prefix});
+        argc = 3;
+    }
+    proto().emit(instruction{op::call, callee, argc});
+    release_to(mark);
 }
 
 void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
@@ -559,6 +607,7 @@ compiler_impl::reference compiler_impl::prepare_reference(const vp::node & targe
                 release_to(before);
             }
         }
+        out.readonly = binding_immutability(target.text);
         if (const local * l = find_local_entry(fn(), target.text)) {
             out.what = l->boxed ? reference::kind::boxed_local : reference::kind::local;
             out.reg = l->reg;
@@ -573,15 +622,27 @@ compiler_impl::reference compiler_impl::prepare_reference(const vp::node & targe
         out.name = name_operand(std::string{target.text});
         return out;
     }
-    // `super.x = v` and `super[k] = v`: a Super Reference is PUT with `this`
-    // as the receiver (13.3.7.1 MakeSuperPropertyReference, 6.2.5.6 step
-    // 4), so a data property lands on `this` and a frozen prototype is the
-    // TypeError. The store goes to `this` - which also finds an inherited
-    // setter, since `this` sits below the home object. (A read starts above
-    // the home object; a compound assignment reads from `this`, a deviation
-    // that only a setter or shadowing property on the home object itself can
-    // observe.)
+    // `super.x = v` and `super[k] = v`: a Super Reference (13.3.7.1): the
+    // this binding checked first - the ReferenceError before a derived
+    // constructor's super() - then the key, then GetSuperBase; and it is
+    // read and PUT on that base with `this` as the receiver (6.2.5.5/6.2.5.6),
+    // so a setter on the parent runs on `this` rather than `this`'s own
+    // setter of the same name, which is how `set x(v) { super.x = v; }`
+    // recursed until the stack ran out.
     const bool on_super = target.a >= 0 && at(target.a).kind == vp::nk::super_lit;
+    if (on_super && (target.kind == vp::nk::member || target.kind == vp::nk::index)) {
+        if (const std::string * flag = derived_flag()) { emit_super_check(*flag, false); }
+        out.what = reference::kind::super_property;
+        out.key = alloc_reg();
+        if (target.kind == vp::nk::member) {
+            emit_string(out.key, std::string{target.text});
+        } else {
+            compile_expr(target.b, out.key);
+        }
+        out.reg = alloc_reg();
+        emit_super_base(out.reg);
+        return out;
+    }
     if (target.kind == vp::nk::member) {
         out.what = reference::kind::member;
         out.reg = alloc_reg();
@@ -634,7 +695,36 @@ void compiler_impl::emit_load(const reference & ref, std::uint16_t dst) {
     case reference::kind::index:
         proto().emit(instruction{op::get_index, dst, ref.reg, ref.key});
         break;
+    case reference::kind::super_property: emit_super_access(ref, super_get_name, dst); break;
     }
+}
+
+// `name(base, key, [value,] this[, strict])` for a Super Reference - see
+// reference::kind::super_property. `value` is the store's source, or the
+// load's destination.
+void compiler_impl::emit_super_access(const reference & ref, std::string_view name,
+                                      std::uint16_t value) {
+    const bool store = name == super_set_name;
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(instruction::with_bx(op::get_global, callee, intern_name(std::string{name})));
+    const std::uint16_t base = alloc_reg();
+    proto().emit(instruction{op::move, base, ref.reg});
+    const std::uint16_t key = alloc_reg();
+    proto().emit(instruction{op::move, key, ref.key});
+    if (store) {
+        const std::uint16_t v = alloc_reg();
+        proto().emit(instruction{op::move, v, value});
+    }
+    const std::uint16_t self = alloc_reg();
+    proto().emit(instruction{op::load_this, self});
+    if (store) {
+        const std::uint16_t strict = alloc_reg();
+        proto().emit(instruction{fn().is_strict ? op::load_true : op::load_false, strict});
+    }
+    proto().emit(instruction{op::call, callee, static_cast<std::uint16_t>(store ? 5 : 3)});
+    if (!store) { proto().emit(instruction{op::move, value, callee}); }
+    release_to(mark);
 }
 
 void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
@@ -645,10 +735,14 @@ void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
         emit_store(plain, src);
         const std::size_t done = proto().emit(instruction{op::jump});
         patch_here(bound);
+        // A COPY: the check interns strings, which can grow `names`.
+        const std::string name = proto().names[ref.with_name];
+        emit_with_still_bound(ref.with_reg, name);
         proto().emit(instruction{op::set_prop, ref.with_reg, ref.with_name, src});
         patch_here(done);
         return;
     }
+    if (refuse_immutable_write(ref.readonly)) { return; }
     switch (ref.what) {
     case reference::kind::local: proto().emit(instruction{op::move, ref.reg, src}); break;
     case reference::kind::boxed_local: proto().emit(instruction{op::cell_set, ref.reg, src}); break;
@@ -666,6 +760,7 @@ void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
     case reference::kind::index:
         proto().emit(instruction{op::set_index, ref.reg, ref.key, src});
         break;
+    case reference::kind::super_property: emit_super_access(ref, super_set_name, src); break;
     }
 }
 

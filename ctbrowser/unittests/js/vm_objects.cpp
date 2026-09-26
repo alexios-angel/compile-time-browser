@@ -38,6 +38,87 @@ void test_class_fields_are_per_instance() {
     // it may capture an enclosing local
     expect_result(
         "function build(v) { class A { val = v; } return new A().val; } return build(42);", "42");
+    // A COMPUTED NAME IS THE CLASS'S, evaluated once when it is defined and
+    // in order with the methods' keys (15.7.10) - only the initialiser runs
+    // per instance.
+    expect_result("let x = 1; class C { [x++] = x++; [x++] = x++; } const a = new C();"
+                  " const b = new C(); return [a[1], a[2], b[1], b[2]].join();",
+                  "3,4,5,6");
+    expect_result("let log = []; class C { [(log.push('f'), 'f')] = 1;"
+                  " [(log.push('m'), 'm')]() {} } return log.join() + new C().f;",
+                  "f,m1");
+    expect_result("try { class C { [{ [Symbol.toPrimitive]: {} }] = 1; } } catch (e) {"
+                  " return e.constructor.name; } return 'none';",
+                  "TypeError");
+    expect_result("try { class C { static ['prototype'] = 1; } } catch (e) {"
+                  " return e.constructor.name; } return 'none';",
+                  "TypeError");
+    expect_result("const k = Symbol('k'); class C { [k] = 7; } return new C()[k];", "7");
+    // an object literal's method: `super` starts at the implicit Object.prototype
+    expect_result(
+        "const o = { m() { return super.hasOwnProperty === Object.prototype.hasOwnProperty; } };"
+        " o.hasOwnProperty = null; return o.m();",
+        "true");
+    // `super.x = v` is [[Set]] on the parent with `this` as the receiver: the
+    // parent's setter runs, not this class's own of the same name
+    expect_result("class P { set x(v) { this._x = v; } get x() { return this._x; } }"
+                  " class C extends P { set x(v) { super.x = v * 2; } get x() { return super.x; } }"
+                  " const c = new C(); c.x = 2; return c.x;",
+                  "4");
+    expect_result("const proto = { set p(v) { this.r = 'ok'; } };"
+                  " const o = { __proto__: proto, m() { super.p = 1; super['q'] = 2;"
+                  " return this.r + ':' + Object.keys(this).join(); } }; return o.m();",
+                  "ok:m,r,q");
+    // `super[k]()` calls the parent's method with `this`
+    expect_result(
+        "class P { m() { return 'p' + this.t; } }"
+        " class C extends P { go() { this.t = 1; return super['m']() + super['m'](...[]); } }"
+        " return new C().go();",
+        "p1p1");
+    // a block's `let` of a class with a computed field name keeps the class
+    // (the name's hidden cell is a local of its own - see field_key_name)
+    expect_result("{ let C = class { [9] = 9; }; return typeof C + new C()[9]; }", "function9");
+    // a script's `eval` that is not a function is the TypeError of calling it
+    expect_result("var eval = ''; try { eval(); } catch (e) { return e instanceof TypeError; }"
+                  " return 'none';",
+                  "true");
+    // a method has no `prototype` (MakeMethod, never MakeConstructor); a
+    // generator method and the class itself do
+    expect_result(
+        "class C { m() {} get g() {} *gen() {} } const d = Object.getOwnPropertyDescriptor("
+        "C.prototype, 'g'); return ['prototype' in C.prototype.m, 'prototype' in d.get,"
+        " 'prototype' in C.prototype.gen, typeof C.prototype].join();",
+        "false,false,true,object");
+    // a string spreads (and rests) as the String object it is ToObject'd to
+    expect_result("var r; ({...r} = 'xy'); return JSON.stringify({...'ab'}) + JSON.stringify(r);",
+                  "{\"0\":\"a\",\"1\":\"b\"}{\"0\":\"x\",\"1\":\"y\"}");
+    // a `for (using ...)` head's resources are disposed as the loop completes
+    expect_result("var log = [], n = 0; var r = { [Symbol.dispose]() { log.push('d'); } };"
+                  " for (using x = r; n < 2; n++) log.push(n); log.push('after');"
+                  " return log.join();",
+                  "0,1,d,after");
+    // a function is an object a `using` declaration may hold
+    expect_result("Function.prototype[Symbol.dispose] = function () { this.gone = true; };"
+                  " var f; { using g = function () {}; f = g; }"
+                  " delete Function.prototype[Symbol.dispose]; return f.gone + ':' + f.name;",
+                  "true:g");
+    // a heritage that is no constructor is the TypeError, named without
+    // running its code (a proxy's `get` trap would throw instead)
+    expect_result("const p = new Proxy(() => {}, { get() { throw 'trap'; } });"
+                  " try { class C extends p {} } catch (e) { return e.name; } return 'none';",
+                  "TypeError");
+    // a computed static accessor meets the non-configurable `prototype`
+    expect_result("try { class C { static get ['prototype']() {} } } catch (e) { return e.name; }"
+                  " return 'none';",
+                  "TypeError");
+    // `static constructor() {}` is a static method, not the class's constructor
+    expect_result("class C { static constructor() { return 's'; } constructor() { this.v = 1; } }"
+                  " return C.constructor() + new C().v;",
+                  "s1");
+    // an instance field's home object is the prototype: `super` reads the parent
+    expect_result("class A { get g() { return 'a'; } } class B extends A { v = super.g; }"
+                  " return new B().v;",
+                  "a");
     // fields arrive before the constructor body, which may then use them
     expect_result("class A { n = 2; constructor() { this.n = this.n * 5; } } return new A().n;",
                   "10");
@@ -257,6 +338,22 @@ void test_class_expressions() {
 // Symbol as the key. Every one compiled to a member named "" before
 // 2026-09-12, so `new C()[k]` was undefined.
 void test_computed_member_keys() {
+    // A KEY NAMES THE FUNCTION IT HOLDS (SetFunctionName, 10.2.9): a symbol
+    // in brackets, an accessor with its prefix, a literal key at compile time.
+    expect_result(
+        "const s = Symbol('t'), e = Symbol(), g = Symbol('g'); const o = { [s]: function () {},"
+        " [e]: () => 0, ['k' + 1]() {}, get [g]() {}, 'q': class {}, 2: function () {} };"
+        " return [o[s].name, o[e].name, o.k1.name,"
+        " Object.getOwnPropertyDescriptor(o, g).get.name, o.q.name, o[2].name].join('|');",
+        "[t]||k1|get [g]|q|2");
+    expect_result("const s = Symbol('m'); class C { [s]() {} get g() {} static set h(v) {} }"
+                  " return [C.prototype[s].name,"
+                  " Object.getOwnPropertyDescriptor(C.prototype, 'g').get.name,"
+                  " Object.getOwnPropertyDescriptor(C, 'h').set.name].join('|');",
+                  "[m]|get g|set h");
+    expect_result("let n = 0; const k = { toString() { n++; return 'z'; } };"
+                  " const o = { [k]: function () {} }; return o.z.name + n;",
+                  "z1");
     expect_result(
         "const k = 'dyn'; class C { [k]() { return 1; } static ['s' + 1]() { return 2; } }"
         "return new C().dyn() + C.s1();",

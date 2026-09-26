@@ -145,6 +145,9 @@ inline constexpr double max_array_length = 4294967295.0; // 2^32 - 1
 // beside the write that asks it; the fast paths that ADD elements (push,
 // unshift) ask it too before they skip the [[Set]] they stand in for.
 [[nodiscard]] bool array_chain_holds_indices(context & cx, const array_object & arr);
+// OrdinarySet(o, name, v, receiver) - vm/objects/store.cpp. False is a
+// refusal (strict code's TypeError); a throw answers true.
+bool set_for_receiver(context & cx, value o, const std::string & name, value v, value receiver);
 
 namespace detail {
 
@@ -231,6 +234,24 @@ namespace detail {
     if (!self.is_object()) { return false; }
     auto * obj = static_cast<object_object *>(self.as_heap());
     return obj->props.empty() && !obj->accessors.any;
+}
+// SetFunctionName (10.2.9) with a property key: a symbol's name is its
+// description in brackets - "" with none - and `prefix` ("get", "set") goes
+// in front. A function with an own `name` already keeps it: a class whose
+// static member is called `name` defined that one itself.
+inline void set_function_name(context & cx, value fn, value key, std::string_view prefix) {
+    if (!fn.is_kind(heap_kind::function)) { return; }
+    auto * closure = static_cast<closure_object *>(fn.as_heap());
+    if (closure->find("name") != nullptr) { return; }
+    std::string name;
+    if (key.is_kind(heap_kind::symbol)) {
+        const auto described = static_cast<symbol_object *>(key.as_heap())->description_value();
+        name = described ? "[" + std::string{*described} + "]" : "";
+    } else {
+        name = cx.to_string(key);
+    }
+    if (!prefix.empty()) { name = std::string{prefix} + " " + name; }
+    closure->define("name", cx.string(std::move(name)), attr_configurable);
 }
 // GetPrototypeFromConstructor (10.1.14) FOR A NATIVE THAT MAKES ITS OWN
 // OBJECT. `class A extends Array` reaches Array through super() with `this`

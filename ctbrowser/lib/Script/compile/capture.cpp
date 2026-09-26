@@ -60,6 +60,12 @@ void compiler_impl::tour(std::int32_t idx, std::int32_t enclosing, std::int32_t 
     // their locals must be cells it can be handed (is_captured). Recorded
     // against the function the call is in.
     if (is_direct_eval_call(n)) { eval_ticks_.push_back(inner); }
+    // `new.target` - or an eval, which may say it - under the name of the
+    // hidden local that carries it into arrows (new_target_local), so a
+    // function asks is_captured before walking its body for one.
+    if (n.kind == vp::nk::new_target || is_direct_eval_call(n)) {
+        mentions_[std::string{new_target_local}].push_back(inner);
+    }
     // A template's substitutions are text on the node, not children, so
     // nothing below this reaches them.
     if (n.kind == vp::nk::tmpl) {
@@ -146,6 +152,31 @@ bool compiler_impl::mentions_super(std::int32_t idx, bool root) const {
     return false;
 }
 
+bool compiler_impl::contains_direct_eval(std::int32_t idx) const {
+    // The index covers the program's own tree; a template hole's sub-tree
+    // numbers its nodes afresh (see compile_ident's dead-zone note).
+    if (current_ast_ != &ast_) { return false; }
+    const interval where = range_of(idx);
+    if (where.empty()) { return false; }
+    const auto e = std::ranges::lower_bound(eval_ticks_, where.lo);
+    return e != eval_ticks_.end() && *e < where.hi;
+}
+
+bool compiler_impl::arrow_wants_new_target(std::int32_t idx, bool in_arrow) const {
+    if (idx < 0) { return false; }
+    const vp::node & n = at(idx);
+    if (n.kind == vp::nk::func_decl || n.kind == vp::nk::func_expr) { return false; }
+    const bool inside = in_arrow || n.kind == vp::nk::arrow;
+    if (inside && (n.kind == vp::nk::new_target || is_direct_eval_call(n))) { return true; }
+    for (const std::int32_t slot : child_slots(n)) {
+        if (arrow_wants_new_target(slot, inside)) { return true; }
+    }
+    for (const std::int32_t k : kids(n)) {
+        if (arrow_wants_new_target(k, inside)) { return true; }
+    }
+    return false;
+}
+
 bool compiler_impl::is_captured(std::string_view name) const {
     const interval where = frames_.back().captures;
     if (where.empty()) { return false; }
@@ -218,7 +249,7 @@ void compiler_impl::collect_declared_names(std::int32_t body) {
     }
 }
 
-void compiler_impl::predeclare_locals(std::int32_t body) {
+void compiler_impl::predeclare_locals(std::int32_t body, bool lexical_only) {
     // A PROGRAM'S top level counts too, not only a function's block. It
     // never used to: a classic script's top-level declarations are globals,
     // so there was nothing to pre-declare. A MODULE's are locals, and a
@@ -228,10 +259,22 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
     if (body < 0 || (at(body).kind != vp::nk::block && at(body).kind != vp::nk::program)) {
         return;
     }
-    const auto hoist = [this](std::string name, std::uint32_t initialized_at = 0) {
-        if (name.empty() || find_local_entry(fn(), name) != nullptr) { return; }
+    // A NAMED FUNCTION EXPRESSION'S OWN NAME is not one of its body's
+    // bindings - it lives in a scope outside them (15.2.5 step 4) - so any
+    // declaration of the name in the body shadows it: `function me() { var
+    // me; }` has a `me` that is undefined, and assignable.
+    const auto bound = [this](std::string_view name) {
+        const local * l = find_local_entry(fn(), name);
+        return l != nullptr && l->readonly != immutability::sloppy;
+    };
+    const auto hoist = [this, &bound](std::string name, std::uint32_t initialized_at = 0,
+                                      immutability readonly = immutability::none,
+                                      bool lexical = false) {
+        if (name.empty() || bound(name)) { return; }
         const std::uint16_t r = declare_local(name);
         fn().locals.back().initialized_at = initialized_at;
+        fn().locals.back().readonly = readonly;
+        fn().locals.back().lexical = lexical;
         proto().emit(instruction{op::load_undef, r});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
         fn().predeclared.push_back(std::move(name));
@@ -258,11 +301,16 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
         }
         const std::int32_t stmt =
             at(outer).kind == vp::nk::export_decl && at(outer).a >= 0 ? at(outer).a : outer;
+        if (lexical_only && !(at(stmt).kind == vp::nk::var_decl && at(stmt).text != "var") &&
+            at(stmt).kind != vp::nk::class_decl) {
+            continue;
+        }
         if (at(stmt).kind == vp::nk::var_decl) {
             // A `let`/`const`/`using` binding is in its TDZ until its
             // declarator has run: the offset past the declarator (or, with
             // no initialiser, past the statement) is when it is initialised.
             const bool lexical = at(stmt).text != "var";
+            const immutability readonly = declared_immutability(at(stmt));
             for (const std::int32_t d : kids(at(stmt))) {
                 const std::uint32_t ready = lexical ? at(d).end : 0;
                 if (at(d).b >= 0) { // a shape: hoist every name inside it
@@ -271,9 +319,11 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
                     // single offset cannot say.
                     std::vector<std::string> names;
                     pattern_names(at(d).b, names);
-                    for (std::string & name : names) { hoist(std::move(name)); }
+                    for (std::string & name : names) {
+                        hoist(std::move(name), 0, readonly, lexical);
+                    }
                 } else {
-                    hoist(std::string{at(d).text}, ready);
+                    hoist(std::string{at(d).text}, ready, readonly, lexical);
                 }
             }
         } else if (at(stmt).kind == vp::nk::import_decl) {
@@ -284,7 +334,11 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
             // luck and `import { a, b }` did not: the next statement's
             // temporary landed on top of `b`. The same trap
             // declare_pattern_names records for destructuring.
-            for (const std::int32_t spec : kids(at(stmt))) { hoist(std::string{at(spec).text}); }
+            // Immutable, as every import binding is (InitializeEnvironment:
+            // an import binding, or CreateImmutableBinding for a namespace).
+            for (const std::int32_t spec : kids(at(stmt))) {
+                hoist(std::string{at(spec).text}, 0, immutability::strict);
+            }
         } else if (at(stmt).kind == vp::nk::func_decl) {
             // A nested function declaration is a BINDING IN ITS SCOPE, and
             // it has to exist before its own body compiles or a recursive
@@ -298,9 +352,10 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
             // the next statement's temporaries reuse the slot. `class S {}`
             // followed by two `new S()` therefore worked once and then
             // found an object in the register the second time.
-            hoist(std::string{at(stmt).text}, at(stmt).end);
+            hoist(std::string{at(stmt).text}, at(stmt).end, immutability::none, true);
         }
     }
+    if (lexical_only) { return; }
     // And every `var` in a NESTED block, which the loop above cannot see -
     // it walks this body's own statements only. `hoist` returns early on a
     // name already declared, so the statements just handled cost a lookup.
@@ -337,7 +392,7 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
                 // (B.3.3.1 step 1.a.ii.2, "and F is not `arguments`"), and
                 // hoisting a local of that name shadowed the object itself.
                 if (name == "arguments") { return; }
-                const bool fresh = find_local_entry(fn(), name) == nullptr;
+                const bool fresh = !bound(name);
                 if (fresh) {
                     // AND IT IS VAR-SCOPED FROM NOW ON. Two blocks declaring
                     // one name are two applicable declarations: the second

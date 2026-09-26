@@ -643,6 +643,16 @@ void checker::walk_expression(std::int32_t idx) {
         // `super` below is NOT this case and stays refused. It needs a home
         // object, which no top level has under any reading of the contract,
         // and nothing in this engine's API hands one back.
+        //
+        // AN EVAL'S SOURCE IS NOT THE EMBEDDER'S, so the contract does not
+        // reach it: outside a function - an indirect eval, or a direct one
+        // whose `this` is the global one - it is the SyntaxError of 19.2.1.1
+        // step 7.a (inFunction false, and the body Contains NewTarget).
+        // Nor does it reach a MODULE: no embedder hands one a function body
+        // (16.2.1.1: a ModuleItemList may not Contain NewTarget).
+        if ((eval_ != nullptr || module_()) && enclosing_non_arrow() == frame_kind::script) {
+            report("`new.target` outside a function", idx);
+        }
         return;
 
     case nk::super_lit: {

@@ -128,8 +128,9 @@ struct frame {
 
 class checker {
 public:
-    checker(const vp::ast & tree, std::string_view source, bool strict_root)
-        : ast_(tree), source_(source), strict_root_(strict_root) {}
+    checker(const vp::ast & tree, std::string_view source, bool strict_root,
+            const eval_site * eval = nullptr)
+        : ast_(tree), source_(source), strict_root_(strict_root), eval_(eval) {}
 
     void run();
 
@@ -239,7 +240,7 @@ private:
     // `interface`, `package`, `private`, `protected`, `public` are reserved.
     // `trusted` says the spelling may be judged against the reserved words
     // too - a binding always is; a reference only when `escaped` (see there).
-    void check_strict_binding(std::string_view name, std::int32_t node, bool trusted = true);
+    void check_strict_binding(std::string_view spelled, std::int32_t node, bool trusted = true);
     // 12.7.2: the ReservedWords that are never an identifier, in any mode.
     // The contextual ones (`let`, `static`, `async`, `of`, `get`, `set`,
     // `yield`, `await`) are not here: they are identifiers in sloppy code,
@@ -263,7 +264,8 @@ private:
     // --- defined in statements.cpp --------------------------------------------------------
     void walk_statement(std::int32_t idx, list_kind kind, std::vector<binding> & vars);
     [[nodiscard]] bool newline_follows(std::int32_t idx, std::size_t lexeme) const;
-    void check_nested_declaration(std::int32_t idx, bool annex_b_function);
+    void check_nested_declaration(std::int32_t idx, bool annex_b_function,
+                                  bool labelled_item = false);
     void walk_loop_body(std::int32_t body, std::vector<binding> & vars);
     void check_declaration(std::int32_t idx, std::vector<binding> & vars);
     void check_for(std::int32_t idx, list_kind kind, std::vector<binding> & vars);
@@ -359,7 +361,10 @@ private:
     std::string_view source_;
     int depth_ = 0;
     std::vector<frame> frames_;
-    bool strict_root_ = false;    // a module: strict code from the first line
+    bool strict_root_ = false; // a module: strict code from the first line
+    // AN EVAL'S SOURCE, and where the eval was (19.2.1.1 steps 4-7): its top
+    // level is that place's, not a script's - see run(). Null otherwise.
+    const eval_site * eval_ = nullptr;
     std::size_t class_depth_ = 0; // inside a class body: strict code (15.7.1)
     std::vector<std::vector<std::string_view>> private_names_; // see check_private_reference
     // WALKING A FORMAL PARAMETER LIST of the innermost frame: `yield` and

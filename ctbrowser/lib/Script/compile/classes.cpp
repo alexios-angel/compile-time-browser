@@ -26,7 +26,9 @@ void compiler_impl::emit_computed_accessor(std::uint16_t target, std::int32_t ke
     const std::uint16_t getter = alloc_reg();
     const std::uint16_t setter_reg = alloc_reg();
     proto().emit(instruction{op::load_undef, setter ? getter : setter_reg});
+    method_pending_ = true; // see frame::has_home
     compile_expr(fn_node, setter ? setter_reg : getter);
+    method_pending_ = false;
     // Its home object, as a named accessor gets one below.
     proto().emit(
         instruction{op::set_prop, setter ? setter_reg : getter, name_operand("__home"), target});
@@ -94,6 +96,7 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
     frames_.emplace_back();
     frames_.back().proto = index;
     frames_.back().is_strict = true;
+    frames_.back().has_home = true; // the prototype, or the class for `<static>`
     // A BODY IS NOT THE DECLARATION THAT HOLDS IT: `const f = function () {
     // typo = 1; }` writes `typo` as an assignment, whatever `f` is.
     const not_declaring body_is_not_a_write{*this};
@@ -131,6 +134,9 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
     }
     for (const std::int32_t member : fields) {
         const vp::node & m = at(member);
+        // A static block is a method's body, not a field's initialiser
+        // (15.7.11: no [[ClassFieldInitializerName]]) - see eval_site.
+        fn().field_initializer = m.c != 3;
         if (m.c == 3) {
             // `static { ... }`: a body of its own, with its own lexical scope
             // and its function declarations hoisted to its top (15.7.11
@@ -151,17 +157,22 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
         const std::uint16_t self = alloc_reg();
         proto().emit(instruction{op::load_this, self});
         const std::uint16_t v = alloc_reg();
+        const bool computed = (m.d & 2) != 0 && m.a >= 0;
         // `class A { x; }` declares x and gives it undefined - a field
         // without an initialiser is still a field.
         if (m.b >= 0) {
-            compile_named_expr(m.b, v, (m.d & 2) != 0 ? "" : m.text);
+            compile_named_expr(m.b, v, computed ? "" : m.text);
         } else {
             proto().emit(instruction{op::load_undef, v});
         }
-        if ((m.d & 2) != 0 && m.a >= 0) { // a computed key: `[expr] = init`
+        if (computed) { // a computed key: `[expr] = init`
+            // Evaluated when the class was defined (field_key_name), and
+            // DEFINED like any public field - naming an anonymous function
+            // it holds (15.7.10 step 3.b, NamedEvaluation with the key).
             const std::uint16_t key = alloc_reg();
-            compile_expr(m.a, key);
-            proto().emit(instruction{op::set_index, self, key, v});
+            emit_plain_read(field_key_name(member), key);
+            if (is_anonymous_function_definition(m.b)) { emit_set_function_name(v, key); }
+            emit_define_own_key(self, key, v, true);
         } else if (m.text.starts_with('#')) {
             // A PRIVATE FIELD IS ADDED, NOT SET (7.3.28 PrivateFieldAdd): a
             // set_prop would be the brand check store_property makes, on an
@@ -193,9 +204,15 @@ void compiler_impl::declare_class_name(std::string name, bool force) {
     if ((force || frames_.size() > 1) && !was_predeclared(name) &&
         find_local_in_current_scope(name) == nullptr) {
         const std::uint16_t reg = declare_local(name);
+        fn().locals.back().lexical = true;
         proto().emit(instruction{op::load_undef, reg});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, reg}); }
     }
+}
+
+std::string compiler_impl::field_key_name(std::int32_t member) const {
+    return "@fieldkey:" + std::to_string(private_scopes_.back().klass) + ":" +
+           std::to_string(member);
 }
 
 void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as_declaration,
@@ -211,10 +228,20 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     if (own_scope) { push_scope(); }
     ++class_body_depth_; // everything in here is strict code (15.7.1)
     if (!n.text.empty()) { declare_class_name(std::string{n.text}, own_scope); }
+    // Inside the body the name is the class's own immutable binding - see
+    // class_bindings_. Wherever the declaration put the name, a write from
+    // in here that resolves to the same binding is refused.
+    if (!n.text.empty()) {
+        const auto [level, position] = binding_position(n.text);
+        class_bindings_.push_back(class_binding{std::string{n.text}, level, position});
+    }
+    const boost::scope::scope_exit close_binding{[&]() noexcept {
+        if (!n.text.empty()) { class_bindings_.pop_back(); }
+    }};
     const std::span<const std::int32_t> members = kids(n);
     // The body's private names, in scope for every member (a method may
     // read a field declared below it) and gone when the body closes.
-    private_scopes_.push_back(private_scope{{}, ++private_classes_});
+    private_scopes_.push_back(private_scope{{}, ++private_classes_, {}});
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
         if ((m.d & 2) == 0 && m.text.starts_with('#')) {
@@ -222,6 +249,17 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         }
     }
     const boost::scope::scope_exit closing{[&]() noexcept { private_scopes_.pop_back(); }};
+    // The computed field names' cells - see field_key_name. Boxed whatever
+    // the capture index says: only the initialisers, compiled below, read
+    // them, and nothing in the source names them.
+    for (const std::int32_t member : members) {
+        const vp::node & m = at(member);
+        if (m.c != 0 || (m.d & 2) == 0 || m.a < 0) { continue; }
+        const std::uint16_t cell = declare_local(field_key_name(member));
+        fn().locals.back().boxed = true;
+        proto().emit(instruction{op::load_undef, cell});
+        proto().emit(instruction{op::new_cell, cell});
+    }
     const std::uint32_t mark = reg_mark();
     const std::uint16_t prototype_reg = alloc_reg();
     proto().emit(instruction{op::new_object, prototype_reg});
@@ -235,7 +273,10 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     bool has_instance_elements = false;
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
-        if (m.c == 1 && m.text == "constructor") { constructor_body = m.b; }
+        // THE constructor is the one non-static, non-computed method of the
+        // name (15.7.3 ConstructorMethod); `static constructor() {}` is an
+        // ordinary static method.
+        if (m.c == 1 && m.text == "constructor" && (m.d & 3) == 0) { constructor_body = m.b; }
         // An instance field, or a private method/accessor (whose brand the
         // initialiser adds) - what `__fields` will hold, see below.
         if ((m.d & 1) == 0 &&
@@ -253,6 +294,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         // it had no name of its own and every stack trace through one said
         // `<anonymous>` - which in a 4.5 MB bundle is no answer at all.
         derived_ctor_pending_ = n.a >= 0; // see frame::derived_flag
+        method_pending_ = true;
         const std::uint32_t index = compile_function_body(constructor_body, std::string{n.text});
         derived_ctor_pending_ = false;
         proto().emit(instruction::with_bx(op::closure, dst, index));
@@ -346,6 +388,15 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         const std::uint16_t init = alloc_reg();
         proto().emit(instruction::with_bx(op::closure, init, fields));
         proto().emit(instruction{op::set_prop, dst, name_operand("__fields"), init});
+        // AN INSTANCE FIELD'S HOME OBJECT IS THE PROTOTYPE (15.7.10
+        // ClassFieldDefinitionEvaluation: MakeMethod(initializer, homeObject)),
+        // so `x = super.y` reads the parent's - wired, as an object literal's
+        // method is, only when an initialiser says `super` or `eval(`.
+        if (std::ranges::any_of(instance_fields, [&](std::int32_t f) {
+                return mentions_super(at(f).b, false) || contains_direct_eval(at(f).b);
+            })) {
+            proto().emit(instruction{op::set_prop, init, name_operand("__home"), prototype_reg});
+        }
     }
     if (static_brand) {
         const std::uint32_t inner = reg_mark();
@@ -382,7 +433,19 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     const std::uint16_t slot = alloc_reg();
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
-        if (m.text == "constructor" && m.c == 1) { continue; }
+        if (m.text == "constructor" && m.c == 1 && (m.d & 3) == 0) { continue; }
+        if (m.c == 0 && (m.d & 2) != 0 && m.a >= 0) {
+            // A computed field name: evaluated and made a key HERE, in order
+            // with the methods' - see field_key_name.
+            const std::uint32_t at_key = reg_mark();
+            const std::uint16_t key = alloc_reg();
+            compile_expr(m.a, key);
+            emit_iterator_native(to_property_key_name, key, key);
+            const local * cell = find_local_entry(fn(), field_key_name(member));
+            if (cell != nullptr) { proto().emit(instruction{op::cell_set, cell->reg, key}); }
+            release_to(at_key);
+            continue;
+        }
         if (m.c == 0 || m.c == 3) { continue; } // fields and static blocks: below
         const bool computed = (m.d & 2) != 0 && m.a >= 0;
         if (m.c == 2) {
@@ -399,7 +462,10 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
                 emit_computed_accessor(target, m.a, m.b, (m.d & 4) != 0);
                 continue;
             }
-            compile_expr(m.b, slot);
+            method_pending_ = true;
+            // An accessor is named for its key, "get id" (15.4.5 step 6).
+            compile_named_expr(m.b, slot, ((m.d & 4) != 0 ? "set " : "get ") + std::string{m.text});
+            method_pending_ = false;
             const std::uint16_t name = member_operand(m.text);
             proto().emit(instruction{(m.d & 4) != 0 ? op::define_setter : op::define_getter, target,
                                      name, slot});
@@ -427,8 +493,15 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             const std::uint32_t mark = reg_mark();
             const std::uint16_t key = alloc_reg();
             compile_expr(m.a, key);
+            // Made a key ONCE, and it names the method (15.4.4 DefineMethod,
+            // then SetFunctionName) - known now when it is a literal.
+            const std::optional<std::string> literal_key = literal_key_name(m.a);
+            if (!literal_key) { emit_iterator_native(to_property_key_name, key, key); }
+            method_pending_ = true;
             const std::uint32_t index = compile_function_body(m.b, "");
+            if (literal_key) { out_.functions[index].inferred_name = *literal_key; }
             proto().emit(instruction::with_bx(op::closure, slot, index));
+            if (!literal_key) { emit_set_function_name(slot, key); }
             if ((m.d & 1) != 0) {
                 // A STATIC one is DEFINED (15.4.4 DefineMethodProperty), not
                 // set: a [[Set]] on the constructor asks Function.prototype,
@@ -443,6 +516,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             continue;
         }
         if (m.c == 1) {
+            method_pending_ = true;
             const std::uint32_t index = compile_function_body(m.b, std::string{m.text});
             proto().emit(instruction::with_bx(op::closure, slot, index));
         } else {

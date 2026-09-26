@@ -108,6 +108,24 @@ bool compiler_impl::emit_with_object(std::string_view name, std::uint16_t obj) {
     return true;
 }
 
+// 9.1.1.2.5 SetMutableBinding of an object Environment Record: `stillExists`
+// is asked again at the write, and a binding the object lost in between - the
+// getter a compound assignment read through deleted it - is the ReferenceError
+// in strict code (a strict function inside the `with`; the statement itself
+// cannot be strict). Sloppy code writes the property back.
+void compiler_impl::emit_with_still_bound(std::uint16_t obj, std::string_view name) {
+    if (!fn().is_strict) { return; }
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t key = alloc_reg();
+    emit_string(key, std::string{name});
+    const std::uint16_t has = alloc_reg();
+    proto().emit(instruction{op::has_property, has, key, obj});
+    const std::size_t present = proto().emit(instruction{op::jump_if_true, has});
+    emit_throw("ReferenceError", std::string{name} + " is not defined");
+    patch_here(present);
+    release_to(mark);
+}
+
 void compiler_impl::emit_plain_read(std::string_view name, std::uint16_t dst, bool typeof_lookup) {
     if (const local * l = find_local_entry(fn(), name)) {
         proto().emit(instruction{l->boxed ? op::cell_get : op::move, dst, l->reg});
@@ -128,6 +146,7 @@ void compiler_impl::emit_plain_read(std::string_view name, std::uint16_t dst, bo
 }
 
 void compiler_impl::emit_plain_write(std::string_view name, std::uint16_t src) {
+    if (!declaring_ && refuse_immutable_write(binding_immutability(name))) { return; }
     if (const local * l = find_local_entry(fn(), name)) {
         if (l->boxed) {
             proto().emit(instruction{op::cell_set, l->reg, src});

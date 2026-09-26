@@ -19,8 +19,6 @@ namespace ctbrowser::script {
 // ArraySetLength's shrink, defined beside [[DefineOwnProperty]] in descriptors.cpp.
 bool array_set_length(array_object & arr, double n);
 
-namespace {
-
 // OrdinarySet(O, P, V, Receiver), 10.1.9.2, for a Receiver that is NOT O: a
 // write that reaches a PROXY on an object's prototype chain, or an array's
 // fresh named property asking its prototypes. A setter found on the way runs
@@ -28,7 +26,8 @@ namespace {
 // property lands through the receiver's own [[GetOwnProperty]] and
 // [[DefineOwnProperty]]. store_property's own walk carries no receiver; this
 // one does. False is a refusal, for strict code to throw; a throw answers
-// true, so that it is not a second one.
+// true, so that it is not a second one. External linkage: `super.x = v` is
+// this with the home object's prototype as O (builtins/internal.hpp).
 bool set_for_receiver(context & cx, value o, const std::string & name, value v, value receiver) {
     const std::size_t before = cx.unwinds();
     const auto threw = [&] { return cx.throw_pending() || cx.unwinds() != before; };
@@ -89,8 +88,6 @@ bool set_for_receiver(context & cx, value o, const std::string & name, value v, 
     }
     return cx.define_own_property(receiver, name, wanted);
 }
-
-} // namespace
 
 // COULD ANYTHING ON AN ORDINARY ARRAY'S CHAIN ANSWER AN INDEX? A write to an
 // index the array does not have - a hole, or past the end, which is every
@@ -274,7 +271,19 @@ void context::store_index(value target, value key, value v) {
         }
         return;
     }
-    store_property(target, to_string(key), v);
+    // ToObject(base) before ToPropertyKey, as lookup_index (PutValue step 3.a).
+    if (target.is_nullish()) [[unlikely]] {
+        const bool plain = key.is_string() || key.is_number() || key.is_boolean();
+        throw_error("TypeError", "Cannot set properties of " +
+                                     std::string{target.is_null() ? "null" : "undefined"} +
+                                     (plain ? " (setting '" + to_string(key) + "')" : ""));
+        return;
+    }
+    const std::size_t unwound = unwinds();
+    const bool pending = throw_pending();
+    const std::string name = to_string(key);
+    if ((!pending && throw_pending()) || unwinds() != unwound) { return; }
+    store_property(target, name, v);
 }
 
 void context::pass_new_target(value from) {
@@ -650,7 +659,9 @@ void context::store_property(value target, const std::string & name, value v) {
         // = x` for a function whose [[Prototype]] is a class or a native
         // constructor found that one's read-only `prototype` and was refused -
         // Babel's `_inherits`, every `class A extends Array`.
-        if (name == "prototype") { (void)ensure_prototype(target); }
+        if (name == "prototype" && !method_without_prototype(*closure)) {
+            (void)ensure_prototype(target);
+        }
         if (accessor_entry * entry = closure->find_accessor(name)) {
             // An own accessor with no setter refuses the write; it is never
             // shadowed by a data property of the same name.
