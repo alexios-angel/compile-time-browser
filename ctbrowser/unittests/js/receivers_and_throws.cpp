@@ -238,5 +238,26 @@ int main() {
     js_expect("(function(){ var o = { m() { return super.toString(); } };"
               " Object.setPrototypeOf(o, null); try { o.m(); } catch (e) { return e.name; } })()",
               "TypeError");
+    // A numeric operator converts its LEFT operand first, and a throw there -
+    // a valueOf, a Symbol's TypeError - is the operator's: the right one is
+    // never converted.
+    js_expect("(function(){ var x = {valueOf: function () { throw 'x'; }};"
+              " var y = {valueOf: function () { throw 'y'; }};"
+              " try { x & y; } catch (e) { return e + (function () { try { x << y; }"
+              " catch (f) { return f; } })(); } })()",
+              "xx");
+    js_expect(
+        "(function(){ var t = ''; try { ({valueOf: function () { t += 'l'; return Symbol(); }})"
+        " / ({valueOf: function () { t += 'r'; return 1; }}); } catch (e) { return e.name + t; } "
+        "})()",
+        "TypeErrorl");
+    // A function's [[Prototype]] set to null is null, not the unset link that
+    // means Function.prototype - so a static method's `super.x = v` throws.
+    js_expect("(function(){ function F() {} Object.setPrototypeOf(F, null);"
+              " return Object.getPrototypeOf(F) === null; })()",
+              "true");
+    js_expect("(function(){ class C { static m() { super.x = 1; } }"
+              " Object.setPrototypeOf(C, null); try { C.m(); } catch (e) { return e.name; } })()",
+              "TypeError");
     REPORT("receivers_and_throws");
 }

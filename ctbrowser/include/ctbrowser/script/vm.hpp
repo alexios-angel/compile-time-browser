@@ -345,6 +345,11 @@ public:
     [[nodiscard]] value bit_not_value(value v);
 
     [[nodiscard]] value numeric_operand(value v);
+    // ToNumeric of both operands of a numeric binary operator, LEFT FIRST
+    // (13.15.3 steps 3-4): the left's conversion - its valueOf, a Symbol's
+    // TypeError - finishes before the right's starts, and a throw from it is
+    // the operator's. False with that throw landed or in flight.
+    [[nodiscard]] bool numeric_operands(value lhs, value rhs, value & l, value & r);
 
     enum class proto_kind : std::uint8_t {
         object,
