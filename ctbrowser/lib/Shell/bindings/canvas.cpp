@@ -1651,12 +1651,12 @@ void dom_bindings::install_canvas_2d(context & cx) {
         }
         // AN ImageData, and not merely something shaped like one: WebIDL
         // converts the argument to the interface, and a plain {width, height,
-        // data} is a TypeError (2d.imageData.put.wrongtype).
-        const value image_ctor = c.global("ImageData");
-        const value image_proto =
-            image_ctor.is_callable() ? c.lookup_property(image_ctor, "prototype") : value{};
-        if (a.empty() || !a[0].is_object() || !image_proto.is_object() ||
-            !(static_cast<script::object_object *>(a[0].as_heap())->prototype == image_proto)) {
+        // data} is a TypeError (2d.imageData.put.wrongtype). The brand every
+        // real one carries, so a subclass instance passes and a page that
+        // reassigns `window.ImageData` changes nothing.
+        if (a.empty() || !a[0].is_object() ||
+            static_cast<script::object_object *>(a[0].as_heap())->find(detail::image_data_brand) ==
+                nullptr) {
             c.throw_error("TypeError", "putImageData: the argument is not an ImageData");
             return value::undefined();
         }

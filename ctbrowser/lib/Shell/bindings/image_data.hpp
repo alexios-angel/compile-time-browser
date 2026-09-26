@@ -9,6 +9,7 @@
 #include <limits>
 #include <new>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 namespace ctbrowser::shell::detail {
@@ -40,6 +41,11 @@ namespace ctbrowser::shell::detail {
     return static_cast<std::size_t>(width * height * 4);
 }
 
+// THE ImageData BRAND: every one made here carries it, under a key no page
+// can spell, and it is what putImageData converts its argument by - not the
+// prototype, which a subclass changes and a page can replace.
+inline constexpr std::string_view image_data_brand = CTBROWSER_PRIVATE_KEY("ctbrowser:image-data");
+
 [[nodiscard]] inline script::value make_image_data(
     script::context & cx, std::uint64_t width, std::uint64_t height,
     script::value bytes = script::value::undefined()) {
@@ -60,6 +66,7 @@ namespace ctbrowser::shell::detail {
     out->set("width", script::value::number(static_cast<double>(width)));
     out->set("height", script::value::number(static_cast<double>(height)));
     out->set("data", bytes);
+    out->set(image_data_brand, script::value::boolean(true));
     // AN ImageData, to `instanceof` as well: its prototype is the realm's
     // ImageData.prototype (install_window gives the constructor one).
     if (const script::value ctor = cx.global("ImageData"); ctor.is_callable()) {
