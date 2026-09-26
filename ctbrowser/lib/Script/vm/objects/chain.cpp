@@ -311,6 +311,14 @@ value context::get_prototype(value target) {
     return value::undefined();
 }
 
+value context::super_base(value home) {
+    const value up = get_prototype(home);
+    if (up.is_null() && home.is_object()) {
+        if (object_object * table = prototype(proto_kind::object)) { return value::object(table); }
+    }
+    return up;
+}
+
 void context::set_prototype(value target, value proto) {
     if (target.is_object()) { static_cast<object_object *>(target.as_heap())->prototype = proto; }
     if (target.is_array()) { static_cast<array_object *>(target.as_heap())->prototype = proto; }

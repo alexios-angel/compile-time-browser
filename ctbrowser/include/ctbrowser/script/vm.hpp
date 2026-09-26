@@ -442,6 +442,12 @@ public:
     [[nodiscard]] value own_keys(value source);
 
     [[nodiscard]] value get_prototype(value target);
+    // GetSuperBase (9.1.1.3.5): the home object's [[GetPrototypeOf]], what
+    // op::get_proto answers. get_prototype's null - an object whose link was
+    // never set - is the IMPLICIT Object.prototype here, so `super.m()` in a
+    // class with no `extends` finds Object.prototype's; an explicit null
+    // (undefined in the field) stays nothing.
+    [[nodiscard]] value super_base(value home);
     void set_prototype(value target, value proto);
 
     [[nodiscard]] bool has_property(value target, value key);

@@ -229,5 +229,14 @@ int main() {
               " var jt = h(); jt.next(); jt.return(); return [gets, r.value, r.done,"
               " caught === thrown].join(); })()",
               "1,2,true,true");
+    // `super.m()` where the home object's [[Prototype]] is the implicit
+    // Object.prototype - a class with no `extends`, a plain literal - calls
+    // Object.prototype's m (GetSuperBase), and an explicit null is nothing.
+    js_expect("(function(){ class A { m() { return super.toString(); } } return new A().m(); })()",
+              "[object Object]");
+    js_expect("({ m() { return super.hasOwnProperty.call(this, 'm'); } }).m()", "true");
+    js_expect("(function(){ var o = { m() { return super.toString(); } };"
+              " Object.setPrototypeOf(o, null); try { o.m(); } catch (e) { return e.name; } })()",
+              "TypeError");
     REPORT("receivers_and_throws");
 }

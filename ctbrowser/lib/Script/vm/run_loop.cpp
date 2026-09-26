@@ -868,7 +868,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
             // the running method was written in - not above `this`, which in a
             // three-deep hierarchy is a different object and would call the
             // method again forever. So each method carries its home object.
-            reg(in.a) = get_prototype(reg(in.b));
+            reg(in.a) = super_base(reg(in.b));
             break;
         }
         while (0);
