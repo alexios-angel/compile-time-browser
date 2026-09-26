@@ -195,8 +195,28 @@ void compiler_impl::compile_program() {
     const auto declared_by = [this](std::int32_t s) {
         return at(s).kind == vp::nk::export_decl && at(s).c != 1 && at(s).a >= 0 ? at(s).a : s;
     };
+    // `export default function () {}` IS A DECLARATION TOO (16.2.3: a
+    // HoistableDeclaration[+Default]), instantiated before the module's first
+    // statement - a module importing itself, or a cycle, calls it before its
+    // text. A parenthesised function is an expression and is not hoisted; the
+    // parser gives the two the same node, so the byte before the function
+    // says which.
+    const auto hoisted_default = [this](std::int32_t s) {
+        const vp::node & n = at(s);
+        if (!module_scope_ || n.kind != vp::nk::export_decl || n.c != 1 || n.a < 0 ||
+            at(n.a).kind != vp::nk::func_expr) {
+            return false;
+        }
+        std::size_t i = at(n.a).begin;
+        if (i == 0 || i > source_view_.size()) { return false; }
+        while (i > 0 && (source_view_[i - 1] == ' ' || source_view_[i - 1] == '\t' ||
+                         source_view_[i - 1] == '\n' || source_view_[i - 1] == '\r')) {
+            --i;
+        }
+        return i > 0 && source_view_[i - 1] != '(';
+    };
     for (const std::int32_t s : kids(root)) {
-        if (at(declared_by(s)).kind == vp::nk::func_decl) { compile_stmt(s); }
+        if (at(declared_by(s)).kind == vp::nk::func_decl || hoisted_default(s)) { compile_stmt(s); }
     }
     const std::span<const std::int32_t> body = kids(root);
     // `eval("a; b")` is b, and `eval("1; if (x) {}")` is undefined: the
@@ -226,7 +246,7 @@ void compiler_impl::compile_program() {
         return;
     }
     for (const std::int32_t s : body) {
-        if (at(declared_by(s)).kind == vp::nk::func_decl) { continue; }
+        if (at(declared_by(s)).kind == vp::nk::func_decl || hoisted_default(s)) { continue; }
         compile_stmt(s);
     }
     ret_completion();
