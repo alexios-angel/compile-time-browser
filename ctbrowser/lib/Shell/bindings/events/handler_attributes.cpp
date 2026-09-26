@@ -470,12 +470,26 @@ void dom_bindings::event_handler_set(context & cx, value self, const std::string
 // THE ATTRIBUTE WRITES THE DOCUMENT LOGGED since the last mutation: an
 // `on*` content attribute activates its handler's listener the moment it is
 // set (HTML 8.1.8.1 - the attribute change steps), and deactivates it when
-// it goes with no IDL handler assigned in its place.
+// it goes with no IDL handler assigned in its place. And a <details> whose
+// `open` came or went queues its toggle (4.11.1).
 void dom_bindings::settle_attribute_writes(const std::vector<document::write_note> & writes) {
     if (cx_ == nullptr || doc_ == nullptr) { return; }
     for (const document::write_note & note : writes) {
         if (note.kind != document::write_note::edit::attribute || !note.node) { continue; }
         const std::string_view name = atoms_->text(note.name);
+        // ponytail: a removal does not say its namespace, so a namespaced
+        // attribute qualified `open` toggles too.
+        if (name == "open" && note.existed == note.removal) {
+            const auto txn = doc_->read();
+            if (txn.contains(note.node) && txn.element_ns(note.node) == node_ns::html &&
+                txn.local_name(note.node) == "details") {
+                const attribute * held = txn.find_attribute(note.node, note.name);
+                if (held == nullptr || !held->ns) {
+                    queue_details_toggle(note.node, note.existed, !note.removal);
+                }
+            }
+            continue;
+        }
         if (name.size() < 3 || name[0] != 'o' || name[1] != 'n') { continue; }
         bool present = false;
         {
@@ -509,6 +523,50 @@ void dom_bindings::settle_attribute_writes(const std::vector<document::write_not
             deactivate_event_handler(at, type);
         }
     }
+}
+
+// "Queue a details toggle event task" (HTML 4.11.1): a ToggleEvent at the
+// element in a later task, and ONE per burst - a toggle still queued is
+// cancelled and its old state carried into the new one, so open-then-close
+// in one script fires once, "closed" to "closed". On the PRIMARY's timers,
+// the queue the tick drains.
+void dom_bindings::queue_details_toggle(node_id details, bool was_open, bool open) {
+    dom_bindings & top = primary();
+    const auto held = std::ranges::find(details_toggles_, details, &details_toggle::details);
+    if (held != details_toggles_.end()) {
+        was_open = held->was_open;
+        for (timer & t : top.timers_) {
+            if (t.id == held->task) { t.cancelled = true; }
+        }
+        details_toggles_.erase(held);
+    }
+    const auto state = [](bool is_open) { return is_open ? "open" : "closed"; };
+    const std::uint32_t task = top.add_timer(
+        native(*cx_, "details toggle",
+               [this, details, old_state = state(was_open),
+                new_state = state(open)](context & c, std::span<value>) {
+                   std::erase_if(details_toggles_, [details](const details_toggle & d) {
+                       return d.details == details;
+                   });
+                   const value event = make_event(c, "toggle", details);
+                   auto * object = static_cast<script::object_object *>(event.as_heap());
+                   object->set("bubbles", value::boolean(false));
+                   object->set("cancelable", value::boolean(false));
+                   object->set("oldState", c.string(old_state));
+                   object->set("newState", c.string(new_state));
+                   if (const value ctor = c.has_global("ToggleEvent") ? c.global("ToggleEvent")
+                                                                      : value::undefined();
+                       ctor.is_object_like()) {
+                       if (const value proto = c.lookup_property(ctor, "prototype");
+                           proto.is_object()) {
+                           object->prototype = proto;
+                       }
+                   }
+                   (void)dispatch_event("toggle", details, event);
+                   return value::undefined();
+               }),
+        0, false);
+    details_toggles_.push_back(details_toggle{details, task, was_open});
 }
 
 // EVERY ONE OF THEM, ON EVERY OBJECT HTML PUTS THEM ON.

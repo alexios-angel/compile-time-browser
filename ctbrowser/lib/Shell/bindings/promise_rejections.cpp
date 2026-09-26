@@ -53,6 +53,12 @@ void dom_bindings::install_promise_rejections(context & cx) {
     cx.set_rejection_tracker([this](value promise, bool handled) {
         primary().track_promise_rejection(promise, handled);
     });
+    // AT THE END OF THE CHECKPOINT, not at the rejection: HTML's "perform a
+    // microtask checkpoint" step 5 is what queues the notification task, so a
+    // task queued while the rejecting script ran - a <details> toggle, a
+    // message - comes before it and may still attach a handler
+    // (promise-rejection-events.html, "delayed handling").
+    cx.set_checkpoint_hook([this] { primary().queue_rejection_notification(); });
 }
 
 void dom_bindings::track_promise_rejection(value promise, bool handled) {
@@ -64,7 +70,11 @@ void dom_bindings::track_promise_rejection(value promise, bool handled) {
     } else {
         rejections_to_notify_.push_back(promise);
     }
-    if (rejection_task_queued_) { return; }
+}
+
+void dom_bindings::queue_rejection_notification() {
+    if (cx_ == nullptr || rejection_task_queued_) { return; }
+    if (rejections_to_notify_.empty() && rejections_handled_late_.empty()) { return; }
     rejection_task_queued_ = true;
     (void)add_timer(
         native(

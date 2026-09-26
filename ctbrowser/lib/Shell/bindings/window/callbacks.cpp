@@ -188,6 +188,10 @@ std::size_t dom_bindings::run_due_callbacks() {
         }
         note_callback_fault("setTimeout");
         ++ran;
+        // A TIMER IS A TASK, and every task ends in a microtask checkpoint:
+        // a promise the callback settled runs its reactions before the NEXT
+        // timer, not after the whole batch.
+        cx_->drain_microtasks();
     }
     std::erase_if(timers_, [](const timer & t) { return t.cancelled; });
     // AFTER THE TIMERS, BEFORE THE ANIMATION FRAMES. That is where a browser

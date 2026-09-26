@@ -378,6 +378,7 @@ inline auto context::drain_microtasks() -> void {
         microtasks_.clear();
         raise("the microtask queue did not drain - a promise chain is not terminating");
     }
+    if (!failed_ && checkpoint_hook_) { checkpoint_hook_(); }
 }
 
 // THE STACK AS IT IS RIGHT NOW - for raise() and for a constructed

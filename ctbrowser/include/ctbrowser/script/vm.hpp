@@ -317,6 +317,11 @@ public:
 
     void set_rejection_tracker(std::function<void(value promise, bool handled)> track);
 
+    // Called at the END of every microtask checkpoint that drained cleanly -
+    // where HTML's "perform a microtask checkpoint" step 5 notifies about
+    // rejected promises. A host hook; it must not run script.
+    void set_checkpoint_hook(std::function<void()> hook);
+
     void track_promise_rejection(value promise, bool handled);
 
     [[nodiscard]] static bool promise_is_handled(value promise);
@@ -792,6 +797,7 @@ private:
     std::function<value(context &)> pending_promise_factory_;
     std::function<void(context &, value, value, bool)> promise_settler_;
     std::function<void(value, bool)> rejection_tracker_; // see set_rejection_tracker
+    std::function<void()> checkpoint_hook_;              // see set_checkpoint_hook
     // Set by `op::pass_new_target` and consumed by the very next frame push, so
     // a super() call hands its own new.target to the base constructor.
     value pending_new_target_ = value::undefined();

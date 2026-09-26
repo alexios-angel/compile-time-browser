@@ -565,7 +565,8 @@ std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
     // the attribute being overwritten.
     const auto at =
         std::ranges::find_if(n->attributes, [name](const attribute & a) { return a.name == name; });
-    if (at != n->attributes.end()) {
+    const bool existed = at != n->attributes.end();
+    if (existed) {
         // ONLY THE VALUE. The attribute found may be in a namespace and may
         // carry a prefix; neither is what a `setAttribute` was asked to change.
         at->value = std::string{value};
@@ -574,7 +575,7 @@ std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
     }
     update_pi_data(id, *n);
     bump_version();
-    note_write(id, name, false);
+    note_write(id, name, false, existed);
     return {};
 }
 
@@ -590,13 +591,14 @@ std::expected<void, dom_error> document::set_attribute_ns(node_id id, atom ns, a
 
     const auto at = std::ranges::find_if(
         n->attributes, [&](const attribute & a) { return attribute_is(*atoms_, a, uri, local); });
-    if (at != n->attributes.end()) {
+    const bool existed = at != n->attributes.end();
+    if (existed) {
         at->value = std::string{value};
     } else {
         n->attributes.push_back(attribute{name, ns, std::string{value}});
     }
     bump_version();
-    note_write(id, name, false);
+    note_write(id, name, false, existed);
     return {};
 }
 
@@ -620,6 +622,7 @@ std::expected<void, dom_error> document::remove_attribute(node_id id, atom name)
     n->attributes.erase(gone);
     update_pi_data(id, *n);
     bump_version();
+    note_write(id, name, false, true, true);
     return {};
 }
 
@@ -630,8 +633,10 @@ std::expected<void, dom_error> document::remove_attribute_ns(node_id id, std::st
     const auto gone = std::ranges::find_if(
         n->attributes, [&](const attribute & a) { return attribute_is(*atoms_, a, ns, local); });
     if (gone == n->attributes.end()) { return {}; }
+    const atom name = gone->name;
     n->attributes.erase(gone);
     bump_version();
+    note_write(id, name, false, true, true);
     return {};
 }
 
@@ -675,12 +680,14 @@ std::vector<document::write_note> document::take_writes() {
     return std::exchange(writes_log_, {});
 }
 
-void document::note_write(node_id id, atom name, bool text) {
+void document::note_write(node_id id, atom name, bool text, bool existed, bool removal) {
     if (log_writes_) {
         write_note note;
         note.node = id;
         note.name = name;
         note.text = text;
+        note.existed = existed;
+        note.removal = removal;
         if (text) { note.kind = write_note::edit::data; }
         writes_log_.push_back(note);
     }

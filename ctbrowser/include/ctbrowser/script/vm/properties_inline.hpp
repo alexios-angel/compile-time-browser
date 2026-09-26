@@ -143,6 +143,10 @@ inline auto context::set_rejection_tracker(std::function<void(value promise, boo
     rejection_tracker_ = std::move(track);
 }
 
+inline auto context::set_checkpoint_hook(std::function<void()> hook) -> void {
+    checkpoint_hook_ = std::move(hook);
+}
+
 inline auto context::track_promise_rejection(value promise, bool handled) -> void {
     if (rejection_tracker_) { rejection_tracker_(promise, handled); }
 }

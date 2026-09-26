@@ -757,6 +757,14 @@ void dom_bindings::install_event_interfaces(context & cx) {
                      e.set("newURL", c.string(dict_string(c, init, "newURL")));
                  });
 
+    // `ToggleEvent` (HTML 6.12.2): a <details> or popover's `toggle`, from
+    // one state to another - handler_attributes.cpp queues the details one.
+    interface_of("ToggleEvent", event_prototype_,
+                 [](context & c, script::object_object & e, value init) {
+                     e.set("oldState", c.string(dict_string(c, init, "oldState")));
+                     e.set("newState", c.string(dict_string(c, init, "newState")));
+                 });
+
     // `PageTransitionEvent` (HTML 7.4.6.4): `pageshow` after the window's
     // `load` (input.cpp's dispatch), and whether the page came from a cache,
     // which here it never does.

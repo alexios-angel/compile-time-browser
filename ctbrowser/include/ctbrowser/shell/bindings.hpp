@@ -66,6 +66,10 @@ public:
     bool dispatch_event(std::string_view type, node_id target, value event);
 
     bool click(node_id target);
+    // After ANY write to the document, the browser's own included (a
+    // <summary>'s activation): the observers' records and the attribute change
+    // steps (entry.cpp).
+    void mutated();
     [[nodiscard]] bool is_connected(node_id target) const;
 
     std::size_t run_due_callbacks();
@@ -214,10 +218,21 @@ private:
     [[nodiscard]] value match_media(context & cx, std::string_view text);
     void install_promise_rejections(context & cx);
     void track_promise_rejection(value promise, bool handled);
+    // At a checkpoint's end (install_promise_rejections).
+    void queue_rejection_notification();
     std::vector<value> rejections_to_notify_;    // roots until the task ran
     std::vector<value> outstanding_rejections_;  // notified, still unhandled
     std::vector<value> rejections_handled_late_; // roots until the task ran
     bool rejection_task_queued_ = false;
+    // A <details> whose `open` came or went: its toggle task, and the state
+    // before the first change that task stands for (handler_attributes.cpp).
+    struct details_toggle {
+        node_id details;
+        std::uint32_t task = 0;
+        bool was_open = false;
+    };
+    std::vector<details_toggle> details_toggles_;
+    void queue_details_toggle(node_id details, bool was_open, bool open);
     [[nodiscard]] bool is_media_query_list(value v) const;
     [[nodiscard]] dom_bindings & owner_of_media_query_list(value list);
     [[nodiscard]] bool media_query_matches(std::string_view media);
@@ -570,8 +585,6 @@ private:
     [[nodiscard]] std::string text_of(node_id id) const;
 
     void set_text(node_id id, std::string text);
-
-    void mutated();
 
     // --- globals ----------------------------------------------------------
 

@@ -53,9 +53,46 @@ void test_events() {
                          "unhandled:p3,three,true,true,true|handled:p3,false"});
 }
 
+// "Delayed handling": the notification task is queued at the END of the
+// rejecting script's microtask checkpoint, so a task that script queued - the
+// WPT's queueTask is a <details> toggle - runs first and attaches its handler
+// in time, while a task queued from THAT task is too late.
+void test_task_delayed_handling() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"html(<!doctype html><html><body><script>
+        const seen = [];
+        function queueTask(f) {
+            const d = document.createElement('details');
+            d.ontoggle = e => {
+                seen.push('toggle:' + e.oldState + '>' + e.newState + ',' + (e instanceof ToggleEvent));
+                f();
+            };
+            d.setAttribute('open', '');
+        }
+        addEventListener('unhandledrejection', ev => seen.push('unhandled:' + ev.reason.message));
+        const early = Promise.reject(new Error('early'));
+        queueTask(() => early.catch(() => {}));
+        const late = Promise.reject(new Error('late'));
+        queueTask(() => queueTask(() => late.catch(() => {})));
+        // One burst, one toggle: the first change's old state, the last's new.
+        const d = document.createElement('details');
+        d.ontoggle = e => seen.push('burst:' + e.oldState + '>' + e.newState);
+        d.open = true;
+        d.open = false;
+        window.report = () => console.log('seen=' + seen.join('|'));
+        </script></body></html>)html");
+    CHECK_EQ(page.script_error(), std::string{});
+    for (int i = 0; i < 6; ++i) { (void)page.tick(16.0); }
+    (void)page.run_script("report()");
+    CHECK_EQ(page.bindings().console_output().back(),
+             std::string{"seen=toggle:closed>open,true|toggle:closed>open,true|burst:closed>closed|"
+                         "unhandled:late|toggle:closed>open,true"});
+}
+
 } // namespace
 
 int main() {
     test_events();
+    test_task_delayed_handling();
     REPORT("promise_rejection_events");
 }

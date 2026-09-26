@@ -432,7 +432,8 @@ private:
     // mutation record, and a diff of before against after cannot see it. So
     // while a reader has asked (`log_writes(true)`), every set_attribute* and
     // set_text notes what it wrote, and `take_writes` drains the notes. Off,
-    // it costs one load per write.
+    // it costs one load per write. An attribute that is actually removed is
+    // noted too - the attribute change steps run for a removal.
     //
     // AND THE TREE EDITS, for the live ranges (DOM 5.5): every child inserted
     // or removed is noted with its parent and its index at that moment, in
@@ -449,6 +450,10 @@ public:
         node_id node;      // the element or character data written; the PARENT of a child
         atom name;         // the attribute's qualified name; unused otherwise
         bool text = false; // `kind == data`
+        // attribute: whether it was there before, and whether this REMOVED it
+        // - what HTML's attribute change steps are given as oldValue and value.
+        bool existed = false;
+        bool removal = false;
         edit kind = edit::attribute;
         node_id child;           // inserted/removed: which
         std::uint32_t index = 0; // ...and where in `node`'s children it was
@@ -458,7 +463,7 @@ public:
     [[nodiscard]] std::vector<write_note> take_writes();
 
 private:
-    void note_write(node_id id, atom name, bool text);
+    void note_write(node_id id, atom name, bool text, bool existed = false, bool removal = false);
     void note_edit(write_note::edit kind, node_id parent, node_id child, std::size_t index);
     bool log_writes_ = false;
     std::vector<write_note> writes_log_;

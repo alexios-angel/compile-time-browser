@@ -94,7 +94,8 @@ bool browser::toggle_details(node_id target) {
             (void)doc_->set_attribute(details, open, "");
         }
     }
-    bindings_->dispatch("toggle", details);
+    // The toggle event is the attribute change steps', a task later.
+    bindings_->mutated();
     mark(dirty::everything);
     return true;
 }
