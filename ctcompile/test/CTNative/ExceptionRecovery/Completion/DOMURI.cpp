@@ -4316,7 +4316,148 @@ static void testProtectedNumberArithmetic(mlir::MLIRContext & context) {
     }
 }
 
+static void testBooleanNumberInputs(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    const std::array inputs = {
+        "anchor.hasAttribute('flag')",
+        "true",
+        "false",
+        "anchor === anchor",
+        "!anchor.hasAttribute('flag')",
+        "anchor.hasAttribute('flag') === false",
+        "anchor.hasAttribute('flag') ? true : false",
+        "anchor.hasAttribute('flag') ? anchor.hasAttribute('other') : false",
+        "!!anchor.hasAttribute('flag')",
+        "anchor",
+        "{}",
+        "unknown()",
+        "(unknown(), true)",
+        "anchor.hasAttribute('flag') ? true : anchor",
+        "anchor.hasAttribute('flag') ? (unknown(), true) : false",
+        "anchor.hasAttribute('flag') ? true : (unknown(), false)",
+        "unknown() === true",
+        "anchor.unknown === true",
+    };
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 32; ++control) {
+            std::string source = R"js(function guarded(anchor) {
+                try {
+                    const saved = Number(anchor.hasAttribute('flag'));
+                    anchor.setAttribute('data-written', saved);
+                    return true;
+                } catch (error) { return error === anchor; }
+            })js";
+            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
+                source.replace(source.find(from.str()), from.size(), to.str());
+            };
+            if (control < inputs.size()) {
+                replace("anchor.hasAttribute('flag')", inputs[control]);
+            }
+            if (control == 18) {
+                replace("anchor.setAttribute('data-written'",
+                        "anchor.setAttribute('flag', ''); anchor.setAttribute('data-written'");
+            }
+            if (control == 19) {
+                replace("const saved = Number(anchor.hasAttribute('flag'));",
+                        "const present = anchor.hasAttribute('flag'); "
+                        "anchor.setAttribute('flag', ''); const saved = Number(present);");
+            }
+            if (control == 20) { replace("return true;", "throw anchor;"); }
+            if (control == 21) { replace("try {", "Number = anchor; try {"); }
+            if (control == 27) { replace("data-written", "bad name"); }
+            if (control == 31) {
+                replace("anchor.hasAttribute('flag')", "anchor.hasAttribute('flag', unknown())");
+            }
+            auto candidate = import(context, source, true);
+            if (!candidate) { continue; }
+            auto function = guarded(*candidate);
+            ctjs::LoadGlobalOp number;
+            llvm::SmallVector<ctjs::CallOp> originalCalls;
+            function.walk([&](ctjs::LoadGlobalOp load) {
+                if (load.getName() == "Number") { number = load; }
+            });
+            function.walk([&](ctjs::CallOp call) { originalCalls.push_back(call); });
+            if (!check(number && originalCalls.size() >= 2,
+                       "Boolean conversion retains original Number binding and calls")) {
+                continue;
+            }
+            // These controls retain the original direct read/conversion/write order;
+            // imported completion state may forward their callees through arguments.
+            auto conversion = originalCalls[1];
+            auto anchor = function.getBody().front().getArgument(ctjs::implicit_arguments);
+            if (control == 28) { conversion.getReceiverMutable().assign(anchor); }
+            if (control == 29) { conversion.getArgsMutable().append(anchor); }
+            if (control == 30) { conversion.getArgsMutable().clear(); }
+            mlir::Builder builder(&context);
+            number->setAttr("ctnative.host_intrinsic", builder.getStringAttr("Number"));
+            for (auto call : originalCalls) {
+                call->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+            }
+            HostContract request;
+            request.provider = provider;
+            request.entry = function.getSymName().str();
+            request.elementParameters = {0};
+            if (control != 22) { request.initialIntrinsics = {"Number"}; }
+            if (control == 23) { number.setName("Other"); }
+            request.moduleSha256 = hostContractFingerprint(*candidate);
+            const auto originalContract = request;
+            if (control == 24) { number.setName("Other"); }
+            const auto original = printed(*candidate);
+            auto error = prepareDOMEntry(*candidate, request,
+                                         control == 25   ? 0
+                                         : control == 26 ? 500
+                                                         : 100000);
+            const bool admitted = control < 9 || (control >= 18 && control <= 20);
+            if (!admitted) {
+                check(static_cast<bool>(error) && printed(*candidate) == original &&
+                          request.moduleSha256 == originalContract.moduleSha256 &&
+                          request.initialIntrinsics == originalContract.initialIntrinsics &&
+                          request.elementParameters == originalContract.elementParameters &&
+                          request.provider == originalContract.provider &&
+                          request.entry == originalContract.entry,
+                      "Boolean conversion refuses coercion, effects, invalid bindings and budgets");
+                if (error) { llvm::consumeError(std::move(error)); }
+                continue;
+            }
+            if (!check(!error, "proved Boolean Number input completes its protected source")) {
+                llvm::errs() << "Boolean Number control " << control << ": "
+                             << llvm::toString(std::move(error)) << '\n';
+                continue;
+            }
+            DOMEntryAnalysis proof(*candidate, request);
+            check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                  "Boolean conversion still requires fresh complete DOM proof");
+            if (control != 0 && control < 18) { continue; }
+            llvm::SmallVector<ctjs::CallOp> calls;
+            function = guarded(*candidate);
+            function.walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            const bool snapshot = control == 18 || control == 19;
+            if (!check(calls.size() == (snapshot ? 4u : 3u),
+                       "Boolean read, conversion and ordered writes execute exactly once")) {
+                continue;
+            }
+            const unsigned converted = control == 19 ? 2 : 1;
+            const auto * read = proof.call(calls.front());
+            const auto * numeric = proof.call(calls[converted]);
+            const auto * write = proof.call(calls.back());
+            bool ordered = true;
+            for (unsigned index = 1; index < calls.size(); ++index) {
+                ordered &= calls[index - 1]->getBlock() == calls[index]->getBlock() &&
+                           calls[index - 1]->isBeforeInBlock(calls[index]);
+            }
+            check(read && read->kind == HostDOMMethod::hasAttribute && numeric &&
+                      numeric->kind == HostDOMMethod::number && write &&
+                      write->kind == HostDOMMethod::setAttribute && ordered &&
+                      calls[converted].getArgs()[0] == calls.front().getResult() &&
+                      calls.back().getArgs()[1] == calls[converted].getResult(),
+                  "Number and later writes consume the Boolean snapshot from its original read");
+        }
+    }
+}
+
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    testBooleanNumberInputs(context);
     testConditionalNumberCallee(context);
     testProtectedNumberArithmetic(context);
     testProtectedNumberReads(context);

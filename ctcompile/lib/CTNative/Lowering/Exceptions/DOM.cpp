@@ -430,6 +430,12 @@ struct DOMAttributeProof {
     llvm::DenseSet<mlir::Value> stringReads;
     llvm::DenseSet<mlir::Value> numberReads;
     bool booleanValue(mlir::Value value) const {
+        if (auto compare = value.getDefiningOp<ctjs::CompareOp>()) {
+            return compare.getKind() == ctjs::CompareKind::StrictEq;
+        }
+        if (auto unary = value.getDefiningOp<ctjs::UnaryOp>()) {
+            return unary.getKind() == ctjs::UnaryKind::Not;
+        }
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
         return booleanReads.contains(value) ||
                (constant && llvm::isa<ctjs::BooleanAttr>(constant.getValue()));
@@ -534,7 +540,9 @@ struct DOMAttributeProof {
         // Unlike result-tag evidence, suppressing an exception requires an
         // input that cannot invoke ToPrimitive or throw during Number conversion.
         // The initial global binding is checked by the complete final DOM proof.
-        return attributeCall(call) || (numberCallee(call) && stringValue(call.getArgs().front()));
+        return attributeCall(call) ||
+               (numberCallee(call) &&
+                (stringValue(call.getArgs().front()) || booleanValue(call.getArgs().front())));
     }
     void callResult(ctjs::CallOp call, mlir::Value result) {
         // Called only after the independent nonthrowing proof succeeds.
