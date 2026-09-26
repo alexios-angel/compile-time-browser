@@ -228,6 +228,40 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-number-read-string-return": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number')).toString();
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-string-snapshot": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number')).toString();
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-string-divide-return": """function customElements(anchor) {
+  try {
+    const saved = (1 / Number(anchor.getAttribute('data-number'))).toString();
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-string-read-snapshot": """function customElements(anchor) {
+  try {
+    const saved = anchor.getAttribute('data-number');
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -317,6 +351,9 @@ NUMBER_ARITHMETIC_RESULTS["write-number-read-conditional-divide-return"] = (
     NUMBER_ARITHMETIC_RESULTS["write-number-read-protected-divide-return"]
 )
 NUMBER_ARITHMETIC_RESULTS["write-number-read-number-divide-return"] = NUMBER_ARITHMETIC_RESULTS[
+    "write-number-read-protected-divide-return"
+]
+NUMBER_ARITHMETIC_RESULTS["write-number-read-string-divide-return"] = NUMBER_ARITHMETIC_RESULTS[
     "write-number-read-protected-divide-return"
 ]
 NUMBER_CONDITIONAL_READS = {
@@ -448,6 +485,7 @@ def main():
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
     for name, source in SOURCES.items():
+        string_read = name == "write-string-read-snapshot"
         number_inputs = (
             tuple(
                 zip(
@@ -459,6 +497,10 @@ def main():
             if name in NUMBER_ARITHMETIC_RESULTS
             else NUMBER_READ_INPUTS
         )
+        if string_read:
+            number_inputs = tuple(
+                (value, "null" if value is None else value) for value, _ in NUMBER_READ_INPUTS
+            )
         script = (
             source
             + "function observe(closed) { let reads = 0; "
@@ -468,7 +510,7 @@ def main():
         )
         if name.startswith("write-"):
             script = source + WRITE_OBSERVER
-        if name.startswith("write-number-"):
+        if name.startswith("write-number-") or string_read:
             script = source + NUMBER_WRITE_OBSERVER
         number_boolean = name.startswith("write-number-boolean-")
         if number_boolean:
@@ -479,7 +521,7 @@ def main():
                 "saved['data-closed'] = 'yes'", f"saved[{condition[0]!r}] = 'yes'"
             )
         number_read = name.startswith("write-number-read")
-        if number_read:
+        if number_read or string_read:
             script = script.replace(
                 "var result0 = observe(false), result1 = observe(true);",
                 "\n".join(
@@ -552,7 +594,7 @@ def main():
                 )
         if name in WRITE_EXPECTED:
             expected = WRITE_EXPECTED[name]
-        if number_read:
+        if number_read or string_read:
             expected = ""
             for index in (0, 1):
                 trace = "|".join(
@@ -738,7 +780,7 @@ def main():
             )
             if number_boolean:
                 checks = checks.replace('"data-closed"', '"flag"')
-        if number_read:
+        if number_read or string_read:
             inputs = ",\n".join(
                 "{"
                 + ("nullptr" if value is None else json.dumps(value, ensure_ascii=False))
@@ -810,7 +852,7 @@ def main():
                 if "throw " in source_cpp or "catch (" in source_cpp:
                     raise RuntimeError("confined node escaped into a native exception")
                 dom.standalone(args, native, label, checks, compilers, includes, libraries)
-                if name == "helper-next-record" or name.startswith("write-number-"):
+                if name == "helper-next-record" or name.startswith("write-number-") or string_read:
                     dom.lower(
                         args,
                         ir,
@@ -981,6 +1023,36 @@ def main():
                     "(anchor.hasAttribute('flag') ? Number : anchor)(1)",
                 ),
                 ("bigint-input", "Number(anchor.hasAttribute('flag'))", "1n"),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
+    string_body = SOURCES["write-number-read-string-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    refusals.update(
+        {
+            "write-number-read-string-" + name: string_body.replace(before, after)
+            for name, before, after in (
+                ("without-intrinsic", "Number", "Number"),
+                ("rebound-intrinsic", "try {", "try { Number = anchor;"),
+                ("coercing-input", "anchor.getAttribute('data-number')", "anchor"),
+                (
+                    "wrong-receiver",
+                    "const saved = Number(anchor.getAttribute('data-number')).toString()",
+                    "const number = Number(anchor.getAttribute('data-number')); const stringify = number.toString; const saved = stringify()",
+                ),
+                ("different-callee", ".toString()", ".toFixed()"),
+                ("radix", ".toString()", ".toString(16)"),
+                ("coercing-radix", ".toString()", ".toString(anchor)"),
+                (
+                    "effectful-branch",
+                    "Number(anchor.getAttribute('data-number'))",
+                    "(anchor.hasAttribute('flag') ? (anchor.unknown(), 1) : Number(anchor.getAttribute('data-number')))",
+                ),
+                (
+                    "rebound-method",
+                    "try {",
+                    "try { Number.prototype.toString = anchor;",
+                ),
                 ("invalid-name", "'data-written'", "'bad name'"),
             )
         }
