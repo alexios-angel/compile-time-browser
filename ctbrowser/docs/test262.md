@@ -137,3 +137,5 @@ The following sections retain the complete original text and measurements.
 - [Rounds eight to ten, and Temporal — 2026-09-25](test262/03-measured-2026-09-25.md#rounds-eight-to-ten-and-temporal--2026-09-25)
 <a id="direct-eval--2026-09-25"></a>
 - [Direct eval — 2026-09-25](test262/03-measured-2026-09-25.md#direct-eval--2026-09-25)
+<a id="round-eleven-and-the-module-host--2026-09-26"></a>
+- [Round eleven, and the module host — 2026-09-26](test262/03-measured-2026-09-25.md#round-eleven-and-the-module-host--2026-09-26)

@@ -14,6 +14,51 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Round eleven and the root's VM work — 2026-09-26
+
+Round eleven (CSS3, HTML3, DOM3, T262-3; the CSS and DOM agents were cut
+off by a usage limit after their last green gate and their branches merged
+whole) plus the root's commits since `b9c6662e`, measured at `5ca8e8a1`.
+Same instrument: WPT `3f6b09ae`, devbox, four workers, 4 GB cap,
+deterministic GL; test262 four workers, 10 s, 2 GB.
+
+| suite | files PASS `b9c6662e` → `5ca8e8a1` | subtests PASS `b9c6662e` → `5ca8e8a1` |
+|---|---:|---:|
+| `css` | 2,041 → **2,168** | 90,003 → **98,450** |
+| `html` | 814 → **835** | 74,214 → **74,387** |
+| `dom` | 408 → **409** | 52,396 → **52,407** |
+| `shadow-dom` | 98 → **100** | 8,637 → **8,642** |
+| `custom-elements` | 88 → **119** | 3,584 → **3,945** |
+| `domparsing` | 24 → **24** | 704 → **704** |
+| `selection` | 57 → **57** | 33,638 → **33,638** |
+| `url` | 39 → **40** | 9,269 → **9,529** |
+| **WPT total** | 3,569 → **3,752** (+183) | 272,445 → **281,702** |
+| test262 (ran) | 47,425 → **48,057** (+632) | — |
+
+**Zero files lost** in any suite, WPT or test262. What moved it: CSS3's 53
+commits (a frame's style sheets are the frame's, `shape()` and path
+interpolation, 3D transforms computed as `matrix3d`, grid tracks
+interpolated track by track, shorthands split into their longhands, and a
+long tail of grammars - `css-conformance.md`); HTML3's form submission through
+the form algorithm, Fetch's Headers/Request/Response, XHR decoding and
+`<area>`; DOM3's scoped custom element registries and the parser
+constructing custom elements; T262-3's immutable bindings, `super` and
+`new.target` in direct eval, computed class fields and the rest
+(`test262.md`); and the root's event-loop ordering (`promise-rejection-
+events.html` 32 → 40 of 43), `import()` rejecting, module namespaces,
+a script's `var` non-configurable, and strings counting toward collection
+(`document-write/032.html` no longer aborts at the 4 GB cap).
+
+**The instrument, widened (2026-09-26).** `fetch-wpt.sh` now checks out
+`/interfaces/` and `/fetch/data-urls/resources/` and makes wptserve's
+`/resources/WebIDLParser.js` alias. Seven idlharness files that were
+HARNESS_ERROR ran for the first time at `5ca8e8a1`: `css/cssom` 263/497
+subtests, `css/cssom-view` 167/417, `css/css-conditional` 32/45,
+`container-queries` 14/28, `css/css-cascade` 23/34, `url` 41/77 (all
+FAIL), and `selection/idlharness.window.js` TIMEOUT; `html/webappapis/atob/
+base64.any.js` went 285/286 → 317/380. The table above predates the
+re-fetch; the next measurement includes them.
+
 ## Rounds eight to ten, Temporal and direct eval — 2026-09-25
 
 Eight suites and the whole of test262, measured at the session's start

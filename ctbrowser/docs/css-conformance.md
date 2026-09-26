@@ -11,6 +11,49 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Round eleven — 2026-09-26
+
+Full `css/` at `5ca8e8a1`: **2,168/2,926 runnable files PASS, 98,450
+subtests PASS**, from 2,041 and 90,003 at `b9c6662e` - **+127 files,
++8,447 subtests, zero files lost.** Same instrument. Round eleven's CSS3
+(53 commits; cut off by a usage limit after its fifth green gate, which
+measured the same numbers) - modules that gained three files or a hundred
+subtests:
+
+| module | files PASS `b9c6662e` / `5ca8e8a1` | subtests PASS `b9c6662e` / `5ca8e8a1` |
+|---|---:|---:|
+| `css/motion` | 21 / 37 | 3,504 / 4,892 |
+| `css/css-grid` | 28 / 41 | 2,662 / 3,215 |
+| `css/css-masking` | 33 / 45 | 4,733 / 6,077 |
+| `css/css-transforms` | 35 / 45 | 3,539 / 4,940 |
+| `css/css-fonts` | 63 / 73 | 3,555 / 3,969 |
+| `css/filter-effects` | 17 / 25 | 2,020 / 2,338 |
+| `css/css-transitions` | 20 / 27 | 811 / 902 |
+| `css/css-shapes` | 13 / 19 | 1,750 / 2,340 |
+| `css/css-lists` | 13 / 17 | 396 / 440 |
+| `css/css-ui` | 43 / 47 | 1,313 / 1,355 |
+| `css/selectors` | 142 / 145 | 4,641 / 5,148 |
+| `css/cssom` | 160 / 163 | 3,299 / 3,444 |
+| `css/css-animations` | 33 / 36 | 442 / 579 |
+| `css/css-tables` | 14 / 17 | 40 / 167 |
+| `css/css-images` | 26 / 29 | 3,081 / 3,207 |
+| `css/css-text` | 83 / 86 | 1,794 / 1,910 |
+| `css/css-rhythm` | 12 / 15 | 89 / 155 |
+| `css/css-anchor-position` | 3 / 6 | 124 / 186 |
+| `css/css-gaps` | 70 / 73 | 4,097 / 4,145 |
+| `css/css-content` | 2 / 4 | 97 / 205 |
+| `css/fill-stroke` | 0 / 1 | 0 / 356 |
+| `css/mediaqueries` | 16 / 16 | 1,381 / 1,565 |
+
+A frame's style sheets and computed style are the frame's now (the
+attribute-case selector files' iframe halves), `shape()` and paths
+interpolate, 3D transforms compute as `matrix3d`, grid tracks interpolate
+track by track, and the shorthands `grid`, `transition`, `animation-range`,
+`mask` and `block-step` split into their longhands. The largest failures
+left: `calc-size()` / `interpolate-size` interpolation (~2,000 subtests),
+`scrollWidth`/`scrollHeight` with negative margins (420), `color-mix()`
+with `none` and powerless hues (356).
+
 ## Rounds eight to ten — 2026-09-25
 
 Full `css/` at the round-ten merge `b9c6662e`: **2,041/2,926 runnable files
