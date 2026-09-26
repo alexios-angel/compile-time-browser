@@ -1526,7 +1526,19 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {4, 64, "", false},
         {67, 8, "", false},
     }};
-    for (unsigned control = 0; control != 1426; ++control) {
+    const std::array<std::pair<mlir::Attribute, llvm::StringRef>, 10> taggedUnaries{{
+        {predicates[0].first, "number"}, // +0
+        {predicates[1].first, "number"}, // -0
+        {predicates[2].first, "number"}, // quiet NaN
+        {predicates[3].first, "number"}, // negative signaling NaN
+        {ctjs::BooleanAttr::get(context, false), "boolean"},
+        {predicates[9].first, "string"},                        // empty String
+        {ctjs::StringAttr::get(context, "\xc0\x80"), "string"}, // no byte decoding
+        {ctjs::StringAttr::get(context, std::string(100002, 'a')), "string"},
+        {predicates[12].first, "object"}, // null
+        {predicates[13].first, "undefined"},
+    }};
+    for (unsigned control = 0; control != 1518; ++control) {
         auto expected = baseline;
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
@@ -1685,8 +1697,10 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             const auto payload = terminal->getOperand(0);
             const auto other = first.getArgument(ctjs::arg_receiver);
             const bool primitive = control < 104;
-            const bool stringAdd = control >= 1248;
-            const bool concat = control >= 1358;
+            const bool taggedUnary = control >= 1426;
+            const unsigned taggedIndex = taggedUnary ? (control - 1426) / 4 : 0;
+            const bool stringAdd = control >= 1248 && !taggedUnary;
+            const bool concat = control >= 1358 && !taggedUnary;
             const unsigned addStart = concat ? 1358 : 1248;
             const auto strings = concat ? llvm::ArrayRef(concats) : llvm::ArrayRef(stringAdds);
             const auto stringCount = static_cast<unsigned>(strings.size());
@@ -1710,13 +1724,14 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             const bool bitwiseUnary = control >= 326 && control < 372;
             const bool numericUnary = (control >= 280 && control < 372) || coercingUnary;
             const bool staticCalculated = control >= 372 && !equality && !power && !numericUnary &&
-                                          !coercingBinary && !stringAdd;
+                                          !coercingBinary && !stringAdd && !taggedUnary;
             const unsigned staticIndex = staticCalculated ? (control - 372) / 2 : 0;
-            const bool calculated = control >= 232 && !numericUnary && !equality;
+            const bool calculated = control >= 232 && !numericUnary && !equality && !taggedUnary;
             const bool compared = control >= 176 && control < 232;
             const bool computed = control >= 116 && control < 176;
             const unsigned index =
-                stringAdd          ? addIndex < stringCount ? strings[addIndex].accepts ? 0 : 18
+                taggedUnary        ? 0
+                : stringAdd        ? addIndex < stringCount ? strings[addIndex].accepts ? 0 : 18
                                                             : addIndex - stringCount + 12
                 : coercingBinary   ? binaryIndex < 22    ? 0
                                      : binaryIndex < 27  ? 18
@@ -1751,18 +1766,27 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 : compared         ? (control - 176) / 2
                 : computed         ? (control - 116) / 2
                                    : (control - 76) / 2;
-            const bool transported = (computed && control >= 156) ||
+            const bool transported = (taggedUnary && (taggedIndex == 10 || taggedIndex == 11 ||
+                                                      taggedIndex == 20 || taggedIndex == 21)) ||
+                                     (computed && control >= 156) ||
                                      (compared && (index == 14 || index == 15)) ||
                                      (calculated && (index == 12 || index == 13)) ||
                                      (numericUnary && (index == 12 || index == 13)) ||
                                      (equality && (index == 27 || index == 28));
-            const unsigned transport = equality       ? index == 28 ? 2 : 0
+            const unsigned transport = taggedUnary    ? taggedIndex == 11   ? 3
+                                                        : taggedIndex == 20 ? 6
+                                                        : taggedIndex == 21 ? 8
+                                                                            : 0
+                                       : equality     ? index == 28 ? 2 : 0
                                        : numericUnary ? index == 13 ? 2 : 0
                                        : calculated   ? index == 13 ? 2 : 0
                                        : compared     ? index == 15 ? 2 : 0
                                        : transported  ? index - 20
                                                       : 0;
-            const unsigned mutation = equality       ? index == 31   ? 0
+            const unsigned mutation = taggedUnary    ? taggedIndex == 13   ? 0
+                                                       : taggedIndex == 14 ? 1
+                                                                           : 6
+                                      : equality     ? index == 31   ? 0
                                                        : index == 32 ? 1
                                                                      : 6
                                       : numericUnary ? index == 15   ? 0
@@ -1783,7 +1807,63 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             at.setInsertionPoint(moved);
             mlir::Value input;
             llvm::SmallVector<std::pair<mlir::Operation *, mlir::Attribute>> evaluatedResults;
-            if (stringAdd) {
+            if (taggedUnary) {
+                const auto & row =
+                    taggedUnaries[taggedIndex < taggedUnaries.size() ? taggedIndex : 0];
+                const auto kind =
+                    (control - 1426) % 4 < 2 ? ctjs::UnaryKind::TypeOf : ctjs::UnaryKind::Void;
+                mlir::Value operand =
+                    taggedIndex == 15 ? mlir::Value(other)
+                    : taggedIndex == 16
+                        ? ctjs::CreateObjectOp::create(at, where, payload.getType()).getResult()
+                    : taggedIndex == 18
+                        ? ctjs::LoadGlobalOp::create(at, where, "tagged-unary-input-effect")
+                              .getResult()
+                        : ctjs::ConstantOp::create(
+                              at, where,
+                              taggedIndex == 17
+                                  ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
+                                  : row.first)
+                              .getResult();
+                auto operation = ctjs::UnaryOp::create(
+                    at, where, payload.getType(), ctjs::UnaryKindAttr::get(context, kind), operand);
+                if (control == 1514) { operation->eraseOperand(0); }
+                if (control == 1515) { operation->removeAttr("kind"); }
+                if (control == 1516) { operand.getDefiningOp()->removeAttr("value"); }
+                if (control == 1517) {
+                    mlir::OpBuilder invalid(operation);
+                    auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
+                    operation->setOperand(0, flag);
+                }
+                const mlir::Attribute value =
+                    kind == ctjs::UnaryKind::TypeOf
+                        ? mlir::Attribute(ctjs::StringAttr::get(context, row.second))
+                        : ctjs::UndefinedAttr::get(context);
+                evaluatedResults.emplace_back(operation.getOperation(), value);
+                input = operation;
+                selected = kind == ctjs::UnaryKind::TypeOf;
+                if (taggedIndex >= 10 && taggedIndex <= 12) {
+                    auto expectedValue = ctjs::ConstantOp::create(at, where, value);
+                    auto comparison =
+                        ctjs::CompareOp::create(at, where, payload.getType(),
+                                                ctjs::CompareKind::StrictEq, input, expectedValue);
+                    evaluatedResults.emplace_back(comparison.getOperation(),
+                                                  ctjs::BooleanAttr::get(context, true));
+                    auto negated = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), comparison);
+                    evaluatedResults.emplace_back(negated.getOperation(),
+                                                  ctjs::BooleanAttr::get(context, false));
+                    input = negated;
+                    selected = false;
+                    if (taggedIndex == 12) {
+                        llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(input);
+                    }
+                }
+                if (taggedIndex == 19) {
+                    ctjs::StoreGlobalOp::create(at, where, "tagged-unary-prefix-effect", other);
+                }
+            } else if (stringAdd) {
                 const auto & row = strings[addIndex < stringCount ? addIndex : 1];
                 const auto oversized = ctjs::StringAttr::get(context, std::string(100002, 'a'));
                 mlir::Value lhs =
@@ -2242,7 +2322,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                                     : predicates[6].first;
                 input = ctjs::ConstantOp::create(at, where, value);
             }
-            if (primitive || (computed && (index < 12 || (transported && transport < 5))) ||
+            if ((taggedUnary && taggedIndex < 13) || primitive ||
+                (computed && (index < 12 || (transported && transport < 5))) ||
                 (compared && (index < 17 || index == 21)) || control == 268 || control == 269 ||
                 control == 1356 || control == 1357 ||
                 (calculated &&
@@ -2667,7 +2748,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             (control >= 742 && control < 748) || (control >= 890 && control < 896) ||
             (control >= 1042 && control < 1048) || (control >= 1242 && control < 1248) ||
             (control >= 1350 && control < 1356) || control == 1414 || control == 1415 ||
-            (control >= 1420 && control < 1426);
+            (control >= 1420 && control < 1426) || control >= 1514;
         if (!check(mlir::succeeded(mlir::verify(*candidate)) != malformed,
                    "only intentionally malformed helper operations fail verification")) {
             continue;
@@ -2703,7 +2784,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             (control >= 1166 && control < 1210) || (control >= 1220 && control < 1226) ||
             control == 268 || control == 269 || (control >= 1248 && control < 1312) ||
             (control >= 1324 && control < 1330) || (control >= 1356 && control < 1388) ||
-            (control >= 1394 && control < 1400);
+            (control >= 1394 && control < 1400) || (control >= 1426 && control < 1478);
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
@@ -2717,7 +2798,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 control == 353 || control == 411 || control == 493 || control == 541 ||
                 control == 623 || control == 703 || control == 851 || control == 1019 ||
                 control == 1083 || control == 1151 || control == 1223 || control == 1327 ||
-                control == 1397) {
+                control == 1397 || control == 1471 || control == 1473) {
                 const auto attempt = [&](unsigned budget) {
                     mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
                     auto limitedProof = proof;

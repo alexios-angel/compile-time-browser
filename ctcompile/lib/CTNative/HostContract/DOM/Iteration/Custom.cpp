@@ -227,6 +227,14 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return value.known ? ctjs::BooleanAttr::get(unary.getContext(), !value.truthy)
                                : mlir::Attribute{};
         }
+        if (unary.getKind() == ctjs::UnaryKind::TypeOf ||
+            unary.getKind() == ctjs::UnaryKind::Void) {
+            if (!ctjs::isPrimitiveAttr(input.getValue())) { return {}; }
+            return host_detail::prefixUnary(unary.getKind(),
+                                            host_detail::prefixValue::constant(input.getValue()),
+                                            unary.getContext())
+                .literal;
+        }
         if (unary.getKind() != ctjs::UnaryKind::Plus && unary.getKind() != ctjs::UnaryKind::Neg &&
             unary.getKind() != ctjs::UnaryKind::BitNot) {
             return {};
