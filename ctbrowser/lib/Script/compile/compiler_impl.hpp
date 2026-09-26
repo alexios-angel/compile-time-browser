@@ -768,6 +768,7 @@ public:
     void compile_do_while(const vp::node & n);
 
     void compile_for(const vp::node & n);
+    void compile_for_loop(const vp::node & n);
 
     // for..of and for..in.
     //

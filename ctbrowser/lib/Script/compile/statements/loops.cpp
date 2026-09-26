@@ -154,6 +154,18 @@ void compiler_impl::compile_do_while(const vp::node & n) {
 }
 
 void compiler_impl::compile_for(const vp::node & n) {
+    // `for (using x = r; ;)` (14.7.4.2): the resources live for the whole
+    // statement and are disposed as it completes, however it completes - one
+    // using region round the loop, where emit_using_add found no stack and
+    // refused the script.
+    if (n.a >= 0 && is_using_decl(at(n.a))) {
+        compile_using_region(at(n.a).text == "await using", [&] { compile_for_loop(n); });
+        return;
+    }
+    compile_for_loop(n);
+}
+
+void compiler_impl::compile_for_loop(const vp::node & n) {
     push_scope();
     const std::vector<std::string> label = take_labels();
     const std::size_t init_mark = fn().scope_marks.back();

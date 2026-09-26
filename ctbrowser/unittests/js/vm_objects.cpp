@@ -89,6 +89,11 @@ void test_class_fields_are_per_instance() {
         "C.prototype, 'g'); return ['prototype' in C.prototype.m, 'prototype' in d.get,"
         " 'prototype' in C.prototype.gen, typeof C.prototype].join();",
         "false,false,true,object");
+    // a `for (using ...)` head's resources are disposed as the loop completes
+    expect_result("var log = [], n = 0; var r = { [Symbol.dispose]() { log.push('d'); } };"
+                  " for (using x = r; n < 2; n++) log.push(n); log.push('after');"
+                  " return log.join();",
+                  "0,1,d,after");
     // a function is an object a `using` declaration may hold
     expect_result("Function.prototype[Symbol.dispose] = function () { this.gone = true; };"
                   " var f; { using g = function () {}; f = g; }"
