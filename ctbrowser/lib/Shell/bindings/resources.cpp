@@ -21,6 +21,8 @@ namespace detail {
 // A body's bytes decoded, BOM and all - defined in xhr.cpp beside the
 // response decoding that needed it first.
 [[nodiscard]] std::string decode_body(std::string_view bytes, std::string_view name);
+// "UTF-8 decode": a UTF-8 BOM dropped and none other sniffed - xhr.cpp.
+[[nodiscard]] std::string utf8_decode(std::string_view bytes);
 } // namespace detail
 
 namespace {
@@ -800,11 +802,11 @@ void dom_bindings::install_resources(context & cx) {
             });
         };
         read("text", [](context & c, script::object_object &, const std::string & bytes) {
-            return c.make_promise(c.string(detail::decode_body(bytes, "UTF-8")), false);
+            return c.make_promise(c.string(detail::utf8_decode(bytes)), false);
         });
         read("json", [](context & c, script::object_object &, const std::string & bytes) {
             const value parse = c.lookup_property(c.global("JSON"), "parse");
-            const value text = c.string(detail::decode_body(bytes, "UTF-8"));
+            const value text = c.string(detail::utf8_decode(bytes));
             const value parsed = c.call(parse, std::span<const value>{&text, 1});
             if (c.throw_pending()) { return c.make_promise(c.take_pending_throw(), true); }
             return c.make_promise(parsed, false);
