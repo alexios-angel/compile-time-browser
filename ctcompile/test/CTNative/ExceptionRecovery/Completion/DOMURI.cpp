@@ -4651,9 +4651,13 @@ static void testNumberNumberInputs(mlir::MLIRContext & context) {
 
 static void testProtectedNumberStrings(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
+    const std::array beforeTryControls = {0u,  1u,  3u,  4u,  5u,  7u,  8u,  9u,
+                                          10u, 13u, 14u, 15u, 16u, 17u, 18u, 19u};
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 19; ++control) {
+        for (unsigned index = 0; index < 19 + beforeTryControls.size(); ++index) {
+            const bool beforeTry = index >= 19;
+            const unsigned control = beforeTry ? beforeTryControls[index - 19] : index;
             std::string source = R"js(function guarded(anchor) {
                 try {
                     const saved = Number(anchor.getAttribute('data-number')).toString();
@@ -4686,6 +4690,14 @@ static void testProtectedNumberStrings(mlir::MLIRContext & context) {
             if (control == 10) { replace("const saved =", "unknown(); const saved ="); }
             if (control == 11) { replace("data-written", "bad name"); }
             if (control == 12) { replace("data-written', saved", "data-written', null"); }
+            if (beforeTry) {
+                const auto begin = source.find("const saved =");
+                const auto end = source.find(';', begin) + 1;
+                const auto saved = source.substr(begin, end - begin);
+                source.erase(begin, end - begin);
+                source.insert(source.find("try {"), saved + " ");
+            }
+            if (control == 19) { replace("const saved =", "unknown(); const saved ="); }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }
             auto function = guarded(*candidate);
@@ -4726,7 +4738,7 @@ static void testProtectedNumberStrings(mlir::MLIRContext & context) {
                 continue;
             }
             if (!check(!error, "protected Number method and saved String complete")) {
-                llvm::errs() << "Number String control " << control << ": "
+                llvm::errs() << "Number String control " << index << ": "
                              << llvm::toString(std::move(error)) << '\n';
                 continue;
             }

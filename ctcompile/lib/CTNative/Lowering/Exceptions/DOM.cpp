@@ -440,10 +440,14 @@ struct DOMAttributeProof {
         return booleanReads.contains(value) ||
                (constant && llvm::isa<ctjs::BooleanAttr>(constant.getValue()));
     }
-    bool stringValue(mlir::Value value) const {
+    bool stringValue(mlir::Value value) {
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+        // A saved Number.toString result may precede the protected body. Reuse
+        // its charged Number origin; producer effects and initial method identity
+        // still require the complete final DOM proof.
         return stringReads.contains(value) ||
-               (constant && llvm::isa<ctjs::StringAttr, ctjs::NullAttr>(constant.getValue()));
+               (constant && llvm::isa<ctjs::StringAttr, ctjs::NullAttr>(constant.getValue())) ||
+               numberStringCall(value.getDefiningOp<ctjs::CallOp>());
     }
     static bool numberCallee(ctjs::CallOp call) {
         if (!call) { return false; }
