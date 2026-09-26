@@ -583,7 +583,10 @@ bool dom_bindings::apply_canvas_font(canvas_context & canvas, std::string_view f
             }
         } else if (name == "font-family") {
             // The FIRST entry, unquoted - what layout resolves a list to as well.
-            std::string_view first = trim(text.substr(0, text.find(',')), " \t");
+            // A view of `text` itself: `text.substr` is a temporary string, and
+            // the view trim() returned into it dangled (ASan, 2026-09-26).
+            const std::string_view list = text;
+            std::string_view first = trim(list.substr(0, list.find(',')), " \t");
             if (first.size() >= 2 && (first.front() == '"' || first.front() == '\'') &&
                 first.back() == first.front()) {
                 first = first.substr(1, first.size() - 2);
