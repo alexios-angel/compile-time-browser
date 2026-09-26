@@ -134,6 +134,32 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-number-read-conditional": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null);
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-conditional-snapshot": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null);
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-conditional-return": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null);
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-arithmetic-conditional-callee": "function customElements(anchor) { try { const saved = Number(anchor.hasAttribute('data-closed') ? anchor.getAttribute('data-number') : null) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; } }\n",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -213,6 +239,17 @@ NUMBER_ARITHMETIC_RESULTS = {
         "NaN",
         "0.023809523809523808",
     ),
+}
+
+
+NUMBER_ARITHMETIC_RESULTS["write-number-read-arithmetic-conditional-callee"] = (
+    NUMBER_ARITHMETIC_RESULTS["write-number-read-protected-add"]
+)
+NUMBER_CONDITIONAL_READS = {
+    "write-number-read-conditional": ("flag", "0"),
+    "write-number-read-conditional-snapshot": ("flag", "0"),
+    "write-number-read-conditional-return": ("flag", "0"),
+    "write-number-read-arithmetic-conditional-callee": ("data-closed", "1"),
 }
 
 
@@ -341,6 +378,11 @@ def main():
             script = source + WRITE_OBSERVER
         if name.startswith("write-number-"):
             script = source + NUMBER_WRITE_OBSERVER
+        condition = NUMBER_CONDITIONAL_READS.get(name)
+        if condition:
+            script = script.replace(
+                "saved['data-closed'] = 'yes'", f"saved[{condition[0]!r}] = 'yes'"
+            )
         number_read = name.startswith("write-number-read")
         if number_read:
             script = script.replace(
@@ -416,19 +458,23 @@ def main():
         if name in WRITE_EXPECTED:
             expected = WRITE_EXPECTED[name]
         if number_read:
-            trace = "|".join(
-                "true:get:data-number="
-                + ("null" if value is None else value)
-                + ";"
-                + ("write:data-number=99;" if name.endswith("-snapshot") else "")
-                + "write:data-written="
-                + result
-                + ";"
-                for value, result in number_inputs
-            )
-            expected = "".join(
-                f"result{index}={json.dumps(trace, ensure_ascii=False)}\n" for index in (0, 1)
-            )
+            expected = ""
+            for index in (0, 1):
+                trace = "|".join(
+                    "true:"
+                    + (f"read:{condition[0]}={'true' if index else 'false'};" if condition else "")
+                    + (
+                        "get:data-number=" + ("null" if value is None else value) + ";"
+                        if not condition or index
+                        else ""
+                    )
+                    + ("write:data-number=99;" if name.endswith("-snapshot") else "")
+                    + "write:data-written="
+                    + (condition[1] if condition and not index else result)
+                    + ";"
+                    for value, result in number_inputs
+                )
+                expected += f"result{index}={json.dumps(trace, ensure_ascii=False)}\n"
         if name == "helper-next-record":
             expected = (
                 'result0="false:read:data-yielded=false;write:data-next=false;write:data-yielded=yes;"\n'
@@ -625,10 +671,34 @@ def main():
                     ),
                 )
             )
+        if condition:
+            checks = (
+                checks.replace(
+                    "for (const auto & test : cases) {",
+                    "for (bool enabled : {false, true}) { "
+                    f'const auto flag = target.atoms().intern("{condition[0]}"); '
+                    "assert(target.remove_attribute(id, flag)); "
+                    'if (enabled) { assert(target.set_attribute(id, flag, "yes")); } '
+                    "for (const auto & test : cases) {",
+                )
+                .replace("== test[1]", f'== (enabled ? test[1] : "{condition[1]}")')
+                .replace("                };", "                } };", 1)
+            )
         checks += " (void)pressed; (void)alias;"
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
                 label = f"caught-node-{name}-{provider}-{optimize}"
+                # Keep this complete witness: checked-invocation state still needs proof.
+                if name == "write-number-read-conditional-return":
+                    dom.lower(
+                        args,
+                        ir,
+                        dict(contract, provider=provider),
+                        label,
+                        optimize=optimize,
+                        success=False,
+                    )
+                    continue
                 native = dom.lower(
                     args, ir, dict(contract, provider=provider), label, optimize=optimize
                 )
@@ -709,7 +779,18 @@ def main():
             "write-number-read-arithmetic-unary-coercion": "try { const saved = +anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
             "write-number-read-arithmetic-negate-coercion": "try { const saved = -anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
             "write-number-read-arithmetic-divide-coercion": "try { const saved = 1 / anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
-            "write-number-read-arithmetic-conditional-callee": "try { const saved = Number(anchor.hasAttribute('data-closed') ? anchor.getAttribute('data-number') : null) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-without-intrinsic": "try { const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-rebound-intrinsic": "try { Number = anchor; const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-different-callee": "try { const saved = (anchor.hasAttribute('flag') ? Number : anchor)(anchor.getAttribute('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-mutable-callee": "try { let convert = Number; if (anchor.hasAttribute('flag')) convert = anchor; const saved = convert(anchor.getAttribute('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-then-effect": "try { const saved = Number(anchor.hasAttribute('flag') ? (anchor.unknown(), anchor.getAttribute('data-number')) : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-else-effect": "try { const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : (anchor.unknown(), null)); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-then-coercion": "try { const saved = Number(anchor.hasAttribute('flag') ? anchor : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-else-coercion": "try { const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : anchor); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-then-invalid-write": "try { const saved = Number(anchor.hasAttribute('flag') ? (anchor.setAttribute('bad name', 'yes'), anchor.getAttribute('data-number')) : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-else-invalid-write": "try { const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : (anchor.setAttribute('bad name', 'yes'), null)); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-arm-rebound-intrinsic": "try { const saved = Number(anchor.hasAttribute('flag') ? (Number = anchor, anchor.getAttribute('data-number')) : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-unknown-condition": "try { const saved = Number(anchor.unknown ? anchor.getAttribute('data-number') : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
             "mixed-protected-throw-call": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { decodeURIComponent('%'); throw anchor; } } catch (error) { return error === anchor; } return false;",
             "mixed-rethrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { throw error; } return false;",
             "mixed-return-borrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { return error; } return false;",
