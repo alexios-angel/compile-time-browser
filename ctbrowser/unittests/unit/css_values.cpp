@@ -95,6 +95,18 @@ void test_the_things_that_must_survive() {
     ok("content", "counters(par-num, \".\", DECIMAL )", "counters(par-num, \".\")");
     ok("content", "counter(par-num, upper-roman)", "counter(par-num, upper-roman)");
     ok("content", "counter(par-num)", "counter(par-num)");
+    // `content`'s grammar: an alt text is strings, counters and attr() only.
+    ok("content", "counter(n, symbols(symbolic 'a'))", "counter(n, symbols(\"a\"))");
+    ok("content", "open-quote \"a\" / \"alt\" counter(n)", "open-quote \"a\" / \"alt\" counter(n)");
+    CHECK(supports_declaration("content", "counters(n, \".\", symbols(cyclic \"a\"))"));
+    bad("content", "attr()");
+    bad("content", "counter()");
+    bad("content", "counters(n)");
+    bad("content", "open-quote / no-close-quote");
+    bad("content", "\"a\" / url(\"x.svg\")");
+    bad("content", "counter(n, symbols(numeric \"a\"))");
+    bad("content", "counter(n, symbols(a b))");
+    bad("content", "normal \"a\"");
     // AN ARBITRARY SUBSTITUTION FUNCTION IS A VALUE FOR ANY PROPERTY, CSS
     // Values 5: what its arguments mean is decided after parsing, so a length
     // grammar has no business refusing one.

@@ -861,6 +861,127 @@ constexpr pair_grammar pair_grammars[] = {
     return std::nullopt;
 }
 
+// `normal | none | [ <content-replacement> | <content-list> ] [ / [ <string> |
+// <counter> | <attr()> ]+ ]?` (CSS Generated Content 3 §2), with counter() and
+// counters() as CSS Lists 3 §4 writes them and symbols() as CSS Counter Styles 3
+// §6.1 does. Only the grammar: the freeform path writes the value.
+[[nodiscard]] bool content_valid(const token_stream & ts, const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    const auto type_of = [&](std::size_t k) { return ts.tokens[at[k]].type; };
+    const auto name_of = [&](std::size_t k) {
+        std::string name = ascii_lower_copy(ts.text_of(ts.tokens[at[k]]));
+        if (!name.empty() && name.back() == '(') { name.pop_back(); }
+        return name;
+    };
+    // The position in `at` of the `)` closing the block opened at `open` -
+    // `at.size()` when the value ends first, which closes it.
+    const auto close_of = [&](std::size_t open) {
+        int depth = 0;
+        for (std::size_t k = open; k < at.size(); ++k) {
+            const token_type t = type_of(k);
+            if (t == token_type::function || t == token_type::open_paren) {
+                ++depth;
+            } else if (t == token_type::close_paren && --depth == 0) {
+                return k;
+            }
+        }
+        return at.size();
+    };
+    // The comma-separated arguments of the function at `open`, as positions.
+    const auto args_of = [&](std::size_t open, std::size_t close) {
+        std::vector<std::vector<std::size_t>> args{{}};
+        for (std::size_t k = open + 1; k < close; ++k) {
+            if (type_of(k) == token_type::comma) {
+                args.emplace_back();
+                continue;
+            }
+            const std::size_t end = type_of(k) == token_type::function ? close_of(k) : k;
+            for (std::size_t j = k; j <= end && j < close; ++j) { args.back().push_back(j); }
+            k = end;
+        }
+        return args;
+    };
+    const auto single_ident = [&](const std::vector<std::size_t> & arg) {
+        return arg.size() == 1 && type_of(arg[0]) == token_type::ident;
+    };
+    // `symbols( <symbols-type>? [ <string> | <image> ]+ )`: two symbols at
+    // least for `numeric` and `alphabetic`, and `additive` is not a type here.
+    const auto symbols_ok = [&](std::size_t open, std::size_t close) {
+        std::size_t k = open + 1;
+        std::size_t least = 1;
+        if (k < close && type_of(k) == token_type::ident) {
+            const std::string kind = name_of(k);
+            if (!has_keyword("cyclic numeric alphabetic symbolic fixed", kind)) { return false; }
+            if (kind == "numeric" || kind == "alphabetic") { least = 2; }
+            ++k;
+        }
+        std::size_t count = 0;
+        for (; k < close; ++k, ++count) {
+            if (type_of(k) == token_type::function) {
+                k = close_of(k);
+            } else if (type_of(k) != token_type::string && type_of(k) != token_type::url) {
+                return false;
+            }
+        }
+        return count >= least;
+    };
+    // counter( <counter-name>, <counter-style>? ) and counters( <counter-name>,
+    // <string>, <counter-style>? ).
+    const auto counter_ok = [&](std::size_t open, std::size_t close) {
+        const bool plural = name_of(open) == "counters";
+        const std::vector<std::vector<std::size_t>> args = args_of(open, close);
+        const std::size_t fixed = plural ? 2 : 1;
+        if (args.size() < fixed || args.size() > fixed + 1 || !single_ident(args[0])) {
+            return false;
+        }
+        if (plural && (args[1].size() != 1 || type_of(args[1][0]) != token_type::string)) {
+            return false;
+        }
+        if (args.size() == fixed) { return true; }
+        const std::vector<std::size_t> & style = args[fixed];
+        if (single_ident(style)) { return name_of(style[0]) != "none"; }
+        return !style.empty() && type_of(style[0]) == token_type::function &&
+               name_of(style[0]) == "symbols" && close_of(style[0]) == style.back() &&
+               symbols_ok(style[0], style.back());
+    };
+    if (at.size() == 1 && type_of(0) == token_type::ident &&
+        ascii_iequals_any(name_of(0), {"normal", "none"})) {
+        return true;
+    }
+    bool alt = false;
+    std::size_t items = 0;
+    for (std::size_t k = 0; k < at.size(); ++k) {
+        const token_type t = type_of(k);
+        if (t == token_type::delim && ts.text_of(ts.tokens[at[k]]) == "/") {
+            if (alt || items == 0) { return false; }
+            alt = true;
+            items = 0;
+            continue;
+        }
+        ++items;
+        if (t == token_type::string) { continue; }
+        if (t == token_type::function) {
+            const std::size_t close = close_of(k);
+            const std::string name = name_of(k);
+            if (name == "counter" || name == "counters") {
+                if (!counter_ok(k, close)) { return false; }
+            } else if (alt && name != "attr") {
+                return false;
+            }
+            k = close;
+            continue;
+        }
+        if (alt) { return false; }
+        if (t == token_type::url) { continue; }
+        if (t != token_type::ident ||
+            !has_keyword("open-quote close-quote no-open-quote no-close-quote contents",
+                         name_of(k))) {
+            return false;
+        }
+    }
+    return items > 0;
+}
+
 // `<easing-function>#` (CSS Easing 1 §2 and 2 §2), each written canonically:
 // `step-start` is `steps(1, start)`, `step-end` and an `end`/`jump-end` step
 // position are left unwritten, a cubic-bezier()'s x values lie in [0, 1], and
@@ -1219,6 +1340,10 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
     if (!handled && ascii_iequals(property, "font-palette")) {
         handled = true;
         answer = font_palette(ts, found);
+    }
+    // `content` is only checked here; the freeform path writes a valid one.
+    if (!handled && ascii_iequals(property, "content") && !content_valid(ts, found)) {
+        handled = true;
     }
     if (!handled) { return false; }
     out = answer.value_or(std::string{});
