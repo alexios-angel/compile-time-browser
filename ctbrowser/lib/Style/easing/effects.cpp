@@ -770,13 +770,56 @@ void promote(transform_fn & fn) {
             const std::optional<numeric_pair> n = numeric_of(x, y, ctx);
             if (!n) { return std::nullopt; }
             css::calc_result mixed = mix(n->a, n->b, p);
-            mixed.px = std::max(mixed.px, 0.0);
+            // Every amount but an angle stops at zero: hue-rotate(0deg) to
+            // hue-rotate(180deg) at -0.5 is -90deg (filter-interpolation-001).
+            if (name != "hue-rotate") { mixed.px = std::max(mixed.px, 0.0); }
             if (name == "grayscale" || name == "invert" || name == "opacity" || name == "sepia") {
                 mixed.px = std::min(mixed.px, 1.0);
             }
             piece = css::serialize_calc(mixed);
         }
         if (!ok) { return std::nullopt; }
+        if (i != 0) { out += ' '; }
+        out += name + '(' + piece + ')';
+    }
+    return out;
+}
+
+// Filter Effects 1 §11.3, accumulation of two filter lists: each extended
+// with the lacuna values of the other's trailing functions, then function by
+// function - a length, an angle or a drop-shadow sums, an amount whose lacuna
+// is 0 (grayscale, invert, sepia) sums, one whose lacuna is 1 (brightness,
+// contrast, opacity, saturate) is `a + b - 1`. Unclamped: the interpolation
+// that follows clamps. nullopt - the keyframe's list replaces - for a url()
+// or two functions that do not pair.
+[[nodiscard]] std::optional<std::string> accumulate_filter(std::string_view underlying,
+                                                           std::string_view value,
+                                                           const css::length_context & ctx) {
+    std::optional<std::vector<filter_fn>> a = parse_filters(underlying);
+    std::optional<std::vector<filter_fn>> b = parse_filters(value);
+    if (!a || !b) { return std::nullopt; }
+    if (a->empty()) { return std::string{value}; }
+    for (std::size_t i = 0; i < std::min(a->size(), b->size()); ++i) {
+        if ((*a)[i].name != (*b)[i].name) { return std::nullopt; }
+    }
+    for (std::size_t i = a->size(); i < b->size(); ++i) { a->push_back({(*b)[i].name, ""}); }
+    for (std::size_t i = b->size(); i < a->size(); ++i) { b->push_back({(*a)[i].name, ""}); }
+    std::string out;
+    for (std::size_t i = 0; i < a->size(); ++i) {
+        const std::string & name = (*a)[i].name;
+        const std::string_view x = (*a)[i].args.empty() ? filter_identity(name) : (*a)[i].args;
+        const std::string_view y = (*b)[i].args.empty() ? filter_identity(name) : (*b)[i].args;
+        std::string piece;
+        if (name == "drop-shadow") {
+            piece = add_pair("text-shadow", computed_shape("text-shadow", x, ctx),
+                             computed_shape("text-shadow", y, ctx), ctx);
+        } else {
+            const std::optional<numeric_pair> n = numeric_of(x, y, ctx);
+            if (!n) { return std::nullopt; }
+            css::calc_result total = sum(n->a, n->b);
+            if (filter_identity(name) == "1") { total.px -= 1; }
+            piece = css::serialize_calc(total);
+        }
         if (i != 0) { out += ' '; }
         out += name + '(' + piece + ')';
     }

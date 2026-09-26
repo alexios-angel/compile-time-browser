@@ -237,10 +237,16 @@ struct gap_shape {
             return *r;
         }
     }
+    // TWO FILTER LISTS INTERPOLATE AS FILTER LISTS OR NOT AT ALL (Filter
+    // Effects 1 §11.2): a url() in either, or two functions that do not pair,
+    // is discrete - not the item-by-item blend below, which kept the url()
+    // and blended the functions beside it (backdrop-filter-composition).
     if (property == "filter" || property == "backdrop-filter") {
         if (const std::optional<std::string> f = interpolate_filter(from, to, p, ctx)) {
             return *f;
         }
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
     }
     // A COLOUR, which a comma LIST of colours is not - `rgb(1, 2, 3), red` is
     // two items, each paired below, and not the first of them alone.

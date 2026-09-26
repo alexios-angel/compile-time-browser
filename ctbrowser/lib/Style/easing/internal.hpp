@@ -216,6 +216,10 @@ struct filter_fn {
                                                             std::string_view to, double p,
                                                             const css::length_context & ctx);
 
+[[nodiscard]] std::optional<std::string> accumulate_filter(std::string_view underlying,
+                                                           std::string_view value,
+                                                           const css::length_context & ctx);
+
 [[nodiscard]] std::optional<std::string> accumulate_transform(std::string_view underlying,
                                                               std::string_view value);
 

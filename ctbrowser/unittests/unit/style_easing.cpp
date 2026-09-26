@@ -160,6 +160,18 @@ void test_interpolation() {
     CHECK(interpolate_text("filter", "blur(6px)", "blur(10px) hue-rotate(180deg)", 0.5, context) ==
           "blur(8px) hue-rotate(90deg)");
     CHECK(interpolate_text("filter", "blur(6px)", "grayscale(1)", 0.5, context) == "grayscale(1)");
+    // An angle may go negative; a url() makes the pair discrete; accumulation
+    // sums, a 1-based amount as `a + b - 1` (Filter Effects 1 §11.3).
+    CHECK(interpolate_text("filter", "hue-rotate(0deg)", "hue-rotate(180deg)", -0.5, context) ==
+          "hue-rotate(-90deg)");
+    CHECK(interpolate_text("filter", "url(#a) blur(1px)", "url(#a) blur(3px)", 0.25, context) ==
+          "url(#a) blur(1px)");
+    CHECK(composite_text("filter", "blur(10px) saturate(0.75)", "blur(40px)",
+                         composite_op::accumulate, context) == "blur(50px) saturate(0.75)");
+    CHECK(composite_text("filter", "brightness(0.25)", "brightness(0.5)", composite_op::accumulate,
+                         context) == "brightness(-0.25)");
+    CHECK(composite_text("filter", "contrast(0.75)", "blur(40px)", composite_op::accumulate,
+                         context) == "blur(40px)");
     // Colours premultiplied in sRGB, clamped to the gamut when extrapolated.
     CHECK(interpolate_text("color", "rgb(0, 0, 255)", "rgba(255, 0, 0, 0)", 0.5, context) ==
           "rgba(0.0000, 0.0000, 255.0000, 0.5000)");
