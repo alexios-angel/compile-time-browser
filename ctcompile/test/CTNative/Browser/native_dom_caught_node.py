@@ -41,6 +41,31 @@ SOURCES = {
     "write-boolean-read-return": "function customElements(anchor) { try { const saved = anchor.hasAttribute('data-closed'); anchor.setAttribute('data-written', saved); return saved; } catch (error) { return false; } }\n",
     "write-boolean-snapshot": "function customElements(anchor) { let saved = false; try { saved = anchor.hasAttribute('data-closed'); anchor.setAttribute('data-closed', true); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor && saved; } }\n",
     "write-boolean-conditional": "function customElements(anchor) { let saved = false; try { if (anchor.hasAttribute('data-closed')) { saved = anchor.hasAttribute('data-closed'); } anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor && saved; } }\n",
+    "write-number-return": "function customElements(anchor) { try { anchor.setAttribute('data-written', 42); return true; } catch (error) { return false; } }\n",
+    "write-number-corners": """function customElements(anchor) {
+  const zero = -0, nan = 0 / 0, infinity = 1 / 0, negativeInfinity = -1 / 0;
+  try {
+    anchor.setAttribute('data-zero', zero);
+    anchor.setAttribute('data-nan', nan);
+    anchor.setAttribute('data-infinity', infinity);
+    anchor.setAttribute('data-negative-infinity', negativeInfinity);
+    anchor.setAttribute('data-small-exponent', 1e-7);
+    anchor.setAttribute('data-small-decimal', 1e-6);
+    anchor.setAttribute('data-large-decimal', 1e20);
+    anchor.setAttribute('data-written', 1e21);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-snapshot": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('data-closed') ? 7.5 : -0;
+  try {
+    anchor.setAttribute('data-closed', 42);
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor && saved === 7.5; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -66,6 +91,21 @@ WRITE_EXPECTED = {
     "write-boolean-read-return": 'result0="false1:false:1"\nresult1="true1:true:1"\n',
     "write-boolean-snapshot": 'result0="false1:false:2"\nresult1="true1:true:2"\n',
     "write-boolean-conditional": 'result0="false1:false:1"\nresult1="true2:true:1"\n',
+    "write-number-return": 'result0="true:write:data-written=42;"\nresult1="true:write:data-written=42;"\n',
+    "write-number-corners": (
+        'result0="true:write:data-zero=0;write:data-nan=NaN;write:data-infinity=Infinity;'
+        "write:data-negative-infinity=-Infinity;write:data-small-exponent=1e-7;"
+        "write:data-small-decimal=0.000001;write:data-large-decimal=100000000000000000000;"
+        'write:data-written=1e+21;"\n'
+        'result1="true:write:data-zero=0;write:data-nan=NaN;write:data-infinity=Infinity;'
+        "write:data-negative-infinity=-Infinity;write:data-small-exponent=1e-7;"
+        "write:data-small-decimal=0.000001;write:data-large-decimal=100000000000000000000;"
+        'write:data-written=1e+21;"\n'
+    ),
+    "write-number-snapshot": (
+        'result0="false:read:data-closed=false;write:data-closed=42;write:data-written=0;"\n'
+        'result1="true:read:data-closed=true;write:data-closed=42;write:data-written=7.5;"\n'
+    ),
 }
 
 WRITE_OBSERVER = """function observe(closed) {
@@ -105,6 +145,26 @@ HELPER_OBSERVER = """function observe(repeat) {
 var result0 = observe(false), result1 = observe(true);
 """
 
+NUMBER_WRITE_OBSERVER = """function observe(closed) {
+  const saved = {};
+  if (closed) saved['data-closed'] = 'yes';
+  let trace = '';
+  const anchor = {
+    hasAttribute(name) {
+      const value = name in saved;
+      trace += 'read:' + name + '=' + value + ';';
+      return value;
+    },
+    setAttribute(name, value) {
+      saved[name] = '' + value;
+      trace += 'write:' + name + '=' + saved[name] + ';';
+    }
+  };
+  return customElements(anchor) + ':' + trace;
+}
+var result0 = observe(false), result1 = observe(true);
+"""
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -128,6 +188,8 @@ def main():
         )
         if name.startswith("write-"):
             script = source + WRITE_OBSERVER
+        if name.startswith("write-number-"):
+            script = source + NUMBER_WRITE_OBSERVER
         if name == "helper-next-record":
             script = source + HELPER_OBSERVER
         nested = name.startswith("mixed-node-nested-") or name == "nested-protected-normal-read"
@@ -295,6 +357,51 @@ def main():
                 exercise(doc, button, [&] { return @ENTRY@(alias); });
                 exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
             """
+        if name.startswith("write-number-"):
+            expected_writes = {
+                "write-number-return": [("data-written", '"42"')],
+                "write-number-corners": [
+                    ("data-zero", '"0"'),
+                    ("data-nan", '"NaN"'),
+                    ("data-infinity", '"Infinity"'),
+                    ("data-negative-infinity", '"-Infinity"'),
+                    ("data-small-exponent", '"1e-7"'),
+                    ("data-small-decimal", '"0.000001"'),
+                    ("data-large-decimal", '"100000000000000000000"'),
+                    ("data-written", '"1e+21"'),
+                ],
+                "write-number-snapshot": [
+                    ("data-closed", '"42"'),
+                    ("data-written", '(closed ? "7.5" : "0")'),
+                ],
+            }[name]
+            write_checks = "\n".join(
+                f'assert(writes[{index}].name == target.atoms().intern("{attribute}")); '
+                f'assert(target.read().attribute_value(id, target.atoms().intern("{attribute}")) == {value});'
+                for index, (attribute, value) in enumerate(expected_writes)
+            )
+            checks = (
+                r"""
+                const auto exercise = [&](ctbrowser::document & target, node_id id, auto && call) {
+                    const auto closed_name = target.atoms().intern("data-closed");
+                    target.log_writes(true);
+                    for (bool closed : {false, true}) {
+                        assert(target.remove_attribute(id, closed_name));
+                        if (closed) { assert(target.set_attribute(id, closed_name, "yes")); }
+                        (void)target.take_writes();
+                        assert(static_cast<bool>(call()) == @ANSWER@);
+                        const auto writes = target.take_writes();
+                        assert(writes.size() == @COUNT@);
+                        for (const auto & write : writes) { assert(write.node == id && !write.text); }
+                        @WRITES@
+                    }
+                };
+                exercise(doc, button, [&] { return @ENTRY@(alias); });
+                exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
+                """.replace("@ANSWER@", "closed" if name == "write-number-snapshot" else "true")
+                .replace("@COUNT@", str(len(expected_writes)))
+                .replace("@WRITES@", write_checks)
+            )
         checks += " (void)pressed; (void)alias;"
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
@@ -311,7 +418,7 @@ def main():
                 if "throw " in source_cpp or "catch (" in source_cpp:
                     raise RuntimeError("confined node escaped into a native exception")
                 dom.standalone(args, native, label, checks, compilers, includes, libraries)
-                if name == "helper-next-record":
+                if name == "helper-next-record" or name.startswith("write-number-"):
                     dom.lower(
                         args,
                         ir,
@@ -322,6 +429,10 @@ def main():
                         max_steps=0,
                     )
     refusals = {
+        "write-number-invalid-name": "try { anchor.setAttribute('bad name', 42); throw anchor; } catch (error) { return error === anchor; }",
+        "write-number-mixed-join": "const saved = anchor.hasAttribute('data-closed') ? 42 : anchor; try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+        "write-number-coercing-input": "const saved = +anchor; try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+        "write-number-throwing-producer": "try { const saved = JSON.parse('42'); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
         "write-boolean-unknown-value": "try { anchor.setAttribute('data-written', anchor.unknown); throw anchor; } catch (error) { return error === anchor; }",
         "write-boolean-forged-read": "try { const saved = ({hasAttribute() { return true; }}).hasAttribute('data-closed'); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
         "write-boolean-mixed-join": "let saved = anchor; try { if (anchor.hasAttribute('data-closed')) { saved = true; } anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
