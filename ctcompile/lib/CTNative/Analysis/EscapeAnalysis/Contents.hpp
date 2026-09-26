@@ -99,9 +99,11 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
         }
         auto first = left.getDefiningOp<ctjs::ConstantOp>();
         auto second = right.getDefiningOp<ctjs::ConstantOp>();
-        // Equal immutable Number bits supply the same strict-comparison input.
-        // No read-time snapshot, coercion or signed-zero equivalence is inferred.
-        return first && second && llvm::isa<ctjs::NumberAttr>(first.getValue()) &&
+        // Exact immutable primitive attributes supply the same comparison input.
+        // No snapshot, coercion, signed-zero or BigInt spelling equivalence is inferred.
+        return first && second &&
+               llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr, ctjs::NumberAttr,
+                         ctjs::StringAttr, ctjs::BigIntAttr>(first.getValue()) &&
                first.getValue() == second.getValue();
     };
     const auto sameComparison = [&](mlir::Value left, mlir::Value right) {

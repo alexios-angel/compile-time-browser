@@ -677,6 +677,13 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
                            comparedInput("%read", "%two", "strict_eq %p, %otherZero",
                                          "    %otherZero = ctjs.constant #ctjs.number<0>\n"));
+    auto stringComparisonGap = numberComparisonGap;
+    stringComparisonGap.replace(stringComparisonGap.find("#ctjs.number<0>"),
+                                std::string{"#ctjs.number<0>"}.size(), "#ctjs.string<\"0\">");
+    stringComparisonGap.replace(stringComparisonGap.find("strict_eq %p, %zero"),
+                                std::string{"strict_eq %p, %zero"}.size(),
+                                "strict_eq %p, %firstLiteral");
+    stringComparisonGap.insert(0, "    %firstLiteral = ctjs.constant #ctjs.string<\"0\">\n");
     const auto reversedInput = [&](const std::string & left = "%zero",
                                    const std::string & right = "%one", unsigned negations = 0) {
         return comparedInput(left, right, "strict_eq %zero, %p", "", negations);
@@ -2671,18 +2678,77 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                      selectedStore(literalComparisons("#ctjs.number<0>", "#ctjs.string<\"0\">"))) +
                  done,
          .complete = false},
-        {.what = "equal String literals gain no Number comparison authority",
+        {.what = "exact String literals share strict comparison inputs",
          .body = loopValues +
                  allocationLoop(selectedStore(
                      literalComparisons("#ctjs.string<\"0\">", "#ctjs.string<\"0\">"))) +
                  done,
-         .complete = false},
-        {.what = "equal Boolean literals gain no Number comparison authority",
+         .confinedNested = "fresh"},
+        {.what = "exact Boolean literals share strict comparison inputs",
          .body = loopValues +
                  allocationLoop(selectedStore(
                      literalComparisons("#ctjs.boolean<false>", "#ctjs.boolean<false>"))) +
                  done,
+         .confinedNested = "fresh"},
+        {.what = "exact Null literals share strict comparison inputs",
+         .body = loopValues +
+                 allocationLoop(selectedStore(literalComparisons("#ctjs.null", "#ctjs.null"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "exact Undefined literals share strict comparison inputs",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(literalComparisons("#ctjs.undefined", "#ctjs.undefined"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "exact BigInt spellings share strict comparison inputs",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     literalComparisons("#ctjs.bigint<\"1\">", "#ctjs.bigint<\"1\">"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "different Strings retain independent comparison inputs",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     literalComparisons("#ctjs.string<\"0\">", "#ctjs.string<\"1\">"))) +
+                 done,
          .complete = false},
+        {.what = "different Booleans retain independent comparison inputs",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     literalComparisons("#ctjs.boolean<false>", "#ctjs.boolean<true>"))) +
+                 done,
+         .complete = false},
+        {.what = "Null and Undefined cannot borrow loose equality correspondence",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(literalComparisons("#ctjs.null", "#ctjs.undefined"))) +
+             done,
+         .complete = false},
+        {.what = "Boolean and Number literals retain distinct tags",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(literalComparisons("#ctjs.boolean<false>", "#ctjs.number<0>"))) +
+                 done,
+         .complete = false},
+        {.what = "different BigInt spellings gain no parsed value correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     literalComparisons("#ctjs.bigint<\"1\">", "#ctjs.bigint<\"01\">"))) +
+                 done,
+         .complete = false},
+        {.what = "exact String comparison inputs preserve odd Not polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     literalComparisons("#ctjs.string<\"0\">", "#ctjs.string<\"0\">", 3))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "exact String comparison inputs retain a dominating cross-block key",
+         .body = loopValues +
+                 allocationLoop(crossBlockStore(
+                     literalComparisons("#ctjs.string<\"0\">", "#ctjs.string<\"0\">"))) +
+                 done,
+         .confinedNested = "fresh"},
         {.what = "a reversed coercing comparison cannot borrow strict equality correspondence",
          .body = loopValues +
                  allocationLoop(selectedStore(comparedInput("%zero", "%one", "eq %zero, %p"))) +
@@ -4535,7 +4601,8 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = literalMutation.what, .body = literalMutation.body, .expected = ""},
              "the Boolean-literal mutation fixture did not parse");
     }
-    for (const std::string & comparisons : {comparedGap, crossBlockGap, numberComparisonGap}) {
+    for (const std::string & comparisons :
+         {comparedGap, crossBlockGap, numberComparisonGap, stringComparisonGap}) {
         retention_row comparisonMutation{
             .what =
                 "strict comparison correspondence reproves both operations, operands and guards",
@@ -4627,6 +4694,31 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                     }
                 }
             }
+            if (comparisons == stringComparisonGap) {
+                auto firstLiteral = originalRight.getDefiningOp<ctjs::ConstantOp>();
+                auto secondLiteral = comparedRight.getDefiningOp<ctjs::ConstantOp>();
+                const auto original = firstLiteral.getValue();
+                for (mlir::Attribute changed :
+                     {mlir::Attribute(ctjs::StringAttr::get(&context, "1")),
+                      mlir::Attribute(ctjs::BooleanAttr::get(&context, false)),
+                      mlir::Attribute(ctjs::NullAttr::get(&context)),
+                      mlir::Attribute(ctjs::UndefinedAttr::get(&context)),
+                      mlir::Attribute(ctjs::BigIntAttr::get(&context, "1"))}) {
+                    for (bool same : {true, false}) {
+                        firstLiteral.setValueAttr(changed);
+                        secondLiteral.setValueAttr(same ? changed : original);
+                        comparisonMutation.complete = same;
+                        comparisonMutation.confinedNested = same ? "fresh" : "";
+                        budgets += checkArrayRetention(*comparisonModule, comparisonMutation);
+                        if (computeVerdicts(stale, function).arrayRetentionComplete != same) {
+                            fail(row{.what = comparisonMutation.what,
+                                     .body = comparisonMutation.body,
+                                     .expected = ""},
+                                 "stale primitive attributes supplied comparison correspondence");
+                        }
+                    }
+                }
+            }
         } else {
             fail(row{.what = comparisonMutation.what,
                      .body = comparisonMutation.body,
@@ -4635,7 +4727,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         }
     }
     std::printf(
-        "array retention: %zu rows, one hundred ninety-three live states, %zu budget cutoffs\n",
+        "array retention: %zu rows, two hundred twenty-three live states, %zu budget cutoffs\n",
         rows.size(), budgets);
 }
 
