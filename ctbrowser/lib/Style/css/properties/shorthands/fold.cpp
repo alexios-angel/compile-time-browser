@@ -94,6 +94,12 @@ namespace ctbrowser::style::css::shorthand_detail {
 // layer that is all initial (mask-valid, mask-computed).
 [[nodiscard]] std::string fold_mask(std::span<const std::string> v) {
     const auto names = longhands_of("mask");
+    // A mask-border the shorthand cannot spell - anything but its reset, a
+    // computed `0px` for the `0` included.
+    for (std::size_t i = 8; i < v.size(); ++i) {
+        const bool zero = initial_of(names[i]) == "0" && v[i] == "0px";
+        if (v[i] != initial_of(names[i]) && !zero) { return {}; }
+    }
     std::array<std::vector<std::string_view>, 8> lists;
     for (std::size_t i = 0; i < lists.size(); ++i) {
         lists[i] = split_top_level(v[i], ",");

@@ -824,8 +824,10 @@ bool split_mask(std::string_view value, std::vector<std::string> & out) {
             values[4] = boxes[swapped ? 1 : 0];
             values[5] = boxes[swapped ? 0 : 1];
         }
+        // ...and mask-border, which the shorthand only resets: one value,
+        // not one per layer (CSS Masking 1 §7.1).
         for (std::size_t i = 0; i < names.size(); ++i) {
-            out[i] += (layer == 0 ? "" : ", ") + values[i];
+            out[i] = i < 8 ? out[i] + (layer == 0 ? "" : ", ") + values[i] : values[i];
         }
     }
     return true;

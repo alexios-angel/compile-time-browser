@@ -258,7 +258,8 @@ inline constexpr shorthand_syntax table[] = {
     {"position-try", shape::position_try, "position-try-order position-try-fallbacks", ""},
     {"mask", shape::mask,
      "mask-image mask-position mask-size mask-repeat mask-origin mask-clip mask-composite "
-     "mask-mode",
+     "mask-mode mask-border-source mask-border-slice mask-border-width mask-border-outset "
+     "mask-border-repeat",
      ""},
     {"background", shape::background,
      "background-color background-image background-position background-size "
