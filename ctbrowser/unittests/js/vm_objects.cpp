@@ -82,6 +82,11 @@ void test_class_fields_are_per_instance() {
     expect_result("var eval = ''; try { eval(); } catch (e) { return e instanceof TypeError; }"
                   " return 'none';",
                   "true");
+    // a heritage that is no constructor is the TypeError, named without
+    // running its code (a proxy's `get` trap would throw instead)
+    expect_result("const p = new Proxy(() => {}, { get() { throw 'trap'; } });"
+                  " try { class C extends p {} } catch (e) { return e.name; } return 'none';",
+                  "TypeError");
     // a computed static accessor meets the non-configurable `prototype`
     expect_result("try { class C { static get ['prototype']() {} } } catch (e) { return e.name; }"
                   " return 'none';",

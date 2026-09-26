@@ -290,7 +290,13 @@ void install_destructuring_iteration(context & cx) {
             return value::undefined();
         }
         if (!is_constructor(parent)) {
-            c.throw_error("TypeError", "Class extends value " + c.to_string(parent) +
+            // NAMED WITHOUT RUNNING ANY OF ITS CODE: stringifying an object
+            // asks its @@toPrimitive and toString - a proxy's `get` trap -
+            // whose throw then replaced this TypeError.
+            const bool opaque = parent.is_object_like() || parent.is_kind(heap_kind::symbol);
+            c.throw_error("TypeError", "Class extends value " +
+                                           (opaque ? std::string{context::type_of(parent)}
+                                                   : c.to_string(parent)) +
                                            " is not a constructor or null");
             return value::undefined();
         }
