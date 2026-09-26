@@ -307,7 +307,17 @@ void canvas_context::fill(const canvas_path & path, fill_rule rule) {
 }
 
 void canvas_context::stroke(const canvas_path & path) {
-    paint_path(stroke_outline(path), fill_rule::nonzero, state_.stroke);
+    // The dashes worth building are the ones that can land - on the canvas, or
+    // off it by no more than a shadow's offset and blur can bring back.
+    rect cull{0, 0, static_cast<float>(width()), static_cast<float>(height())};
+    if (shadows_drawn()) {
+        const auto sx = static_cast<float>(state_.shadow_x);
+        const auto sy = static_cast<float>(state_.shadow_y);
+        const float blur = 1025; // draw_shadow's widest spread, and a pixel
+        cull = rect{std::min(0.0f, -sx) - blur, std::min(0.0f, -sy) - blur,
+                    cull.width + std::fabs(sx) + 2 * blur, cull.height + std::fabs(sy) + 2 * blur};
+    }
+    paint_path(stroke_outline(path, cull), fill_rule::nonzero, state_.stroke);
 }
 
 void canvas_context::draw_focus_ring(const canvas_path & path) {

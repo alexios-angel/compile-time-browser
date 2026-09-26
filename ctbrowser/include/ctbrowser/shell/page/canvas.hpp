@@ -413,8 +413,10 @@ private:
 
     // The outline a stroke of `path` covers, in device space: every segment,
     // join, cap and dash, each piece wound the same way so that a nonzero fill
-    // of the lot is their union.
-    [[nodiscard]] canvas_path stroke_outline(const canvas_path & path) const;
+    // of the lot is their union. `cull` is the device area the caller looks
+    // at - the canvas, or the one point a hit test asks about - and a DASH
+    // that cannot reach it is not built.
+    [[nodiscard]] canvas_path stroke_outline(const canvas_path & path, const rect & cull) const;
 
     // The colours of one row of pixels under a gradient or a pattern.
     void sample_row(const canvas_paint & paint, int y, int x0, int x1,
