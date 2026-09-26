@@ -102,9 +102,11 @@ template <typename T> void repeat_to_match(std::vector<T> & a, std::vector<T> & 
 
 // --- transform lists (CSS Transforms 1 §12) ---
 
-// One 2D transform function with its arguments as numbers: lengths in px,
+// One transform function with its arguments as numbers: lengths in px,
 // angles in degrees. `scale(2)` is `scale(2, 2)`, `translate(1px)` is
-// `translate(1px, 0px)`, so two functions of one primitive always pair.
+// `translate(1px, 0px)`, `rotateX(a)` is `rotate3d(1, 0, 0, a)`, so two
+// functions of one primitive always pair; a perspective() holds the
+// reciprocal of its depth, 0 for `none`.
 struct transform_fn {
     std::string name;
     std::vector<double> args;
@@ -143,6 +145,50 @@ struct decomposed2d {
 [[nodiscard]] matrix2d recompose(const decomposed2d & d);
 
 [[nodiscard]] std::string matrix_text(const matrix2d & m);
+
+// A 4x4 matrix, column-major as matrix3d() lists it: m[c * 4 + r] is row r
+// of column c.
+using matrix3d = std::array<double, 16>;
+
+// §16.2, the 3D decomposition: interpolated part by part, the rotation as a
+// quaternion by spherical interpolation, and recomposed.
+struct decomposed3d {
+    std::array<double, 3> translate, scale, skew;
+    std::array<double, 4> perspective, quaternion;
+};
+
+void promote(transform_fn & fn);
+
+[[nodiscard]] bool is_3d(const transform_fn & fn);
+
+[[nodiscard]] matrix3d identity3d();
+
+[[nodiscard]] matrix3d multiply(const matrix3d & a, const matrix3d & b);
+
+[[nodiscard]] matrix3d rotation3d(double x, double y, double z, double deg);
+
+[[nodiscard]] matrix3d matrix3d_of(const transform_fn & fn);
+
+[[nodiscard]] matrix3d matrix3d_of(const std::vector<transform_fn> & list);
+
+[[nodiscard]] bool flat(const matrix3d & m);
+
+[[nodiscard]] double determinant3(double a, double b, double c, double d, double e, double f,
+                                  double g, double h, double i);
+
+[[nodiscard]] std::optional<matrix3d> inverse(const matrix3d & m);
+
+[[nodiscard]] std::optional<decomposed3d> decompose3d(matrix3d m);
+
+[[nodiscard]] matrix3d recompose3d(const decomposed3d & d);
+
+[[nodiscard]] decomposed3d blend3d(const decomposed3d & a, const decomposed3d & b, double p);
+
+[[nodiscard]] std::string matrix_text(const matrix3d & m);
+
+[[nodiscard]] std::optional<std::string> blend_as_matrices(const std::vector<transform_fn> & a,
+                                                           const std::vector<transform_fn> & b,
+                                                           double p);
 
 [[nodiscard]] std::string function_text(const transform_fn & fn);
 

@@ -283,6 +283,22 @@ void test_composition() {
     CHECK(interpolate_text("transform", "matrix(1, 0, 0, 1, 0, -6)", "matrix(0, 7, -1, 0, 6, 0)",
                            0.5, context)
               .starts_with("matrix(2.828427, 2.828427, -0.707107, 0.707107, 3, -3)"));
+    // 3D (CSS Transforms 2 §15-16): a perspective interpolates its reciprocal
+    // depth, `none` being zero and what an overshoot past it is; one axis
+    // interpolates the angle; anything else is the decomposed 4x4 matrices.
+    CHECK(interpolate_text("transform", "scaleZ(1) perspective(400px)",
+                           "scaleZ(2) perspective(500px)", 0.5,
+                           context) == "scale3d(1, 1, 1.5) perspective(444.444444px)");
+    CHECK(interpolate_text("transform", "perspective(none)", "perspective(500px)", -1, context) ==
+          "perspective(none)");
+    CHECK(interpolate_text("transform", "rotateX(0deg)", "rotateX(720deg)", 0.5, context) ==
+          "rotate3d(1, 0, 0, 360deg)");
+    CHECK(interpolate_text("transform", "rotateX(90deg)", "rotateY(90deg)", 0.5, context)
+              .starts_with("matrix3d("));
+    CHECK(interpolate_text("transform", "rotateX(90deg) scaleZ(1)", "scaleZ(1) rotateX(90deg)", 0.5,
+                           context) == "matrix3d(1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1)");
+    CHECK(composite_text("transform", "rotateX(10deg)", "rotateX(20deg)", composite_op::accumulate,
+                         context) == "rotate3d(1, 0, 0, 30deg)");
 }
 
 } // namespace
