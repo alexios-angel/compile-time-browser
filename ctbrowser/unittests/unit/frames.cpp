@@ -455,16 +455,28 @@ void test_a_frame_document_is_laid_out_at_the_size_of_its_box() {
 } // namespace
 
 // HTML 4.10.21.3: a GET submission aimed at a frame this document names
-// navigates the frame to the action with the entries as its query - the
-// frame's own `location` reads it back and its document is the action's.
+// navigates the frame to the action with the entries as its query. PLANNED:
+// the frame still has its old document when submit() returns, and the new
+// one - whose `location` reads the query back - by the frame's next `load`.
 void test_a_form_submits_into_a_named_frame() {
-    is("<form id=fm action=inner.html target=f><input name=a value='x y'><input name=b value=2>"
-       "</form><iframe id=f name=f></iframe>",
-       "(function () { document.getElementById('fm').submit();"
-       " var w = document.getElementById('f').contentWindow;"
-       " return w.location.search + '|' + w.document.title + '|' + (w.location === "
-       "w.document.location) + '|' + (w.location === window.location); })()",
-       "?a=x+y&b=2|inner|true|false");
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///pages/the-page.html");
+    page.assets().add("inner.html", bytes_of(inner_html));
+    page.load_html("<!DOCTYPE html><html><body>"
+                   "<form id=fm action=inner.html target=f><input name=a value='x y'>"
+                   "<input name=b value=2></form><iframe id=f name=f></iframe><script>"
+                   "addEventListener('load', function () {"
+                   " var f = document.getElementById('f');"
+                   " document.getElementById('fm').submit();"
+                   " var before = f.contentDocument.title;"
+                   " f.onload = function () { var w = f.contentWindow;"
+                   "  console.log([before, w.location.search, w.document.title,"
+                   "   w.location === w.document.location, w.location === window.location]"
+                   "   .join('|')); }; });</script></body></html>");
+    for (int i = 0; i < 4; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"|?a=x+y&b=2|inner|true|false"}); }
 }
 
 int main() {

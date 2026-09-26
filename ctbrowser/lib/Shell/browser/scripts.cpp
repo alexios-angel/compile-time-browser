@@ -80,6 +80,7 @@ void browser::run_scripts() {
     bindings_->observe_style_engine(*styles_);
     bindings_->observe_viewport(layout_viewport_width(), options_.height);
     bindings_->observe_resources(assets_, images_);
+    bindings_->observe_requests(&options_.on_request);
     bindings_->allow_network(network_allowed_);
     // `element.click()` performs the default action, which is the browser's half.
     bindings_->set_activate_hook([this](node_id id) { activate(id); });

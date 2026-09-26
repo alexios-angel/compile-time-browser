@@ -218,10 +218,35 @@ void dom_bindings::install_frame_accessors(context & cx) {
     }
 }
 
+// THE EMBEDDER'S ANSWER to a request (browser_options::on_request), asked
+// before the asset registry by a frame's load and by load_resource - nullopt
+// when there is no handler or it left the request alone. The handler is the
+// primary's: a frame document asks the one its page was given.
+void dom_bindings::observe_requests(const request_handler * handler) {
+    request_handler_ = handler;
+}
+
+std::optional<resource_reply> dom_bindings::ask_request_handler(resource_request request) {
+    const dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+    if (top.request_handler_ == nullptr || !*top.request_handler_) { return std::nullopt; }
+    // A fragment never leaves the client.
+    request.url = request.url.substr(0, request.url.find('#'));
+    return (*top.request_handler_)(request);
+}
+
 // Build the frame's document. Synchronous, because the bytes are already on
 // disk or in the registry; the EVENT it queues is what makes the load
 // asynchronous in the way a page can observe.
-dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::string & src) {
+//
+// `request` is a NAVIGATION's (run_planned_navigations): a form submission's
+// method, absolute URL, Content-Type and body. Null is an ordinary load of
+// `src` - a GET of it, resolved against this document's address. Either is
+// offered to the embedder's request handler first, whose Content-Type is then
+// the document's type and whose charset, when it names an encoding, the
+// document's encoding: "the transport layer" of HTML 13.2.3.1, which only a
+// BOM overrules.
+dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::string & src,
+                                        const resource_request * request) {
     std::string bytes;
     // A FRAME ALWAYS LOADS. A navigation that fetched nothing - a 404, and
     // here a name the registry cannot find - still ends in a document (the
@@ -231,10 +256,19 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     // on exactly that load.
     bool ok = true;
     std::string type{mime_for_path(src)};
+    std::string charset; // the transport layer's, when a request handler named one
     // THE SAME WAY createHTMLDocument MAKES ONE - in the primary's flat list,
     // with `primary_` set (below); the primary is also where the object URL
     // table lives.
     dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+    // THE DOCUMENT'S ADDRESS, fragment and all: the navigation's, else the
+    // src resolved against this document's.
+    std::string href;
+    if (request != nullptr && !request->url.empty()) {
+        href = request->url;
+    } else if (!src.empty()) {
+        href = location_href_.empty() ? src : resolve(location_href_, src);
+    }
     if (src.starts_with("blob:")) {
         // An object URL's type is the Blob's (File API §10.3), not an
         // extension's: `iframe.src = URL.createObjectURL(new Blob([html],
@@ -245,7 +279,27 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
             if (name == src) { type = stated; }
         }
     }
-    if (!src.empty()) {
+    // THE EMBEDDER FIRST, for anything asked for by URL - a data: or a blob:
+    // URL's bytes are already here.
+    bool answered = false;
+    if (!src.empty() && !src.starts_with("blob:") && !is_data_url(src)) {
+        resource_request asked = request != nullptr ? *request : resource_request{};
+        asked.url = href;
+        if (std::optional<resource_reply> reply = ask_request_handler(std::move(asked))) {
+            answered = true;
+            bytes = std::move(reply->body);
+            // The essence - `text/plain; charset=UTF-8` is text/plain - and the
+            // charset parameter, by the Encoding Standard's label table.
+            const std::string_view stated = reply->content_type;
+            const std::size_t semicolon = stated.find(';');
+            type = ascii_lower_copy(trim(stated.substr(0, semicolon), " \t"));
+            if (semicolon != std::string_view::npos) {
+                charset = std::string{
+                    encoding_from_label(encoding_from_meta_content(stated.substr(semicolon + 1)))};
+            }
+        }
+    }
+    if (!answered && !src.empty()) {
         // A data: URL CARRIES ITS OWN TYPE, and it is the only source here that
         // states one - RFC 2397 puts the media type in the URL, so this is the
         // one case that does not have to guess from an extension. The bytes
@@ -261,15 +315,20 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
             // goes over whole, as it always did; parse_data_url owns its shape.
             const std::size_t hash = is_data_url(src) ? std::string::npos : src.find('#');
             const std::vector<std::byte> loaded = assets_->load(src.substr(0, hash));
-            bytes.resize(loaded.size());
-            for (std::size_t i = 0; i < loaded.size(); ++i) {
-                bytes[i] = static_cast<char>(loaded[i]);
+            bytes.assign(reinterpret_cast<const char *>(loaded.data()), loaded.size());
+            // A `file:` URL IS A PATH: what a submission's action is once it is
+            // resolved against a page opened from disk. Read as that path,
+            // percent-decoded, without its query - as load_resource reads one.
+            if (bytes.empty() && href.starts_with("file://")) {
+                std::string_view path = std::string_view{href}.substr(7);
+                path = path.substr(std::min(path.find('/'), path.size()));
+                path = path.substr(0, std::min(path.find('?'), path.find('#')));
+                const std::vector<std::byte> read = assets_->load(percent_decode(path));
+                bytes.assign(reinterpret_cast<const char *>(read.data()), read.size());
             }
         }
-        if (type.empty()) { type = "application/octet-stream"; }
-    } else {
-        type = "text/html";
     }
+    if (type.empty()) { type = src.empty() ? "text/html" : "application/octet-stream"; }
 
     // Built by hand here before, without `primary_`, so
     // `owner_of` run from inside a frame document could see nothing but the
@@ -297,7 +356,11 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
         // tree the parser had, exactly as a top-level XML document does.
         (void)parse_xml(fresh, bytes);
     } else if (type == "text/html") {
-        if (const std::string declared = prescan_encoding(bytes); !declared.empty()) {
+        const bool has_bom = bytes.starts_with("\xEF\xBB\xBF") || bytes.starts_with("\xFE\xFF") ||
+                             bytes.starts_with("\xFF\xFE");
+        if (!charset.empty() && !has_bom) {
+            fresh.set_encoding(charset); // the transport layer's (13.2.3.1): certain
+        } else if (const std::string declared = prescan_encoding(bytes); !declared.empty()) {
             fresh.set_encoding(declared);
         } else {
             fresh.set_encoding(doc_->encoding()); // 13.2.3.2 step 8: the parent's, same-origin
@@ -305,8 +368,15 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
         (void)parse_html(fresh, decode_document_bytes(bytes, fresh.encoding()));
     } else if (type.starts_with("text/") || type == "application/json" ||
                type == "text/javascript") {
-        (void)parse_html(fresh, "<html><head></head><body><pre>" + escaped(bytes) +
-                                    "</pre></body></html>");
+        // HTML 7.5's plain-text document: the parser as if it had seen a `pre`
+        // start tag and ONE newline - which the in-body rules drop - so a text
+        // that itself starts with a newline keeps it. Decoded by the transport
+        // layer's charset when there is one.
+        if (!charset.empty()) { fresh.set_encoding(charset); }
+        (void)parse_html(
+            fresh, "<html><head></head><body><pre>\n" +
+                       escaped(charset.empty() ? bytes : decode_document_bytes(bytes, charset)) +
+                       "</pre></body></html>");
     } else {
         // An image, or anything else this engine will not display: HTML gives
         // it a document with the resource as the body's only element, and the
@@ -318,8 +388,7 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     // with its fragment - which is what makes `:target` match inside a frame
     // loaded as `page.html#target` (ParentNode-querySelector-All.html's
     // in-document cases run in one).
-    if (!src.empty()) {
-        const std::string href = location_href_.empty() ? src : resolve(location_href_, src);
+    if (!href.empty()) {
         const std::size_t hash = href.find('#');
         made.observe_location(href, hash == std::string::npos ? std::string{} : href.substr(hash));
     }
@@ -341,6 +410,25 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     // `contentWindow`: THE FRAME'S OWN WINDOW, over a realm of its own (see
     // install_frame_realm) - and then the scripts its parse left, run in it.
     made.install_frame_realm(cx, *this, id);
+    // A FRAME DOCUMENT'S DEFAULT ACTIONS. The page's are the browser's -
+    // browser::activate, through set_activate_hook - and a frame's document has
+    // no browser of its own, so a submit or reset button clicked in one did
+    // nothing at all; submit-entity-body.html clicks the button inside the
+    // frame it loaded. The same decision the browser makes (form_store::
+    // form_action_of: the button, its form owner, "actually disabled"), run
+    // through the frame's own bindings. ponytail: a <label> in a frame clicks
+    // nothing and a <select> opens no popup - browser::activate's other
+    // branches are the page's alone until a frame is rendered.
+    made.set_activate_hook([&made](node_id target) {
+        form_store::form_action action;
+        {
+            const auto txn = made.doc_->read();
+            action = form_store::form_action_of(txn, *made.atoms_, target);
+        }
+        if (!action.form) { return; }
+        if (action.submits && made.submit_from_) { (void)made.submit_from_(action.form, target); }
+        if (action.resets && made.reset_form_) { made.reset_form_(action.form); }
+    });
     frame_object->set("contentWindow", made.window_view_);
     made.run_frame_scripts(cx);
 
@@ -350,58 +438,149 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     return &made;
 }
 
-// HTML 4.10.21.3 "submit", steps 17-22, for the one case this engine can
-// take without a server: the GET method aimed at a nested navigable this
-// document names - `<form target="if1">` and `<iframe name="if1">`. The
-// action URL's query becomes the entry list, urlencoded, and the frame is
-// navigated to it: a new document under the same element, whose
-// `location.search` is the query and whose `load` fires at the element.
-// `_self`/`_blank`/`_parent`/`_top` and the POST method are the browser's
-// (a navigation of the page itself, or one that needs a server) and stay
-// where they were: recorded as `last_submission`. Answers whether it
-// navigated. ponytail: no `formtarget`/`formaction` on the submitter, which
-// browser::submit does not carry.
-bool dom_bindings::navigate_form_target(node_id form, const form_pairs & entries) {
+// HTML 4.10.21.3 "submit", steps 20-24, and "plan to navigate": the navigable
+// a submission goes to, and the navigation PLANNED there rather than run.
+// build_submission made `navigation` - the URL, a GET's query already the
+// entry list, and the request that loads it; this chooses where it goes.
+//
+// THE RULES FOR CHOOSING A NAVIGABLE (7.3.1.7), for the navigables this
+// engine has - a frame document's own and each <iframe>'s: "" and `_self`
+// are the form document's own; `_parent` the one its frame is in, or its own
+// when it has none; a NAME the navigable of that name - the form document's
+// own frame, then an <iframe> in the form's document, then anywhere in the
+// page. A TOP-LEVEL navigable is the embedder's page, which no submission
+// replaces here: `_top`, `_blank`, `_self` in the page itself and `_parent`
+// out of a frame the page holds all answer false, and the browser records the
+// entry list instead (browser::submit's last_submission).
+//
+// PLANNED, one per form: "if the form has a non-null planned navigation,
+// remove it from its task queue" - a later submission of the same form,
+// from whatever and at whatever target, replaces the earlier one before it
+// ran (form-double-submit*.html). The plan runs at the start of the next tick
+// (run_planned_navigations), a task after the one that submitted.
+bool dom_bindings::navigate_form_target(node_id form, form_navigation navigation) {
     if (cx_ == nullptr || !form) { return false; }
-    std::string action;
-    std::string method;
-    std::string target;
-    {
-        const auto txn = doc_->read();
-        action = std::string{txn.attribute_value(form, atoms_->intern("action"))};
-        method = ascii_lower_copy(txn.attribute_value(form, atoms_->intern("method")));
-        target = std::string{txn.attribute_value(form, atoms_->intern("target"))};
-    }
-    if (method == "post" || method == "dialog") { return false; }
-    if (target.empty() || target.front() == '_') { return false; }
-    node_id frame;
-    {
-        const auto txn = doc_->read();
-        for (const node_id id : all_html_elements("iframe")) {
-            if (txn.attribute_value(id, atoms_->intern("name")) == target) {
-                frame = id;
-                break;
+    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+    // The <iframe> whose content document `doc` is - its document's bindings
+    // and the element - or nothing for the page itself. Over SNAPSHOTS of each
+    // frame list: nothing below runs script, but a list is never walked live.
+    const auto holding = [&top](const dom_bindings * doc) {
+        const auto walk = [doc](const auto & self,
+                                dom_bindings & at) -> std::pair<dom_bindings *, node_id> {
+            const std::vector<frame_entry> children = at.frames_;
+            for (const frame_entry & entry : children) {
+                if (entry.bindings == nullptr) { continue; }
+                if (entry.bindings == doc) { return {&at, entry.element}; }
+                if (const auto found = self(self, *entry.bindings); found.first != nullptr) {
+                    return found;
+                }
             }
+            return {nullptr, node_id{}};
+        };
+        return walk(walk, top);
+    };
+    std::pair<dom_bindings *, node_id> chosen{nullptr, node_id{}};
+    const std::string keyword = ascii_lower_copy(navigation.target);
+    const std::pair<dom_bindings *, node_id> own = holding(this);
+    if (keyword.empty() || keyword == "_self") {
+        chosen = own;
+    } else if (keyword == "_parent") {
+        chosen = own.first == nullptr ? own : holding(own.first);
+    } else if (keyword != "_top" && keyword != "_blank") {
+        const atom name = atoms_->intern("name");
+        // The first <iframe> of `doc` whose name is the target. RECONCILED
+        // first, which can build a frame and run its scripts - so the searches
+        // below walk copies of each frame list, never the live one: a script
+        // there that reads an ancestor's `contentWindow` reconciles that
+        // ancestor's list, and swapping a vector under a range-for is a
+        // use-after-free. A dom_bindings is never freed while the page lives
+        // (secondary_documents_), so a copied pointer stays good.
+        const auto named = [&](dom_bindings & doc) -> node_id {
+            doc.reconcile_frames();
+            const std::vector<node_id> frames = doc.all_html_elements("iframe");
+            const auto txn = doc.doc_->read();
+            for (const node_id id : frames) {
+                if (txn.attribute_value(id, name) == navigation.target) { return id; }
+            }
+            return node_id{};
+        };
+        const auto search = [&](const auto & self, dom_bindings & doc) -> void {
+            if (chosen.first != nullptr) { return; }
+            if (const node_id found = named(doc)) {
+                chosen = {&doc, found};
+                return;
+            }
+            const std::vector<frame_entry> children = doc.frames_;
+            for (const frame_entry & entry : children) {
+                if (entry.bindings != nullptr) { self(self, *entry.bindings); }
+            }
+        };
+        bool own_name = false;
+        if (own.first != nullptr) {
+            const auto txn = own.first->doc_->read();
+            own_name = txn.attribute_value(own.second, name) == navigation.target;
+        }
+        if (own_name) {
+            chosen = own;
+        } else if (const node_id found = named(*this)) {
+            chosen = {this, found};
+        } else {
+            search(search, top);
         }
     }
-    if (!frame) { return false; }
-    // "Mutate action URL": the action - this document's address when there is
-    // none - with its query replaced by the entries. Kept as the page wrote it
-    // (a path the registry resolves), not resolved into an absolute URL, so
-    // the load goes where the page's other subresources go.
-    std::string url = action.empty() ? location_href_ : action;
-    url = url.substr(0, std::min(url.find('?'), url.find('#')));
-    url += "?" + serialize_form_urlencoded(entries);
-    reconcile_frames();
-    dom_bindings * made = load_frame(*cx_, frame, url);
-    const auto entry =
-        std::ranges::find_if(frames_, [&](const frame_entry & e) { return e.element == frame; });
-    if (entry != frames_.end()) {
-        entry->bindings = made;
-    } else {
-        frames_.push_back(frame_entry{frame, std::string{}, made});
-    }
+    if (chosen.first == nullptr) { return false; }
+    std::erase_if(top.planned_navigations_, [&](const planned_navigation & plan) {
+        return plan.form_document == this && plan.form == form;
+    });
+    top.planned_navigations_.push_back(
+        planned_navigation{this, form, chosen.first, chosen.second, std::move(navigation)});
     return true;
+}
+
+// The planned navigations, run: each <iframe> loads what its plan asked for -
+// a new document under the same element - unless the plan's form's document
+// is no longer active in the page, or the navigable's: a planned navigation
+// is an element task, and a navigated frame's document runs no more tasks.
+void dom_bindings::run_planned_navigations() {
+    if (cx_ == nullptr || planned_navigations_.empty()) { return; }
+    std::vector<planned_navigation> due;
+    due.swap(planned_navigations_);
+    const auto active = [this](const dom_bindings * doc) {
+        if (doc == this) { return true; }
+        const auto walk = [doc](const auto & self, const dom_bindings & at) -> bool {
+            const std::vector<frame_entry> children = at.frames_;
+            for (const frame_entry & entry : children) {
+                if (entry.bindings == doc ||
+                    (entry.bindings != nullptr && self(self, *entry.bindings))) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        return walk(walk, *this);
+    };
+    for (planned_navigation & plan : due) {
+        if (!active(plan.form_document) || !active(plan.navigable)) { continue; }
+        dom_bindings & owner = *plan.navigable;
+        if (!owner.is_connected(plan.element)) { continue; }
+        owner.reconcile_frames();
+        dom_bindings * made =
+            owner.load_frame(*cx_, plan.element, plan.navigation.src, &plan.navigation.request);
+        // THE ELEMENT'S `src` IS UNCHANGED, so the entry keeps what it read -
+        // the next reconcile must not load it over the navigated document.
+        const auto entry = std::ranges::find_if(
+            owner.frames_, [&](const frame_entry & e) { return e.element == plan.element; });
+        if (entry != owner.frames_.end()) {
+            entry->bindings = made;
+        } else {
+            std::string src;
+            {
+                const auto txn = owner.doc_->read();
+                src = std::string{txn.attribute_value(plan.element, atoms_->intern("src"))};
+            }
+            owner.frames_.push_back(frame_entry{plan.element, std::move(src), made});
+        }
+    }
 }
 
 // `load` at the frame, or `error` when the src resolved to no bytes. It does

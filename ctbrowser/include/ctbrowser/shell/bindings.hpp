@@ -83,8 +83,9 @@ public:
     std::size_t run_due_callbacks();
 
     void reconcile_frames();
-    bool navigate_form_target(node_id form,
-                              const std::vector<std::pair<std::string, std::string>> & entries);
+    bool navigate_form_target(node_id form, form_navigation navigation);
+    void run_planned_navigations();
+    void observe_requests(const request_handler * handler);
     std::function<bool(node_id form, node_id submitter)> submit_from_;
     std::function<void(node_id form)> reset_form_;
     void record_first_paint();
@@ -716,8 +717,12 @@ private:
     using frame_entry = binding_detail::frame_entry;
     std::vector<frame_entry> frames_;
     bool frames_dirty_ = true;
+    std::vector<planned_navigation> planned_navigations_; // the primary's
+    const request_handler * request_handler_ = nullptr;   // the primary's
+    [[nodiscard]] std::optional<resource_reply> ask_request_handler(resource_request request);
     // Returns the bindings over the frame's document (null when no wrapper).
-    dom_bindings * load_frame(context & cx, node_id id, const std::string & src);
+    dom_bindings * load_frame(context & cx, node_id id, const std::string & src,
+                              const resource_request * request = nullptr);
     void settle_frame(context & cx, const pending_frame & waiting);
     [[nodiscard]] static std::string_view mime_for_path(std::string_view path);
 

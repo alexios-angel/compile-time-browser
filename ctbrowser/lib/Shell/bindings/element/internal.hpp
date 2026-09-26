@@ -203,4 +203,14 @@ std::string remove_stored_declaration(script::object_object & held, context & cx
 // there at all. Defined in reflection.cpp.
 [[nodiscard]] bool parse_html_integer(std::string_view text, long long & out);
 
+// HTML 4.2.3 "document base URL": the first HTML <base href> in tree order,
+// parsed against the fallback base URL - `address`, the document's own - and
+// that address when there is none. A walk per call (hyperlink.cpp says why).
+[[nodiscard]] std::string document_base_url(const read_txn & txn, atom_table & atoms,
+                                            const std::string & address);
+
+// The first HTML <base target>'s value, "" for none - what "getting an
+// element's target" falls back to (4.6.4). Defined in hyperlink.cpp.
+[[nodiscard]] std::string document_base_target(const read_txn & txn, atom_table & atoms);
+
 } // namespace ctbrowser::shell::detail

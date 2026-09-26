@@ -54,9 +54,7 @@ void browser::activate(node_id target) {
     // toggle, submit, focus or fire an event. Without this the attribute
     // was purely decorative, and it was not even that.
     if (is_disabled(target)) { return; }
-    node_id form;
-    bool submits = false;
-    bool resets = false;
+    form_store::form_action action;
     {
         const auto txn = doc_->read();
         const control_kind kind = kind_of(txn, target);
@@ -75,15 +73,13 @@ void browser::activate(node_id target) {
         // `<input type=image>` is one, with a picture on it (4.10.5.1.20),
         // though control_kind_of files it with the text controls because that
         // is how it is laid out; so is a <button> with no type, which is the
-        // default people forget and then wonder why their form reloads.
-        submits = form_store::is_submit_button(txn, atoms_, target);
-        resets = kind == control_kind::button &&
-                 ascii_iequals(txn.attribute_value(target, atoms_.intern("type")), "reset");
-        // Its FORM OWNER, `form=` and all; with none, a button does nothing.
-        form = form_store::owning_form(txn, atoms_, target);
+        // default people forget and then wonder why their form reloads. Its
+        // FORM OWNER, `form=` and all; with none, a button does nothing.
+        action = form_store::form_action_of(txn, atoms_, target);
     }
-    if (submits) { submit(form, target); }
-    if (resets) { reset(form); }
+    if (!action.form) { return; }
+    if (action.submits) { submit(action.form, target); }
+    if (action.resets) { reset(action.form); }
 }
 
 bool browser::toggle_details(node_id target) {

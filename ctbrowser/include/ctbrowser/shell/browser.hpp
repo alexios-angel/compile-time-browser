@@ -86,6 +86,11 @@ struct browser_options {
     // it blinking, which is what a screenshot test wants: a caret that is
     // sometimes there is not byte-comparable.
     double caret_blink_ms = 500;
+    // AN EMBEDDER'S ANSWER to a request, asked before the asset registry by a
+    // frame's load, a form submission's navigation and fetch()/XHR - see
+    // resource_request in page/forms.hpp. Empty for every application;
+    // ctdrive fills it with the WPT handler emulation under a document root.
+    request_handler on_request{};
 };
 
 // Detailed contracts: docs/reference/header-contracts/shell-browser-*.md

@@ -53,40 +53,56 @@ constexpr hyperlink_attribute hyperlink_attributes[] = {
     {"hash", [](const url_record & u) { return u.hash(); }, "", url_part::hash},
 };
 
+// The first HTML <base> in tree order that carries `attribute`. THE NAMESPACE
+// DECIDES: an SVG <base> is not HTML's, and the two intern to the same atom
+// (the CLAUDE.md invariant).
+[[nodiscard]] node_id first_base_with(const read_txn & txn, atom attribute) {
+    const auto walk = [&](const auto & self, node_id id) -> node_id {
+        if (txn.element_ns(id) == node_ns::html && txn.local_name(id) == "base" &&
+            txn.has_attribute(id, attribute)) {
+            return id;
+        }
+        for (const node_id child : txn.children(id)) {
+            if (const node_id found = self(self, child)) { return found; }
+        }
+        return node_id{};
+    };
+    return walk(walk, txn.document_node());
+}
+
 } // namespace
+
+// HTML 4.2.3 "document base URL". A WALK PER ACCESS, and deliberately: a <base>
+// can be inserted, removed or have its href rewritten at any moment
+// (a-element.js rewrites it between every subtest), so a cached answer is a
+// stale one. Pages carry a handful of elements before <body>, and the walk
+// stops at the first <base href>.
+// ponytail: linear scan of the tree; cache on the document's version counter
+// if a page with a large <head> ever measures.
+std::string detail::document_base_url(const read_txn & txn, atom_table & atoms,
+                                      const std::string & address) {
+    const atom href = atoms.intern("href");
+    const node_id found = first_base_with(txn, href);
+    if (!found) { return address; }
+    const std::string raw{txn.attribute_value(found, href)};
+    if (address.empty()) { return raw; }
+    // The frozen base URL, 4.2.3: the attribute parsed against the FALLBACK
+    // base URL, which is the document's own address.
+    const std::string resolved = resolve(address, raw);
+    return resolved.empty() ? raw : resolved;
+}
+
+std::string detail::document_base_target(const read_txn & txn, atom_table & atoms) {
+    const atom target = atoms.intern("target");
+    const node_id found = first_base_with(txn, target);
+    return found ? std::string{txn.attribute_value(found, target)} : std::string{};
+}
 
 void dom_bindings::install_hyperlink_utils(context & cx) {
     const atom href_name = atoms_->intern("href");
 
-    // HTML 4.2.3 "document base URL". A WALK PER ACCESS, and deliberately: a
-    // <base> can be inserted, removed or have its href rewritten at any moment
-    // (a-element.js rewrites it between every subtest), so a cached answer is a
-    // stale one. Pages carry a handful of elements before <body>, and the walk
-    // stops at the first <base href>.
-    // ponytail: linear scan of the tree; cache on the document's version
-    // counter if a page with a large <head> ever measures.
-    const auto base_url = [this, href_name]() -> std::string {
-        const auto txn = doc_->read();
-        const auto first_base = [&](auto & self, node_id id) -> node_id {
-            // THE NAMESPACE DECIDES: an SVG <base> is not HTML's, and the two
-            // intern to the same atom (the CLAUDE.md invariant).
-            if (txn.element_ns(id) == node_ns::html && txn.local_name(id) == "base" &&
-                txn.has_attribute(id, href_name)) {
-                return id;
-            }
-            for (const node_id child : txn.children(id)) {
-                if (const node_id found = self(self, child)) { return found; }
-            }
-            return node_id{};
-        };
-        const node_id found = first_base(first_base, txn.document_node());
-        if (!found) { return location_href_; }
-        const std::string raw{txn.attribute_value(found, href_name)};
-        if (location_href_.empty()) { return raw; }
-        // The frozen base URL, 4.2.3: the attribute parsed against the
-        // FALLBACK base URL, which is the document's own address.
-        const std::string resolved = resolve(location_href_, raw);
-        return resolved.empty() ? raw : resolved;
+    const auto base_url = [this]() -> std::string {
+        return document_base_url(doc_->read(), *atoms_, location_href_);
     };
 
     // "Reinitialize url": null when there is no href attribute, and null again

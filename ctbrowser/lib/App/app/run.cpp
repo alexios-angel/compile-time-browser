@@ -169,6 +169,7 @@ int run_app(std::string_view html, app_options options) {
     browser_options.width = options.logical_width > 0 ? options.logical_width : options.width;
     browser_options.height = options.logical_height > 0 ? options.logical_height : options.height;
     browser_options.caret_blink_ms = options.caret_blink_ms;
+    browser_options.on_request = options.on_request;
     shell::browser page{browser_options};
 
     // Resources BEFORE the page: an <img src> is resolved while the document

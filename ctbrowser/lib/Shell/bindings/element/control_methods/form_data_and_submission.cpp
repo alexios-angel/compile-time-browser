@@ -493,10 +493,13 @@ void dom_bindings::install_control_form_data(context & cx) {
 
     // --- submit, requestSubmit, reset, HTML 4.10.21 ------------------------------------
     //
-    // Submission stops where the network would begin: the entry list is
-    // built (which fires `formdata`), and nothing navigates. `submit()`
-    // fires no `submit` event; `requestSubmit()` validates, fires it, and
-    // builds the list unless it was cancelled.
+    // `submit()` fires no `submit` event; `requestSubmit()` validates, fires
+    // it, and builds the list unless it was cancelled. Then the submission
+    // itself, 4.10.21.3 from step 6: the entry list; the submitter's method,
+    // action, enctype and target over the form's; the row of the scheme
+    // table; and a navigation PLANNED at the navigable the target names
+    // (navigate_form_target, frames.cpp) - or, for the page itself, the
+    // browser's (last_submission).
     const auto build_submission = [new_form_data, entry_list, entry_name,
                                    entry_value](context & c, dom_bindings * b, node_id form,
                                                 node_id submitter) -> bool {
@@ -531,37 +534,147 @@ void dom_bindings::install_control_form_data(context & cx) {
         // "If form cannot navigate, then return" - a `formdata` listener
         // that removed the form ended the submission.
         if (!b->is_connected(form)) { return false; }
-        // ...AND THE NAVIGATION, when the form aims a GET at a frame this
-        // document names (frames.cpp): the entry list "converted to a list
-        // of name-value pairs" (4.10.21.6) - a File by its name, and in the
-        // name and the value every CR not followed by LF and every LF not
-        // preceded by CR made a CR LF, which the urlencoded serialiser then
-        // writes as %0D%0A.
-        const auto crlf = [](std::string text) {
-            std::string out;
-            out.reserve(text.size());
-            for (std::size_t i = 0; i < text.size(); ++i) {
-                if (text[i] == '\r' || text[i] == '\n') {
-                    out += "\r\n";
-                    if (text[i] == '\r' && i + 1 < text.size() && text[i + 1] == '\n') { ++i; }
-                } else {
-                    out += text[i];
-                }
-            }
-            return out;
-        };
-        std::vector<std::pair<std::string, std::string>> pairs;
-        const value * held =
-            static_cast<script::object_object *>(data.as_heap())->find(entries_slot);
-        if (held != nullptr && held->is_array()) {
-            for (const value & pair : static_cast<script::array_object *>(held->as_heap())->items) {
+        // THE ENTRY LIST, for the encodings: a string entry's text, and a
+        // File's name, type and bytes apart - multipart/form-data sends all
+        // three, the other two the name alone. Read from the entries' and the
+        // Files' OWN SLOTS, the internal slots the specifications give them,
+        // and never through a getter: no page code runs here, so a `formdata`
+        // listener that kept `e.formData` cannot grow the list under the walk
+        // (which goes by index regardless).
+        std::vector<form_entry> entries;
+        if (const value * held =
+                static_cast<script::object_object *>(data.as_heap())->find(entries_slot);
+            held != nullptr && held->is_array()) {
+            const auto & items = static_cast<script::array_object *>(held->as_heap())->items;
+            for (std::size_t i = 0; i < items.size(); ++i) {
+                const value pair = items[i];
+                form_entry entry;
+                entry.name = entry_name(c, pair);
                 const value v = entry_value(pair);
-                std::string text =
-                    v.is_object_like() ? c.to_string(c.lookup_property(v, "name")) : c.to_string(v);
-                pairs.emplace_back(crlf(entry_name(c, pair)), crlf(std::move(text)));
+                if (v.is_object()) {
+                    auto * file = static_cast<script::object_object *>(v.as_heap());
+                    const auto own_string = [&](std::string_view key) {
+                        const value * slot = file->find(key);
+                        return slot != nullptr && slot->is_string() ? c.to_string(*slot)
+                                                                    : std::string{};
+                    };
+                    entry.file = true;
+                    entry.filename = to_usv_string(own_string("name"));
+                    entry.type = own_string("type");
+                    if (const value * bytes = file->find("__bytes");
+                        bytes != nullptr && bytes->is_array()) {
+                        for (const value & byte :
+                             static_cast<script::array_object *>(bytes->as_heap())->items) {
+                            entry.value.push_back(static_cast<char>(
+                                static_cast<std::uint32_t>(context::to_number(byte)) & 0xFFu));
+                        }
+                    }
+                } else {
+                    entry.value = c.to_string(v);
+                }
+                entries.push_back(std::move(entry));
             }
         }
-        (void)b->navigate_form_target(form, pairs);
+        // THE SUBMITTER'S OWN ATTRIBUTES FIRST (4.10.18.6): a submit button's
+        // formaction, formmethod, formenctype and formtarget, and where it has
+        // none the form's. submit() has no submitter, and requestSubmit()
+        // without one submits from the form.
+        std::string action;
+        std::string method = "get";
+        std::string enctype = "application/x-www-form-urlencoded";
+        std::string target;
+        std::string base;
+        {
+            const auto txn = b->doc_->read();
+            const bool button =
+                submitter && form_store::is_submit_button(txn, *b->atoms_, submitter);
+            const auto pick = [&](std::string_view own,
+                                  std::string_view of_form) -> std::optional<std::string> {
+                if (const atom name = b->atoms_->intern(own);
+                    button && txn.has_attribute(submitter, name)) {
+                    return std::string{txn.attribute_value(submitter, name)};
+                }
+                if (const atom name = b->atoms_->intern(of_form); txn.has_attribute(form, name)) {
+                    return std::string{txn.attribute_value(form, name)};
+                }
+                return std::nullopt;
+            };
+            action = pick("formaction", "action").value_or(std::string{});
+            // The two enumerated attributes: GET and urlencoded when absent or
+            // not one of their keywords (the invalid value defaults).
+            if (const auto stated = pick("formmethod", "method")) {
+                const std::string folded = ascii_lower_copy(*stated);
+                if (folded == "post" || folded == "dialog") { method = folded; }
+            }
+            if (const auto stated = pick("formenctype", "enctype")) {
+                const std::string folded = ascii_lower_copy(*stated);
+                if (folded == "multipart/form-data" || folded == "text/plain") { enctype = folded; }
+            }
+            // "Getting an element's target" (4.6.4): formtarget, the form's
+            // target, else the first <base target>; one with an ASCII tab or
+            // newline AND a `<` is `_blank`.
+            target = pick("formtarget", "target").value_or(document_base_target(txn, *b->atoms_));
+            if (target.find_first_of("\t\n\r") != std::string::npos &&
+                target.find('<') != std::string::npos) {
+                target = "_blank";
+            }
+            base = document_base_url(txn, *b->atoms_, b->location_href_);
+        }
+        // ponytail: a dialog submission closes no <dialog> - "close the
+        // dialog" with the submitter's value is the upgrade.
+        if (method == "dialog") { return true; }
+        // "If action is the empty string, let action be the URL of the form
+        // document", then parsed against its base URL - a failure ends it. A
+        // page with no address keeps the action as written, a name the asset
+        // registry resolves.
+        if (action.empty()) { action = b->location_href_; }
+        std::string url = action;
+        if (!base.empty()) {
+            url = resolve(base, action);
+            if (url.empty()) { return true; }
+        }
+        const std::string scheme =
+            ascii_lower_copy(url.substr(0, std::min(url.find(':'), url.size())));
+        // ponytail: a javascript: action runs in the target and a mailto: one
+        // leaves the browser; neither is here.
+        if (scheme == "javascript" || scheme == "mailto") { return true; }
+        // "Mutate action URL": the query REPLACED by the urlencoded entry
+        // list, the fragment kept.
+        const auto with_query = [](const std::string & at, const std::string & query) {
+            const std::size_t hash = at.find('#');
+            const std::string fragment =
+                hash == std::string::npos ? std::string{} : at.substr(hash);
+            return at.substr(0, std::min(at.find('?'), hash)) + "?" + query + fragment;
+        };
+        form_navigation navigation;
+        navigation.target = std::move(target);
+        if (method == "get" && scheme != "ftp") {
+            const std::string query = urlencoded_form_body(entries, encoding);
+            navigation.src = with_query(action, query);
+            navigation.request.url = with_query(url, query);
+        } else if (method == "post" && scheme != "ftp" && scheme != "data") {
+            // "Submit as entity body": the enctype's encoding of the list. A
+            // scheme the table does not list (file:) is taken as http's.
+            navigation.src = action;
+            navigation.request.method = "POST";
+            navigation.request.url = url;
+            if (enctype == "multipart/form-data") {
+                navigation.request.body = multipart_form_body(entries, encoding);
+                navigation.request.content_type =
+                    "multipart/form-data; boundary=" + std::string{multipart_boundary};
+            } else if (enctype == "text/plain") {
+                navigation.request.body = text_plain_form_body(entries, encoding);
+                navigation.request.content_type = "text/plain";
+            } else {
+                navigation.request.body = urlencoded_form_body(entries, encoding);
+                navigation.request.content_type = "application/x-www-form-urlencoded";
+            }
+        } else {
+            // "Get action URL": the action as it is, the entry list unused.
+            navigation.src = action;
+            navigation.request.url = url;
+        }
+        (void)b->navigate_form_target(form, std::move(navigation));
         return true;
     };
     // HTML 4.10.21.3 "submit" FROM A SUBMITTER - not from submit(): the form
