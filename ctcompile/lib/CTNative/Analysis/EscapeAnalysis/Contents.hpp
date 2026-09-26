@@ -83,8 +83,7 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                (unary && unary.getKind() == ctjs::UnaryKind::Not) ||
                (literal && llvm::isa<ctjs::BooleanAttr>(literal.getValue()));
     };
-    const auto stripBoolean = [&](mlir::Value value) -> std::pair<mlir::Value, bool> {
-        bool negated = false;
+    const auto stripIdentity = [&](mlir::Value value) -> mlir::Value {
         while (true) {
             // The shared budget bounds traversal; exhaustion supplies no partial key.
             if (!spend(1)) { return {}; }
@@ -106,13 +105,21 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                     }
                     common = yield.getOperand(position);
                 }
-                // An identical saved SSA value keeps its snapshot through any
-                // enclosing Boolean chain. Every arm effect is checked separately.
+                // An identical saved SSA value keeps its tag and snapshot.
+                // Every arm effect is checked separately.
                 if (common) {
                     value = common;
                     continue;
                 }
             }
+            return value;
+        }
+    };
+    const auto stripBoolean = [&](mlir::Value value) -> std::pair<mlir::Value, bool> {
+        bool negated = false;
+        while (true) {
+            value = stripIdentity(value);
+            if (!value) { return {}; }
             if (auto convert = value.getDefiningOp<ctjs::ConvertOp>();
                 convert && convert.getKind() == ctjs::ConvertKind::ToBoolean) {
                 value = convert.getOperand();
@@ -177,6 +184,15 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
     };
     bool complete = true;
     const auto sameOperand = [&](mlir::Value left, mlir::Value right) {
+        if (left == right) { return true; }
+        left = stripIdentity(left);
+        right = stripIdentity(right);
+        if (!left || !right) {
+            complete = false;
+            return false;
+        }
+        // Strict comparison operands keep their exact value; Boolean conversion
+        // and logical Not cannot be stripped here.
         if (left == right) { return true; }
         if (!spend(2)) {
             complete = false;

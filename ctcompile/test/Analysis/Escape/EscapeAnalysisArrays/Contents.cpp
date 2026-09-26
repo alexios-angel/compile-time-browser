@@ -977,6 +977,24 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                           identityReads.find("    %secondKey =") -
                               identityReads.find("    %boolean ="),
                           readIdentity);
+    const auto operandCarrier = selectedInput("%p", "%p", "", "", "%operand");
+    const auto operandKeys =
+        selectedStore(comparedInput("%zero", "%one", "strict_eq %operand, %zero", operandCarrier));
+    const auto operandGap = nestedSiblingStore(
+        "      %read = ctjs.get_property %guard[%one]\n" +
+        comparedInput("%read", "%two", "strict_eq %operand, %zero", operandCarrier));
+    const std::string operandTuple =
+        "    %operand:2 = scf.if %flag -> (!ctjs.value, !ctjs.value) {\n"
+        "      scf.yield %zero, %p : !ctjs.value, !ctjs.value\n"
+        "    } else {\n"
+        "      scf.yield %one, %p : !ctjs.value, !ctjs.value\n"
+        "    }\n";
+    auto operandReads = comparedReads();
+    operandReads.replace(operandReads.find("strict_eq %secondRead, %zero"),
+                         std::string{"strict_eq %secondRead, %zero"}.size(),
+                         "strict_eq %operand, %zero");
+    operandReads.insert(operandReads.find("    %secondCompare"),
+                        selectedInput("%secondRead", "%secondRead", "", "", "%operand"));
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -3330,6 +3348,105 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(identityKeys) +
                  "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
                  "  ctjs.return %read\n"},
+        {.what = "strict comparison operands forward an identical saved SSA value",
+         .body = loopValues + allocationLoop(operandKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "identity operands preserve the corresponding tuple slot and Not polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %zero, %operand#1", operandTuple, 3))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "strict comparison operands follow nested identical SSA forwarding",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     comparedInput("%zero", "%one", "strict_eq %outerOperand, %zero",
+                                   operandCarrier + selectedInput("%operand", "%operand", "", "",
+                                                                  "%outerOperand")))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "identity operands preserve exact immutable literal comparison inputs",
+         .body = loopValues + "  %otherZero = ctjs.constant #ctjs.number<0>\n" +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %p, %operand",
+                     selectedInput("%otherZero", "%otherZero", "", "", "%operand")))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "identity comparison operands preserve the independent guard read gap",
+         .body =
+             loopValues + allocationLoop(operandGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "a changed then comparison operand yield cannot borrow saved identity",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(comparedInput("%zero", "%one", "strict_eq %operand, %zero",
+                                                 selectedInput("%q", "%p", "", "", "%operand")))) +
+                 done,
+         .complete = false},
+        {.what = "a changed else comparison operand yield cannot borrow saved identity",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(comparedInput("%zero", "%one", "strict_eq %operand, %zero",
+                                                 selectedInput("%p", "%q", "", "", "%operand")))) +
+                 done,
+         .complete = false},
+        {.what = "identity comparison operands cannot borrow a sibling tuple slot",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     comparedInput("%zero", "%one", "strict_eq %operand#0, %zero", operandTuple))) +
+                 done,
+         .complete = false},
+        {.what = "ToBoolean changes the strict comparison operand value",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %operand, %zero",
+                     "    %converted = ctjs.convert to_boolean %p\n" +
+                         selectedInput("%converted", "%converted", "", "", "%operand")))) +
+                 done,
+         .complete = false},
+        {.what = "logical Not changes the strict comparison operand value",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %operand, %zero",
+                     "    %converted = ctjs.unary not %p\n" +
+                         selectedInput("%converted", "%converted", "", "", "%operand")))) +
+                 done,
+         .complete = false},
+        {.what = "identity comparison operands preserve distinct mutable read snapshots",
+         .body = loopValues + allocationLoop(operandReads) + done,
+         .complete = false},
+        {.what = "identical comparison operand yields preserve then arm effects",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     comparedInput("%zero", "%one", "strict_eq %operand, %zero",
+                                   selectedInput("%p", "%p", "      %called = ctjs.call %p(%q)\n",
+                                                 "", "%operand")))) +
+                 done,
+         .complete = false},
+        {.what = "identical comparison operand yields preserve else arm effects",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %operand, %zero",
+                     selectedInput("%p", "%p", "", "      %called = ctjs.call %p(%q)\n",
+                                   "%operand")))) +
+                 done,
+         .complete = false},
+        {.what = "identity comparison operands cannot overwrite their guard dependency",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(
+                     "      %read = ctjs.get_property %guard[%zero]\n" +
+                     comparedInput("%read", "%two", "strict_eq %operand, %zero", operandCarrier))) +
+                 done,
+         .complete = false},
+        {.what = "a returned identity-operand holder retains its child",
+         .body = loopValues + allocationLoop(operandKeys) + "  ctjs.return %guard\n"},
+        {.what = "clearing an identity-operand holder releases its child",
+         .body = loopValues + allocationLoop(operandKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved identity-operand child survives clearing its holder",
+         .body = loopValues + allocationLoop(operandKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
         {.what = "ToBoolean preserves the exact input truthiness choice",
          .body = loopValues + allocationLoop(booleanKeys) + done,
          .confinedNested = "fresh"},
@@ -5004,6 +5121,68 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = identityMutation.what, .body = identityMutation.body, .expected = ""},
              "the inner-identity mutation fixture did not parse");
     }
+    retention_row operandMutation{
+        .what = "identity comparison operands reprove both yields, comparisons and guards",
+        .body =
+            loopValues + allocationLoop(operandGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto operandModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + operandMutation.body + "}\n", &context);
+    if (operandModule) {
+        ctjs::FuncOp function = *operandModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto compare = second.getCondition()
+                           .getDefiningOp<ctjs::TruthyOp>()
+                           .getValue()
+                           .getDefiningOp<ctjs::CompareOp>();
+        auto carrier = compare.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto * thenYield = carrier.getThenRegion().front().getTerminator();
+        auto * elseYield = carrier.getElseRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = thenYield->getOperand(0);
+        const mlir::Value otherInput = function.getBody().front().getArgument(4);
+        const mlir::Value originalRight = compare.getRhs();
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*operandModule))) {
+            fail(row{.what = operandMutation.what, .body = operandMutation.body, .expected = ""},
+                 "the identity operand stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 8; ++state) {
+            thenYield->setOperand(0, state == 1 || state == 3 ? otherInput : originalInput);
+            elseYield->setOperand(0, state == 2 || state == 3 ? otherInput : originalInput);
+            compare.setKindAttr(ctjs::CompareKindAttr::get(
+                &context, state == 4 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+            compare->setOperand(1, state == 5 ? originalPosition : originalRight);
+            load->setOperand(1, state == 6 ? zero : originalPosition);
+            operandMutation.complete = state == 0 || state == 7;
+            operandMutation.confinedNested = operandMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*operandModule, operandMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                operandMutation.complete) {
+                fail(
+                    row{.what = operandMutation.what, .body = operandMutation.body, .expected = ""},
+                    "a stale solver or forged marker supplied identity comparison operands");
+            }
+        }
+    } else {
+        fail(row{.what = operandMutation.what, .body = operandMutation.body, .expected = ""},
+             "the identity operand mutation fixture did not parse");
+    }
     retention_row booleanMutation{
         .what =
             "ToBoolean correspondence reproves live conversion inputs, kinds, yields and guards",
@@ -5519,8 +5698,9 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  "the strict comparison mutation fixture did not parse");
         }
     }
-    std::printf("array retention: %zu rows, two hundred seventy live states, %zu budget cutoffs\n",
-                rows.size(), budgets);
+    std::printf(
+        "array retention: %zu rows, two hundred seventy-eight live states, %zu budget cutoffs\n",
+        rows.size(), budgets);
 }
 
 void checkObjectContents(mlir::MLIRContext & context) {
