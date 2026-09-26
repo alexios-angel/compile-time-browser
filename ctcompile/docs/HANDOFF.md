@@ -22,6 +22,110 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved prefix Strings, Boolean arm literals and iterator setup, 2026-09-26 UTC
+
+Continued **0248c1c0** and its measured Number String saved before `try`
+refusal. The separate candidate with equal Boolean arm literals was measured
+before changing production. The checkout began clean; `codex-wip-20260907` was already an ancestor.
+Parallel agents prepared source/transaction controls and reviewed escape and
+iterator proofs. Detached gates preserved the work through service interruptions.
+
+**9ffb3a09** lets the protected-write proof recognize a preceding exact
+`Number(...).toString()` result through its existing charged origin proof. The
+owning String remains a snapshot across later DOM mutation. Producer effects,
+method identity, receiver, arity and complete private final DOM admission remain
+required. There are 32 new transaction controls: eight admissions and 24 unchanged
+refusals across both providers. **9d79a5aa** adds three complete sources and
+ten refusal bodies, preserving all earlier source bodies.
+
+**7a16bc6e** recognizes distinct equal Boolean literals in selected `scf.if`
+result slots on the literal side of strict equality. All leaves must have the same
+Boolean attribute; no arm-local SSA value becomes a dominating representative.
+The input still needs exact Boolean provenance. Both operand orders, false
+polarity, mutable-read identity, complete arm effects/census/replay and budgets
+retain their checks. Ten new rows and 12 live mutation states bring the focused
+fixture to 626 rows and 298 live states. The unchanged-production baseline passed
+`ctcompile_escape_analysis_arrays` 1/1 in 5.85 s with these equal leaves refused.
+No allocation or performance gain was measured.
+
+**9f65781b** restores private custom iterator normalization after the
+`d09c440a` frontend change integrated by browser merge **6f11236b**. Computed
+methods now call property-key conversion and function-naming helpers. Both exact
+initial bindings must be declared. Conversion is proved only for the original
+well-known Symbol; naming is proved only for the private identity closure. Exact
+arity, undefined receivers, source order and all value/helper observers are
+checked. The converted key may occur only in the proved opening invocation's
+unwind state, which normal projection discards. Legacy direct-key IR remains
+supported. There are 48 new refusal transactions and 14 parser/live-contract rows.
+Generated output must contain none of the five internal iterator/setup helpers.
+
+The first five-target native build passed, then exact exception recovery failed
+in 5.47 s on existing iterator sources because of that frontend change. The new
+Number String controls did not fail. Actual complete imported IR established the
+new setup order and opening unwind-state uses. The first integration build then
+caught a `TypedValue`/`Value` assignment; an explicit `mlir::Value` fixed it.
+
+Final build: seven explicit devbox targets (`ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctcompile-test-escape-analysis-arrays`,
+`ctcompile-test-escape-analysis-completion`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`). All four exact CTests passed 1/1 (total elapsed):
+`ctcompile_exception_recovery` **20.34 s**, `ctcompile_host_contract` **2.83 s**,
+`ctcompile_escape_analysis_arrays` **5.83 s**, and
+`ctcompile_escape_analysis_completion` **0.02 s**.
+
+The three selected sources with saved formatted Strings passed **24 generated C++
+files, 48 GCC/Clang executions, 12 admissions and 68 refusals**, including 12
+zero-budget refusals. Both providers, printers and optimization settings, all
+13 inputs, both flag states, ordered Node/interpreter observations, two documents
+and 16 lifetimes passed. The two selected iterator sources passed
+**16 generated C++ files, 32 GCC/Clang executions, eight admissions and 72
+refusals**, with 16 ordered Node/VM observations. All 40 generated files were
+retrieved. Source and linked-symbol checks reject Script/AOT and the internal setup/iterator helpers.
+Independent inspection of the saved-String functions confirms owning String
+snapshots before mutation, typed Number arithmetic, public Core formatting and
+public DOM calls with document RAII. Independent iterator output inspection
+confirms scalar control flow, borrowed element handles and document ownership
+by value in both printers/providers.
+
+The selected source runners reuse existing harnesses; this is not a full lit or
+native-matrix pass. All eleven final source hashes match locally and on the devbox.
+
+Local ordered Node oracles, JavaScript/Python syntax, Black, scoped pinned
+clang-format and diff checks pass. Repository `tools/format.sh --check` found
+12 diagnostics in untouched browser `element/node_methods.cpp` and
+`events/handler_names.hpp`, plus four in the new iterator proof; the four were
+corrected and scoped rechecking passed. The browser files remain untouched.
+Full CTest/compiler lit, broader source fixtures/corpus/matrices, raw escape
+oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and performance
+checks were skipped. Claude's loop remained running; concurrent ownership rules
+were followed. There were no browser/shared implementation changes or local C++
+builds.
+
+**Next measured boundary:** a raw nullable attribute String saved before `try`
+still refuses when passed to the protected write:
+
+```javascript
+function customElements(anchor) {
+  const saved = anchor.getAttribute('data-number');
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+```
+
+The complete source was imported with `ctbrowser-dom-v1`, no initial intrinsics
+and optimization disabled. It refuses with
+`native DOM source: DOM URI requires its fingerprinted initial provider binding`.
+This probe was not executed natively. Extend the saved nullable String-origin
+proof across the prefix/protected-body boundary while preserving the original
+read/write order, owning snapshot, handler and complete final DOM proof. Do not
+add URI declarations or drop the handler to bypass this refusal. The native
+application driver, complete Bootstrap compilation and broader escape plan
+remain unfinished.
+
+Evidence: `../ctcompile-plan/evidence/2026-09-26-saved-number-strings/`.
+
 ## Protected Number formatting and saved String writes, 2026-09-26 UTC
 
 Continued **79613a6e** and its complete protected `Number(getAttribute).toString()`
