@@ -422,6 +422,28 @@ namespace ctbrowser::style::easing_detail {
             return computed;
         }
     }
+    // font-variation-settings pairs axis by axis, whatever order either side
+    // wrote them in: each list sorted by tag, a repeated tag's last value
+    // winning (font-variation-settings-interpolation).
+    if (property == "font-variation-settings" && !ascii_iequals(text, "normal")) {
+        std::vector<std::pair<std::string, std::string>> axes;
+        for (const std::string_view raw : split_top_level(text, ",")) {
+            const std::string_view item = trim(raw, html_whitespace);
+            const std::size_t space = item.find_last_of(" \t\n\r\f");
+            if (space == std::string_view::npos) { return std::string{text}; }
+            std::string tag{trim(item.substr(0, space), html_whitespace)};
+            if (tag.size() < 2) { return std::string{text}; }
+            tag = tag.substr(1, tag.size() - 2);
+            std::erase_if(axes, [&tag](const auto & axis) { return axis.first == tag; });
+            axes.emplace_back(std::move(tag), std::string{item.substr(space + 1)});
+        }
+        std::ranges::stable_sort(axes, {}, &std::pair<std::string, std::string>::first);
+        std::string out;
+        for (const auto & [tag, value] : axes) {
+            out += (out.empty() ? "\"" : ", \"") + tag + "\" " + value;
+        }
+        return out;
+    }
     // `normal` is `oblique 0deg` and a bare `oblique` is `oblique 14deg` (CSS
     // Fonts 4 §2.4), so either pairs with an oblique angle.
     if (property == "font-style") {

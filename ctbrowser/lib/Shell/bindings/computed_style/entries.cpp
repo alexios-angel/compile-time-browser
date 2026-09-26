@@ -760,8 +760,11 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 if (answer.outcome == style::css::math_outcome::resolved &&
                     !answer.value.is_number &&
                     answer.value.type == style::css::numeric_type::angle) {
-                    if (answer.value.px == 0) { return "normal"; }
-                    return "oblique " + number_text(static_cast<float>(answer.value.px)) + "deg";
+                    // ...and within [-90deg, 90deg], where an animation past
+                    // either end stops (font-style-interpolation).
+                    const double angle = std::clamp(answer.value.px, -90.0, 90.0);
+                    if (angle == 0) { return "normal"; }
+                    return "oblique " + number_text(static_cast<float>(angle)) + "deg";
                 }
             }
             return words;

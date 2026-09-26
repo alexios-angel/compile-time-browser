@@ -305,6 +305,8 @@ void test_composition() {
                            context) == "translateY(75%) scaleZ(1.25)");
     CHECK(interpolate_text("transform-origin", "top left", "bottom right", 0.5, context) ==
           "50% 50%");
+    CHECK(interpolate_text("font-variation-settings", "'bbbb' 10, 'aaaa' 0",
+                           "\"aaaa\" 30, \"bbbb\" 20", 0.5, context) == "\"aaaa\" 15, \"bbbb\" 15");
     CHECK(composite_text("transform", "rotate(30deg)", "scale(2)", composite_op::add, context) ==
           "rotate(30deg) scale(2)");
     CHECK(composite_text("transform", "matrix(0, 1, -1, 0, 100, 0)", "matrix(1, 0, 0, 1, 50, 0)",
