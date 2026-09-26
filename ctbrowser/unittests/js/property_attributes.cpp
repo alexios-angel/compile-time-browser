@@ -973,6 +973,12 @@ int main() {
     js_expect("(function(){class C { static v = C.make(); static make() { return 7; } static w; }"
               "return C.v + '/' + ('w' in C) + '/' + C.w;})()",
               "7/true/undefined");
+    // A class's static ACCESSOR is configurable, so `delete` removes it - it
+    // answered true and the getter stayed (a closure's accessors were never
+    // looked at).
+    js_expect("(function(){class C { static get x() { return 2; } }"
+              "var d = delete C.x; return d + '/' + C.x + '/' + ('x' in C);})()",
+              "true/undefined/false");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }
