@@ -128,6 +128,13 @@ value context::make_generator(closure_object * closure, value receiver,
     saved->window.resize(closure->proto->frame_size, value::undefined());
 
     value out = make_object();
+    // ROOTED FROM HERE: the eager prologue below runs page code - a default
+    // parameter can call anything, and a call can collect - while the
+    // generator is reachable only from this local, and `saved` only through
+    // it. A native's pin hid this under `eval` until 2026-09-26 (test262's
+    // staging/sm/expressions/destructuring-array-default-*: heap-use-after-
+    // free in suspend_frame).
+    const rooted keep{*this, out};
     auto * obj = static_cast<object_object *>(out.as_heap());
     saved->async_gen = closure->proto->is_async;
     saved->self = out;
@@ -153,7 +160,6 @@ value context::make_generator(closure_object * closure, value receiver,
     // have reassigned it; ensure_prototype makes one inheriting the intrinsic
     // otherwise), else the intrinsic already set above.
     if (!failed_) {
-        const rooted keep{*this, out};
         const value own = ensure_prototype(value::object(closure));
         if (own.is_object_like()) { obj->prototype = own; }
     }

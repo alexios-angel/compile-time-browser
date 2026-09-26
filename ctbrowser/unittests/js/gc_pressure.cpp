@@ -95,5 +95,24 @@ int main() {
         CHECK_EQ(cx2.to_string(cx2.global("out")), std::string{"300/100"});
         CHECK(cx2.collections() > 0);
     }
+
+    // WHAT THE INTERPRETER ITSELF HOLDS ACROSS A CALL is rooted where it is
+    // made, not by a native's pin: a generator whose parameters run a callback
+    // before its object is anywhere else, and a spread through a proxy's `get`
+    // trap. Both were freed once the pin narrowed (ASan, 2026-09-26), and both
+    // were already exposed in a script no native was running.
+    {
+        context stress;
+        install_builtins(stress);
+        stress.set_gc_stress(true);
+        const program held = compiler::compile(R"(
+            function* g(a = [1, 2].map(function (x) { return x * 2; })) { yield a.length; }
+            var spread = [...new Proxy([{ n: 1 }, { n: 2 }], { get: function (t, k) { return t[k]; } })];
+            return g().next().value + spread[0].n + spread[1].n;
+        )");
+        const run_result got = stress.run(held);
+        CHECK(got.ok);
+        CHECK_EQ(stress.to_string(got.returned), std::string{"5"});
+    }
     REPORT("gc_pressure");
 }

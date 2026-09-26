@@ -359,6 +359,7 @@ value context::iterable_values(value v) {
         const value length = lookup_property(v, "length");
         if (!length.is_number()) { return make_array(); }
         value out = make_array();
+        const rooted keep{*this, out}; // each `get` trap is page code, and can collect
         auto * items = static_cast<array_object *>(out.as_heap());
         const auto count = static_cast<std::size_t>(std::max(0.0, to_number(length)));
         for (std::size_t i = 0; i < count && i < 1u << 24; ++i) {
@@ -460,6 +461,7 @@ value context::iterable_values(value v) {
     // is what a NodeList, `arguments` and a page's own collection look like.
     if (value * length = obj->find("length"); length != nullptr && length->is_number()) {
         value out = make_array();
+        const rooted keep{*this, out}; // an index can be a getter
         auto * items = static_cast<array_object *>(out.as_heap());
         const auto count = static_cast<std::size_t>(std::max(0.0, to_number(*length)));
         for (std::size_t i = 0; i < count && i < 1u << 24; ++i) {
