@@ -22,6 +22,94 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved Number read origins and exact primitive predicates, 2026-09-26 UTC
+
+Resumed **e1547d2c** and its saved `Number(getAttribute)` boundary. Iteration
+43 was fully committed; the old WIP branch was already an ancestor. Interrupted
+child turns resumed from their saved candidates; no passing gate was restarted.
+
+**08d42942** follows an original Number CallOp in the protected-write origin
+query. The direct Number load, undefined receiver and single argument supply only
+conditional result-tag evidence. Fresh complete DOM proof still validates the
+initial intrinsic, input, every effect and source fingerprint. The read and
+conversion stay before the try and any intervening mutation. The protected-effect
+whitelist is unchanged; this adds no permission to discard producer failures.
+There are 36 new transaction controls across both providers, including conditional
+origins, exact snapshot wiring, invalid identity/arity/coercion, forged markers,
+stale fingerprints and zero/insufficient budgets. Independent review found no
+production defect; its two test robustness suggestions were applied.
+
+**b6a0fe8b** extends strict-comparison operand keys from exact Number bits to
+exact supported primitive attributes. Tags, String bytes and BigInt spelling stay
+distinct; there is no coercion, parsed-value equivalence or mutable-snapshot
+equivalence. Shared charged census/current replay still proves guards, finite
+retained values, every effect and exit. Two original String/Boolean refusal bodies
+are promoted unchanged, with ten new retention rows and 30 new live mutation
+states. No ownership or shorter-lifetime authority is added.
+
+**61d77b61** preserves the complete saved-read witness and adds an intervening
+attribute mutation. Each runs 13 missing/String/Number-conversion inputs, including
+signed zero, NaN, infinities, radix/exponent spelling and Unicode whitespace.
+All 35 prior direct and two outer source bodies remain unchanged. Six new refusals
+cover absent/rebound Number, coercing input, unknown getter, invalid name and mixed
+object join. Node and interpreter ordered traces agree.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Final exact CTests passed, each 1/1
+(total elapsed): `ctcompile_exception_recovery` **19.26 s**,
+`ctcompile_host_contract` **2.77 s**, `ctcompile_escape_analysis_arrays` **5.53 s**
+and `ctcompile_escape_analysis_completion` **0.02 s**.
+
+The selected `native_dom_caught_node.py` gate passed both new complete sources,
+all 34 direct refusal bodies and the new sources' zero budgets: **32 GCC/Clang
+native executions, eight admitted provider/optimization combinations and 144
+refusals**. Both printers/providers/optimization modes, two documents, ordered
+writes and 16 lifetimes pass. All **16 generated C++ files** were retrieved;
+source and linked-symbol checks reject Script/AOT. Inspected entries retain typed
+Number snapshots, borrowed element_ref values, public DOM calls and document RAII.
+All five final local/devbox hashes match. This is a selected harness pass, not a
+full caught-node lit run.
+
+The first exception CTest caught two new fixture-discovery assertions: the
+conversion inside try forwards its callee through status-edge block arguments,
+rather than direct SSA. The fixture now accepts that original shape; its source
+and expected refusal are unchanged. Only that test target and failed exact CTest
+were repeated. Production, source checks and the three passing CTests were not
+replayed. Final repository formatting still reports the same six diagnostics in
+untouched `select_and_options.cpp:602`, `node_methods.cpp:63` and
+`Style/css/properties/gaps.cpp:189`; scoped formatting, syntax and diff checks pass.
+
+**Next measured boundary:** moving the read and conversion inside the original
+try still refuses `native DOM source: DOM caught throw protected effect lacks a
+nonthrowing proof`, with initial Number declared:
+
+```javascript
+function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number'));
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+```
+
+That needs independent protected getAttribute/Number effect proofs, retaining
+callee identity, input conversion, ordered reads and complete saved unwind state.
+Result typing alone is insufficient. Broader protected arithmetic, differing
+mutable snapshots, repeated allocations, escaping owners, the native application
+driver and full Bootstrap remain unfinished. No full-Bootstrap admission or raw
+escape-oracle gain is claimed.
+
+Full CTest/compiler lit, other source fixtures and outer catches, broad
+corpus/matrices, raw escape oracle, full Bootstrap, WPT/test262, sanitizers,
+Windows/macOS and performance were skipped. Linux Claude executable PID 2606398
+and loop PID 2333739 were running; Windows inspection succeeded with 362 processes
+and no Claude identities. Concurrent rules applied; no browser/shared implementation
+edits, local builds, push or history rewrite. Evidence: `/tmp/ctcompile-iteration44/`.
+
+
 ## Protected Number attributes and recovered DOM prefixes, 2026-09-26 UTC
 
 Resumed **ddf06584** and its protected numeric `setAttribute` boundary. Iteration
