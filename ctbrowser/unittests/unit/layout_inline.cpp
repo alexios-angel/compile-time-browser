@@ -311,7 +311,35 @@ void test_line_height() {
 
 } // namespace
 
+// An inline box's horizontal padding and border take room on the line, as
+// measure already counted them: the text after `<span>` with 8px of right
+// padding starts 8px further on (Bootstrap's breadcrumb divider). An
+// inline-block is the height it came to, zero included - not a line.
+void test_an_inline_boxs_padding_takes_room_on_the_line() {
+    fixture f;
+    f.load("<html><body><div id=a><span id=s>ab</span><span id=t>c</span>"
+           "<span id=z></span></div></body></html>",
+           "body { margin: 0; padding: 0 } #a { font-size: 10px } "
+           "#s { padding: 0 8px 0 2px; border-right: 1px solid } "
+           "#z { display: inline-block; height: 0; width: 5px }");
+    engine eng{monospace_measure()};
+    const fragment out = eng.run(f.root, 400);
+    const fragment * s = out.find(f.find_id("s"));
+    const fragment * t = out.find(f.find_id("t"));
+    const fragment * z = out.find(f.find_id("z"));
+    check(s != nullptr && t != nullptr && z != nullptr, "the fragments exist");
+    if (s == nullptr || t == nullptr || z == nullptr) { return; }
+    expect_near(s->bounds.width, 2 + 12 + 8 + 1, "the span is its text and its edges");
+    check(!s->children.empty(), "the span holds its text");
+    if (!s->children.empty()) {
+        expect_near(s->children[0].bounds.x, 2, "its text starts past the left padding");
+    }
+    expect_near(t->bounds.x, s->bounds.x + 23, "the next box starts past the right padding");
+    expect_near(z->bounds.height, 0, "a zero-height inline-block stays zero high");
+}
+
 int main() {
+    test_an_inline_boxs_padding_takes_room_on_the_line();
     test_line_height();
     test_text_wraps_at_the_content_width();
     test_a_word_longer_than_the_line_still_advances();

@@ -46,7 +46,16 @@ struct inline_flow {
         // `line-height` did nothing.
         const float line_height = b.line_height;
 
-        float pen_x = 0;
+        // AN INLINE BOX'S OWN PADDING AND BORDER TAKE ROOM ON THE LINE (CSS
+        // 2.1 §10.3.1, §10.8.1): its content starts past the start side's, and
+        // the box ends past the end side's, as measure's outer_intrinsic
+        // already counted them. Left out, a `::before` divider with a
+        // padding-right grew its breadcrumb item by the padding and moved the
+        // text beside it by nothing. A block container's own edges are
+        // block_flow's business, and continuation lines start at zero.
+        const bool inline_box = b.kind == box_kind::inline_;
+        const resolved_edges own = inline_box ? resolve_edges(b, c) : resolved_edges{};
+        float pen_x = own.content_left();
         float pen_y = 0;
         float widest = 0;
         // The tallest thing on the current line. A line containing a 110px
@@ -206,7 +215,13 @@ struct inline_flow {
             f.bounds.x = pen_x + child_edges.margin_left;
             f.bounds.y = pen_y;
             if (f.bounds.width <= 0) { f.bounds.width = w - child_edges.horizontal_margin(); }
-            if (f.bounds.height <= 0) { f.bounds.height = line_height; }
+            // An INLINE BOX with no height of its own is a line tall; an
+            // atomic inline - an inline-block - is the height it came to, a
+            // stated `height: 0` or an empty one's zero included, as its
+            // `auto` is (height-interpolation reads both).
+            if (f.bounds.height <= 0 && child.kind == box_kind::inline_) {
+                f.bounds.height = line_height;
+            }
             pen_x += f.bounds.width + child_edges.horizontal_margin();
             // The MARGIN box sets the line's extent: a margin below an
             // inline-block pushes the next line down, which is the whole of what
@@ -223,7 +238,7 @@ struct inline_flow {
         // The extent the content actually REACHED, not what it was offered. A
         // block container replaces this with its own block-rule width; an inline
         // box keeps it, which is what shrink-to-fit means.
-        out.bounds.width = widest;
+        out.bounds.width = std::max(widest, own.content_left()) + own.pad_right + own.border_right;
         out.bounds.height = has_line_content ? std::max(pen_y + line_extent, total_height) : 0;
         out.has_line_box = has_line_content;
         return out;
