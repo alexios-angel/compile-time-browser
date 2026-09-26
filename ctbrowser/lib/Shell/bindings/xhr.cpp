@@ -270,7 +270,13 @@ void dom_bindings::install_xhr(context & cx) {
                                         given.starts_with("blob:") || given.starts_with("data:")
                                     ? given
                                     : resolve(location_href_, given);
-        if (url.empty()) {
+        // "Encoding-parse" it (4.5.1 steps 7-8): a URL the parser refuses
+        // against the document's address - `http://user@/`, `file://a%/` -
+        // is a SyntaxError, not a request for the string as written. A page
+        // with no address has nothing to parse against, and its relative
+        // paths are the asset registry's.
+        if (url.empty() ||
+            (!location_href_.empty() && !parse_url(given, std::string_view{location_href_}))) {
             throw_dom_exception(c, "SyntaxError", "XMLHttpRequest.open: invalid URL " + given);
             return value::undefined();
         }
