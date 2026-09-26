@@ -345,6 +345,20 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     if (n.kind == vp::nk::func_expr && !out_.functions[index].name.empty() &&
         find_local_in_current_scope(out_.functions[index].name) == nullptr) {
         const std::uint16_t self = declare_local(out_.functions[index].name);
+        // CreateImmutableBinding(name, false) (15.2.5 step 4): `me = 1` in
+        // the body is ignored in sloppy code and the TypeError in strict.
+        // A NAME THE NODE DOES NOT CARRY is a class member's: a constructor's
+        // is the class's own name, immutable in its body (class_bindings_).
+        // A method binds no name at all (15.4.4), so ITS local is a known
+        // deviation - `foo` inside method `foo` reads the method - left
+        // mutable, and in place because removing it changes the bytecode of
+        // every class method, which ctcompile's proofs are pinned to.
+        if (!n.text.empty()) {
+            fn().locals.back().readonly = immutability::sloppy;
+        } else if (!class_bindings_.empty() &&
+                   class_bindings_.back().name == out_.functions[index].name) {
+            fn().locals.back().readonly = immutability::strict;
+        }
         proto().emit(instruction{op::load_callee, self});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, self}); }
     }

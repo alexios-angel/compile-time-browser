@@ -444,7 +444,9 @@ bool compiler_impl::compile_param_eval(const vp::node & n, std::uint16_t dst) {
 // %eval% (step 6 of 13.3.6.1), which the native checks - `callee` the running
 // closure, whose upvalues carry the enclosing functions' bindings, and the
 // descriptor names each binding: "L name" a cell argument, "V name" a value
-// argument (a local nothing boxed), "U index name" the callee's upvalue.
+// argument (a local nothing boxed), "U index name" the callee's upvalue - each
+// followed by " strict" or " sloppy" when the binding is immutable (see
+// immutability), so the eval'd code refuses the writes the caller would.
 // The shape changes only in functions that contain `eval(`, which no native
 // pipeline compiles anyway.
 bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
@@ -468,6 +470,14 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
     const auto taken = [&](std::string_view name) {
         return std::ranges::find(seen, name) != seen.end();
     };
+    const auto readonly = [&](std::string_view name) -> std::string_view {
+        switch (binding_immutability(name)) {
+        case immutability::strict: return " strict";
+        case immutability::sloppy: return " sloppy";
+        case immutability::none: break;
+        }
+        return "";
+    };
     // Sorted by name, so the descriptor does not depend on the hash map's order.
     std::vector<std::string> own;
     for (const auto & [name, positions] : fn().local_index) {
@@ -477,6 +487,7 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
     for (const std::string & name : own) {
         const local & l = fn().locals[fn().local_index.find(name)->second.back()];
         descriptor += std::string{"\n"} + (l.boxed ? "L " : "V ") + name;
+        descriptor += readonly(name);
         seen.push_back(name);
         handed.push_back(&l);
     }
@@ -491,6 +502,7 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
             const int up = resolve_upvalue(level, name);
             if (up < 0) { continue; }
             descriptor += "\nU " + std::to_string(up) + " " + name;
+            descriptor += readonly(name);
             seen.push_back(name);
         }
     }
@@ -502,6 +514,7 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
         const int up = resolve_upvalue(level, name);
         if (up < 0) { continue; }
         descriptor += "\nU " + std::to_string(up) + " " + name;
+        descriptor += readonly(name);
         seen.push_back(name);
     }
     const std::uint32_t mark = reg_mark();

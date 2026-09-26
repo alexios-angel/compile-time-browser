@@ -173,7 +173,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 // free the pattern's own locals with it if they were
                 // allocated inside, leaving the next temporary to overwrite
                 // one. See declare_pattern_names.
-                declare_pattern_names(decl.b, n.text != "var");
+                declare_pattern_names(decl.b, n.text != "var", declared_immutability(n));
                 const std::uint32_t mark = reg_mark();
                 const std::uint16_t r = alloc_reg();
                 if (decl.a >= 0) {
@@ -210,13 +210,17 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             if (was_predeclared(decl.text) &&
                 (function_scoped || find_local_in_current_scope(decl.text) != nullptr)) {
                 // hoisted above: this statement is only the initializer,
-                // and emit_write knows whether it goes through a cell
+                // and emit_write knows whether it goes through a cell - the
+                // declaration's own write, which a `const` takes (declaring_)
                 if (decl.a >= 0) {
                     const std::uint32_t mark = reg_mark();
                     const std::uint16_t tmp = alloc_reg();
                     compile_named_expr(decl.a, tmp, decl.text);
                     if (is_using_decl(n)) { emit_using_add(tmp, n.text == "await using"); }
+                    const bool outer_declaring = declaring_;
+                    declaring_ = true;
                     emit_write(decl.text, tmp);
+                    declaring_ = outer_declaring;
                     release_to(mark);
                 }
                 continue;
@@ -227,6 +231,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             // decides the ReferenceError from this offset (as
             // predeclare_locals records it for a function body's own).
             if (!function_scoped) { fn().locals.back().initialized_at = decl.end; }
+            fn().locals.back().readonly = declared_immutability(n);
             if (fn().locals.back().boxed && decl.a >= 0 && contains_closure(decl.a)) {
                 // THE CELL FIRST when the initialiser makes a closure: `{ let
                 // y = () => y; }` has the arrow capture `y` while it is being

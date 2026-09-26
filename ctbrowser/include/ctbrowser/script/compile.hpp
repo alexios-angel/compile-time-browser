@@ -56,6 +56,22 @@ namespace ctbrowser::script {
 //
 // `script_kind` itself is declared in bytecode.hpp, beside `program`, because a
 // compiled program carries which one it is.
+// A BINDING THAT CANNOT BE ASSIGNED, and what an assignment to one does
+// (9.1.1.1.5 SetMutableBinding step 5). Decided where the write is compiled:
+// the compiler knows which binding a name resolves to, so the refusal costs
+// nothing on any other write. A direct eval is handed it for each of its
+// caller's bindings, so `eval("x = 1")` refuses a `const x` as the caller would.
+enum class immutability : std::uint8_t {
+    none,
+    // CreateImmutableBinding(N, true): `const`, `using`, an import, a class's
+    // own name inside its body - every assignment is the TypeError.
+    strict,
+    // CreateImmutableBinding(N, false): a named function expression's own
+    // name (15.2.5) - the TypeError in strict code, and in sloppy code the
+    // assignment does nothing at all.
+    sloppy,
+};
+
 class compiler {
 public:
     // Compile `source` to a program. On a parse error the program comes back
@@ -69,9 +85,10 @@ public:
     // A DIRECT eval's source (19.2.1.1 PerformEval with direct = true): as
     // compile_for_eval, with the caller's bindings `outer` visible as the
     // entry function's upvalues, in that order, and the caller's strictness.
-    [[nodiscard]] static program compile_for_direct_eval(std::string_view source,
-                                                         std::span<const std::string> outer,
-                                                         bool strict);
+    // `readonly` is parallel to `outer` (empty: every binding is mutable).
+    [[nodiscard]] static program compile_for_direct_eval(
+        std::string_view source, std::span<const std::string> outer, bool strict,
+        std::span<const immutability> readonly = {});
 };
 
 // WHETHER THIS BUILD FILLS `function_proto::locals` AND `code_offsets`.

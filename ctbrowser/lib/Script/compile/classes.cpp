@@ -211,6 +211,16 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     if (own_scope) { push_scope(); }
     ++class_body_depth_; // everything in here is strict code (15.7.1)
     if (!n.text.empty()) { declare_class_name(std::string{n.text}, own_scope); }
+    // Inside the body the name is the class's own immutable binding - see
+    // class_bindings_. Wherever the declaration put the name, a write from
+    // in here that resolves to the same binding is refused.
+    if (!n.text.empty()) {
+        const auto [level, position] = binding_position(n.text);
+        class_bindings_.push_back(class_binding{std::string{n.text}, level, position});
+    }
+    const boost::scope::scope_exit close_binding{[&]() noexcept {
+        if (!n.text.empty()) { class_bindings_.pop_back(); }
+    }};
     const std::span<const std::int32_t> members = kids(n);
     // The body's private names, in scope for every member (a method may
     // read a field declared below it) and gone when the body closes.

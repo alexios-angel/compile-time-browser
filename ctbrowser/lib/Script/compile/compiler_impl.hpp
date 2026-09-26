@@ -503,6 +503,44 @@ public:
     void emit_plain_write(std::string_view name, std::uint16_t src);
     void emit_global_write(std::string_view name, std::uint16_t src);
 
+    // --- immutable bindings ---------------------------------------------------
+    //
+    // `const x = 1; x = 2` is the TypeError of 9.1.1.1.5 SetMutableBinding
+    // step 5, and a named function expression's own name ignores a sloppy
+    // write. Both are decided HERE, where the write is compiled: the binding a
+    // name resolves to is known statically (the same walk resolve_upvalue
+    // makes), so a refused write compiles to the throw and every other write
+    // is untouched. A declaration's own write is never refused (declaring_).
+    //
+    // What an assignment to `name`, from here, may do.
+    [[nodiscard]] immutability binding_immutability(std::string_view name);
+    // The binding `name` resolves to from here: the frame declaring it and its
+    // position there, or {no_binding, 0} for a global (or a direct eval's
+    // caller's binding).
+    static constexpr std::size_t no_binding = static_cast<std::size_t>(-1);
+    [[nodiscard]] std::pair<std::size_t, std::size_t> binding_position(std::string_view name);
+    // Emits the TypeError when the binding refuses the write in this code;
+    // true when the write must not be emitted at all.
+    [[nodiscard]] bool refuse_immutable_write(immutability readonly);
+    // `const`, `using` and `await using` declare immutable bindings.
+    [[nodiscard]] static immutability declared_immutability(const vp::node & decl);
+    // A CLASS'S OWN NAME INSIDE ITS BODY is a binding of its own, immutable
+    // (15.7.14 steps 4.a and 30.a: CreateImmutableBinding(className, true)),
+    // whichever binding the declaration or expression writes outside. One
+    // entry per open named class: the name and the binding it resolves to in
+    // the class's scope - a write from inside the body resolving to that same
+    // binding is a write to the inner one.
+    struct class_binding {
+        std::string name;
+        std::size_t level = no_binding;
+        std::size_t position = 0;
+    };
+    std::vector<class_binding> class_bindings_;
+    // A CLASSIC SCRIPT'S TOP-LEVEL `const`s, which are globals here rather
+    // than locals (see compile_stmt's var_decl): collected before anything
+    // is compiled, since a hoisted function assigning one compiles first.
+    std::vector<std::string> script_consts_;
+
     // A numeric literal's value. The radix prefixes take the integer overload
     // and then widen; a double is exact up to 2^53, which is further than any
     // of these literals reach.
@@ -578,10 +616,13 @@ public:
     //
     // At the top level there is nothing to declare: a declaration there is a
     // global, and emit_write reaches one by falling through to set_global.
-    void declare_pattern_names(std::int32_t pat, bool block_scoped = false);
+    // `readonly`: the names are `const` (or `using`) bindings.
+    void declare_pattern_names(std::int32_t pat, bool block_scoped = false,
+                               immutability readonly = immutability::none);
 
     void compile_pattern_binding(std::int32_t pat, std::uint16_t src, bool declaring,
-                                 bool block_scoped = false);
+                                 bool block_scoped = false,
+                                 immutability readonly = immutability::none);
 
     // Bind `pattern` to the value sitting in `src`. Every name it mentions
     // already exists by the time this runs - see compile_pattern_binding.
@@ -1013,6 +1054,8 @@ public:
     // strict. Empty for every other program.
     std::vector<std::string> eval_outer_names_;
     bool eval_outer_strict_ = false;
+    // Parallel to eval_outer_names_ (or empty): which of them are immutable.
+    std::vector<immutability> eval_outer_readonly_;
     // THE TOP LEVEL IS A SCOPE, not the global one: a module's, and a STRICT
     // eval's, whose `var`s and functions are its own (19.2.1.1 step 17: a new
     // variable environment) - set by compile_program.

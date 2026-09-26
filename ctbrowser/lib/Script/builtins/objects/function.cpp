@@ -460,7 +460,18 @@ void install_dynamic_function(context & cx) {
                                           ? static_cast<closure_object *>(callee.as_heap())
                                           : nullptr;
                 std::vector<std::string> names;
+                std::vector<immutability> readonly;
                 std::vector<value> cells;
+                // "... name" or "... name strict|sloppy" - see immutability.
+                const auto bind = [&](std::string_view rest) {
+                    const std::size_t space = rest.find(' ');
+                    names.emplace_back(rest.substr(0, space));
+                    const std::string_view mode =
+                        space == std::string_view::npos ? "" : rest.substr(space + 1);
+                    readonly.push_back(mode == "strict"   ? immutability::strict
+                                       : mode == "sloppy" ? immutability::sloppy
+                                                          : immutability::none);
+                };
                 bool strict = false;
                 std::size_t next = 5;
                 std::size_t at = 0;
@@ -483,12 +494,12 @@ void install_dynamic_function(context & cx) {
                             index = index * 10 + static_cast<std::size_t>(ch - '0');
                         }
                         if (index >= caller->upvalues.size()) { continue; }
-                        names.emplace_back(line.substr(space + 1));
+                        bind(line.substr(space + 1));
                         cells.push_back(caller->upvalues[index]);
                     } else {
                         const value given = next < a.size() ? a[next] : value::undefined();
                         ++next;
-                        names.emplace_back(line.substr(2));
+                        bind(line.substr(2));
                         // "V": a local nothing boxed - the eval sees its value.
                         cells.push_back(line[0] == 'L' && given.is_kind(heap_kind::cell)
                                             ? given
@@ -496,7 +507,7 @@ void install_dynamic_function(context & cx) {
                     }
                 }
                 program compiled =
-                    compiler::compile_for_direct_eval(c.to_string(source), names, strict);
+                    compiler::compile_for_direct_eval(c.to_string(source), names, strict, readonly);
                 if (!compiled.ok) {
                     c.throw_error("SyntaxError", compiled.error);
                     return value::undefined();

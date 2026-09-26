@@ -24,7 +24,8 @@ namespace {
 
 namespace {
 program compile_source(std::string_view source, script_kind kind, bool completion_value,
-                       std::span<const std::string> outer = {}, bool outer_strict = false);
+                       std::span<const std::string> outer = {}, bool outer_strict = false,
+                       std::span<const immutability> outer_readonly = {});
 } // namespace
 
 program compiler::compile(std::string_view source, script_kind kind) {
@@ -36,13 +37,16 @@ program compiler::compile_for_eval(std::string_view source) {
 }
 
 program compiler::compile_for_direct_eval(std::string_view source,
-                                          std::span<const std::string> outer, bool strict) {
-    return compile_source(source, script_kind::classic, /*completion_value*/ true, outer, strict);
+                                          std::span<const std::string> outer, bool strict,
+                                          std::span<const immutability> readonly) {
+    return compile_source(source, script_kind::classic, /*completion_value*/ true, outer, strict,
+                          readonly);
 }
 
 namespace {
 program compile_source(std::string_view source, script_kind kind, bool completion_value,
-                       std::span<const std::string> outer, bool outer_strict) {
+                       std::span<const std::string> outer, bool outer_strict,
+                       std::span<const immutability> outer_readonly) {
     const vp::ast tree = vp::parse(source);
     program out;
     out.kind = kind;
@@ -94,6 +98,7 @@ program compile_source(std::string_view source, script_kind kind, bool completio
     c.completion_value_ = completion_value;
     c.eval_outer_names_.assign(outer.begin(), outer.end());
     c.eval_outer_strict_ = outer_strict;
+    c.eval_outer_readonly_.assign(outer_readonly.begin(), outer_readonly.end());
     c.compile_program();
     return out;
 }

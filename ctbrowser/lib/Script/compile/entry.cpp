@@ -80,6 +80,23 @@ void compiler_impl::compile_program() {
         });
     }
     if (top_level_is_scope_) { predeclare_locals(ast_.root); }
+    // A CLASSIC SCRIPT'S TOP-LEVEL `const`s are globals here, and immutable
+    // ones - known before the hoisted functions below compile their writes.
+    if (!top_level_is_scope_) {
+        for (const std::int32_t s : kids(root)) {
+            if (at(s).kind != vp::nk::var_decl ||
+                declared_immutability(at(s)) == immutability::none) {
+                continue;
+            }
+            for (const std::int32_t d : kids(at(s))) {
+                if (at(d).b >= 0) {
+                    pattern_names(at(d).b, script_consts_);
+                } else {
+                    script_consts_.emplace_back(at(d).text);
+                }
+            }
+        }
+    }
     if (module_scope_) {
         // THEN THE IMPORTS, still at entry: a function declared anywhere in
         // this module closes over them, and the closures are made below.

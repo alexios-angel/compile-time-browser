@@ -26,7 +26,8 @@ void compiler_impl::pattern_names(std::int32_t pat, std::vector<std::string> & o
     }
 }
 
-void compiler_impl::declare_pattern_names(std::int32_t pat, bool block_scoped) {
+void compiler_impl::declare_pattern_names(std::int32_t pat, bool block_scoped,
+                                          immutability readonly) {
     // A DECLARATION AT A SCRIPT'S TOP LEVEL IS A GLOBAL - unless it is
     // BLOCK-scoped, which a catch parameter always is and a `let`/`const`
     // inside a block of a script is too. Withholding the local there bound
@@ -46,14 +47,15 @@ void compiler_impl::declare_pattern_names(std::int32_t pat, bool block_scoped) {
         // scope this finds it anyway.
         if (find_local_in_current_scope(name) != nullptr) { continue; }
         const std::uint16_t reg = declare_local(name);
+        fn().locals.back().readonly = readonly;
         proto().emit(instruction{op::load_undef, reg});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, reg}); }
     }
 }
 
 void compiler_impl::compile_pattern_binding(std::int32_t pat, std::uint16_t src, bool declaring,
-                                            bool block_scoped) {
-    if (declaring) { declare_pattern_names(pat, block_scoped); }
+                                            bool block_scoped, immutability readonly) {
+    if (declaring) { declare_pattern_names(pat, block_scoped, readonly); }
     // A declaration's names at a script's top level are globals written
     // through emit_write - a declaration's own write, see declaring_.
     const bool outer_declaring = declaring_;

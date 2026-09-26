@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ctbrowser/core/containers.hpp>
+#include <ctbrowser/script/compile.hpp>
 
 #include <boost/container/small_vector.hpp>
 
@@ -32,6 +33,10 @@ struct local {
     // the link between the two.
     static constexpr std::uint32_t no_slot = 0xFFFFFFFFu;
     std::uint32_t debug_slot = no_slot;
+    // WHETHER AN ASSIGNMENT MAY WRITE IT - see immutability and
+    // compiler_impl::binding_immutability. The declaration's own write is
+    // not an assignment and is never refused (compiler_impl::declaring_).
+    immutability readonly = immutability::none;
 };
 
 struct interval {
@@ -113,6 +118,9 @@ struct reference {
     bool with = false;
     std::uint16_t with_reg = 0;
     std::uint16_t with_name = 0; // the name, as a property-name operand
+    // A NAME THAT RESOLVED TO AN IMMUTABLE BINDING: emit_store refuses the
+    // write (the `with` object, when one binds the name, still takes it).
+    immutability readonly = immutability::none;
 };
 
 } // namespace ctbrowser::script::detail::compiler_types

@@ -238,6 +238,9 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     const std::uint16_t item = (declares && !is_shape && !var_global)
                                    ? declare_local(std::string{target.text})
                                    : alloc_reg();
+    // `for (const x of xs)` and the `using` heads bind immutable names.
+    const immutability head_readonly = (n.d & 49) != 0 ? immutability::strict : immutability::none;
+    if (declares && !is_shape && !var_global) { fn().locals.back().readonly = head_readonly; }
 
     const std::size_t top = proto().code.size();
     loops_.push_back(loop_context{label, {}, {}, handler_depth_});
@@ -268,7 +271,7 @@ void compiler_impl::compile_for_await(const vp::node & n) {
             }
             declaring_ = outer_declaring;
         } else if (is_shape) {
-            compile_pattern_binding(target.b, item, declares, true);
+            compile_pattern_binding(target.b, item, declares, true, head_readonly);
         } else if (!declares) {
             emit_write(target.text, item);
         } else if (const local * l = find_local_entry(fn(), target.text);
@@ -373,6 +376,9 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     const std::uint16_t item = (declares && !is_shape && !var_global)
                                    ? declare_local(std::string{target.text})
                                    : alloc_reg();
+    // `for (const x of xs)` and the `using` heads bind immutable names.
+    const immutability head_readonly = (n.d & 49) != 0 ? immutability::strict : immutability::none;
+    if (declares && !is_shape && !var_global) { fn().locals.back().readonly = head_readonly; }
 
     const std::size_t top = proto().code.size();
     loops_.push_back(loop_context{label, {}, {}, handler_depth_});
@@ -406,7 +412,7 @@ void compiler_impl::compile_for_of(const vp::node & n) {
             }
             declaring_ = outer_declaring;
         } else if (is_shape) {
-            compile_pattern_binding(target.b, item, declares, true);
+            compile_pattern_binding(target.b, item, declares, true, head_readonly);
         } else if (!declares) {
             emit_write(target.text, item);
         } else if (const local * l = find_local_entry(fn(), target.text);

@@ -228,10 +228,20 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
     if (body < 0 || (at(body).kind != vp::nk::block && at(body).kind != vp::nk::program)) {
         return;
     }
-    const auto hoist = [this](std::string name, std::uint32_t initialized_at = 0) {
-        if (name.empty() || find_local_entry(fn(), name) != nullptr) { return; }
+    // A NAMED FUNCTION EXPRESSION'S OWN NAME is not one of its body's
+    // bindings - it lives in a scope outside them (15.2.5 step 4) - so any
+    // declaration of the name in the body shadows it: `function me() { var
+    // me; }` has a `me` that is undefined, and assignable.
+    const auto bound = [this](std::string_view name) {
+        const local * l = find_local_entry(fn(), name);
+        return l != nullptr && l->readonly != immutability::sloppy;
+    };
+    const auto hoist = [this, &bound](std::string name, std::uint32_t initialized_at = 0,
+                                      immutability readonly = immutability::none) {
+        if (name.empty() || bound(name)) { return; }
         const std::uint16_t r = declare_local(name);
         fn().locals.back().initialized_at = initialized_at;
+        fn().locals.back().readonly = readonly;
         proto().emit(instruction{op::load_undef, r});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
         fn().predeclared.push_back(std::move(name));
@@ -263,6 +273,7 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
             // declarator has run: the offset past the declarator (or, with
             // no initialiser, past the statement) is when it is initialised.
             const bool lexical = at(stmt).text != "var";
+            const immutability readonly = declared_immutability(at(stmt));
             for (const std::int32_t d : kids(at(stmt))) {
                 const std::uint32_t ready = lexical ? at(d).end : 0;
                 if (at(d).b >= 0) { // a shape: hoist every name inside it
@@ -271,9 +282,9 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
                     // single offset cannot say.
                     std::vector<std::string> names;
                     pattern_names(at(d).b, names);
-                    for (std::string & name : names) { hoist(std::move(name)); }
+                    for (std::string & name : names) { hoist(std::move(name), 0, readonly); }
                 } else {
-                    hoist(std::string{at(d).text}, ready);
+                    hoist(std::string{at(d).text}, ready, readonly);
                 }
             }
         } else if (at(stmt).kind == vp::nk::import_decl) {
@@ -284,7 +295,11 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
             // luck and `import { a, b }` did not: the next statement's
             // temporary landed on top of `b`. The same trap
             // declare_pattern_names records for destructuring.
-            for (const std::int32_t spec : kids(at(stmt))) { hoist(std::string{at(spec).text}); }
+            // Immutable, as every import binding is (InitializeEnvironment:
+            // an import binding, or CreateImmutableBinding for a namespace).
+            for (const std::int32_t spec : kids(at(stmt))) {
+                hoist(std::string{at(spec).text}, 0, immutability::strict);
+            }
         } else if (at(stmt).kind == vp::nk::func_decl) {
             // A nested function declaration is a BINDING IN ITS SCOPE, and
             // it has to exist before its own body compiles or a recursive
@@ -337,7 +352,7 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
                 // (B.3.3.1 step 1.a.ii.2, "and F is not `arguments`"), and
                 // hoisting a local of that name shadowed the object itself.
                 if (name == "arguments") { return; }
-                const bool fresh = find_local_entry(fn(), name) == nullptr;
+                const bool fresh = !bound(name);
                 if (fresh) {
                     // AND IT IS VAR-SCOPED FROM NOW ON. Two blocks declaring
                     // one name are two applicable declarations: the second
