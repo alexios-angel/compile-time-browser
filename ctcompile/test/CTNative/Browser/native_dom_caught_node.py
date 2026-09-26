@@ -338,6 +338,33 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-boolean-read-conditional-prefix-nullable-return": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : null;
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-boolean-read-conditional-prefix-nullable-forwarded-null": """function customElements(anchor) {
+  const flag = anchor.hasAttribute('flag');
+  const empty = flag ? null : null;
+  const saved = flag ? anchor.hasAttribute('data-number') : empty;
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-boolean-read-conditional-prefix-nullable-snapshot": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : null;
+  try {
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -446,6 +473,9 @@ NUMBER_CONDITIONAL_READS = {
     "write-string-read-conditional-prefix-snapshot": ("flag", "null"),
     "write-boolean-read-conditional-prefix-return": ("flag", "false"),
     "write-boolean-read-conditional-prefix-snapshot": ("flag", "false"),
+    "write-boolean-read-conditional-prefix-nullable-return": ("flag", "null"),
+    "write-boolean-read-conditional-prefix-nullable-forwarded-null": ("flag", "null"),
+    "write-boolean-read-conditional-prefix-nullable-snapshot": ("flag", "null"),
 }
 
 
@@ -941,7 +971,18 @@ def main():
                 )
                 if "throw " in source_cpp or "catch (" in source_cpp:
                     raise RuntimeError("confined node escaped into a native exception")
-                dom.standalone(args, native, label, checks, compilers, includes, libraries)
+                dom.standalone(
+                    args,
+                    native,
+                    label,
+                    checks,
+                    compilers,
+                    includes,
+                    libraries,
+                    allow_nullable_boolean=name.startswith(
+                        "write-boolean-read-conditional-prefix-nullable-"
+                    ),
+                )
                 if (
                     name == "helper-next-record"
                     or name.startswith("write-number-")
@@ -1313,6 +1354,15 @@ def main():
                 ("coercing-name", "hasAttribute('data-number')", "hasAttribute(anchor)"),
                 ("invalid-name", "'data-written'", "'bad name'"),
             )
+        }
+    )
+    refusals.update(
+        {
+            name.replace("prefix-", "prefix-nullable-", 1): body.replace(
+                ": false;", ": null;"
+            ).replace("(anchor.unknown(), false)", "(anchor.unknown(), null)")
+            for name, body in refusals.items()
+            if name.startswith("write-boolean-read-conditional-prefix-")
         }
     )
     nested_body = SOURCES["mixed-node-nested-state"].split("{", 1)[1].rsplit("}", 1)[0]
