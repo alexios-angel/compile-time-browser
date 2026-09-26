@@ -36,17 +36,35 @@ constexpr std::string_view canvas_key = CTBROWSER_PRIVATE_KEY("ctbrowser:canvas2
 // On a canvas element's wrapper: its one 2D context - getContext('2d') twice
 // is the SAME object (4.12.5 step "return the same object").
 constexpr std::string_view context_cache_key = CTBROWSER_PRIVATE_KEY("ctbrowser:context2d");
-// On a context object: the CanvasGradient or CanvasPattern script object the
-// fill and stroke style currently hold, so the getter hands back the object
-// that was assigned.
-constexpr std::string_view fill_object_key = CTBROWSER_PRIVATE_KEY("ctbrowser:fill-object");
-constexpr std::string_view stroke_object_key = CTBROWSER_PRIVATE_KEY("ctbrowser:stroke-object");
+// On a context object: the CanvasGradient or CanvasPattern script objects the
+// fillStyle and strokeStyle of every level of the state stack hold, two slots
+// a level, so the getter hands back THE object that was assigned - after a
+// restore() too (4.12.5.1.10, "the respective object"). An array under a key
+// because the state that names them is C++, which the collector cannot see.
+constexpr std::string_view styles_key = CTBROWSER_PRIVATE_KEY("ctbrowser:styles");
 // On CanvasRenderingContext2D.prototype: the other interfaces' prototypes,
 // which have to outlive a page deleting the globals that also hold them.
 constexpr std::string_view gradient_proto_key = CTBROWSER_PRIVATE_KEY("ctbrowser:gradient-proto");
 constexpr std::string_view pattern_proto_key = CTBROWSER_PRIVATE_KEY("ctbrowser:pattern-proto");
 constexpr std::string_view metrics_proto_key = CTBROWSER_PRIVATE_KEY("ctbrowser:metrics-proto");
 constexpr std::string_view installed_key = CTBROWSER_PRIVATE_KEY("ctbrowser:canvas2d-installed");
+
+// The style slots of the context `self`, grown to hold `levels` levels -
+// or, with `grow` false, whatever there is (nullptr for none yet).
+[[nodiscard]] std::vector<value> * style_slots(context & c, value self, std::size_t levels,
+                                               bool grow) {
+    if (!self.is_object()) { return nullptr; }
+    auto & holder = *static_cast<script::object_object *>(self.as_heap());
+    const value * found = holder.find(styles_key);
+    if (found == nullptr || !found->is_array()) {
+        if (!grow) { return nullptr; }
+        holder.set(styles_key, c.make_array());
+        found = holder.find(styles_key);
+    }
+    std::vector<value> & slots = static_cast<script::array_object *>(found->as_heap())->items;
+    if (grow && slots.size() < 2 * levels) { slots.resize(2 * levels, value::undefined()); }
+    return &slots;
+}
 
 // arg_number as the float the canvas works in.
 [[nodiscard]] float number(std::span<value> args, std::size_t i) {
@@ -830,11 +848,10 @@ void dom_bindings::install_canvas_2d(context & cx) {
     // Anything else is converted to a string (which may throw) and parsed as a
     // CSS colour against the canvas; one that does not parse is IGNORED.
     const auto style_attribute = [&](const std::string & name, bool fill) {
-        const std::string_view object_key = fill ? fill_object_key : stroke_object_key;
+        const std::size_t which = fill ? 0 : 1;
         attribute(
             name,
-            [target, fill, object_key, gradient_proto, pattern_proto](context & c,
-                                                                      std::span<value>) {
+            [target, fill, which, gradient_proto, pattern_proto](context & c, std::span<value>) {
                 canvas_context * canvas = target(c);
                 if (canvas == nullptr) { return value::undefined(); }
                 const canvas_paint & paint =
@@ -843,8 +860,11 @@ void dom_bindings::install_canvas_2d(context & cx) {
                     return c.string(fill ? canvas->current().fill_spec
                                          : canvas->current().stroke_spec);
                 }
-                // The object that was assigned, if it is still the one in use.
-                const value held = prototype_slot(c.current_this(), object_key);
+                // The object this level holds, if it is still the one in use.
+                const std::size_t at = 2 * canvas->depth() + which;
+                std::vector<value> * slots =
+                    style_slots(c, c.current_this(), canvas->depth() + 1, true);
+                const value held = slots != nullptr ? (*slots)[at] : value::undefined();
                 if (paint.gradient &&
                     unbox<canvas_gradient>(held, gradient_key) == paint.gradient) {
                     return held;
@@ -852,8 +872,8 @@ void dom_bindings::install_canvas_2d(context & cx) {
                 if (paint.pattern && unbox<canvas_pattern>(held, pattern_key) == paint.pattern) {
                     return held;
                 }
-                // ...or, after a restore() brought an older one back, a new
-                // object over the same gradient or pattern.
+                // ...or, for a paint no script object was assigned for, one
+                // made now - and kept, so that the next read is the same.
                 auto * made = c.allocate<script::object_object>();
                 if (paint.gradient) {
                     made->prototype = value::object(gradient_proto);
@@ -863,31 +883,35 @@ void dom_bindings::install_canvas_2d(context & cx) {
                     box(c, *made, pattern_key,
                         std::const_pointer_cast<canvas_pattern>(paint.pattern));
                 }
+                slots = style_slots(c, c.current_this(), canvas->depth() + 1, true);
+                if (slots != nullptr) { (*slots)[at] = value::object(made); }
                 return value::object(made);
             },
-            [target, canvas_of, fill, object_key, parse_color_for](context & c,
-                                                                   std::span<value> a) {
+            [target, canvas_of, fill, which, parse_color_for](context & c, std::span<value> a) {
                 canvas_context * canvas = target(c);
                 if (canvas == nullptr) { return value::undefined(); }
                 const value v = arg(a, 0);
                 canvas_context::state & s = canvas->current();
                 canvas_paint & paint = fill ? s.fill : s.stroke;
-                const auto keep_object = [&] {
-                    const value self = c.current_this();
-                    if (self.is_object()) {
-                        static_cast<script::object_object *>(self.as_heap())->set(object_key, v);
+                // This level's slot holds the object, or nothing for a colour.
+                const auto hold = [&](value object) {
+                    const bool grow = !object.is_undefined();
+                    if (std::vector<value> * slots =
+                            style_slots(c, c.current_this(), canvas->depth() + 1, grow)) {
+                        const std::size_t at = 2 * canvas->depth() + which;
+                        if (at < slots->size()) { (*slots)[at] = object; }
                     }
                 };
                 if (auto gradient = unbox<canvas_gradient>(v, gradient_key)) {
                     paint = canvas_paint{};
                     paint.gradient = std::move(gradient);
-                    keep_object();
+                    hold(v);
                     return value::undefined();
                 }
                 if (auto pattern = unbox<canvas_pattern>(v, pattern_key)) {
                     paint = canvas_paint{};
                     paint.pattern = std::move(pattern);
-                    keep_object();
+                    hold(v);
                     return value::undefined();
                 }
                 const std::string text = c.to_string(v);
@@ -897,6 +921,7 @@ void dom_bindings::install_canvas_2d(context & cx) {
                 paint = canvas_paint{};
                 paint.solid = parsed->value;
                 (fill ? s.fill_spec : s.stroke_spec) = parsed->text;
+                hold(value::undefined());
                 return value::undefined();
             });
     };
@@ -944,9 +969,37 @@ void dom_bindings::install_canvas_2d(context & cx) {
             return value::undefined();
         });
     };
-    plain_op("save", [](canvas_context & canvas) { canvas.save(); });
-    plain_op("restore", [](canvas_context & canvas) { canvas.restore(); });
-    plain_op("reset", [](canvas_context & canvas) { canvas.reset(); });
+    // save(), restore() and reset() move the style slots with the state: a
+    // saved level's objects are copied up with it, and a popped level's go.
+    canvas_operation(cx, proto, "save", 0, [target](context & c, std::span<value>) {
+        canvas_context * canvas = target(c);
+        if (canvas == nullptr) { return value::undefined(); }
+        const std::size_t level = canvas->depth();
+        canvas->save();
+        if (std::vector<value> * slots = style_slots(c, c.current_this(), 0, false)) {
+            slots->resize(2 * (level + 2), value::undefined());
+            (*slots)[2 * level + 2] = (*slots)[2 * level];
+            (*slots)[2 * level + 3] = (*slots)[2 * level + 1];
+        }
+        return value::undefined();
+    });
+    const auto unwind = [target](bool all) {
+        return [target, all](context & c, std::span<value>) {
+            canvas_context * canvas = target(c);
+            if (canvas == nullptr) { return value::undefined(); }
+            if (all) {
+                canvas->reset();
+            } else {
+                canvas->restore();
+            }
+            if (std::vector<value> * slots = style_slots(c, c.current_this(), 0, false)) {
+                slots->resize(all ? 0 : 2 * (canvas->depth() + 1), value::undefined());
+            }
+            return value::undefined();
+        };
+    };
+    canvas_operation(cx, proto, "restore", 0, unwind(false));
+    canvas_operation(cx, proto, "reset", 0, unwind(true));
     plain_op("beginPath", [](canvas_context & canvas) { canvas.begin_path(); });
     plain_op("resetTransform", [](canvas_context & canvas) { canvas.reset_transform(); });
     canvas_operation(cx, proto, "isContextLost", 0, [target](context & c, std::span<value>) {

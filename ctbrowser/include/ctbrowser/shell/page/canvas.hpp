@@ -327,6 +327,9 @@ public:
 
     void save();
     void restore();
+    // How many states save() has pushed and restore() not yet popped - the
+    // level a binding keeps its per-state script objects at.
+    [[nodiscard]] std::size_t depth() const noexcept { return stack_.size(); }
     void translate(float x, float y) { concat(transform::translation(x, y)); }
     void scale(float x, float y) { concat(transform::scaling(x, y)); }
     void rotate(float radians) { concat(transform::rotation(radians)); }
