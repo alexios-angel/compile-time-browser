@@ -75,6 +75,13 @@ void test_class_fields_are_per_instance() {
         " class C extends P { go() { this.t = 1; return super['m']() + super['m'](...[]); } }"
         " return new C().go();",
         "p1p1");
+    // a block's `let` of a class with a computed field name keeps the class
+    // (the name's hidden cell is a local of its own - see field_key_name)
+    expect_result("{ let C = class { [9] = 9; }; return typeof C + new C()[9]; }", "function9");
+    // a script's `eval` that is not a function is the TypeError of calling it
+    expect_result("var eval = ''; try { eval(); } catch (e) { return e instanceof TypeError; }"
+                  " return 'none';",
+                  "true");
     // `static constructor() {}` is a static method, not the class's constructor
     expect_result("class C { static constructor() { return 's'; } constructor() { this.v = 1; } }"
                   " return C.constructor() + new C().v;",

@@ -247,6 +247,10 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 continue;
             }
             const std::uint16_t r = declare_local(std::string{decl.text});
+            // BY POSITION from here: the initialiser may declare locals of its
+            // own (a class's computed field names, field_key_name), after
+            // which locals.back() is one of those.
+            const std::size_t declared = fn().locals.size() - 1;
             // A lexical binding is in its dead zone until its declarator has
             // run: `let y = y + 1` reads it before that, and compile_ident
             // decides the ReferenceError from this offset (as
@@ -280,7 +284,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             if (is_using_decl(n)) { emit_using_add(r, n.text == "await using"); }
             // A captured local is boxed AFTER its initializer runs, so the
             // cell starts out holding the right value.
-            if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
+            if (fn().locals[declared].boxed) { proto().emit(instruction{op::new_cell, r}); }
             // a declared local keeps its register beyond this statement
             if (fn().next_reg <= r) { fn().next_reg = static_cast<std::uint16_t>(r + 1); }
         }

@@ -451,7 +451,15 @@ void install_dynamic_function(context & cx) {
                 const value source = a.size() > 1 ? a[1] : value::undefined();
                 // Only %eval% makes the call direct (13.3.6.1 step 6.a); any
                 // other function under the name is called as one.
-                if (eval_fn.bits() != intrinsic.bits()) { return c.call(eval_fn, {&source, 1}); }
+                if (eval_fn.bits() != intrinsic.bits()) {
+                    // ...and a value that is not a function is the TypeError a
+                    // call of it is (13.3.6.1 EvaluateCall step 4).
+                    if (!eval_fn.is_callable()) {
+                        c.throw_error("TypeError", "eval is not a function");
+                        return value::undefined();
+                    }
+                    return c.call(eval_fn, {&source, 1});
+                }
                 if (!source.is_string()) { return source; }
                 const value callee = a.size() > 2 ? a[2] : value::undefined();
                 const value self = a.size() > 3 ? a[3] : value::undefined();
@@ -558,7 +566,13 @@ void install_dynamic_function(context & cx) {
             std::string{param_eval_name}, [intrinsic](context & c, std::span<value> a) {
                 const value source = a.empty() ? value::undefined() : a[0];
                 const value current = c.global("eval");
-                if (current.bits() != intrinsic.bits()) { return c.call(current, {&source, 1}); }
+                if (current.bits() != intrinsic.bits()) {
+                    if (!current.is_callable()) {
+                        c.throw_error("TypeError", "eval is not a function");
+                        return value::undefined();
+                    }
+                    return c.call(current, {&source, 1});
+                }
                 if (!source.is_string()) { return source; }
                 // In a function's parameters - so `new.target` is allowed, as
                 // it always was here.
