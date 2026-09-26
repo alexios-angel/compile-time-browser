@@ -866,6 +866,41 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             return out.empty() ? collapse_keyword(text) : out;
         }
+        // A FONT WEIGHT IS A NUMBER once computed (CSS Fonts 4 §2.2): `normal`
+        // 400, `bold` 700, a folded calc() within [1, 1000], and `bolder` or
+        // `lighter` the step §2.2.1's table takes from the parent's computed
+        // weight.
+        // ponytail: a weight whose text is the parent's is read as inherited,
+        // so a `bolder` declared under a `bolder` parent steps once; ask the
+        // cascade which half holds it if that pairing matters.
+        if (property == "font-weight" && !at.pseudo) {
+            const auto weight_at = [&](auto && self, std::size_t k,
+                                       std::string_view held) -> double {
+                const std::string word = collapse_keyword(held);
+                if (word.empty() || word == "normal") { return 400; }
+                if (word == "bold") { return 700; }
+                if (word == "bolder" || word == "lighter") {
+                    const std::string_view above = k + 1 < at.chain.size()
+                                                       ? declared_on(at.chain[k + 1], "font-weight")
+                                                       : std::string_view{};
+                    const double base = k + 1 < at.chain.size() ? self(self, k + 1, above) : 400;
+                    if (collapse_keyword(above) == word) { return base; }
+                    if (word == "bolder") {
+                        return base < 350 ? 400 : base < 550 ? 700 : base < 900 ? 900 : base;
+                    }
+                    return base < 100 ? base : base < 550 ? 100 : base < 750 ? 400 : 700;
+                }
+                double n = 0;
+                if (std::from_chars(word.data(), word.data() + word.size(), n).ptr !=
+                    word.data() + word.size()) {
+                    return -1;
+                }
+                return std::clamp(n, 1.0, 1000.0);
+            };
+            if (const double weight = weight_at(weight_at, 0, text); weight > 0) {
+                return number_text(static_cast<float>(weight));
+            }
+        }
         // `text-size-adjust: none` is no adjustment, which is `100%` (CSS
         // Mobile Text Size Adjustment 1 §2).
         if (property == "text-size-adjust" && collapse_keyword(text) == "none") { return "100%"; }
@@ -980,7 +1015,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                                                                "scroll-timeline-name",
                                                                "view-timeline-name",
                                                                "timeline-scope",
-                                                               "will-change"};
+                                                               "will-change",
+                                                               "list-style-type"};
         return collapse_keyword(text, ascii_iequals_any(property, names_something));
     };
 
