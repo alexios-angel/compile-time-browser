@@ -496,6 +496,9 @@ private:
         // combinator may follow it at all. `::before.a`, `::before div` and
         // `::view-transition:hover` are syntax errors.
         bool after_pe = false;
+        // ...and which one, lowercased: what may follow a pseudo-element
+        // depends on it (CSS Pseudo 4 §4.1-§4.3).
+        std::string last_pe;
         bool view_transition_pe = false;
         // ...BUT A ::part() takes any pseudo-class that is not about the tree
         // (CSS Shadow Parts 1 §4.2): `::part(x):state(y)`, `::part(x):disabled`
@@ -508,6 +511,7 @@ private:
         const auto start_compound = [&] {
             if (!compounds.empty() && after_pe) { dead = invalid_ = true; }
             after_pe = false;
+            last_pe.clear();
             view_transition_pe = false;
             part_pe = false;
             button_pe = false;
@@ -843,12 +847,14 @@ private:
                                 atoms_->intern_lower(ascii_lower_copy(name) + "(" + argument + ")");
                             ++b.tags;
                             after_pe = true;
+                            last_pe = ascii_lower_copy(name);
                             view_transition_pe = ascii_istarts_with(name, "view-transition");
                             part_pe = false;
                             if (in_argument_) { dead = invalid_ = true; }
                             continue;
                         }
                         after_pe = true;
+                        last_pe = ascii_lower_copy(name);
                         view_transition_pe = ascii_istarts_with(name, "view-transition");
                         part_pe = ascii_iequals(name, "part");
                         if (in_argument_) { invalid_ = true; }
@@ -880,9 +886,28 @@ private:
                         dead = invalid_ = true;
                         continue;
                     }
+                    // A PSEUDO-ELEMENT AFTER ANOTHER is ::marker of ::before or
+                    // ::after (CSS Pseudo 4 §4.3), or one of a ::part() or a
+                    // ::slotted(); `::before::before`, `::selection::after` and
+                    // `::placeholder::marker` are no selectors.
+                    if (after_pe) {
+                        const bool marker_of = ascii_iequals(name, "marker") &&
+                                               (last_pe == "before" || last_pe == "after");
+                        if (marker_of) {
+                            b.part.pseudo_element = atoms_->intern_lower(last_pe + "::marker");
+                            last_pe = "marker";
+                            dead = true;
+                            continue;
+                        }
+                        if (last_pe != "part" && last_pe != "slotted") {
+                            dead = invalid_ = true;
+                            continue;
+                        }
+                    }
                     b.part.pseudo_element = atoms_->intern_lower(name);
                     ++b.tags; // a pseudo-element is type-level for specificity
                     after_pe = true;
+                    last_pe = ascii_lower_copy(name);
                     // ::view-transition itself is the tree's root: `:only-child`
                     // follows its descendants, not it (pseudo-elements-invalid).
                     view_transition_pe = ascii_istarts_with(name, "view-transition-");
@@ -896,13 +921,19 @@ private:
                     if (name.starts_with('-')) { dead = true; }
                     continue;
                 }
+                // A HIGHLIGHT PSEUDO-ELEMENT takes no pseudo-class after it at
+                // all (CSS Pseudo 4 §3.6): `::selection:hover` is no selector.
+                const bool highlight_pe =
+                    ascii_iequals_any(last_pe, {"selection", "target-text", "spelling-error",
+                                                "grammar-error", "search-text", "highlight"});
                 if (after_pe &&
-                    !(view_transition_pe ? ascii_iequals(name, "only-child")
-                      : part_pe
-                          ? structural_bit_of(name) == 0
-                          : ascii_iequals_any(name, {"hover", "active", "focus", "focus-visible",
-                                                     "focus-within"}) ||
-                                (button_pe && ascii_iequals_any(name, {"enabled", "disabled"})))) {
+                    (highlight_pe ||
+                     !(view_transition_pe ? ascii_iequals(name, "only-child")
+                       : part_pe ? structural_bit_of(name) == 0
+                                 : ascii_iequals_any(name, {"hover", "active", "focus",
+                                                            "focus-visible", "focus-within"}) ||
+                                       (button_pe &&
+                                        ascii_iequals_any(name, {"enabled", "disabled"}))))) {
                     dead = invalid_ = true;
                     continue;
                 }
