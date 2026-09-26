@@ -135,7 +135,7 @@ inline auto context::store_global_property(realm_record & realm, const std::stri
     return true;
 }
 
-inline auto context::declare_global_function(std::string name) -> void {
+inline auto context::declare_global_function(std::string name, bool configurable) -> void {
     realm_record & realm = current_realm();
     if (realm.declared.contains(name)) { return; }
     value holder = realm.global_this;
@@ -143,6 +143,18 @@ inline auto context::declare_global_function(std::string name) -> void {
         holder = static_cast<proxy_object *>(holder.as_heap())->target;
     }
     property_descriptor own;
+    if (configurable) {
+        // D true: { writable, enumerable, configurable } is the table's own
+        // description of a binding, so a configurable property of the target
+        // steps aside for it (the value is the one the eval's hoisted
+        // declaration writes); a non-configurable one keeps its storage.
+        if (holder.is_object() && own_property(holder, name, own) && own.configurable) {
+            (void)static_cast<object_object *>(holder.as_heap())->erase(name);
+            (void)static_cast<object_object *>(holder.as_heap())->erase_accessor(name);
+        }
+        if (!realm.globals.contains(name)) { realm.globals[std::move(name)] = value::undefined(); }
+        return;
+    }
     if (!holder.is_object() || own_property(holder, name, own)) { return; }
     // A configurable table binding - a page's assignment, an intrinsic - is
     // redefined, which here is the declared mark and its placeholder (see
@@ -308,7 +320,9 @@ inline auto context::set_module_evaluator(std::function<bool(context &, module_r
     // Its `var`s exist before it starts, as run() gives a script's
     // (19.2.1.3 EvalDeclarationInstantiation binds them the same way).
     for (const std::string & name : prog.hoisted_vars) { declare_global_var(name, prog.eval_code); }
-    for (const std::string & name : prog.function_names) { declare_global_function(name); }
+    for (const std::string & name : prog.function_names) {
+        declare_global_function(name, prog.eval_code);
+    }
     auto * entry = allocate<closure_object>(&prog.functions[0]);
     entry->owner = &prog;
     entry->realm = &current_realm();

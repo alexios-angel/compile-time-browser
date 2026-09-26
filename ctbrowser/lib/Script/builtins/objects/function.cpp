@@ -540,7 +540,15 @@ void install_dynamic_function(context & cx) {
                     return value::undefined();
                 }
                 const program & kept = c.own_program(std::move(compiled));
+                // FROM GLOBAL CODE its declarations are globals, instantiated
+                // as an indirect eval's are (program::eval_global).
+                if (kept.eval_global && !c.eval_declaration_instantiation(kept)) {
+                    return value::undefined();
+                }
                 for (const std::string & name : kept.hoisted_vars) { c.declare_global_var(name); }
+                for (const std::string & name : kept.function_names) {
+                    c.declare_global_function(name, true);
+                }
                 auto * entry = c.allocate<closure_object>(&kept.functions[0]);
                 entry->owner = &kept;
                 entry->realm = caller != nullptr && caller->realm != nullptr ? caller->realm

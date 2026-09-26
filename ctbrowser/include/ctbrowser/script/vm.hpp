@@ -62,8 +62,17 @@ public:
     // CreateGlobalFunctionBinding (9.1.1.4.18) for a SCRIPT's top-level
     // function: { writable, enumerable, !configurable }, whatever a configurable
     // binding of that name said before - a name the global object's target
-    // owns keeps its own storage.
-    void declare_global_function(std::string name);
+    // owns keeps its own storage. An EVAL's (`configurable`, D true) is a
+    // table binding with all three, and a configurable property the target
+    // owned gives way to it.
+    void declare_global_function(std::string name, bool configurable = false);
+    // EvalDeclarationInstantiation (19.2.1.3) for an eval whose variable
+    // environment is the global one (program::eval_global): a `var` or
+    // function colliding with a global lexical is the SyntaxError of step
+    // 3.a, one CanDeclareGlobalFunction / CanDeclareGlobalVar refuses the
+    // TypeError of steps 8-10 - both before anything exists - and then each
+    // binding is made (steps 15-17). False with the error thrown.
+    bool eval_declaration_instantiation(const program & prog);
     // GlobalDeclarationInstantiation's refusals (16.1.7 steps 3-6): a
     // classic script whose lexical name is already a var, a lexical or a
     // non-configurable global property, or whose var or function name is

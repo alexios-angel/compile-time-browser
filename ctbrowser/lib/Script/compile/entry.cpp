@@ -153,6 +153,17 @@ void compiler_impl::compile_program() {
             }
         }
     }
+    // AN EVAL OF THE GLOBAL VARIABLE ENVIRONMENT (program::eval_global): its
+    // top-level functions are what EvalDeclarationInstantiation checks with
+    // CanDeclareGlobalFunction and makes with CreateGlobalFunctionBinding.
+    if (!top_level_is_scope_ && completion_value_ && !eval_site_.in_function && !fn().is_strict) {
+        out_.eval_global = true;
+        for (const std::int32_t s : kids(root)) {
+            if (at(s).kind == vp::nk::func_decl && !at(s).text.empty()) {
+                out_.function_names.emplace_back(at(s).text);
+            }
+        }
+    }
     if (module_scope_) {
         // THEN THE IMPORTS, still at entry: a function declared anywhere in
         // this module closes over them, and the closures are made below.
