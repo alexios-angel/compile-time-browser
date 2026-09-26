@@ -270,6 +270,30 @@ void test_form_data_and_submission() {
        "1,hello,1,b");
 }
 
+// A BUTTON'S ACTIVATION BEHAVIOUR submits and resets through the same algorithm
+// requestSubmit() and reset() run: form-submission-algorithm.html's SubmitEvent
+// carrying the button, input-type-change-submit.html's text field made a
+// submit button by its own click listener, button-click-submits-with-
+// commandfor.html's plain button, and reset.html's reset button that names
+// its form with `form=` from outside it.
+void test_activation_submits_and_resets() {
+    is("(function () { var f = document.getElementById('f'); var seen = [];"
+       " document.getElementById('e').value = 'a@b.c';"
+       " f.addEventListener('submit', function (e) {"
+       " seen.push((e instanceof SubmitEvent) + ':' + (e.submitter && e.submitter.id));"
+       " e.preventDefault(); });"
+       " document.getElementById('btn').click();"
+       " var t = document.getElementById('t');"
+       " t.addEventListener('click', function () { t.type = 'submit'; }); t.click();"
+       " var b = document.createElement('button'); b.setAttribute('commandfor', 'x');"
+       " f.appendChild(b); b.click();"
+       " var r = document.createElement('input'); r.type = 'RESET'; r.setAttribute('form', 'f');"
+       " document.body.appendChild(r); var o = document.getElementById('outside');"
+       " o.value = 'changed'; r.click(); seen.push(o.value);"
+       " return seen.join(); })()",
+       "true:btn,true:t,z");
+}
+
 // --- output and textarea ---------------------------------------------------------------
 
 void test_output_and_textarea() {
@@ -560,6 +584,7 @@ int main() {
     test_form_owner_attribute();
     test_selection_api();
     test_form_data_and_submission();
+    test_activation_submits_and_resets();
     test_output_and_textarea();
     REPORT("forms_wpt");
 }
