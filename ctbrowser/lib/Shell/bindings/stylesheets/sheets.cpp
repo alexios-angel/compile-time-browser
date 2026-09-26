@@ -444,7 +444,9 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
                 std::string text;
                 if (assets_ != nullptr) {
                     const std::vector<std::byte> bytes = assets_->load(record.href);
-                    text.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+                    text = style::css::decode_stylesheet(
+                        {reinterpret_cast<const char *>(bytes.data()), bytes.size()}, {},
+                        doc_->encoding());
                 }
                 record.source = std::move(text);
                 parse_sheet_rules(at, record.source);

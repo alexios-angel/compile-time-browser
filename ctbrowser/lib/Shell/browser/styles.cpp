@@ -16,8 +16,10 @@ namespace {
 // rules, as the cascade requires - wrapped in the import's media query when it
 // has one, and expanded itself first so a chain of imports nests correctly.
 // `chain` is the hrefs being expanded, which refuses a cycle and caps the depth.
+// ponytail: an import's environment encoding is the document's, where CSS Syntax
+// 3 §3.2 says the importing sheet's; thread the decoded one down if a page mixes.
 std::string expand_imports(const asset_registry & assets, std::string css, std::string_view base,
-                           std::vector<std::string> & chain) {
+                           std::vector<std::string> & chain, std::string_view environment) {
     if (chain.size() >= 16) { return css; }
     ctbrowser::atom_table atoms;
     const std::vector<ctbrowser::style::css::import_statement> imports =
@@ -31,9 +33,10 @@ std::string expand_imports(const asset_registry & assets, std::string css, std::
         const std::string href = dom_bindings::resolve_sheet_href(base, each.href);
         if (std::ranges::find(chain, href) != chain.end()) { continue; }
         const std::vector<std::byte> bytes = assets.load(href);
-        std::string text{reinterpret_cast<const char *>(bytes.data()), bytes.size()};
+        std::string text = ctbrowser::style::css::decode_stylesheet(
+            {reinterpret_cast<const char *>(bytes.data()), bytes.size()}, {}, environment);
         chain.push_back(href);
-        text = expand_imports(assets, std::move(text), href, chain);
+        text = expand_imports(assets, std::move(text), href, chain, environment);
         chain.pop_back();
         // THE IMPORT'S CONDITIONS AND LAYER, as the blocks they stand for (CSS
         // Cascade 5 §5.1): `layer(a)` files the sheet's rules in layer `a` and
@@ -289,7 +292,8 @@ std::string browser::collect_author_styles(document & doc, dom_bindings * bindin
                     std::string text;
                     for (const node_id child : txn.children(at)) { text += txn.text(child); }
                     std::vector<std::string> chain;
-                    css += gated(at, expand_imports(assets_, std::move(text), {}, chain));
+                    css += gated(
+                        at, expand_imports(assets_, std::move(text), {}, chain, doc.encoding()));
                     css += '\n';
                 }
                 // HTML "update a style block" ends by firing `load` at the
@@ -310,9 +314,14 @@ std::string browser::collect_author_styles(document & doc, dom_bindings * bindin
                         style_error_ = "<link rel=stylesheet href=\"" + href + "\"> not found";
                     }
                 } else if (state == dom_bindings::link_sheet::active && applies(at, enabled)) {
-                    std::string text{reinterpret_cast<const char *>(bytes.data()), bytes.size()};
+                    // Decoded as CSS Syntax 3 §3.2 says, the document's
+                    // encoding the fallback (css-syntax/charset).
+                    std::string text = ctbrowser::style::css::decode_stylesheet(
+                        {reinterpret_cast<const char *>(bytes.data()), bytes.size()}, {},
+                        doc.encoding());
                     std::vector<std::string> chain{href};
-                    css += gated(at, expand_imports(assets_, std::move(text), href, chain));
+                    css += gated(
+                        at, expand_imports(assets_, std::move(text), href, chain, doc.encoding()));
                     css += '\n';
                 }
                 // `load` once the sheet applies, `error` when there is nothing
