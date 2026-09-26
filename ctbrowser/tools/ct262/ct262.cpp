@@ -292,6 +292,7 @@ public:
             if (!failed_) {
                 failed_ = true;
                 compile_error_ = *compiled;
+                failed_key_ = key;
             }
             owned_.push_back(std::move(compiled));
             return;
@@ -425,12 +426,15 @@ public:
 
     [[nodiscard]] bool failed() const noexcept { return failed_; }
     [[nodiscard]] const program & compile_error() const noexcept { return compile_error_; }
+    // Which module the compile error is in - the test file or a dependency.
+    [[nodiscard]] const std::string & failed_key() const noexcept { return failed_key_; }
     [[nodiscard]] const std::string & resolution_error() const noexcept { return resolution_; }
     // A dynamic import that failed is one rejected promise, not a failed run:
     // clear the record so the next import starts clean.
     void reset_failure() {
         failed_ = false;
         compile_error_ = program{};
+        failed_key_.clear();
         resolution_.clear();
     }
 
@@ -444,6 +448,7 @@ private:
     std::size_t depth_ = 0; // instantiate() recursing: the graph is wired when it is back at 0
     bool failed_ = false;
     program compile_error_;
+    std::string failed_key_;
     std::string resolution_;
 };
 
@@ -575,7 +580,17 @@ int main(int argc, char ** argv) {
         // the suite never sets both.
         loader.instantiate(opts.test);
         if (loader.failed()) {
-            report_compile_failure(loader.compile_error());
+            // A DEPENDENCY THAT DOES NOT PARSE fails the graph while it loads,
+            // which is the suite's "resolution" phase (instn-resolve-err-
+            // syntax-*.js); only the test file's own syntax error is "parse".
+            const program & bad = loader.compile_error();
+            if (is_parse_error(bad.error) &&
+                loader.failed_key() !=
+                    std::filesystem::weakly_canonical(opts.test).generic_string()) {
+                report("resolution", "SyntaxError", "SyntaxError", bad.error);
+            } else {
+                report_compile_failure(bad);
+            }
             return 1;
         }
         if (!loader.resolution_error().empty()) {
