@@ -1435,6 +1435,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
             const std::string repetition =
                 repetition_value.is_null() ? std::string{} : c.to_string(repetition_value);
             if (c.throw_pending()) { return value::undefined(); }
+            // The image's usability first: one that is not ready makes no
+            // pattern, whatever the repetition says (4.12.5.1.10 steps 1-2).
+            if (!pixels || pixels->empty()) { return value::null(); }
             auto pattern = std::make_shared<canvas_pattern>();
             if (repetition == "repeat-x") {
                 pattern->repeat_y = false;
@@ -1447,7 +1450,6 @@ void dom_bindings::install_canvas_2d(context & cx) {
                           "createPattern: '" + repetition + "' is not a repetition");
                 return value::undefined();
             }
-            if (!pixels || pixels->empty()) { return value::null(); }
             // A SNAPSHOT: drawing on a source canvas afterwards does not
             // change a pattern already made from it.
             pattern->image = std::make_shared<const paint::bitmap>(*pixels);
