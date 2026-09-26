@@ -115,51 +115,45 @@ void replay(const path_recording & recording, canvas_path & into, const transfor
 }
 
 std::optional<transform> matrix_2d(script::context & c, script::value init) {
-    transform out;
-    if (init.is_undefined() || init.is_null()) { return out; }
+    if (init.is_undefined() || init.is_null()) { return transform{}; }
     if (!init.is_object_like()) {
         c.throw_error("TypeError", "The matrix is not a DOMMatrix2DInit");
         return std::nullopt;
     }
-    // Each of a..f may be given under its m11..m42 alias, and a pair that is
-    // given twice has to agree (Geometry Interfaces 1 "validate and fixup").
-    struct member {
-        const char * name;
-        const char * alias;
-        float * into;
-    };
-    const member members[] = {{"a", "m11", &out.a}, {"b", "m12", &out.b}, {"c", "m21", &out.c},
-                              {"d", "m22", &out.d}, {"e", "m41", &out.e}, {"f", "m42", &out.f}};
-    for (const member & m : members) {
-        const script::value named = c.lookup_property(init, m.name);
+    // WebIDL reads a dictionary's members in LEXICOGRAPHIC order, each one
+    // converted as it is read - so a getter on `m11` runs after the one on `f`.
+    static constexpr const char * names[] = {"a",   "b",   "c",   "d",   "e",   "f",
+                                             "m11", "m12", "m21", "m22", "m41", "m42"};
+    std::array<std::optional<double>, 12> given{};
+    for (std::size_t i = 0; i < given.size(); ++i) {
+        const script::value held = c.lookup_property(init, names[i]);
         if (c.throw_pending()) { return std::nullopt; }
-        const script::value aliased = c.lookup_property(init, m.alias);
+        if (held.is_undefined()) { continue; }
+        given[i] = c.to_number_value(held);
         if (c.throw_pending()) { return std::nullopt; }
-        std::optional<double> first;
-        std::optional<double> second;
-        if (!named.is_undefined()) {
-            first = c.to_number_value(named);
-            if (c.throw_pending()) { return std::nullopt; }
-        }
-        if (!aliased.is_undefined()) {
-            second = c.to_number_value(aliased);
-            if (c.throw_pending()) { return std::nullopt; }
-        }
-        // The members are `unrestricted double`: a non-finite one is no
-        // error, and every caller's answer to it is to do nothing
-        // (2d.pattern.transform.infinity).
-        if ((first && !std::isfinite(*first)) || (second && !std::isfinite(*second))) {
-            return std::nullopt;
-        }
-        if (first && second && *first != *second && !(std::isnan(*first) && std::isnan(*second))) {
-            c.throw_error("TypeError", std::string{"DOMMatrix2DInit "} + m.name + " and " +
-                                           m.alias + " disagree");
-            return std::nullopt;
-        }
-        if (second) { *m.into = static_cast<float>(*second); }
-        if (first) { *m.into = static_cast<float>(*first); }
     }
-    return out;
+    // VALIDATE AND FIXUP (Geometry Interfaces 1, 6.1): a member and its m-name
+    // alias that are both given have to agree under SameValueZero, whatever
+    // they are - Infinity and Infinity agree, and NaN agrees with NaN. Then
+    // each m-name takes its alias's value, or the identity's.
+    static constexpr double identity[] = {1, 0, 0, 1, 0, 0};
+    std::array<double, 6> v{};
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        const std::optional<double> & named = given[i];
+        const std::optional<double> & alias = given[i + 6];
+        if (named && alias && *named != *alias && !(std::isnan(*named) && std::isnan(*alias))) {
+            c.throw_error("TypeError", std::string{"DOMMatrix2DInit "} + names[i] + " and " +
+                                           names[i + 6] + " disagree");
+            return std::nullopt;
+        }
+        v[i] = alias ? *alias : named ? *named : identity[i];
+    }
+    // Only then the canvas's own rule: a matrix with a member that is not
+    // finite is ignored by setTransform, CanvasPattern.setTransform and
+    // addPath alike (2d.pattern.transform.infinity).
+    if (!all_finite(v.data(), v.size())) { return std::nullopt; }
+    const auto f = [](double d) { return static_cast<float>(d); };
+    return transform{f(v[0]), f(v[1]), f(v[2]), f(v[3]), f(v[4]), f(v[5])};
 }
 
 void install_path_methods(script::context & cx, script::object_object & proto,
