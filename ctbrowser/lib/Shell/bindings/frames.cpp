@@ -545,7 +545,7 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
             });
         ctor->set("prototype", cx.lookup_property(cx.global(name), "prototype"));
         frame_window->set(name, value::object(ctor));
-        cx.define_global(name, value::object(ctor));
+        cx.define_builtin_global(name, value::object(ctor));
     }
     // Listening at THIS window: a frame script's `addEventListener("load", f)`
     // hears the frame's load, not the page's.
@@ -596,7 +596,7 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
         }
         wrapper->define("length", value::number(1), script::attr_configurable);
         wrapper->define("name", cx.string(name), script::attr_configurable);
-        cx.define_global(name, value::object(wrapper));
+        cx.define_builtin_global(name, value::object(wrapper));
     }
 }
 

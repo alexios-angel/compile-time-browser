@@ -35,6 +35,8 @@ void install_builtins(context & cx, std::uint64_t seed) {
     install_globals(cx);
     install_promise(cx);
     install_temporal(cx);
+    // Everything above is an intrinsic, and none of it is enumerable.
+    cx.mark_globals_builtin();
 }
 
 } // namespace ctbrowser::script

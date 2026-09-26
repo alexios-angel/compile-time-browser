@@ -349,7 +349,7 @@ void dom_bindings::install_xml_serializer(context & cx) {
         });
     ctor->define("prototype", value::object(proto), script::attr_none);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
-    cx.define_global("XMLSerializer", value::object(ctor));
+    cx.define_builtin_global("XMLSerializer", value::object(ctor));
 }
 
 } // namespace ctbrowser::shell

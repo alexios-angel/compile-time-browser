@@ -693,7 +693,7 @@ void dom_bindings::install_mutation_observer(context & cx) {
         });
     record_ctor->define("prototype", mutation_record_prototype_, script::attr_none);
     record_proto->define("constructor", value::object(record_ctor), script::attr_builtin);
-    cx.define_global("MutationRecord", value::object(record_ctor));
+    cx.define_builtin_global("MutationRecord", value::object(record_ctor));
 
     // --- MutationObserver.prototype ----------------------------------------
     auto * observer_proto = cx.allocate<script::object_object>();
@@ -917,7 +917,7 @@ void dom_bindings::install_mutation_observer(context & cx) {
         });
     ctor->define("prototype", mutation_observer_prototype_, script::attr_none);
     observer_proto->define("constructor", value::object(ctor), script::attr_builtin);
-    cx.define_global("MutationObserver", value::object(ctor));
+    cx.define_builtin_global("MutationObserver", value::object(ctor));
     mutation_interface_ = ctor;
 
     // The delivery trampoline. It is not reachable from script and never

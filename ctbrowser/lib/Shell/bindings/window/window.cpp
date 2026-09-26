@@ -165,7 +165,7 @@ void dom_bindings::install_window(context & cx) {
         return make_blob(c, bytes, type);
     });
     blob_ctor->set("prototype", blob_prototype_);
-    cx.define_global("Blob", value::object(blob_ctor));
+    cx.define_builtin_global("Blob", value::object(blob_ctor));
 
     // --- the DOM's interface objects -----------------------------------
     //
@@ -192,7 +192,7 @@ void dom_bindings::install_window(context & cx) {
                 return value::undefined();
             });
         ctor->set("prototype", prototype_out);
-        cx.define_global(name, value::object(ctor));
+        cx.define_builtin_global(name, value::object(ctor));
     };
     // `HTMLElement` is the one a page's class EXTENDS, so it is constructible
     // and lives with the registry - bindings/custom_elements.cpp - and it has
@@ -239,7 +239,7 @@ void dom_bindings::install_window(context & cx) {
                 return made;
             });
         file_ctor->set("prototype", blob_prototype_);
-        cx.define_global("File", value::object(file_ctor));
+        cx.define_builtin_global("File", value::object(file_ctor));
 
         // A FileList is array-SHAPED: indices, a length, and item(). Every page
         // walks one with `for (const f of files)` or `files[0]`, and both of those
@@ -957,9 +957,14 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
             }
             context::property_descriptor own;
             if (c.own_property(args[0], name, own)) { return c.from_property_descriptor(own); }
+            // An interface object or an intrinsic is not enumerable; the
+            // Window's own members and a page's assignments are
+            // (realm_record::builtin).
             if (const auto it = realm_of->globals.find(name); it != realm_of->globals.end()) {
-                return c.from_property_descriptor(
-                    context::property_descriptor::data(it->second, script::attr_default));
+                return c.from_property_descriptor(context::property_descriptor::data(
+                    it->second, realm_of->builtin.contains(name)
+                                    ? script::attr_writable | script::attr_configurable
+                                    : script::attr_default));
             }
             value held = frame_at(c, name);
             if (held.is_undefined()) { held = named_value(c, name); }
@@ -979,6 +984,7 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
                        return value::boolean(c.delete_own_property(args[0], name));
                    }
                    (void)realm_of->globals.erase(name);
+                   (void)realm_of->builtin.erase(name);
                    return value::boolean(true);
                });
     return value::object(

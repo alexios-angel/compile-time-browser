@@ -205,7 +205,7 @@ void dom_bindings::install_media_queries(context & cx) {
     ctor->define("prototype", media_query_list_prototype_, script::attr_none);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
     proto->define("@@toStringTag", cx.string("MediaQueryList"), script::attr_configurable);
-    cx.define_global("MediaQueryList", value::object(ctor));
+    cx.define_builtin_global("MediaQueryList", value::object(ctor));
     // A bare global, as `getComputedStyle` is: `window` is a proxy that falls
     // back to the globals. A frame's window carries its own (frames.cpp).
     cx.define_native("matchMedia", [this](context & c, std::span<value> args) {

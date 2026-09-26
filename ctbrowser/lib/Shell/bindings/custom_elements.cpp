@@ -936,7 +936,7 @@ void dom_bindings::install_custom_elements(context & cx) {
     html_element_ctor->set("prototype", value::object(html_element_proto));
     html_element_proto->define("constructor", value::object(html_element_ctor),
                                script::attr_builtin);
-    cx.define_global("HTMLElement", value::object(html_element_ctor));
+    cx.define_builtin_global("HTMLElement", value::object(html_element_ctor));
     install_element_internals(cx, *html_element_proto);
 
     // --- CustomElementRegistry.prototype -----------------------------------
@@ -1302,7 +1302,7 @@ void dom_bindings::install_custom_elements(context & cx) {
         });
     registry_ctor->set("prototype", value::object(registry_proto));
     registry_proto->define("constructor", value::object(registry_ctor), script::attr_builtin);
-    cx.define_global("CustomElementRegistry", value::object(registry_ctor));
+    cx.define_builtin_global("CustomElementRegistry", value::object(registry_ctor));
     custom_elements_interface_ = registry_ctor;
 
     // `window.customElements` - a bare global, which the window proxy answers

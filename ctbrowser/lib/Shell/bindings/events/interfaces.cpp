@@ -331,7 +331,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
         if (proto->find("@@toStringTag") == nullptr) {
             proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
         }
-        cx.define_global(name, value::object(ctor));
+        cx.define_builtin_global(name, value::object(ctor));
         return ctor;
     };
     const auto interface_of = [&cx, &constructor_for](const char * name, value parent_prototype,
@@ -552,7 +552,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
         list_ctor->retained.push_back(touch_list_prototype);
         list_ctor->define("prototype", touch_list_prototype, script::attr_none);
         touch_list_proto->define("constructor", value::object(list_ctor), script::attr_builtin);
-        cx.define_global("TouchList", value::object(list_ctor));
+        cx.define_builtin_global("TouchList", value::object(list_ctor));
     }
 
     // `new Touch({identifier: 0, target: el})` - and BOTH of those members are
@@ -602,7 +602,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
         touch_ctor->retained.push_back(touch_prototype);
         touch_ctor->define("prototype", touch_prototype, script::attr_none);
         touch_proto->define("constructor", value::object(touch_ctor), script::attr_builtin);
-        cx.define_global("Touch", value::object(touch_ctor));
+        cx.define_builtin_global("Touch", value::object(touch_ctor));
     }
 
     // `sequence<Touch>` to TouchList. Read as an ARRAY-LIKE rather than copied
@@ -984,7 +984,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
     target_ctor->retained.push_back(target_prototype);
     target_ctor->set("prototype", target_prototype);
     target_proto->define("constructor", value::object(target_ctor), script::attr_builtin);
-    cx.define_global("EventTarget", value::object(target_ctor));
+    cx.define_builtin_global("EventTarget", value::object(target_ctor));
     event_target_prototype_ = target_prototype;
     // THE FENCE HANGS OFF THE EventTarget CONSTRUCTOR, which is the one object
     // in this file that is reachable from a root the collector already walks:

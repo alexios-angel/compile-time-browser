@@ -951,7 +951,7 @@ void dom_bindings::install_range(context & cx) {
         ctor->define(name, value::number(bits), script::attr_enumerable);
         proto->define(name, value::number(bits), script::attr_enumerable);
     }
-    cx.define_global("Range", value::object(ctor));
+    cx.define_builtin_global("Range", value::object(ctor));
 
     // --- StaticRange, DOM 5.4 --------------------------------------------------
     //
@@ -1010,7 +1010,7 @@ void dom_bindings::install_range(context & cx) {
         });
     static_ctor->define("prototype", static_proto_value, script::attr_none);
     static_proto->define("constructor", value::object(static_ctor), script::attr_builtin);
-    cx.define_global("StaticRange", value::object(static_ctor));
+    cx.define_builtin_global("StaticRange", value::object(static_ctor));
     // UNDER AbstractRange, when the interface table has already been linked:
     // install_dom_interfaces adopts `Range.prototype` off the global and
     // chains it, but only if it runs after this - and the first wrap() of

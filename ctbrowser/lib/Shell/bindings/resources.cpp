@@ -618,7 +618,7 @@ void dom_bindings::install_resources(context & cx) {
         ctor->define("prototype", value::object(proto), script::attr_none);
         proto->define("constructor", value::object(ctor), script::attr_builtin);
         proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
-        cx.define_global(name, value::object(ctor));
+        cx.define_builtin_global(name, value::object(ctor));
         return ctor;
     };
     // `this` for a constructor: the object `new` made, else a TypeError.
@@ -637,7 +637,7 @@ void dom_bindings::install_resources(context & cx) {
 
     auto * headers_proto = cx.allocate<script::object_object>();
     const value headers_proto_value = value::object(headers_proto);
-    cx.define_global(headers_proto_global, headers_proto_value);
+    cx.define_builtin_global(headers_proto_global, headers_proto_value);
     script::native_object * headers_ctor = make_ctor("Headers", headers_proto);
     headers_ctor->fn = [headers_ctor, headers_proto_value, constructed](context & c,
                                                                         std::span<value> a) {
@@ -1011,7 +1011,7 @@ void dom_bindings::install_resources(context & cx) {
     // refused under a null body status.
     auto * response_proto = cx.allocate<script::object_object>();
     const value response_proto_value = value::object(response_proto);
-    cx.define_global(response_proto_global, response_proto_value);
+    cx.define_builtin_global(response_proto_global, response_proto_value);
     script::native_object * response_ctor = make_ctor("Response", response_proto);
     // "Initialize a response": the three init members onto `self`, or false
     // with the error thrown.

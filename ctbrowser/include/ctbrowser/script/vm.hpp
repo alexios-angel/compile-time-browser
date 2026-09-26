@@ -29,6 +29,12 @@ public:
     [[nodiscard]] value iter_result(value v, bool done);
 
     void define_global(std::string name, value v);
+    // A PLATFORM name - an interface object, a namespace, an alias of one:
+    // { writable, !enumerable, configurable } (realm_record::builtin).
+    void define_builtin_global(std::string name, value v);
+    // Every name the current realm has becomes a platform name: the last step
+    // of install_builtins, whose intrinsics are all ECMA-262 clause 19's.
+    void mark_globals_builtin();
 
     // CreateGlobalVarBinding (9.1.1.4.17): a script's or an eval's `var` - a
     // new binding is undefined, and a name the global object already owns,
@@ -89,6 +95,7 @@ public:
     // What a new realm's binding table starts as: the page's globals as they
     // stood before any page script ran - the builtins and the platform's
     // interface objects, none of the page's own `var`s.
+    // The current realm's platform names (realm_record::builtin) go with it.
     void set_realm_template(const string_flat_map<value> & globals);
     // A bare VM's global object for `r`: a proxy over r's binding table, which
     // is what `globalThis` is in ct262 and in unittests/js - and what
@@ -893,6 +900,7 @@ private:
     std::size_t scope_depth_ = 0;
     // See set_realm_template.
     string_flat_map<value> realm_template_;
+    string_flat_map<bool> realm_template_builtin_;
     std::vector<value> registers_;
     std::vector<call_frame> frames_;
     // WHERE THE TYPE ORACLE'S OBSERVATIONS GO, or null - and null selects the

@@ -610,7 +610,7 @@ void dom_bindings::install_xhr(context & cx) {
         ctor->define(name, value::number(n), script::attr_enumerable);
         proto->define(name, value::number(n), script::attr_enumerable);
     }
-    cx.define_global("XMLHttpRequest", value::object(ctor));
+    cx.define_builtin_global("XMLHttpRequest", value::object(ctor));
 
     auto * target_ctor = cx.allocate<script::native_object>(
         "XMLHttpRequestEventTarget", [](context & c, std::span<value>) {
@@ -619,7 +619,7 @@ void dom_bindings::install_xhr(context & cx) {
         });
     target_ctor->define("prototype", value::object(target_proto), script::attr_none);
     target_proto->define("constructor", value::object(target_ctor), script::attr_builtin);
-    cx.define_global("XMLHttpRequestEventTarget", value::object(target_ctor));
+    cx.define_builtin_global("XMLHttpRequestEventTarget", value::object(target_ctor));
 }
 
 } // namespace ctbrowser::shell

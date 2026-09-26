@@ -413,7 +413,7 @@ void dom_bindings::install_control_form_data(context & cx) {
         form_data_ctor->define("prototype", form_data_proto_value, script::attr_none);
         form_data_ctor->define("length", value::number(0), script::attr_configurable);
         form_data_proto->define("constructor", value::object(form_data_ctor), script::attr_builtin);
-        cx.define_global("FormData", value::object(form_data_ctor));
+        cx.define_builtin_global("FormData", value::object(form_data_ctor));
 
         // --- SubmitEvent and FormDataEvent, HTML 4.10.21.2 and 4.10.21.3 -------------
         //
@@ -455,7 +455,7 @@ void dom_bindings::install_control_form_data(context & cx) {
             ctor->define("length", value::number(1), script::attr_configurable);
             proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
             proto->define("constructor", value::object(ctor), script::attr_builtin);
-            cx.define_global(name, value::object(ctor));
+            cx.define_builtin_global(name, value::object(ctor));
         };
         form_event("SubmitEvent", [this](context & c, script::object_object & event, value init) {
             value submitter = dict_object(c, init, "submitter");

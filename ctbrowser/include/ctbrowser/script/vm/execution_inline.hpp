@@ -54,6 +54,17 @@ inline auto context::define_global(std::string name, value v) -> void {
     current_realm().globals[std::move(name)] = v;
 }
 
+inline auto context::define_builtin_global(std::string name, value v) -> void {
+    realm_record & realm = current_realm();
+    realm.builtin[name] = true;
+    realm.globals[std::move(name)] = v;
+}
+
+inline auto context::mark_globals_builtin() -> void {
+    realm_record & realm = current_realm();
+    for (const auto & [name, held] : realm.globals) { realm.builtin[name] = true; }
+}
+
 inline auto context::declare_global_var(std::string name, bool configurable) -> void {
     realm_record & realm = current_realm();
     if (realm.globals.find(name) != realm.globals.end()) { return; }

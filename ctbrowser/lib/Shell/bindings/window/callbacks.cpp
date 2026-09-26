@@ -323,7 +323,7 @@ void dom_bindings::install_console(context & cx) {
          {"group", "groupEnd", "groupCollapsed", "table", "time", "timeEnd", "assert", "count"}) {
         console->set(name, value::object(cx.allocate<script::native_object>(name, ignore)));
     }
-    cx.define_global("console", value::object(console));
+    cx.define_builtin_global("console", value::object(console));
 }
 
 void dom_bindings::install_timers(context & cx) {

@@ -38,7 +38,7 @@ script::object_object * cssom_interface(context & cx, script::object_object * in
     proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
     internals->set(std::string{name} + ".prototype", value::object(proto));
     internals->set(std::string{name}, value::object(ctor));
-    cx.define_global(name, value::object(ctor));
+    cx.define_builtin_global(name, value::object(ctor));
     return proto;
 }
 

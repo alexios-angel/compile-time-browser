@@ -294,7 +294,7 @@ void dom_bindings::install_animations(context & cx) {
     // an Animation answered with the EventTarget's tag it inherits.
     timeline_proto->define("@@toStringTag", cx.string("DocumentTimeline"),
                            script::attr_configurable);
-    cx.define_global("DocumentTimeline", value::object(timeline_ctor));
+    cx.define_builtin_global("DocumentTimeline", value::object(timeline_ctor));
     auto * timeline = cx.allocate<script::object_object>();
     timeline->prototype = value::object(timeline_proto);
     timeline_ = value::object(timeline);
@@ -452,7 +452,7 @@ void dom_bindings::install_animations(context & cx) {
     effect_ctor->define("prototype", keyframe_effect_prototype_, script::attr_none);
     effect_proto->define("constructor", value::object(effect_ctor), script::attr_builtin);
     effect_proto->define("@@toStringTag", cx.string("KeyframeEffect"), script::attr_configurable);
-    cx.define_global("KeyframeEffect", value::object(effect_ctor));
+    cx.define_builtin_global("KeyframeEffect", value::object(effect_ctor));
 
     // --- Animation ------------------------------------------------------------
     auto * proto = cx.allocate<script::object_object>();
@@ -699,7 +699,7 @@ void dom_bindings::install_animations(context & cx) {
     ctor->define("prototype", animation_prototype_, script::attr_none);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
     proto->define("@@toStringTag", cx.string("Animation"), script::attr_configurable);
-    cx.define_global("Animation", value::object(ctor));
+    cx.define_builtin_global("Animation", value::object(ctor));
     animation_interface_ = ctor;
 
     // --- CSSAnimation and CSSTransition ------------------------------------
@@ -725,7 +725,7 @@ void dom_bindings::install_animations(context & cx) {
         sub_ctor->define("prototype", value::object(sub), script::attr_none);
         sub->define("constructor", value::object(sub_ctor), script::attr_builtin);
         sub->define("@@toStringTag", cx.string(name), script::attr_configurable);
-        cx.define_global(name, value::object(sub_ctor));
+        cx.define_builtin_global(name, value::object(sub_ctor));
         return value::object(sub);
     };
     css_animation_prototype_ =

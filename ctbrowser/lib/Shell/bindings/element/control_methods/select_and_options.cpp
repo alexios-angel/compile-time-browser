@@ -248,7 +248,7 @@ void dom_bindings::install_control_select_options(context & cx) {
             option_ctor->define("prototype", proto_value, script::attr_none);
         }
         option_ctor->define("length", value::number(0), script::attr_configurable);
-        cx.define_global("Option", value::object(option_ctor));
+        cx.define_builtin_global("Option", value::object(option_ctor));
     }
 
     // --- HTMLOptionElement --------------------------------------------------------

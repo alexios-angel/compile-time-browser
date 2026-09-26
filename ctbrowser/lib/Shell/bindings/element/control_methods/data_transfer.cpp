@@ -387,7 +387,7 @@ void control_helpers::install_data_transfer(context & cx) const {
     ctor->define("prototype", dt_proto_value, script::attr_none);
     ctor->define("length", value::number(0), script::attr_configurable);
     dt_proto->define("constructor", value::object(ctor), script::attr_builtin);
-    cx.define_global("DataTransfer", value::object(ctor));
+    cx.define_builtin_global("DataTransfer", value::object(ctor));
 }
 
 } // namespace ctbrowser::shell::detail

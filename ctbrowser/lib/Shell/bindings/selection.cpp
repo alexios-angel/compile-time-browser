@@ -792,7 +792,7 @@ void dom_bindings::install_selection(context & cx) {
         });
     ctor->define("prototype", proto_value, script::attr_none);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
-    cx.define_global("Selection", value::object(ctor));
+    cx.define_builtin_global("Selection", value::object(ctor));
 
     // THE PAGE'S SELECTION, made now, of this document.
     auto * selection = cx.allocate<script::object_object>();
