@@ -228,6 +228,15 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     if (own_scope) { push_scope(); }
     ++class_body_depth_; // everything in here is strict code (15.7.1)
     if (!n.text.empty()) { declare_class_name(std::string{n.text}, own_scope); }
+    // AN EXPRESSION'S OWN NAME IS IN ITS DEAD ZONE until the class exists
+    // (15.7.14 step 4.a creates it uninitialised; the heritage and the
+    // computed keys run before step 27 initialises it): `(class x extends x
+    // {})` is the ReferenceError, decided statically as a declaration's is
+    // (capture.cpp hoists that one with the same offset). Only reads in this
+    // frame see it - a method's body is a function of its own.
+    if (own_scope && !n.text.empty() && n.end > 0) {
+        if (local * self = find_local_in_current_scope(n.text)) { self->initialized_at = n.end; }
+    }
     // Inside the body the name is the class's own immutable binding - see
     // class_bindings_. Wherever the declaration put the name, a write from
     // in here that resolves to the same binding is refused.
