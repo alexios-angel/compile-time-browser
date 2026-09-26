@@ -664,6 +664,19 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string comparedKeys = selectedStore(comparedInput());
     const std::string comparedGap = nestedSiblingStore(
         "      %read = ctjs.get_property %guard[%one]\n" + comparedInput("%read", "%two"));
+    const auto literalComparisons = [&](const std::string & first = "#ctjs.number<0>",
+                                        const std::string & second = "#ctjs.number<0>",
+                                        unsigned negations = 0) {
+        auto input = comparedInput("%zero", "%one", "strict_eq %p, %secondLiteral", "", negations);
+        input.replace(input.find("strict_eq %p, %zero"), std::string{"strict_eq %p, %zero"}.size(),
+                      "strict_eq %p, %firstLiteral");
+        return "    %firstLiteral = ctjs.constant " + first +
+               "\n    %secondLiteral = ctjs.constant " + second + "\n" + input;
+    };
+    const std::string numberComparisonGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           comparedInput("%read", "%two", "strict_eq %p, %otherZero",
+                                         "    %otherZero = ctjs.constant #ctjs.number<0>\n"));
     const auto reversedInput = [&](const std::string & left = "%zero",
                                    const std::string & right = "%one", unsigned negations = 0) {
         return comparedInput(left, right, "strict_eq %zero, %p", "", negations);
@@ -835,6 +848,10 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string siblingComparisonGap = nestedSiblingStore(
         "      %read = ctjs.get_property %guard[%one]\n" +
         independentComparisons(representativeInput(comparisonYields(), "%read", "%two")));
+    const std::string literalComparisonYields =
+        "    %otherZero = ctjs.constant #ctjs.number<0>\n"
+        "    %thirdZero = ctjs.constant #ctjs.number<0>\n" +
+        comparisonYields("strict_eq %p, %otherZero", "strict_eq %thirdZero, %p");
     auto reversedSiblingComparisons = independentComparisons(representativeComparisons, true);
     auto firstNumbers = selectedInput("%zero", "%one", "", "", "%firstKey");
     firstNumbers.replace(firstNumbers.find("%flag"), 5, "%firstFlag");
@@ -2513,12 +2530,12 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  allocationLoop(selectedStore(comparedInput("%zero", "%one", "eq %p, %zero"))) +
                  done,
          .complete = false},
-        {.what = "equal literal attributes do not replace strict comparison SSA identity",
+        {.what = "identical Number bits share a strict comparison input",
          .body = loopValues + "  %otherZero = ctjs.constant #ctjs.number<0>\n" +
                  allocationLoop(
                      selectedStore(comparedInput("%zero", "%one", "strict_eq %p, %otherZero"))) +
                  done,
-         .complete = false},
+         .confinedNested = "fresh"},
         {.what = "separate strict comparison reads retain their own snapshots",
          .body = loopValues + allocationLoop(comparedReads()) + done,
          .complete = false},
@@ -2609,10 +2626,61 @@ void checkArrayRetention(mlir::MLIRContext & context) {
              allocationLoop(selectedStore(comparedInput("%zero", "%one", "strict_eq %zero, %q"))) +
              done,
          .complete = false},
-        {.what = "reversed equal literal attributes do not replace SSA identity",
+        {.what = "reversed identical Number bits share a strict comparison input",
          .body = loopValues + "  %otherZero = ctjs.constant #ctjs.number<0>\n" +
                  allocationLoop(
                      selectedStore(comparedInput("%zero", "%one", "strict_eq %otherZero, %p"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "identical Number literals preserve odd Not comparison polarity",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(literalComparisons("#ctjs.number<0>", "#ctjs.number<0>", 3))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "identical Number literals retain a dominating cross-block comparison",
+         .body = loopValues + allocationLoop(crossBlockStore(literalComparisons())) + done,
+         .confinedNested = "fresh"},
+        {.what = "identical negative-zero bits are exact strict comparison operands",
+         .body = loopValues +
+                 allocationLoop(selectedStore(literalComparisons(
+                     "#ctjs.number<9223372036854775808>", "#ctjs.number<9223372036854775808>"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "identical NaN bits correlate predicates without Number cancellation",
+         .body = loopValues +
+                 allocationLoop(selectedStore(literalComparisons(
+                     "#ctjs.number<9221120237041090560>", "#ctjs.number<9221120237041090560>"))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "different Number bits remain independent comparison operands",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     literalComparisons("#ctjs.number<0>", "#ctjs.number<4607182418800017408>"))) +
+                 done,
+         .complete = false},
+        {.what = "opposite signed zeroes gain no literal comparison equivalence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     literalComparisons("#ctjs.number<0>", "#ctjs.number<9223372036854775808>"))) +
+                 done,
+         .complete = false},
+        {.what = "Number and String literals cannot share strict comparison inputs",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(literalComparisons("#ctjs.number<0>", "#ctjs.string<\"0\">"))) +
+                 done,
+         .complete = false},
+        {.what = "equal String literals gain no Number comparison authority",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     literalComparisons("#ctjs.string<\"0\">", "#ctjs.string<\"0\">"))) +
+                 done,
+         .complete = false},
+        {.what = "equal Boolean literals gain no Number comparison authority",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     literalComparisons("#ctjs.boolean<false>", "#ctjs.boolean<false>"))) +
                  done,
          .complete = false},
         {.what = "a reversed coercing comparison cannot borrow strict equality correspondence",
@@ -3015,6 +3083,34 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         {.what = "matching sibling comparisons retain their dominating If result",
          .body = loopValues + allocationLoop(selectedStore(siblingOnlyComparisons)) + done,
          .confinedNested = "fresh"},
+        {.what = "identical Number literals match independent sibling comparison yields",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     independentComparisons(representativeInput(literalComparisonYields)))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "identical Number literals cannot erase sibling comparison polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     independentComparisons(representativeInput(literalComparisonYields), true))) +
+                 done,
+         .complete = false},
+        {.what = "identical Number comparison operands cannot hide sibling effects",
+         .body = loopValues +
+                 allocationLoop(selectedStore(independentComparisons(representativeInput(
+                     "    %otherZero = ctjs.constant #ctjs.number<0>\n" +
+                     comparisonYields("strict_eq %p, %otherZero", "strict_eq %otherZero, %p", "",
+                                      "      %called = ctjs.call %p(%q)\n"))))) +
+                 done,
+         .complete = false},
+        {.what = "identical Number comparison operands cannot overwrite the guard dependency",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(
+                     "      %read = ctjs.get_property %guard[%zero]\n" +
+                     comparedInput("%read", "%one", "strict_eq %p, %otherZero",
+                                   "    %otherZero = ctjs.constant #ctjs.number<0>\n"))) +
+                 done,
+         .complete = false},
         {.what = "an earlier negated comparison If retains its own polarity",
          .body = loopValues + allocationLoop(selectedStore(reversedSiblingComparisons)) + done,
          .confinedNested = "fresh"},
@@ -4439,7 +4535,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = literalMutation.what, .body = literalMutation.body, .expected = ""},
              "the Boolean-literal mutation fixture did not parse");
     }
-    for (const std::string & comparisons : {comparedGap, crossBlockGap}) {
+    for (const std::string & comparisons : {comparedGap, crossBlockGap, numberComparisonGap}) {
         retention_row comparisonMutation{
             .what =
                 "strict comparison correspondence reproves both operations, operands and guards",
@@ -4468,6 +4564,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
             auto load = firstYield->getOperand(0).getDefiningOp<ctjs::GetPropertyOp>();
             const mlir::Value originalLeft = firstCompare.getLhs();
             const mlir::Value originalRight = firstCompare.getRhs();
+            const mlir::Value comparedRight = secondCompare.getRhs();
             const mlir::Value originalYield = secondYield->getOperand(0);
             const mlir::Value originalPosition = load->getOperand(1);
             const mlir::Value independent = function.getBody().front().getArgument(4);
@@ -4486,11 +4583,11 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                 const bool reversed = state >= 10;
                 const unsigned mutation = state % 10;
                 secondCompare->setOperand(0, mutation == 1 ? independent
-                                             : reversed    ? originalRight
+                                             : reversed    ? comparedRight
                                                            : originalLeft);
                 secondCompare->setOperand(1, mutation == 2 ? originalPosition
                                              : reversed    ? originalLeft
-                                                           : originalRight);
+                                                           : comparedRight);
                 secondCompare.setKindAttr(ctjs::CompareKindAttr::get(
                     &context, mutation == 3 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
                 firstCompare.setKindAttr(ctjs::CompareKindAttr::get(
@@ -4511,6 +4608,25 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                          "correspondence");
                 }
             }
+            if (comparisons == numberComparisonGap) {
+                auto literal = comparedRight.getDefiningOp<ctjs::ConstantOp>();
+                const auto original = literal.getValue();
+                for (mlir::Attribute changed :
+                     {mlir::Attribute(ctjs::NumberAttr::get(&context, 1)),
+                      mlir::Attribute(ctjs::StringAttr::get(&context, "0")), original}) {
+                    literal.setValueAttr(changed);
+                    comparisonMutation.complete = changed == original;
+                    comparisonMutation.confinedNested = comparisonMutation.complete ? "fresh" : "";
+                    budgets += checkArrayRetention(*comparisonModule, comparisonMutation);
+                    if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                        comparisonMutation.complete) {
+                        fail(row{.what = comparisonMutation.what,
+                                 .body = comparisonMutation.body,
+                                 .expected = ""},
+                             "stale literal bits or tags supplied comparison correspondence");
+                    }
+                }
+            }
         } else {
             fail(row{.what = comparisonMutation.what,
                      .body = comparisonMutation.body,
@@ -4518,8 +4634,9 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  "the strict comparison mutation fixture did not parse");
         }
     }
-    std::printf("array retention: %zu rows, one hundred seventy live states, %zu budget cutoffs\n",
-                rows.size(), budgets);
+    std::printf(
+        "array retention: %zu rows, one hundred ninety-three live states, %zu budget cutoffs\n",
+        rows.size(), budgets);
 }
 
 void checkObjectContents(mlir::MLIRContext & context) {

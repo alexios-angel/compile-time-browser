@@ -90,13 +90,29 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
         }
         return {value, negated};
     };
-    const auto sameComparison = [](mlir::Value left, mlir::Value right) {
+    bool complete = true;
+    const auto sameOperand = [&](mlir::Value left, mlir::Value right) {
+        if (left == right) { return true; }
+        if (!spend(2)) {
+            complete = false;
+            return false;
+        }
+        auto first = left.getDefiningOp<ctjs::ConstantOp>();
+        auto second = right.getDefiningOp<ctjs::ConstantOp>();
+        // Equal immutable Number bits supply the same strict-comparison input.
+        // No read-time snapshot, coercion or signed-zero equivalence is inferred.
+        return first && second && llvm::isa<ctjs::NumberAttr>(first.getValue()) &&
+               first.getValue() == second.getValue();
+    };
+    const auto sameComparison = [&](mlir::Value left, mlir::Value right) {
         auto first = left.getDefiningOp<ctjs::CompareOp>();
         auto second = right.getDefiningOp<ctjs::CompareOp>();
         return first && second && first.getKind() == ctjs::CompareKind::StrictEq &&
                second.getKind() == ctjs::CompareKind::StrictEq &&
-               ((first.getLhs() == second.getLhs() && first.getRhs() == second.getRhs()) ||
-                (first.getLhs() == second.getRhs() && first.getRhs() == second.getLhs()));
+               ((sameOperand(first.getLhs(), second.getLhs()) &&
+                 sameOperand(first.getRhs(), second.getRhs())) ||
+                (sameOperand(first.getLhs(), second.getRhs()) &&
+                 sameOperand(first.getRhs(), second.getLhs())));
     };
     const auto booleanInput = [&](mlir::Value operand) -> std::pair<mlir::Value, bool> {
         auto [value, negated] = stripBoolean(operand);
@@ -226,6 +242,7 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
         }
         break;
     }
+    if (!complete) { return {}; }
     return {input, negated};
 }
 
