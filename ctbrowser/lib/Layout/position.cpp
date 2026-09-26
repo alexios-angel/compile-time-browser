@@ -96,12 +96,18 @@ struct positioner {
             abs_x += shift.x;
             abs_y += shift.y;
         }
-        // Everything but `static` is an anchor for the descendants below it.
-        if (box != nullptr && box->is_positioned()) {
+        // Everything but `static` is an anchor for the descendants below it -
+        // and so is a TRANSFORMED box, whatever its position, for its fixed
+        // descendants as well as its absolute ones (CSS Transforms 1 §3): a
+        // `position: fixed` inside a `transform: scale(1)` is placed against
+        // that box and not the viewport (getComputedStyle-insets-fixed).
+        const bool holds_fixed = box != nullptr && box->transformed;
+        if (box != nullptr && (box->is_positioned() || holds_fixed)) {
             inner = padding_box_of(*box, f, abs_x + f.bounds.x, abs_y + f.bounds.y);
         }
         for (fragment & child : f.children) {
-            walk(child, abs_x + f.bounds.x, abs_y + f.bounds.y, inner, fixed_cb);
+            walk(child, abs_x + f.bounds.x, abs_y + f.bounds.y, inner,
+                 holds_fixed ? inner : fixed_cb);
         }
     }
 
