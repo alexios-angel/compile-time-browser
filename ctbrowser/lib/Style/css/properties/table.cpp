@@ -188,8 +188,8 @@ constexpr property_syntax table[] = {
 
     // --- colour and background ------------------------------------------
     {"color", k::color, "", "rgb(0, 0, 0)", true, false},
-    {"caret-color", k::freeform, "", "auto", true, false}, // declaration.cpp
-    {"accent-color", k::color, "auto", "auto", false, false},
+    {"caret-color", k::freeform, "", "auto", true, false},   // declaration.cpp
+    {"accent-color", k::color, "auto", "auto", true, false}, // inherited, CSS UI 4 §6.1
     {"background", k::freeform, "", "none", false, false, true},
     {"background-color", k::color, "", "rgba(0, 0, 0, 0)", false, false},
     {"background-image", k::freeform, "", "none", false, false},

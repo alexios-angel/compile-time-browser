@@ -872,6 +872,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         std::string text = value_of(physical.empty() ? p.name : physical);
         if (text.empty()) { text = std::string{p.initial}; }
         if (ascii_iequals(text, "currentcolor")) { text = current_color; }
+        // caret-color's initial `auto` is currentcolor as well (CSS UI 4 §6.2.1).
+        if (p.name == "caret-color" && ascii_iequals(text, "auto")) { text = current_color; }
         // ...and inside a shadow list, where it is one shadow's colour.
         if (p.name == "box-shadow" || p.name == "text-shadow") {
             for (std::size_t at = text.find("currentcolor"); at != std::string::npos;
