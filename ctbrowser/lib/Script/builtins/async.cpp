@@ -84,7 +84,7 @@ void install_aggregate_error(context & cx) {
                     made->define("cause", cause, attr_builtin);
                 }
             }
-            made->define("@#ErrorData",
+            made->define(CTBROWSER_PRIVATE_KEY("ErrorData"),
                          c.string("AggregateError" + (text.empty() ? std::string{} : ": " + text) +
                                   c.current_stack()),
                          attr_none);
@@ -352,8 +352,8 @@ enum class combine : std::uint8_t {
 // prototype table - %AsyncFromSyncIteratorPrototype%, whose own [[Prototype]]
 // is %AsyncIteratorPrototype% - and read the sync iterator off `this`.
 
-constexpr std::string_view sync_iterator_slot = "@#SyncIterator";
-constexpr std::string_view sync_next_slot = "@#SyncNext";
+constexpr std::string_view sync_iterator_slot = CTBROWSER_PRIVATE_KEY("SyncIterator");
+constexpr std::string_view sync_next_slot = CTBROWSER_PRIVATE_KEY("SyncNext");
 
 // 27.1.6.4. `close_on_rejection` is the ES2025 addition: a rejected `value`
 // closes the sync iterator before the rejection is reported.
@@ -420,7 +420,7 @@ constexpr std::string_view sync_next_slot = "@#SyncNext";
 // %AsyncIteratorPrototype%, 27.1.3: one method, @@asyncIterator answering
 // `this`. %AsyncGeneratorPrototype% and %AsyncFromSyncIteratorPrototype% both
 // inherit from it. Kept on Promise.prototype under a private key.
-constexpr std::string_view async_iterator_key = "@#AsyncIteratorPrototype";
+constexpr std::string_view async_iterator_key = CTBROWSER_PRIVATE_KEY("AsyncIteratorPrototype");
 [[nodiscard]] object_object * async_iterator_prototype(context & cx) {
     object_object * promise_proto = detail::promise::promise_prototype(cx);
     if (const value * held = promise_proto->find(async_iterator_key); held != nullptr) {
@@ -433,7 +433,7 @@ constexpr std::string_view async_iterator_key = "@#AsyncIteratorPrototype";
             detail::method_native(cx, "[Symbol.asyncIterator]",
                                   [](context & c, std::span<value>) { return c.current_this(); });
         detail::install_arity(cx, self, 0);
-        table->define("@@asyncIterator", value::object(self), attr_builtin);
+        table->define(CTBROWSER_SYMBOL_KEY("asyncIterator"), value::object(self), attr_builtin);
     }
     // %AsyncIteratorPrototype%[@@asyncDispose] (explicit resource management,
     // 27.1.3.2): a promise of undefined once the iterator's `return`, if it
@@ -482,7 +482,7 @@ constexpr std::string_view async_iterator_key = "@#AsyncIteratorPrototype";
                 return cap.promise;
             });
         detail::install_arity(cx, dispose, 0);
-        table->define("@@asyncDispose", value::object(dispose), attr_builtin);
+        table->define(CTBROWSER_SYMBOL_KEY("asyncDispose"), value::object(dispose), attr_builtin);
     }
     return table;
 }
@@ -653,7 +653,7 @@ void install_promise(context & cx) {
         // 7.4.3 GetIterator(async): GetMethod(@@asyncIterator) - a value that
         // is neither undefined, null nor callable is the TypeError right
         // there, and @@iterator is asked only when the method is ABSENT.
-        const value async = c.lookup_property(source, "@@asyncIterator");
+        const value async = c.lookup_property(source, CTBROWSER_SYMBOL_KEY("asyncIterator"));
         if (c.throw_pending()) { return value::undefined(); }
         if (async.is_callable()) {
             const value made = c.call(async, {}, source);
@@ -823,8 +823,8 @@ void install_promise(context & cx) {
             detail::method_native(cx, "get [Symbol.species]",
                                   [](context & c, std::span<value>) { return c.current_this(); });
         detail::install_arity(cx, species, 0);
-        promise_new->define_accessor("@@species", value::object(species), value::undefined(),
-                                     attr_configurable);
+        promise_new->define_accessor(CTBROWSER_SYMBOL_KEY("species"), value::object(species),
+                                     value::undefined(), attr_configurable);
     }
     detail::constant(promise_new, "prototype", value::object(proto));
     link_constructor(cx, proto, "Promise", 1, value::object(promise_new));

@@ -181,12 +181,18 @@ void dom_bindings::install_media_queries(context & cx) {
         });
     // The two aliases, as the IDL says: `addListener(cb)` is
     // `addEventListener("change", cb)` and forwards to it so a listener added
-    // one way can be removed the other (addListener-removeListener.html).
+    // one way can be removed the other (addListener-removeListener.html). An
+    // operation is enumerable, and its one argument is required though it
+    // may be null (Web IDL §3.7.6, cssom-view/idlharness).
     for (const auto & [alias, method] : {std::pair{"addListener", "addEventListener"},
                                          std::pair{"removeListener", "removeEventListener"}}) {
         set_method(
             cx, *proto, alias,
             [method](context & c, std::span<value> a) {
+                if (a.empty()) {
+                    c.throw_error("TypeError", "1 argument required, but only 0 present.");
+                    return value::undefined();
+                }
                 const value self = c.current_this();
                 const value callback = arg(a, 0);
                 if (!callback.is_object_like()) { return value::undefined(); }
@@ -195,7 +201,7 @@ void dom_bindings::install_media_queries(context & cx) {
                 (void)c.call(fn, args, self);
                 return value::undefined();
             },
-            script::attr_builtin);
+            script::attr_writable | script::attr_enumerable | script::attr_configurable);
     }
     auto * ctor =
         cx.allocate<script::native_object>("MediaQueryList", [](context & c, std::span<value>) {
@@ -203,14 +209,29 @@ void dom_bindings::install_media_queries(context & cx) {
             return value::undefined();
         });
     ctor->define("prototype", media_query_list_prototype_, script::attr_none);
+    // The interface object inherits EventTarget's as its prototype inherits
+    // EventTarget.prototype (Web IDL §3.7.1), and takes no arguments.
+    if (const value target = cx.global("EventTarget"); target.is_object_like()) {
+        ctor->proto_link = target;
+    }
+    ctor->define("length", value::number(0), script::attr_configurable);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
-    proto->define("@@toStringTag", cx.string("MediaQueryList"), script::attr_configurable);
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("MediaQueryList"),
+                  script::attr_configurable);
     cx.define_builtin_global("MediaQueryList", value::object(ctor));
     // A bare global, as `getComputedStyle` is: `window` is a proxy that falls
     // back to the globals. A frame's window carries its own (frames.cpp).
     cx.define_native("matchMedia", [this](context & c, std::span<value> args) {
-        return match_media(c, args.empty() ? std::string{} : c.to_string(args[0]));
+        if (args.empty()) {
+            c.throw_error("TypeError", "1 argument required, but only 0 present.");
+            return value::undefined();
+        }
+        return match_media(c, c.to_string(args[0]));
     });
+    if (const value made = cx.global("matchMedia"); made.is_object_like()) {
+        static_cast<script::native_object *>(made.as_heap())
+            ->define("length", value::number(1), script::attr_configurable);
+    }
 }
 
 } // namespace ctbrowser::shell

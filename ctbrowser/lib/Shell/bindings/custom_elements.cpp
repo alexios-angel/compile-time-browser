@@ -145,7 +145,7 @@ constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
     }
     // GetMethod(V, @@iterator): a method that is present and not callable -
     // `{[Symbol.iterator]: 1}` - is a TypeError, not an empty list.
-    const value method = cx.lookup_property(from, "@@iterator");
+    const value method = cx.lookup_property(from, CTBROWSER_SYMBOL_KEY("iterator"));
     if (cx.throw_pending()) { return false; }
     if (!method.is_callable()) {
         cx.throw_error("TypeError", "The provided value cannot be converted to a sequence.");
@@ -730,11 +730,20 @@ value dom_bindings::create_html_element(context & cx, const std::string & name, 
             is_values_.insert_or_assign(made.key(), is);
         }
         set_node_registry(doc_->read(), made, registry);
+        // createElementNS's <script>, noted as createElement's is.
+        if (exact && ns == node_ns::html && lowered == "script") { note_unstarted_script(made); }
         return wrap(cx, made);
     }
-    // ponytail: a prefixed custom element (`createElementNS(html, "p:x-a")`) is
-    // constructed without its prefix - the constructor path makes the element.
-    return construct_custom_element(cx, index, registry, atoms_->intern(lowered));
+    // A PREFIXED custom element (`createElementNS(html, "p:x-a")`) is
+    // constructed under its local name and takes the prefix only once the
+    // constructor has returned - step 6.1.3.9, and the element made instead
+    // of one that failed has it too (Document-createElementNS-prefix-timing).
+    const value made = construct_custom_element(cx, index, registry, atoms_->intern(lowered));
+    if (const node_id id = prefixed ? handle_of(made) : node_id{}; id && made.is_object()) {
+        doc_->set_element_prefix(id, tag);
+        refresh_element(cx, *static_cast<script::object_object *>(made.as_heap()), id);
+    }
+    return made;
 }
 
 // DOM 4.9 "create an element" with the synchronous custom elements flag set,

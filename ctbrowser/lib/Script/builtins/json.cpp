@@ -15,7 +15,7 @@ namespace {
 // --- JSON -----------------------------------------------------------------
 
 // [[IsRawJSON]] (25.5.3): the private slot JSON.rawJSON's objects carry.
-constexpr std::string_view raw_json_slot = "@#IsRawJSON";
+constexpr std::string_view raw_json_slot = CTBROWSER_PRIVATE_KEY("IsRawJSON");
 
 // QuoteJSONString, 25.5.2.3. The escape TABLE is the specification's, and two
 // of its rows were missing: U+0008 and U+000C have the short forms \b and \f
@@ -354,7 +354,7 @@ struct json_writer {
             // ENUMERABLE OWN STRING KEYS ONLY - EnumerableOwnProperties, step
             // 5. A symbol key is filtered out by each_own_enumerable_key for
             // the reason it always was: this engine spells one
-            // "@@sym:N:description" and keeps it in the ordinary property
+            // as a string key (core/symbol.hpp) and keeps it in the ordinary property
             // table, so without the filter the internal spelling was serialised
             // into the page's own data.
             static_cast<const object_object *>(v.as_heap())
@@ -795,7 +795,8 @@ void install_json(context & cx) {
             v.is_object() &&
             static_cast<object_object *>(v.as_heap())->find(detail::raw_json_slot) != nullptr);
     });
-    json->define("@@toStringTag", cx.string("JSON"), attr_configurable); // 25.5.4
+    json->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("JSON"),
+                 attr_configurable); // 25.5.4
     cx.define_global("JSON", value::object(json));
 }
 

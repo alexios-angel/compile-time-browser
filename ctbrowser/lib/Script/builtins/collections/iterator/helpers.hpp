@@ -7,9 +7,9 @@ namespace ctbrowser::script::builtins_detail::iterator_helper {
 
 using detail::iterator_record;
 
-inline constexpr std::string_view helper_slot = "@#IteratorHelper";
+inline constexpr std::string_view helper_slot = CTBROWSER_PRIVATE_KEY("IteratorHelper");
 
-inline constexpr std::string_view wrapped_slot = "@#Iterated";
+inline constexpr std::string_view wrapped_slot = CTBROWSER_PRIVATE_KEY("Iterated");
 
 enum class helper_kind : std::uint8_t {
     map,

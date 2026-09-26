@@ -3,40 +3,21 @@
 
 #include "internal.hpp"
 
+#include "../element/internal.hpp" // document_base_url
+
 #include <optional>
 
 namespace ctbrowser::shell {
 
 using namespace detail;
 
-// Every part of the URL, derived from href. Called wherever href is set, so
-// the two cannot disagree.
-void dom_bindings::write_location_parts(context & cx, script::object_object & loc) {
-    const location_url parts = location_parts(location_href_);
-    loc.set("protocol", cx.string(parts.protocol));
-    loc.set("host", cx.string(parts.host));
-    loc.set("hostname", cx.string(parts.hostname));
-    loc.set("port", cx.string(parts.port));
-    loc.set("pathname", cx.string(parts.pathname));
-    loc.set("search", cx.string(parts.search));
-    loc.set("origin", cx.string(parts.origin.empty() ? "null" : parts.origin));
-}
-
 void dom_bindings::observe_location(std::string href, std::string hash) {
     location_href_ = std::move(href);
     location_hash_ = std::move(hash);
-    // WRITE THEM THROUGH. `href` was set once when the object was built,
-    // which made it a snapshot: a page reading location.href after
-    // following a link got whatever was true at page load, forever.
-    if (cx_ != nullptr && location_.is_object()) {
-        auto * loc = static_cast<script::object_object *>(location_.as_heap());
-        loc->set("href", cx_->string(location_href_));
-        loc->set("hash", cx_->string(location_hash_));
-        write_location_parts(*cx_, *loc);
-    }
-    // AND THE DOCUMENT'S THREE NAMES FOR THE SAME STRING, for the same reason:
-    // `document.URL` set once at install is a snapshot, and a page that follows
-    // a link and then reads it gets the address it started at.
+    // THE DOCUMENT'S THREE NAMES FOR THE URL are data, written through: set
+    // once at install they were a snapshot, and a page that followed a link
+    // and then read `document.URL` got the address it started at. The
+    // Location object's members are getters over the same two strings.
     if (cx_ != nullptr) {
         if (auto * doc = document_object()) {
             for (const char * name : {"URL", "documentURI", "baseURI"}) {
@@ -373,6 +354,10 @@ void dom_bindings::mutated() {
     // steps, then the custom element reactions - a connectedCallback may mutate
     // again and arrive back here - and everything above it is bookkeeping.
     run_inserted_scripts();
+    // ...and the insertion steps of the blank <iframe>s it connected, which a
+    // script of the same insertion that PRECEDED them did not see
+    // (frames.cpp, connect_inserted_frames).
+    connect_inserted_frames(writes);
     react_custom_elements();
 }
 
@@ -493,7 +478,6 @@ void dom_bindings::execute_script_element(context & cx, node_id id, const std::s
     // IN THIS DOCUMENT'S REALM - a frame's script declares into the frame's
     // globals and reads the frame's `document` (frames.cpp).
     const auto in_realm = enter_realm(cx);
-    const atom src_name = atoms_->intern("src");
     {
         // `document.currentScript` is this element while it runs - and while
         // its parse error is reported - and what it was, the outer script when
@@ -529,17 +513,17 @@ void dom_bindings::execute_script_element(context & cx, node_id id, const std::s
                         txn.element_ns(at) == node_ns::html) {
                         const bool loaded = std::ranges::any_of(
                             frames_, [at](const auto & entry) { return entry.element == at; });
-                        if (!loaded) {
-                            preceding.emplace_back(at,
-                                                   std::string{txn.attribute_value(at, src_name)});
-                        }
+                        if (!loaded) { preceding.emplace_back(at, frame_source(txn, at)); }
                     }
                     for (const node_id child : txn.children(at)) { self(self, child); }
                 };
                 walk(walk, txn.root());
             }
             for (const auto & [frame, src] : preceding) {
-                frames_.push_back(frame_entry{frame, src, load_frame(cx, frame, src)});
+                // A blank one has its `load` at once (frames.cpp).
+                if (!connect_blank_frame(frame, src)) {
+                    frames_.push_back(frame_entry{frame, src, start_frame(frame, src)});
+                }
             }
         }
         const bool frames_were_dirty = frames_dirty_;
@@ -601,7 +585,7 @@ void dom_bindings::install_navigation(context & cx) {
     // global one, not three copies - a page reads whichever it learned, and
     // they have to agree.
     if (auto * doc = document_object()) {
-        doc->set("location", location_);
+        define_location_property(cx, *doc);
         // `document.URL`, `documentURI` and `baseURI` are the same string as
         // location.href and are set beside it so they cannot drift. Three
         // spellings because three specifications named it: URL is HTML's,
@@ -633,21 +617,201 @@ void dom_bindings::install_navigation(context & cx) {
         // is the first thing after it that already reaches for both.
         doc->set("defaultView", cx.global("window"));
     }
-    if (auto * window = window_object()) { window->set("location", location_); }
+    if (auto * window = window_object()) { define_location_property(cx, *window); }
 }
 
+// THE LOCATION OBJECT, HTML 7.2.4 - this document's, over its URL. Every
+// member is [LegacyUnforgeable], so an OWN, non-configurable property of the
+// object rather than a prototype's: the getters read the document's address
+// as it is now, so a navigation is seen without the object being rewritten.
+//
+// THE SETTERS NAVIGATE ("Location-object navigate"). `href`, assign() and
+// replace() parse the new URL against the ENTRY document's base URL - the
+// realm the calling script runs in - and a failure is a SyntaxError; the
+// part setters edit a copy of this URL. What differs from the current URL
+// only in its fragment is a fragment navigation, here: the address moves,
+// `:target` follows, and `hashchange` fires on a later task when the fragment
+// changed. Anything else navigates this document's navigable - a frame's
+// <iframe>, planned with the rest (bindings/frames.cpp, navigate_frame).
+// ponytail: the TOP-LEVEL page is the embedder's to navigate, and a script
+// cannot ask it to yet; such a navigation is dropped, as it always was.
 value dom_bindings::make_location(context & cx) {
     auto * loc = cx.allocate<script::object_object>();
-    set_method(cx, *loc, "reload", [this](context &, std::span<value>) {
-        reload_requested_ = true;
+    constexpr std::uint8_t unforgeable = script::attr_enumerable;
+    // Location-object navigate to `url`, absolute.
+    const auto navigate = [this](context & c, const std::string & url) {
+        const std::size_t hash = url.find('#');
+        const std::string_view current =
+            std::string_view{location_href_}.substr(0, location_href_.find('#'));
+        if (hash != std::string::npos && !location_href_.empty() &&
+            std::string_view{url}.substr(0, hash) == current) {
+            // NAVIGATE TO A FRAGMENT (7.4.2.3.3): synchronous, and `hashchange`
+            // a task later when the fragment moved.
+            const std::string old_url = location_href_;
+            const std::size_t old_mark = old_url.find('#');
+            const std::optional<std::string> old_fragment =
+                old_mark == std::string::npos ? std::nullopt
+                                              : std::optional{old_url.substr(old_mark + 1)};
+            const std::string fragment = url.substr(hash + 1);
+            observe_location(url, fragment.empty() ? std::string{} : "#" + fragment);
+            if (old_fragment != fragment) {
+                const value fire =
+                    native(c, "hashchange", [this, old_url, url](context &, std::span<value>) {
+                        (void)dispatch_hash_change(old_url, url);
+                        return value::undefined();
+                    });
+                dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+                (void)top.add_timer(fire, 0, false);
+            }
+            return;
+        }
+        const auto [navigable, element] = choose_navigable("_self");
+        if (navigable == nullptr) { return; }
+        form_navigation navigation;
+        navigation.src = url;
+        navigation.request.url = url;
+        navigate_frame(*navigable, element, std::move(navigation));
+    };
+    // The given URL parsed against the entry document, or the SyntaxError.
+    const auto parse_given = [this](context & c, value given,
+                                    std::string_view what) -> std::optional<std::string> {
+        const std::string text = to_usv_string(c.to_string(given));
+        if (c.throw_pending()) { return std::nullopt; }
+        dom_bindings & entry = bindings_of(c.global("window"));
+        const std::string base =
+            document_base_url(entry.doc_->read(), *entry.atoms_, entry.fallback_base_url());
+        const std::optional<url_record> parsed =
+            base.empty() ? parse_url(text) : parse_url(text, base);
+        if (!parsed) {
+            throw_dom_exception(c, "SyntaxError",
+                                "Failed to " + std::string{what} + " on 'Location': '" + text +
+                                    "' is not a valid URL.");
+            return std::nullopt;
+        }
+        return parsed->serialize();
+    };
+    const auto accessor = [&](const char * name, script::native_fn get, script::native_fn set) {
+        const value setter = set ? value::object(cx.allocate<script::native_object>(
+                                       std::string{"set "} + name, std::move(set)))
+                                 : value::undefined();
+        loc->define_accessor(name,
+                             value::object(cx.allocate<script::native_object>(
+                                 std::string{"get "} + name, std::move(get))),
+                             setter, unforgeable);
+    };
+    accessor(
+        "href", [this](context & c, std::span<value>) { return c.string(location_href_); },
+        [navigate, parse_given](context & c, std::span<value> a) {
+            if (const auto url = parse_given(c, arg(a, 0), "set the 'href' property")) {
+                navigate(c, *url);
+            }
+            return value::undefined();
+        });
+    accessor(
+        "origin",
+        [this](context & c, std::span<value>) {
+            const std::string origin = location_parts(location_href_).origin;
+            return c.string(origin.empty() ? "null" : origin);
+        },
+        nullptr);
+    // THE PARTS: each getter a piece of the address, each setter the URL
+    // Standard's setter over a copy of it (6.1, set_url_part) - then the
+    // navigation. `hash` is the one a page writes most, and the fragment
+    // navigation above is what it does.
+    struct part {
+        const char * name;
+        std::string location_url::* field;
+        url_part which;
+    };
+    for (const part & one : {part{"protocol", &location_url::protocol, url_part::protocol},
+                             part{"host", &location_url::host, url_part::host},
+                             part{"hostname", &location_url::hostname, url_part::hostname},
+                             part{"port", &location_url::port, url_part::port},
+                             part{"pathname", &location_url::pathname, url_part::pathname},
+                             part{"search", &location_url::search, url_part::search},
+                             part{"hash", &location_url::hash, url_part::hash}}) {
+        accessor(
+            one.name,
+            [this, field = one.field, hash = one.which == url_part::hash](context & c,
+                                                                          std::span<value>) {
+                return c.string(hash ? location_hash_ : location_parts(location_href_).*field);
+            },
+            [this, navigate, which = one.which](context & c, std::span<value> a) {
+                const std::string given = to_usv_string(c.to_string(arg(a, 0)));
+                if (c.throw_pending()) { return value::undefined(); }
+                std::optional<url_record> copy = parse_url(location_href_);
+                if (!copy) { return value::undefined(); }
+                if (which == url_part::hash) {
+                    // Location's own steps: the fragment is SET, never nulled
+                    // - `location.hash = ""` goes to `#` - and a fragment that
+                    // did not change navigates nowhere.
+                    const std::optional<std::string> before = copy->fragment;
+                    (void)set_url_part(*copy, url_part::hash, given.empty() ? "#" : given);
+                    if (copy->fragment == before) { return value::undefined(); }
+                } else {
+                    const bool needs_hierarchy =
+                        which == url_part::host || which == url_part::hostname ||
+                        which == url_part::port || which == url_part::pathname;
+                    if (needs_hierarchy && copy->opaque_path) { return value::undefined(); }
+                    (void)set_url_part(*copy, which, given);
+                    // A protocol setter that left http(s) terminates.
+                    if (which == url_part::protocol && copy->scheme != "http" &&
+                        copy->scheme != "https") {
+                        return value::undefined();
+                    }
+                }
+                navigate(c, copy->serialize());
+                return value::undefined();
+            });
+    }
+    const auto method = [&](const char * name, unsigned length, script::native_fn fn) {
+        auto * made = cx.allocate<script::native_object>(name, std::move(fn));
+        made->define("length", value::number(length), script::attr_configurable);
+        loc->define(name, value::object(made), unforgeable);
+    };
+    method("assign", 1, [navigate, parse_given](context & c, std::span<value> a) {
+        if (const auto url = parse_given(c, arg(a, 0), "execute 'assign'")) { navigate(c, *url); }
         return value::undefined();
     });
-    set_method(cx, *loc, "toString",
-               [this](context & c, std::span<value>) { return c.string(location_href_); });
-    loc->set("href", cx.string(location_href_));
-    loc->set("hash", cx.string(location_hash_));
-    write_location_parts(cx, *loc);
+    method("replace", 1, [navigate, parse_given](context & c, std::span<value> a) {
+        if (const auto url = parse_given(c, arg(a, 0), "execute 'replace'")) { navigate(c, *url); }
+        return value::undefined();
+    });
+    // reload(): the page's is the browser's, between callbacks; a frame's
+    // navigates the frame to where it is.
+    method("reload", 0, [this](context &, std::span<value>) {
+        const auto [navigable, element] = choose_navigable("_self");
+        if (navigable == nullptr) {
+            reload_requested_ = true;
+        } else {
+            form_navigation navigation;
+            navigation.src = location_href_;
+            navigation.request.url = location_href_;
+            navigate_frame(*navigable, element, std::move(navigation));
+        }
+        return value::undefined();
+    });
+    method("toString", 0,
+           [this](context & c, std::span<value>) { return c.string(location_href_); });
     return value::object(loc);
+}
+
+// `window.location` and `document.location`: [PutForwards=href], so an
+// ACCESSOR whose setter is `location.href = v` - `frame.contentWindow.location
+// = url` navigates the frame (and throws a SyntaxError for a URL that does not
+// parse) rather than replacing the property with a string.
+void dom_bindings::define_location_property(context & cx, script::object_object & holder) {
+    holder.define_accessor(
+        "location",
+        value::object(cx.allocate<script::native_object>(
+            "get location", [this](context &, std::span<value>) { return location_; })),
+        value::object(cx.allocate<script::native_object>("set location",
+                                                         [this](context & c, std::span<value> a) {
+                                                             c.store_property(location_, "href",
+                                                                              arg(a, 0));
+                                                             return value::undefined();
+                                                         })),
+        script::attr_enumerable);
 }
 
 // THE TARGET, not the proxy. Everything in these bindings that writes a

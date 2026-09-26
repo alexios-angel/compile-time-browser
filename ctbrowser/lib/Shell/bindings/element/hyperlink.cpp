@@ -53,58 +53,81 @@ constexpr hyperlink_attribute hyperlink_attributes[] = {
     {"hash", [](const url_record & u) { return u.hash(); }, "", url_part::hash},
 };
 
+// The first HTML <base> in tree order that carries `attribute`. THE NAMESPACE
+// DECIDES: an SVG <base> is not HTML's, and the two intern to the same atom
+// (the CLAUDE.md invariant).
+[[nodiscard]] node_id first_base_with(const read_txn & txn, atom attribute) {
+    const auto walk = [&](const auto & self, node_id id) -> node_id {
+        if (txn.element_ns(id) == node_ns::html && txn.local_name(id) == "base" &&
+            txn.has_attribute(id, attribute)) {
+            return id;
+        }
+        for (const node_id child : txn.children(id)) {
+            if (const node_id found = self(self, child)) { return found; }
+        }
+        return node_id{};
+    };
+    return walk(walk, txn.document_node());
+}
+
 } // namespace
+
+// HTML 4.2.3 "document base URL". A WALK PER ACCESS, and deliberately: a <base>
+// can be inserted, removed or have its href rewritten at any moment
+// (a-element.js rewrites it between every subtest), so a cached answer is a
+// stale one. Pages carry a handful of elements before <body>, and the walk
+// stops at the first <base href>.
+// ponytail: linear scan of the tree; cache on the document's version counter
+// if a page with a large <head> ever measures.
+std::string detail::document_base_url(const read_txn & txn, atom_table & atoms,
+                                      const std::string & address) {
+    const atom href = atoms.intern("href");
+    const node_id found = first_base_with(txn, href);
+    if (!found) { return address; }
+    const std::string raw{txn.attribute_value(found, href)};
+    if (address.empty()) { return raw; }
+    // The frozen base URL, 4.2.3: the attribute parsed against the FALLBACK
+    // base URL, which is the document's own address.
+    const std::string resolved = resolve(address, raw);
+    return resolved.empty() ? raw : resolved;
+}
+
+std::string detail::document_base_target(const read_txn & txn, atom_table & atoms) {
+    const atom target = atoms.intern("target");
+    const node_id found = first_base_with(txn, target);
+    return found ? std::string{txn.attribute_value(found, target)} : std::string{};
+}
 
 void dom_bindings::install_hyperlink_utils(context & cx) {
     const atom href_name = atoms_->intern("href");
 
-    // HTML 4.2.3 "document base URL". A WALK PER ACCESS, and deliberately: a
-    // <base> can be inserted, removed or have its href rewritten at any moment
-    // (a-element.js rewrites it between every subtest), so a cached answer is a
-    // stale one. Pages carry a handful of elements before <body>, and the walk
-    // stops at the first <base href>.
-    // ponytail: linear scan of the tree; cache on the document's version
-    // counter if a page with a large <head> ever measures.
-    const auto base_url = [this, href_name]() -> std::string {
-        const auto txn = doc_->read();
-        const auto first_base = [&](auto & self, node_id id) -> node_id {
-            // THE NAMESPACE DECIDES: an SVG <base> is not HTML's, and the two
-            // intern to the same atom (the CLAUDE.md invariant).
-            if (txn.element_ns(id) == node_ns::html && txn.local_name(id) == "base" &&
-                txn.has_attribute(id, href_name)) {
-                return id;
-            }
-            for (const node_id child : txn.children(id)) {
-                if (const node_id found = self(self, child)) { return found; }
-            }
-            return node_id{};
-        };
-        const node_id found = first_base(first_base, txn.document_node());
-        if (!found) { return location_href_; }
-        const std::string raw{txn.attribute_value(found, href_name)};
-        if (location_href_.empty()) { return raw; }
-        // The frozen base URL, 4.2.3: the attribute parsed against the
-        // FALLBACK base URL, which is the document's own address.
-        const std::string resolved = resolve(location_href_, raw);
-        return resolved.empty() ? raw : resolved;
+    // THE ELEMENT'S OWN DOCUMENT. These accessors live on the prototypes every
+    // document shares, and an <a> in a frame's document is read through the
+    // frame's bindings - its tree, its address, its <base> - not the page's.
+    const auto owner = [this](context & c) -> dom_bindings & {
+        dom_bindings * found = owner_of(c.current_this());
+        return found == nullptr ? *this : *found;
     };
 
     // "Reinitialize url": null when there is no href attribute, and null again
-    // when what it holds does not parse.
-    const auto url_of = [this, base_url, href_name](node_id id) -> std::optional<url_record> {
+    // when what it holds does not parse - against the document base URL, whose
+    // fallback is a srcdoc document's container's (fallback_base_url).
+    const auto url_of = [href_name](dom_bindings & b, node_id id) -> std::optional<url_record> {
         std::string raw;
         {
-            const auto txn = doc_->read();
+            const auto txn = b.doc_->read();
             if (!id || !txn.has_attribute(id, href_name)) { return std::nullopt; }
             raw = std::string{txn.attribute_value(id, href_name)};
         }
-        const std::string base = base_url();
+        const std::string fallback = b.fallback_base_url();
+        const std::string base = document_base_url(b.doc_->read(), *b.atoms_, fallback);
         if (base.empty()) { return parse_url(raw); }
         const std::optional<url_record> parsed_base = parse_url(base);
         return parse_url(raw, parsed_base ? &*parsed_base : nullptr);
     };
-    const auto href_attribute = [this, href_name](node_id id) -> std::optional<std::string> {
-        const auto txn = doc_->read();
+    const auto href_attribute = [href_name](dom_bindings & b,
+                                            node_id id) -> std::optional<std::string> {
+        const auto txn = b.doc_->read();
         if (!id || !txn.has_attribute(id, href_name)) { return std::nullopt; }
         return std::string{txn.attribute_value(id, href_name)};
     };
@@ -121,18 +144,20 @@ void dom_bindings::install_hyperlink_utils(context & cx) {
         // <base>'s.)
         define_getter(
             cx, *proto, "href",
-            [this, url_of, href_attribute](context & c, std::span<value>) {
-                const node_id id = receiver(c);
-                if (const std::optional<url_record> url = url_of(id)) {
+            [owner, url_of, href_attribute](context & c, std::span<value>) {
+                dom_bindings & b = owner(c);
+                const node_id id = b.receiver(c);
+                if (const std::optional<url_record> url = url_of(b, id)) {
                     return c.string(url->serialize());
                 }
-                return c.string(href_attribute(id).value_or(std::string{}));
+                return c.string(href_attribute(b, id).value_or(std::string{}));
             },
-            [this, href_name](context & c, std::span<value> a) {
-                const node_id id = receiver(c);
+            [owner, href_name](context & c, std::span<value> a) {
+                dom_bindings & b = owner(c);
+                const node_id id = b.receiver(c);
                 if (!id) { return value::undefined(); }
-                (void)doc_->set_attribute(id, href_name, to_usv_string(c.to_string(arg(a, 0))));
-                mutated();
+                (void)b.doc_->set_attribute(id, href_name, to_usv_string(c.to_string(arg(a, 0))));
+                b.mutated();
                 return value::undefined();
             });
 
@@ -140,24 +165,26 @@ void dom_bindings::install_hyperlink_utils(context & cx) {
             script::native_fn setter;
             if (row.set) {
                 const url_part part = *row.set;
-                setter = [this, url_of, part, href_name](context & c, std::span<value> a) {
-                    const node_id id = receiver(c);
-                    std::optional<url_record> url = url_of(id);
+                setter = [owner, url_of, part, href_name](context & c, std::span<value> a) {
+                    dom_bindings & b = owner(c);
+                    const node_id id = b.receiver(c);
+                    std::optional<url_record> url = url_of(b, id);
                     // "If url is null, return" - the shape every setter of the
                     // mixin has. Nothing is written and nothing throws.
                     if (!url) { return value::undefined(); }
                     (void)set_url_part(*url, part, to_usv_string(c.to_string(arg(a, 0))));
                     // "Update href": the content attribute takes the record's
                     // serialisation, which is what makes the next read agree.
-                    (void)doc_->set_attribute(id, href_name, url->serialize());
-                    mutated();
+                    (void)b.doc_->set_attribute(id, href_name, url->serialize());
+                    b.mutated();
                     return value::undefined();
                 };
             }
             define_getter(
                 cx, *proto, row.name,
-                [this, url_of, row](context & c, std::span<value>) {
-                    const std::optional<url_record> url = url_of(receiver(c));
+                [owner, url_of, row](context & c, std::span<value>) {
+                    dom_bindings & b = owner(c);
+                    const std::optional<url_record> url = url_of(b, b.receiver(c));
                     return c.string(url ? row.get(*url) : std::string{row.when_null});
                 },
                 std::move(setter));

@@ -77,8 +77,8 @@ value context::own_keys(value source) {
         for (std::size_t i = 0; i < closure->props.size(); ++i) {
             const std::string & name = closure->props[i].first;
             // `__home` is the compiler's [[HomeObject]] slot, not a static.
-            if ((closure->attrs_of(name) & attr_enumerable) != 0 && !name.starts_with("@@") &&
-                name != "__home") {
+            if ((closure->attrs_of(name) & attr_enumerable) != 0 &&
+                !name.starts_with(symbol_key_mark) && name != "__home") {
                 keys->items.push_back(string(name));
             }
         }
@@ -86,7 +86,7 @@ value context::own_keys(value source) {
         auto * fn = static_cast<native_object *>(source.as_heap());
         for (std::size_t i = 0; i < fn->props.size(); ++i) {
             const std::string & name = fn->props[i].first;
-            if ((fn->attrs_of(name) & attr_enumerable) != 0 && !name.starts_with("@@")) {
+            if ((fn->attrs_of(name) & attr_enumerable) != 0 && !name.starts_with(symbol_key_mark)) {
                 keys->items.push_back(string(name));
             }
         }
@@ -433,11 +433,12 @@ bool context::instance_of(value target, value ctor) {
         return false;
     }
     const std::size_t before = unwinds();
-    const value handler = lookup_property(ctor, "@@hasInstance");
+    const value handler = lookup_property(ctor, CTBROWSER_SYMBOL_KEY("hasInstance"));
     if (throw_pending() || unwinds() != before) { return false; }
     if (!handler.is_nullish()) {
         object_object * fn_proto = prototype(proto_kind::function);
-        const value * intrinsic = fn_proto == nullptr ? nullptr : fn_proto->find("@@hasInstance");
+        const value * intrinsic =
+            fn_proto == nullptr ? nullptr : fn_proto->find(CTBROWSER_SYMBOL_KEY("hasInstance"));
         if (intrinsic == nullptr || !handler.same_value(*intrinsic)) {
             if (!handler.is_callable()) {
                 throw_error("TypeError", "Symbol.hasInstance of the right-hand side of "
@@ -457,8 +458,8 @@ bool context::instance_of(value target, value ctor) {
     // OrdinaryHasInstance step 2: a bound function asks about its target,
     // with the whole operator.
     if (ctor.is_kind(heap_kind::native)) {
-        if (const value * bound =
-                static_cast<native_object *>(ctor.as_heap())->find("@#BoundTargetFunction")) {
+        if (const value * bound = static_cast<native_object *>(ctor.as_heap())
+                                      ->find(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"))) {
             return instance_of(target, *bound);
         }
     }

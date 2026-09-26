@@ -28,6 +28,7 @@ void dom_bindings::install_window(context & cx) {
                              *window); // scrollX/scrollY, scroll/scrollTo/scrollBy (scrolling.cpp)
     install_window_listeners(cx, *window);
     install_post_message(cx, *window);
+    install_window_open(cx, *window); // window.open(), bindings/frames.cpp
     // `localStorage`, IN MEMORY AND FOR THIS PAGE ONLY. 38 uses in p5.js, which
     // reads it before it draws anything.
     //
@@ -579,7 +580,8 @@ void dom_bindings::install_window(context & cx) {
         if (!ctor.is_kind(script::heap_kind::native)) { continue; }
         auto * proto = cx.allocate<script::object_object>();
         proto->define("constructor", ctor, script::attr_builtin);
-        proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+        proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name),
+                      script::attr_configurable);
         static_cast<script::native_object *>(ctor.as_heap())
             ->define("prototype", value::object(proto), script::attr_none);
     }

@@ -8,7 +8,7 @@ namespace ctbrowser::script::builtins_detail {
 
 void install_temporal(context & cx) {
     object_object * ns = detail::new_table(cx);
-    ns->define("@@toStringTag", cx.string("Temporal"), attr_configurable);
+    ns->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Temporal"), attr_configurable);
     temporal_js::install_now(cx, *ns);
     temporal_js::install_instant(cx, *ns);
     temporal_js::install_plain_date_time(cx, *ns);

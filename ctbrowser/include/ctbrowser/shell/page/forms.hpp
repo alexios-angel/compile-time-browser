@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -283,12 +284,17 @@ public:
     }
 
     // A control's FORM OWNER (HTML 4.10.18.3): with a `form` attribute, the
-    // first element in its tree whose id is the value - when that is a
-    // <form>, and none at all otherwise - else the <form> it is inside. A
-    // button outside its form that names it submits it.
+    // first element in its tree whose id is the value - when that is an HTML
+    // <form>, and none at all otherwise - else its nearest ancestor HTML
+    // <form>. A button outside its form that names it submits it. THE ONE
+    // ALGORITHM: the browser's default actions and every binding that asks
+    // for a form owner (control_helpers::form_owner) come here.
     [[nodiscard]] static node_id owning_form(const read_txn & txn, atom_table & atoms,
                                              node_id from) {
         const atom form_tag = atoms.intern_lower("form");
+        const auto is_form = [&](node_id at) {
+            return txn.element_ns(at) == node_ns::html && txn.tag(at).value_or(atom{}) == form_tag;
+        };
         if (const atom named = atoms.intern("form"); txn.has_attribute(from, named)) {
             const std::string_view id = txn.attribute_value(from, named);
             if (id.empty()) { return node_id{}; }
@@ -298,17 +304,67 @@ public:
                 const node_id at = pending.back();
                 pending.pop_back();
                 if (txn.attribute_value(at, id_attribute) == id) {
-                    return txn.tag(at).value_or(atom{}) == form_tag ? at : node_id{};
+                    return is_form(at) ? at : node_id{};
                 }
                 const std::span<const node_id> children = txn.children(at);
                 for (std::size_t i = children.size(); i-- > 0;) { pending.push_back(children[i]); }
             }
             return node_id{};
         }
-        for (node_id at = from; at; at = txn.parent(at)) {
-            if (txn.tag(at).value_or(atom{}) == form_tag) { return at; }
+        for (node_id at = txn.parent(from); at; at = txn.parent(at)) {
+            if (is_form(at)) { return at; }
         }
         return node_id{};
+    }
+
+    // HTML 4.10.18.5 "actually disabled": the element's own `disabled`, or a
+    // disabled <fieldset> ancestor - unless the element is inside that
+    // fieldset's first <legend> child, which the fieldset leaves enabled.
+    [[nodiscard]] static bool is_actually_disabled(const read_txn & txn, atom_table & atoms,
+                                                   node_id id) {
+        const atom disabled = atoms.intern("disabled");
+        if (txn.has_attribute(id, disabled)) { return true; }
+        const atom fieldset = atoms.intern_lower("fieldset");
+        const atom legend = atoms.intern_lower("legend");
+        for (node_id child = id, at = txn.parent(id); at; child = at, at = txn.parent(at)) {
+            if (txn.tag(at).value_or(atom{}) != fieldset || !txn.has_attribute(at, disabled)) {
+                continue;
+            }
+            node_id first_legend;
+            for (const node_id one : txn.children(at)) {
+                if (txn.tag(one).value_or(atom{}) == legend) {
+                    first_legend = one;
+                    break;
+                }
+            }
+            if (child != first_legend) { return true; }
+        }
+        return false;
+    }
+
+    // WHAT A BUTTON'S ACTIVATION DOES TO ITS FORM (4.10.6, 4.10.5.1.18-19): a
+    // submit button submits its form owner and a reset button resets it.
+    // `form` is empty when the element is neither, is actually disabled or
+    // has no form owner. browser::activate and a frame document's activation
+    // (bindings/frames.cpp) both ask this.
+    struct form_action {
+        node_id form;
+        bool submits = false;
+        bool resets = false;
+    };
+    [[nodiscard]] static form_action form_action_of(const read_txn & txn, atom_table & atoms,
+                                                    node_id id) {
+        if (!txn.contains(id) || txn.element_ns(id) != node_ns::html ||
+            is_actually_disabled(txn, atoms, id)) {
+            return {};
+        }
+        const std::string_view local = txn.local_name(id);
+        form_action out;
+        out.submits = is_submit_button(txn, atoms, id);
+        out.resets = (local == "button" || local == "input") &&
+                     ascii_iequals(txn.attribute_value(id, atoms.intern("type")), "reset");
+        if (out.submits || out.resets) { out.form = owning_form(txn, atoms, id); }
+        return out;
     }
 
     // The UTF-8 code point boundary on either side of a byte offset - a caret
@@ -321,6 +377,92 @@ private:
     void erase_selection(control_state & control);
 
     flat_map<std::uint64_t, control_state> states_;
+};
+
+// --- a request an embedder may answer --------------------------------------
+
+// This engine opens no socket for a page loaded from disk: every byte a frame,
+// a fetch() or an XHR gets comes out of the asset registry, which answers a GET
+// for a FILE and nothing else. A form POSTed to a script, or a GET whose answer
+// depends on its query, has nobody to answer it - and a request handler
+// (browser_options::on_request) is that somebody: given the method, the
+// absolute URL, the request's Content-Type and its body, it returns a
+// response, or nullopt to leave the request to the registry as before.
+//
+// ONE CALLER FILLS IT IN THIS TREE: ctdrive, under a document root, with
+// emulations of the web-platform-tests' Python handlers
+// (tools/ctdrive/wpt_handlers.cpp) - the server half of a form submission
+// test. An application has no reason to set it.
+struct resource_request {
+    std::string method = "GET";
+    std::string url;          // absolute, fragment removed
+    std::string content_type; // the request's Content-Type; empty for none
+    std::string body;         // the entity body's bytes
+};
+
+struct resource_reply {
+    int status = 200;
+    std::string content_type; // the response's Content-Type, parameters and all
+    std::string body;         // its bytes
+};
+
+using request_handler = std::function<std::optional<resource_reply>(const resource_request &)>;
+
+// --- form submission, HTML 4.10.21.3-9 ---------------------------------------
+
+// ONE ENTRY OF A FORM'S ENTRY LIST as the three encodings read it: a name and
+// a string - or a File, whose name, type and bytes multipart/form-data sends
+// and the other two reduce to the name. Text is UTF-8 of scalar values.
+struct form_entry {
+    std::string name;
+    std::string value; // a string entry's text; a File's bytes
+    bool file = false;
+    std::string filename;
+    std::string type; // a File's type; "" is application/octet-stream
+};
+
+// The three submission bodies over an entry list, each ENCODED in `encoding`
+// - the one "picking an encoding for the form" chose - with the Encoding
+// Standard's "html" error mode, so a character the encoding lacks is `&#N;`:
+// application/x-www-form-urlencoded (URL 5.2, also a GET's query),
+// text/plain (4.10.21.9) and multipart/form-data (4.10.21.8). Names and
+// string values have their line breaks normalised to CR LF first (4.10.21.6
+// and .8). A legacy multi-byte encoding has no encoder here and is sent as
+// UTF-8.
+[[nodiscard]] std::string urlencoded_form_body(const std::vector<form_entry> & entries,
+                                               std::string_view encoding);
+[[nodiscard]] std::string text_plain_form_body(const std::vector<form_entry> & entries,
+                                               std::string_view encoding);
+[[nodiscard]] std::string multipart_form_body(const std::vector<form_entry> & entries,
+                                              std::string_view encoding);
+
+// THE multipart/form-data boundary string. Fixed, so a submission's bytes are
+// the same on every run and a golden could compare them. ponytail: a value
+// that contains it ends its part early; a boundary from the seeded random
+// source is the upgrade.
+inline constexpr std::string_view multipart_boundary = "----ctbrowserFormBoundary7MA4YWxkTrZu0gW";
+
+class dom_bindings;
+
+// A SUBMISSION'S NAVIGATION, as build_submission makes it: the target it
+// names, the URL as the page wrote it - the name the asset registry is asked
+// for - and the request (method, absolute URL, Content-Type and body).
+struct form_navigation {
+    std::string target;
+    std::string src;
+    resource_request request;
+};
+
+// ...PLANNED, once a navigable is chosen (bindings/frames.cpp): the form's
+// document and the form - whose one planned navigation a later one replaces;
+// both empty for a script's navigation (a Location setter, window.open) - and
+// the <iframe> it navigates, by the bindings of the document it is in.
+struct planned_navigation {
+    dom_bindings * form_document = nullptr;
+    node_id form;
+    dom_bindings * navigable = nullptr;
+    node_id element;
+    form_navigation navigation;
 };
 
 } // namespace ctbrowser::shell

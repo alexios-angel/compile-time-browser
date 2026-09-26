@@ -179,7 +179,7 @@ constexpr spec kinds[] = {
             static_cast<std::size_t>(new_byte_length / static_cast<double>(width)), true);
     }
     // An iterable, else an array-like (steps 6.b.iv-vi).
-    const value using_iterator = c.lookup_property(first, "@@iterator");
+    const value using_iterator = c.lookup_property(first, CTBROWSER_SYMBOL_KEY("iterator"));
     if (c.throw_pending()) { return value::undefined(); }
     if (!using_iterator.is_nullish() && !using_iterator.is_callable()) {
         c.throw_error("TypeError", "Symbol.iterator is not a function");
@@ -234,7 +234,7 @@ constexpr spec kinds[] = {
         c.throw_error("TypeError", "TypedArray.from called on null or undefined");
         return value::undefined();
     }
-    const value using_iterator = c.lookup_property(source, "@@iterator");
+    const value using_iterator = c.lookup_property(source, CTBROWSER_SYMBOL_KEY("iterator"));
     if (c.throw_pending()) { return value::undefined(); }
     if (!using_iterator.is_nullish() && !using_iterator.is_callable()) {
         c.throw_error("TypeError", "Symbol.iterator is not a function");
@@ -557,8 +557,8 @@ void install_typed_arrays(context & cx) {
             detail::method_native(cx, "get [Symbol.species]",
                                   [](context & c, std::span<value>) { return c.current_this(); });
         detail::install_arity(cx, species, 0);
-        typed_ctor->define_accessor("@@species", value::object(species), value::undefined(),
-                                    attr_configurable);
+        typed_ctor->define_accessor(CTBROWSER_SYMBOL_KEY("species"), value::object(species),
+                                    value::undefined(), attr_configurable);
     }
     method(cx, typed_ctor, "from", 1, typed_array_from);
     method(cx, typed_ctor, "of", 0, typed_array_of);

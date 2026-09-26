@@ -382,6 +382,10 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
     }
     out.u32(static_cast<std::uint32_t>(from.hoisted_vars.size()));
     for (const std::string & s : from.hoisted_vars) { out.text(s); }
+    out.u32(static_cast<std::uint32_t>(from.lexical_names.size()));
+    for (const std::string & s : from.lexical_names) { out.text(s); }
+    out.u32(static_cast<std::uint32_t>(from.function_names.size()));
+    for (const std::string & s : from.function_names) { out.text(s); }
 
     out.text(option == image_option::keep_source ? std::string_view{from.source}
                                                  : std::string_view{});

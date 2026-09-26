@@ -541,6 +541,13 @@ struct program {
     // (19.2.1.3 step 17: CreateGlobalVarBinding(vn, true)), where a script's
     // are not (16.1.7 step 17, `false`) - see context::declare_global_var.
     bool eval_code = false;
+    // A CLASSIC SCRIPT'S TOP-LEVEL LEXICAL NAMES - `let`, `const`, `class` -
+    // and its top-level FUNCTION declarations: with hoisted_vars, what
+    // 16.1.7 GlobalDeclarationInstantiation checks against the bindings
+    // earlier scripts made before this one may run (context::run). Data, like
+    // hoisted_vars. Empty for a module and an eval.
+    std::vector<std::string> lexical_names;
+    std::vector<std::string> function_names;
     // THE SOURCE THIS WAS COMPILED FROM, kept so a function can be printed.
     // A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
     std::string source;

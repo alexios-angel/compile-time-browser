@@ -292,7 +292,7 @@ void dom_bindings::install_animations(context & cx) {
     // §3.7.3): `assert_class_string(getAnimations()[0], "CSSTransition")` is
     // how css-properties-values-api asks what a transition is, and without it
     // an Animation answered with the EventTarget's tag it inherits.
-    timeline_proto->define("@@toStringTag", cx.string("DocumentTimeline"),
+    timeline_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("DocumentTimeline"),
                            script::attr_configurable);
     cx.define_builtin_global("DocumentTimeline", value::object(timeline_ctor));
     auto * timeline = cx.allocate<script::object_object>();
@@ -451,7 +451,8 @@ void dom_bindings::install_animations(context & cx) {
         });
     effect_ctor->define("prototype", keyframe_effect_prototype_, script::attr_none);
     effect_proto->define("constructor", value::object(effect_ctor), script::attr_builtin);
-    effect_proto->define("@@toStringTag", cx.string("KeyframeEffect"), script::attr_configurable);
+    effect_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("KeyframeEffect"),
+                         script::attr_configurable);
     cx.define_builtin_global("KeyframeEffect", value::object(effect_ctor));
 
     // --- Animation ------------------------------------------------------------
@@ -657,6 +658,48 @@ void dom_bindings::install_animations(context & cx) {
             return value::undefined();
         },
         script::attr_builtin);
+    // commitStyles(), Web Animations 1 §4.4.14: the effect's current values
+    // written into its target's `style` attribute, each property through the
+    // element's own CSSStyleDeclaration as `el.style.setProperty(name, value)`
+    // would write it (transform-interpolation-inline-value).
+    // ponytail: the values are every animation on the target composited, not
+    // only those up to this one in composite order; split animated_values'
+    // stack when two animations and commitStyles meet in a test.
+    set_method(
+        cx, *proto, "commitStyles",
+        [this, self_index](context & c, std::span<value>) {
+            const std::size_t i = self_index(c);
+            if (i == no_record || animations_[i].effect == no_record) { return value::undefined(); }
+            const keyframe_effect_record & e = effects_[animations_[i].effect];
+            const node_id target = e.target;
+            if (!target) { return value::undefined(); }
+            std::vector<std::string> names;
+            for (const animation_keyframe & k : e.keyframes) {
+                for (const auto & [name, text] : k.values) {
+                    if (std::ranges::find(names, name) == names.end()) { names.push_back(name); }
+                }
+            }
+            const style::computed_style * own = nullptr;
+            if (styles_ != nullptr) {
+                const auto found = styles_->find(style::engine::key_of(target));
+                if (found != styles_->end() && found->second) { own = found->second.get(); }
+            }
+            const std::vector<std::pair<std::string, std::string>> values =
+                animated_values(target, 16.0f, [&](std::string_view property) -> std::string_view {
+                    return own != nullptr ? own->get(atoms_->intern(property)) : std::string_view{};
+                });
+            const value declaration = c.lookup_property(wrap(c, target), "style");
+            const value set = c.lookup_property(declaration, "setProperty");
+            for (const std::string & name : names) {
+                for (const auto & [property, text] : values) {
+                    if (property != name) { continue; }
+                    const value args[] = {c.string(name), c.string(text)};
+                    (void)c.call(set, args, declaration);
+                }
+            }
+            return value::undefined();
+        },
+        script::attr_builtin);
     set_method(
         cx, *proto, "reverse",
         [this, self_index, play](context & c, std::span<value>) {
@@ -698,7 +741,8 @@ void dom_bindings::install_animations(context & cx) {
         });
     ctor->define("prototype", animation_prototype_, script::attr_none);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
-    proto->define("@@toStringTag", cx.string("Animation"), script::attr_configurable);
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Animation"),
+                  script::attr_configurable);
     cx.define_builtin_global("Animation", value::object(ctor));
     animation_interface_ = ctor;
 
@@ -724,7 +768,8 @@ void dom_bindings::install_animations(context & cx) {
             });
         sub_ctor->define("prototype", value::object(sub), script::attr_none);
         sub->define("constructor", value::object(sub_ctor), script::attr_builtin);
-        sub->define("@@toStringTag", cx.string(name), script::attr_configurable);
+        sub->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name),
+                    script::attr_configurable);
         cx.define_builtin_global(name, value::object(sub_ctor));
         return value::object(sub);
     };

@@ -537,6 +537,13 @@ bool context::delete_own_property(value target, const std::string & name) {
     }
     if (target.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(target.as_heap());
+        // AN ACCESSOR IS A PROPERTY TOO - a class's `static get x()` - and
+        // deleting a configurable one removes it, as the object arm does.
+        // It answered true and stayed.
+        if (accessor_entry * entry = closure->find_accessor(name)) {
+            if ((entry->attrs & attr_configurable) == 0) { return false; }
+            return closure->accessors.erase(name);
+        }
         if (closure->find(name) == nullptr) {
             // The synthesised `name` and `length` - see closure_object::name_erased.
             if (name == "name") { closure->name_erased = true; }

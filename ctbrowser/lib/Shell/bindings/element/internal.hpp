@@ -115,7 +115,8 @@ struct reflected_attribute {
 // The hidden slot on an element's `attributes` map holding the element's
 // wrapper - a symbol key, so getOwnPropertyNames does not report it. See
 // install_named_node_map.
-inline constexpr std::string_view named_node_map_owner_key = "@@sym:ctbrowser:attributes-owner";
+inline constexpr std::string_view named_node_map_owner_key =
+    CTBROWSER_SYMBOL_KEY("sym:ctbrowser:attributes-owner");
 
 // The one namespace URI dom/xml.hpp does not name, because nothing upstream of
 // the bindings distinguishes MathML.
@@ -148,12 +149,13 @@ inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Mat
 // object on an element's wrapper, and one validity flag on the internals. The
 // form machinery reads a form-associated custom element's validity through
 // them.
-inline constexpr std::string_view internals_key = "@#ctbrowser:internals";
-inline constexpr std::string_view internals_flag_prefix = "@#ctbrowser:internals-flag:";
+inline constexpr std::string_view internals_key = CTBROWSER_PRIVATE_KEY("ctbrowser:internals");
+inline constexpr std::string_view internals_flag_prefix =
+    CTBROWSER_PRIVATE_KEY("ctbrowser:internals-flag:");
 // On a ShadowRoot's wrapper: attached while its host was not (yet) custom, so
 // not "available to element internals" (shadow.cpp sets it).
 inline constexpr std::string_view shadow_hidden_from_internals_key =
-    "@#ctbrowser:shadow-hidden-from-internals";
+    CTBROWSER_PRIVATE_KEY("ctbrowser:shadow-hidden-from-internals");
 
 // Is this element - or an ancestor - `display: none`, i.e. not being
 // rendered? The innerText collector's answer (rendered_text.cpp).
@@ -202,5 +204,15 @@ std::string remove_stored_declaration(script::object_object & held, context & cx
 // The rules for parsing integers, HTML 2.4.4.1: false when there is no integer
 // there at all. Defined in reflection.cpp.
 [[nodiscard]] bool parse_html_integer(std::string_view text, long long & out);
+
+// HTML 4.2.3 "document base URL": the first HTML <base href> in tree order,
+// parsed against the fallback base URL - `address`, the document's own - and
+// that address when there is none. A walk per call (hyperlink.cpp says why).
+[[nodiscard]] std::string document_base_url(const read_txn & txn, atom_table & atoms,
+                                            const std::string & address);
+
+// The first HTML <base target>'s value, "" for none - what "getting an
+// element's target" falls back to (4.6.4). Defined in hyperlink.cpp.
+[[nodiscard]] std::string document_base_target(const read_txn & txn, atom_table & atoms);
 
 } // namespace ctbrowser::shell::detail

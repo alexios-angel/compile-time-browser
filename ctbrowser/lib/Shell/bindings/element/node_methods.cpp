@@ -60,7 +60,9 @@ void dom_bindings::install_node_methods(context & cx) {
             const std::span<const node_id> kids = txn.children(self);
             return std::pair{self, kids.empty() ? node_id{} : kids.front()};
         }
-        if (where == "beforeend") { return std::pair{self, node_id{}}; }
+        if (where == "beforeend") {
+            return std::pair{self, node_id{}};
+        }
         const bool before = where == "beforebegin";
         if (!before && where != "afterend") {
             throw_dom_exception(c, "SyntaxError",
@@ -628,6 +630,11 @@ void dom_bindings::install_node_methods(context & cx) {
             }
             return value::null();
         }
+        if (shadow_tree_of(self) != nullptr) {
+            throw_dom_exception(c, "NotSupportedError",
+                                "cloneNode: a shadow root cannot be cloned");
+            return value::undefined();
+        }
         const bool deep = !args.empty() && context::truthy(args[0]);
         node_id made;
         {
@@ -908,7 +915,7 @@ void dom_bindings::install_node_methods(context & cx) {
             auto * blocked = static_cast<script::object_object *>(made.as_heap());
             blocked->prototype = value::undefined(); // an EXPLICIT null (object_object::prototype)
             for (const char * name : names) { blocked->set(name, value::boolean(true)); }
-            proto->define("@@unscopables", made, script::attr_configurable);
+            proto->define(CTBROWSER_SYMBOL_KEY("unscopables"), made, script::attr_configurable);
         }
     };
     unscopable(element, {"before", "after", "replaceWith", "remove", "prepend", "append",

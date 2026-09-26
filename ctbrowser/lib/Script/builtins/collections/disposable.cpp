@@ -15,9 +15,9 @@ namespace ctbrowser::script::builtins_detail {
 
 namespace {
 
-constexpr std::string_view stack_slot = "@#DisposableResourceStack";
-constexpr std::string_view disposed_slot = "@#DisposableState";
-constexpr std::string_view async_slot = "@#AsyncDisposableStack";
+constexpr std::string_view stack_slot = CTBROWSER_PRIVATE_KEY("DisposableResourceStack");
+constexpr std::string_view disposed_slot = CTBROWSER_PRIVATE_KEY("DisposableState");
+constexpr std::string_view async_slot = CTBROWSER_PRIVATE_KEY("AsyncDisposableStack");
 
 [[nodiscard]] value slot(object_object * o, std::string_view name) {
     const value * held = o->find(name);
@@ -54,7 +54,7 @@ constexpr std::string_view async_slot = "@#AsyncDisposableStack";
 [[nodiscard]] bool dispose_method(context & cx, value v, bool async, value & out) {
     out = value::undefined();
     if (async) {
-        out = cx.lookup_property(v, "@@asyncDispose");
+        out = cx.lookup_property(v, CTBROWSER_SYMBOL_KEY("asyncDispose"));
         if (cx.throw_pending()) { return false; }
         if (!out.is_nullish()) {
             if (!out.is_callable()) {
@@ -64,7 +64,7 @@ constexpr std::string_view async_slot = "@#AsyncDisposableStack";
             return true;
         }
     }
-    const value sync = cx.lookup_property(v, "@@dispose");
+    const value sync = cx.lookup_property(v, CTBROWSER_SYMBOL_KEY("dispose"));
     if (cx.throw_pending()) { return false; }
     if (sync.is_nullish()) {
         out = value::undefined();
@@ -292,7 +292,7 @@ void install_disposable(context & cx) {
             }
             made->define("error", arg_at(a, 0), attr_builtin);
             made->define("suppressed", arg_at(a, 1), attr_builtin);
-            made->define("@#ErrorData",
+            made->define(CTBROWSER_PRIVATE_KEY("ErrorData"),
                          c.string("SuppressedError" +
                                   (arg_at(a, 2).is_undefined() ? std::string{} : ": " + text) +
                                   c.current_stack()),
@@ -315,7 +315,7 @@ void install_disposable(context & cx) {
     const auto define_stack = [&](bool async) {
         const char * name = async ? "AsyncDisposableStack" : "DisposableStack";
         object_object * proto = new_table(cx);
-        proto->define("@#SuppressedError", suppressed_value, attr_none);
+        proto->define(CTBROWSER_PRIVATE_KEY("SuppressedError"), suppressed_value, attr_none);
         auto * ctor =
             cx.allocate<native_object>(name, [proto, async](context & c, std::span<value>) {
                 const value self = c.current_this();
@@ -423,7 +423,7 @@ void install_disposable(context & cx) {
                 });
             detail::install_arity(cx, dispose, 0);
             proto->define("dispose", value::object(dispose), attr_builtin);
-            proto->define("@@dispose", value::object(dispose), attr_builtin);
+            proto->define(CTBROWSER_SYMBOL_KEY("dispose"), value::object(dispose), attr_builtin);
         } else {
             // 27.5.3.3 disposeAsync(), also @@asyncDispose (27.5.3.8): a
             // promise, rejected with the receiver's TypeError rather than
@@ -476,9 +476,10 @@ void install_disposable(context & cx) {
                 });
             detail::install_arity(cx, dispose, 0);
             proto->define("disposeAsync", value::object(dispose), attr_builtin);
-            proto->define("@@asyncDispose", value::object(dispose), attr_builtin);
+            proto->define(CTBROWSER_SYMBOL_KEY("asyncDispose"), value::object(dispose),
+                          attr_builtin);
         }
-        proto->define("@@toStringTag", cx.string(name), attr_configurable);
+        proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name), attr_configurable);
         detail::constant(ctor, "prototype", value::object(proto));
         link_constructor(cx, proto, name, 0, value::object(ctor));
         cx.define_global(name, value::object(ctor));

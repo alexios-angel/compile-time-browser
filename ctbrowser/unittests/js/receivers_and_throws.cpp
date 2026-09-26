@@ -199,5 +199,35 @@ int main() {
     js_expect("(function(){ var scope = { get x() { delete this.x; return 2; } };"
               " with (scope) { x += 1; } return scope.x; })()",
               "3");
+    // A SPREAD'S ITERATOR THROWS ONCE: @@iterator, next(), a result's `value`
+    // getter - each throw landed on the page's handler and the spread went on
+    // to throw a TypeError of its own over it, which escaped the `try`. A
+    // present but non-callable @@iterator is GetIterator's TypeError.
+    js_expect("(function () { function Boom() {} var out = [];"
+              " var bad = [function () { throw new Boom(); }, function () { return {next:"
+              " function () { throw new Boom(); } }; }, function () { return {next: function ()"
+              " { return Object.defineProperty({done: false}, 'value', {get: function () {"
+              " throw new Boom(); }}); } }; }];"
+              " bad.forEach(function (m) { var it = {}; it[Symbol.iterator] = m;"
+              " try { (function () {})(...it); out.push('none'); } catch (e) {"
+              " out.push(e instanceof Boom); } try { [...it]; out.push('none'); } catch (e) {"
+              " out.push(e instanceof Boom); } });"
+              " var nul = Object.defineProperty({}, Symbol.iterator, {get: function () {"
+              " return null; }}); try { [...nul]; out.push('none'); } catch (e) {"
+              " out.push(e.name); } return out.join(); })()",
+              "true,true,true,true,true,true,TypeError");
+    // `.return()` AT A `yield*` reads the inner `return` ONCE, and a throw
+    // from calling it - or from its result's `done` - is thrown AT the yield,
+    // where the generator's own catch sees it (14.4.14 step 7.c).
+    js_expect("(function () { var gets = 0, thrown = {}; var inner = {next: function () {"
+              " return {done: false}; }, get return() { gets += 1; return null; }};"
+              " inner[Symbol.iterator] = function () { return inner; };"
+              " function* g() { yield* inner; } var it = g(); it.next(); var r = it.return(2);"
+              " var caught; var bad = {next: function () { return {done: false}; }, return:"
+              " function () { throw thrown; }}; bad[Symbol.iterator] = function () {"
+              " return bad; }; function* h() { try { yield* bad; } catch (e) { caught = e; } }"
+              " var jt = h(); jt.next(); jt.return(); return [gets, r.value, r.done,"
+              " caught === thrown].join(); })()",
+              "1,2,true,true");
     REPORT("receivers_and_throws");
 }

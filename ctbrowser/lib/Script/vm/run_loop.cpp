@@ -842,6 +842,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
             // The NEXT (*vm_frame) pushed - the base constructor super() is about to
             // enter - gets this (*vm_frame)'s new.target rather than undefined.
             pass_new_target(vm_frame->new_target);
+            super_call_ = true; // see refuse_class_call
             break;
         }
         while (0);

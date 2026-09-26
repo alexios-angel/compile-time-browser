@@ -348,6 +348,26 @@ namespace ctbrowser::style::css::shorthand_detail {
     case shape::border_image: return fold_border_image(v);
     case shape::background: return fold_background(v);
     case shape::mask: return fold_mask(v);
+    case shape::font_synthesis: {
+        // Each longhand at `auto` names its synthesis, `oblique-only` names
+        // itself, and nothing named is `none`; any other value has no
+        // shorthand spelling.
+        static constexpr std::array<std::string_view, 4> names = {"weight", "style", "small-caps",
+                                                                  "position"};
+        std::string out;
+        for (std::size_t i = 0; i < names.size() && i < v.size(); ++i) {
+            std::string_view word;
+            if (ascii_iequals(v[i], "auto")) {
+                word = names[i];
+            } else if (i == 1 && ascii_iequals(v[i], "oblique-only")) {
+                word = "oblique-only";
+            } else if (!ascii_iequals(v[i], "none")) {
+                return {};
+            }
+            if (!word.empty()) { out += (out.empty() ? "" : " ") + std::string{word}; }
+        }
+        return out.empty() ? std::string{"none"} : out;
+    }
     case shape::text_spacing:
         if (v[0] == "space-all" && v[1] == "no-autospace") { return "none"; }
         if (v[0] == "auto" && v[1] == "auto") { return "auto"; }

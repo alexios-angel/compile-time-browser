@@ -512,7 +512,8 @@ void install_date(context & cx) {
                 return value::undefined();
             });
         detail::install_arity(cx, exotic, 1);
-        date_proto->define("@@toPrimitive", value::object(exotic), attr_configurable);
+        date_proto->define(CTBROWSER_SYMBOL_KEY("toPrimitive"), value::object(exotic),
+                           attr_configurable);
     }
 
     auto * ctor = cx.allocate<native_object>("Date", [date_proto](context & c, std::span<value> a) {

@@ -38,6 +38,18 @@ void context::execute_construct(instruction in, call_frame * vm_frame,
                 reg(in.a) = construct(callee, args);
                 break;
             }
+            // AN ARROW, A GENERATOR OR AN ASYNC FUNCTION HAS NO [[Construct]]
+            // (10.2.3 / 15.5.4): `new` on one is the TypeError of 13.3.5.1.1
+            // step 7, before an instance exists - as construct_new and
+            // context::construct already said for the other two tiers.
+            if (callee.is_kind(heap_kind::function) && !is_constructor(callee)) {
+                const function_proto * p =
+                    static_cast<const closure_object *>(callee.as_heap())->proto;
+                const std::string name = p != nullptr ? p->display_name() : std::string{};
+                throw_error("TypeError", (name.empty() ? std::string{"the value"} : name) +
+                                             " is not a constructor");
+                break;
+            }
             // The instance's prototype comes from the constructor's own
             // `prototype` property, which is what makes a method defined on the
             // class reachable from every instance.

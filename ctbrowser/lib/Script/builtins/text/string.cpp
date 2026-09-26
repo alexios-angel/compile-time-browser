@@ -447,7 +447,8 @@ void install_string(context & cx) {
                     }));
         detail::install_arity(cx, iterator_fn, 0);
         iterator_fn->is_constructor = false;
-        string_proto->define("@@iterator", value::object(iterator_fn), attr_builtin);
+        string_proto->define(CTBROWSER_SYMBOL_KEY("iterator"), value::object(iterator_fn),
+                             attr_builtin);
     }
     method(cx, string_proto, "valueOf", 0, [](context & c, std::span<value>) {
         return this_string_value(c, "String.prototype.valueOf");
@@ -709,7 +710,7 @@ void install_string(context & cx) {
     // 22.1.3.23. A separator with @@split - every RegExp - answers through it
     // (regexp.cpp's [@@split] is the specification's sticky walk); the string
     // form is here.
-    text_after_dispatch("split", 2, "@@split", false,
+    text_after_dispatch("split", 2, CTBROWSER_SYMBOL_KEY("split"), false,
                         [](context & c, const string_object & s, std::span<value> a) -> value {
                             const context::stack_mark before = c.mark_stack();
                             value out = c.make_array();
@@ -826,17 +827,17 @@ void install_string(context & cx) {
     };
 
     text_after_dispatch(
-        "replace", 2, "@@replace", false,
+        "replace", 2, CTBROWSER_SYMBOL_KEY("replace"), false,
         [replace_string](context & c, const string_object & s, std::span<value> a) -> value {
             return replace_string(c, s, a, false);
         });
     // `match` - the single commonest thing done with a regular expression.
     // 22.1.3.13: the argument's own @@match, else RegExpCreate and the new
     // pattern's @@match, which is where the `g` / no-`g` shapes are decided.
-    text_after_dispatch("match", 1, "@@match", false,
+    text_after_dispatch("match", 1, CTBROWSER_SYMBOL_KEY("match"), false,
                         [](context & c, const string_object & self, std::span<value> a) -> value {
-                            return create_and_invoke(c, arg_at(a, 0), nullptr, "@@match",
-                                                     self.text);
+                            return create_and_invoke(c, arg_at(a, 0), nullptr,
+                                                     CTBROWSER_SYMBOL_KEY("match"), self.text);
                         });
     // `search` - WHERE a pattern matches, or -1. It is the smallest of the
     // regular-expression string methods and it was the one missing, which is
@@ -847,20 +848,21 @@ void install_string(context & cx) {
     // rejection was inside a promise the engine does not surface - and the
     // canvas simply showed the clear colour. One missing method, and a whole
     // renderer draws nothing.
-    text_after_dispatch("search", 1, "@@search", false,
+    text_after_dispatch("search", 1, CTBROWSER_SYMBOL_KEY("search"), false,
                         [](context & c, const string_object & self, std::span<value> a) -> value {
-                            return create_and_invoke(c, arg_at(a, 0), nullptr, "@@search",
-                                                     self.text);
+                            return create_and_invoke(c, arg_at(a, 0), nullptr,
+                                                     CTBROWSER_SYMBOL_KEY("search"), self.text);
                         });
     // 22.1.3.14 matchAll: the non-global refusal first, then the argument's
     // @@matchAll, then RegExpCreate with "g" - which is what makes
     // `"aaa".matchAll("a")` three matches rather than the first forever.
-    text_after_dispatch("matchAll", 1, "@@matchAll", true,
+    text_after_dispatch("matchAll", 1, CTBROWSER_SYMBOL_KEY("matchAll"), true,
                         [](context & c, const string_object & self, std::span<value> a) -> value {
-                            return create_and_invoke(c, arg_at(a, 0), "g", "@@matchAll", self.text);
+                            return create_and_invoke(c, arg_at(a, 0), "g",
+                                                     CTBROWSER_SYMBOL_KEY("matchAll"), self.text);
                         });
     text_after_dispatch(
-        "replaceAll", 2, "@@replace", true,
+        "replaceAll", 2, CTBROWSER_SYMBOL_KEY("replace"), true,
         [replace_string](context & c, const string_object & s, std::span<value> a) -> value {
             return replace_string(c, s, a, true);
         });

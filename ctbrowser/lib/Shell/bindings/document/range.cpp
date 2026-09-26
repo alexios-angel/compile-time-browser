@@ -927,7 +927,8 @@ void dom_bindings::install_range(context & cx) {
         }
         return fragment;
     });
-    proto->define("@@toStringTag", cx.string("Range"), script::attr_configurable);
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Range"),
+                  script::attr_configurable);
 
     // `new Range()`: collapsed at (document, 0) of the realm's document.
     auto * ctor = cx.allocate<script::native_object>(
@@ -962,7 +963,8 @@ void dom_bindings::install_range(context & cx) {
     auto * static_proto = cx.allocate<script::object_object>();
     const value static_proto_value = value::object(static_proto);
     install_abstract(*static_proto);
-    static_proto->define("@@toStringTag", cx.string("StaticRange"), script::attr_configurable);
+    static_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("StaticRange"),
+                         script::attr_configurable);
     auto * static_ctor = cx.allocate<script::native_object>(
         "StaticRange",
         [this, static_proto_value, from_value, type_of, store_points](context & c,

@@ -134,6 +134,24 @@ void compiler_impl::compile_program() {
         // Sorted, for binding_immutability's binary search: every write to a
         // global asks, and a large script has many of both.
         std::ranges::sort(script_consts_);
+        // THE NAMES GlobalDeclarationInstantiation COMPARES (16.1.7 steps
+        // 3-6) - see program::lexical_names.
+        for (const std::int32_t s : kids(root)) {
+            const vp::node & d = at(s);
+            if (d.kind == vp::nk::var_decl && d.text != "var") {
+                for (const std::int32_t each : kids(d)) {
+                    if (at(each).b >= 0) {
+                        pattern_names(at(each).b, out_.lexical_names);
+                    } else {
+                        out_.lexical_names.emplace_back(at(each).text);
+                    }
+                }
+            } else if (d.kind == vp::nk::class_decl && !d.text.empty()) {
+                out_.lexical_names.emplace_back(d.text);
+            } else if (d.kind == vp::nk::func_decl && !d.text.empty()) {
+                out_.function_names.emplace_back(d.text);
+            }
+        }
     }
     if (module_scope_) {
         // THEN THE IMPORTS, still at entry: a function declared anywhere in

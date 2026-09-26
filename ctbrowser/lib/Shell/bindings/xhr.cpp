@@ -66,35 +66,40 @@ constexpr int done = 4;
     return held == nullptr || !held->is_string() ? std::string{} : cx.to_string(*held);
 }
 
-// "Get a final encoding" (XHR 3.6.8): the `charset` parameter of a final MIME
-// type, by the Encoding Standard's label table - empty when there is none or
-// it names no encoding. ponytail: the parameter is found the way a <meta>
-// content's is, not by a full MIME type parse; a quoted `;` in an earlier
-// parameter would confuse it.
-[[nodiscard]] std::string final_encoding(std::string_view mime) {
+// A MIME type's `charset` parameter, empty when there is none. ponytail: found
+// the way a <meta> content's is, not by a full MIME type parse; a quoted `;`
+// in an earlier parameter would confuse it.
+[[nodiscard]] std::string_view charset_parameter(std::string_view mime) {
     const std::size_t semicolon = mime.find(';');
-    if (semicolon == std::string_view::npos) { return {}; }
-    return std::string{encoding_from_label(encoding_from_meta_content(mime.substr(semicolon + 1)))};
+    return semicolon == std::string_view::npos
+               ? std::string_view{}
+               : encoding_from_meta_content(mime.substr(semicolon + 1));
+}
+
+// "Get a final encoding" (XHR 3.6.8): the RESPONSE's charset, and then the
+// override MIME type's when that has one - an override naming only a type
+// leaves the response's charset standing - by the Encoding Standard's label
+// table; empty when there is none or it names no encoding.
+[[nodiscard]] std::string final_encoding(std::string_view response_type,
+                                         std::string_view override_type) {
+    std::string_view label = charset_parameter(response_type);
+    if (const std::string_view overriding = charset_parameter(override_type); !overriding.empty()) {
+        label = overriding;
+    }
+    return label.empty() ? std::string{} : std::string{encoding_from_label(label)};
 }
 
 } // namespace
 
 namespace detail {
 
-// "Decode" (Encoding 6) a body by the encoding `name`, UTF-8 when it is empty:
-// a BOM decides first, and UTF-8 is its decoder (4.2) - each ill-formed
-// subsequence one U+FFFD - so a page reads scalar values, never raw bytes
-// taken for Latin-1.
-[[nodiscard]] std::string decode_body(std::string_view bytes, std::string_view name) {
-    if (bytes.starts_with("\xEF\xBB\xBF")) {
-        name = "UTF-8";
-        bytes.remove_prefix(3);
-    } else if (bytes.starts_with("\xFE\xFF")) {
-        name = "UTF-16BE";
-    } else if (bytes.starts_with("\xFF\xFE")) {
-        name = "UTF-16LE";
-    }
-    if (!name.empty() && name != "UTF-8") { return decode_document_bytes(bytes, name); }
+// "UTF-8 decode" (Encoding 6): a UTF-8 BOM dropped and NO OTHER sniffed - FE FF
+// at the front of a fetch() body is two U+FFFDs, not UTF-16 - then the UTF-8
+// decoder (4.2), each ill-formed subsequence one U+FFFD, so a page reads
+// scalar values, never raw bytes taken for Latin-1. What a Body's text() and
+// json() read with.
+[[nodiscard]] std::string utf8_decode(std::string_view bytes) {
+    if (bytes.starts_with("\xEF\xBB\xBF")) { bytes.remove_prefix(3); }
     std::string out;
     out.reserve(bytes.size());
     std::uint32_t code_point = 0;
@@ -140,6 +145,19 @@ namespace detail {
     }
     if (needed != 0) { append_utf8(out, 0xFFFD); }
     return out;
+}
+
+// "Decode" (Encoding 6) a body by the encoding `name`, UTF-8 when it is empty:
+// a BOM decides first.
+[[nodiscard]] std::string decode_body(std::string_view bytes, std::string_view name) {
+    if (bytes.starts_with("\xEF\xBB\xBF")) { return utf8_decode(bytes); }
+    if (bytes.starts_with("\xFE\xFF")) {
+        name = "UTF-16BE";
+    } else if (bytes.starts_with("\xFF\xFE")) {
+        name = "UTF-16LE";
+    }
+    if (!name.empty() && name != "UTF-8") { return decode_document_bytes(bytes, name); }
+    return utf8_decode(bytes);
 }
 
 } // namespace detail
@@ -227,14 +245,12 @@ void dom_bindings::install_xhr(context & cx) {
         const bool failed = !loaded.failure.empty() && loaded.status != 404;
         s->set(status_slot, value::number(failed ? 0 : loaded.status));
         s->set(type_slot, c.string(loaded.type));
-        // THE TEXT RESPONSE (3.6.9): the bytes decoded by the final MIME
-        // type's charset, else as UTF-8.
-        std::string mime = string_slot(c, *s, override_slot);
-        if (mime.empty()) { mime = loaded.type; }
+        // THE TEXT RESPONSE (3.6.9): the bytes decoded by the final
+        // encoding, else as UTF-8.
         s->set(text_slot, c.string(decode_body(
                               std::string_view{reinterpret_cast<const char *>(loaded.body.data()),
                                                loaded.body.size()},
-                              final_encoding(mime))));
+                              final_encoding(loaded.type, string_slot(c, *s, override_slot)))));
         s->set(bytes_slot, make_u8_array(c, loaded.body));
         s->set(error_slot, value::boolean(failed));
         if (failed) {
@@ -426,7 +442,8 @@ void dom_bindings::install_xhr(context & cx) {
                     raw += static_cast<char>(static_cast<unsigned char>(context::to_number(one)));
                 }
             }
-            std::string charset = final_encoding(type);
+            std::string charset =
+                final_encoding(string_slot(c, s, type_slot), string_slot(c, s, override_slot));
             if (charset.empty()) {
                 charset = prescan_encoding(std::string_view{raw}.substr(0, 1024));
             }

@@ -67,11 +67,13 @@ void install_symbol(context & cx) {
                 return this_symbol(c, "Symbol.prototype[Symbol.toPrimitive]");
             });
         detail::install_arity(cx, exotic, 1);
-        symbol_proto->define("@@toPrimitive", value::object(exotic), attr_configurable);
+        symbol_proto->define(CTBROWSER_SYMBOL_KEY("toPrimitive"), value::object(exotic),
+                             attr_configurable);
     }
     // 20.4.3.6: { false, false, true }, and what Object.prototype.toString
     // reads for a Symbol wrapper.
-    symbol_proto->define("@@toStringTag", cx.string("Symbol"), attr_configurable);
+    symbol_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Symbol"),
+                         attr_configurable);
     cx.set_prototype(context::proto_kind::symbol, symbol_proto);
 
     // Callable AND a namespace: `Symbol('x')` and `Symbol.iterator` are both
@@ -86,7 +88,7 @@ void install_symbol(context & cx) {
             }
             // Step 3: an undefined description stays UNDEFINED, which the
             // `description` getter can tell from "" only by the key:
-            // `@@sym:<n>` carries no second colon, `@@sym:<n>:` carries an
+            // symbol_key_prefix `<n>` carries no second colon, `<n>:` carries an
             // empty one. Anything else is ToString'd, and a symbol refuses.
             const bool described = !arg_at(a, 0).is_undefined();
             if (described && !stringable_arg(c, a[0])) { return value::undefined(); }
@@ -145,7 +147,8 @@ void install_symbol(context & cx) {
             for (std::size_t i = 0; i < keys->size() && i < held->items.size(); ++i) {
                 if ((*keys)[i] == d) { return held->items[i]; }
             }
-            const value made = value::object(c.allocate<symbol_object>(d, "@@for:" + d));
+            const value made = value::object(
+                c.allocate<symbol_object>(d, std::string{registered_symbol_key_prefix} + d));
             keys->push_back(d);
             held->items.push_back(made);
             return made;
@@ -208,7 +211,8 @@ void install_symbol(context & cx) {
     method(cx, bigint_proto, "valueOf", 0, [this_bigint](context & c, std::span<value>) {
         return this_bigint(c, "BigInt.prototype.valueOf");
     });
-    bigint_proto->define("@@toStringTag", cx.string("BigInt"), attr_configurable); // 21.2.3.5
+    bigint_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("BigInt"),
+                         attr_configurable); // 21.2.3.5
     cx.set_prototype(context::proto_kind::bigint, bigint_proto);
 
     auto * bigint_ctor = cx.allocate<native_object>("BigInt", [](context & c, std::span<value> a) {

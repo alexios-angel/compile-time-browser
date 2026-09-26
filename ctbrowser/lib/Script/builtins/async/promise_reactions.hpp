@@ -14,15 +14,17 @@ inline constexpr std::string_view rejected_slot = "__rejected";
 
 inline constexpr std::string_view handlers_slot = "__handlers";
 
-inline constexpr std::string_view intrinsic_key = "@#Promise";
+inline constexpr std::string_view intrinsic_key = CTBROWSER_PRIVATE_KEY("Promise");
 
-inline constexpr std::string_view reaction_job_key = "@#PromiseReactionJob";
+inline constexpr std::string_view reaction_job_key = CTBROWSER_PRIVATE_KEY("PromiseReactionJob");
 
-inline constexpr std::string_view thenable_job_key = "@#PromiseResolveThenableJob";
+inline constexpr std::string_view thenable_job_key =
+    CTBROWSER_PRIVATE_KEY("PromiseResolveThenableJob");
 
-inline constexpr std::string_view get_then_key = "@#GetThen";
+inline constexpr std::string_view get_then_key = CTBROWSER_PRIVATE_KEY("GetThen");
 
-inline constexpr std::string_view async_from_sync_key = "@#AsyncFromSyncIteratorPrototype";
+inline constexpr std::string_view async_from_sync_key =
+    CTBROWSER_PRIVATE_KEY("AsyncFromSyncIteratorPrototype");
 
 struct capability {
     value promise = value::undefined();

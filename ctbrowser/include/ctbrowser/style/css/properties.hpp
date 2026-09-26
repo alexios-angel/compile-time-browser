@@ -102,6 +102,14 @@ struct property_syntax {
 // `getComputedStyle`'s indexed properties enumerate.
 [[nodiscard]] std::span<const property_syntax> known_properties();
 
+// Whether a property's animation type is anything but "not animatable": the
+// animation and transition properties, the container's name and type (CSS
+// Conditional 5 §4), the bidi pair, will-change and interpolate-size (CSS
+// Values 5 §interpolate-size) are not. A keyframe ignores such a property (CSS
+// Animations 1 §4.1, Web Animations 1 §5.4.5) and no transition starts on one,
+// allow-discrete or not (CSS Transitions 2 §2.1). A custom property is.
+[[nodiscard]] bool animatable(std::string_view name);
+
 // Whether the table says `name` INHERITS - its "Inherited: yes" - by a hash
 // lookup, because the cascade asks it once per declaration per element. The
 // name is the lowercase CSS spelling the cascade interns.

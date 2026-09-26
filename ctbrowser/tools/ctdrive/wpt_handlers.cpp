@@ -1,0 +1,408 @@
+// ctdrive - the server half of the web-platform-tests this driver runs.
+//
+// WPT runs under wptserve, and a test that submits a form or loads a frame
+// from `something.py` is talking to a Python function on the other end: the
+// test asserts on what THAT function answered. There is no server here -
+// tools/wpt/run-wpt.py opens the file and hands leading-`/` paths to the
+// document root - so without this every such test measures the missing
+// server rather than the engine: the frame gets the handler's SOURCE as an
+// octet-stream and the assertion reads "".
+//
+// EACH ENTRY BELOW IS ONE HANDLER, REPRODUCED. The function is what the `.py`
+// does for any request, read off the file in the corpus - the query parse it
+// uses, the escaping, the content type, the 500 a missing field raises - and
+// not an answer for one test's input. A path that is not in the table is left
+// to the asset registry, which is what it always was.
+//
+// Installed only under a document root (CTBROWSER_DOC_ROOT), which is
+// run-wpt.py and nothing else: an ordinary page driven by ctdrive talks to its
+// files and nothing more.
+
+#include "wpt_handlers.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace ctdrive {
+
+namespace {
+
+using ctbrowser::shell::resource_reply;
+using ctbrowser::shell::resource_request;
+
+using params = std::vector<std::pair<std::string, std::string>>;
+
+// Python's parse_qsl over BYTES: `&`-separated, `+` a space, percent-decoded
+// - what wptserve's request.GET and an urlencoded request.POST are (both keep
+// blank values, and read the bytes as ISO-8859-1, so a value is its bytes).
+[[nodiscard]] params parse_urlencoded(std::string_view text) {
+    params out;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        std::size_t end = text.find('&', start);
+        if (end == std::string_view::npos) { end = text.size(); }
+        const std::string_view field = text.substr(start, end - start);
+        start = end + 1;
+        if (field.empty()) { continue; }
+        const std::size_t equals = field.find('=');
+        std::string name{field.substr(0, equals)};
+        std::string value{equals == std::string_view::npos ? std::string_view{}
+                                                           : field.substr(equals + 1)};
+        std::ranges::replace(name, '+', ' ');
+        std::ranges::replace(value, '+', ' ');
+        out.emplace_back(ctbrowser::shell::percent_decode(name),
+                         ctbrowser::shell::percent_decode(value));
+    }
+    return out;
+}
+
+// Python's bytes.decode('utf-8', 'replace'), re-encoded: well-formed UTF-8,
+// each ill-formed subsequence one U+FFFD. The Encoding Standard's decoder
+// replaces the same maximal subparts; it drops a leading BOM, which Python
+// keeps.
+[[nodiscard]] std::string utf8_round_trip(std::string_view bytes) {
+    std::string out;
+    if (bytes.starts_with("\xEF\xBB\xBF")) {
+        out = "\xEF\xBB\xBF";
+        bytes.remove_prefix(3);
+    }
+    return out + ctbrowser::decode_document_bytes(bytes, "UTF-8");
+}
+
+// A `name="..."` parameter out of a Content-Disposition line.
+[[nodiscard]] std::string disposition_name(std::string_view headers) {
+    const std::size_t at = headers.find("name=\"");
+    if (at == std::string_view::npos) { return {}; }
+    const std::size_t from = at + 6;
+    const std::size_t to = headers.find('"', from);
+    return std::string{headers.substr(from, to == std::string_view::npos ? to : to - from)};
+}
+
+// wptserve's request.POST for a multipart/form-data body: each part's field
+// name and its content, in order. The boundary is the Content-Type's.
+[[nodiscard]] params parse_multipart(std::string_view body, std::string_view content_type) {
+    params out;
+    const std::size_t at = content_type.find("boundary=");
+    if (at == std::string_view::npos) { return out; }
+    std::string_view boundary = content_type.substr(at + 9);
+    boundary = boundary.substr(0, boundary.find(';'));
+    if (boundary.size() >= 2 && boundary.front() == '"' && boundary.back() == '"') {
+        boundary = boundary.substr(1, boundary.size() - 2);
+    }
+    const std::string delimiter = "--" + std::string{boundary};
+    std::size_t pos = body.find(delimiter);
+    while (pos != std::string_view::npos) {
+        pos += delimiter.size();
+        if (body.substr(pos).starts_with("--")) { break; } // the close delimiter
+        if (body.substr(pos).starts_with("\r\n")) { pos += 2; }
+        const std::size_t blank = body.find("\r\n\r\n", pos);
+        if (blank == std::string_view::npos) { break; }
+        const std::string_view headers = body.substr(pos, blank - pos);
+        const std::size_t content = blank + 4;
+        const std::size_t next = body.find("\r\n" + delimiter, content);
+        if (next == std::string_view::npos) { break; }
+        out.emplace_back(disposition_name(headers),
+                         std::string{body.substr(content, next - content)});
+        pos = next + 2;
+    }
+    return out;
+}
+
+// MultiDict.first: the FIRST value under the name.
+[[nodiscard]] const std::string * first(const params & list, std::string_view name) {
+    for (const auto & [key, value] : list) {
+        if (key == name) { return &value; }
+    }
+    return nullptr;
+}
+
+// request.POST: the body parsed by its own Content-Type.
+[[nodiscard]] params post_fields(const resource_request & request) {
+    const std::string_view type = request.content_type;
+    if (type.starts_with("multipart/form-data")) { return parse_multipart(request.body, type); }
+    if (type.starts_with("application/x-www-form-urlencoded")) {
+        return parse_urlencoded(request.body);
+    }
+    return {};
+}
+
+[[nodiscard]] resource_reply reply(std::string type, std::string body, int status = 200) {
+    resource_reply out;
+    out.status = status;
+    out.content_type = std::move(type);
+    out.body = std::move(body);
+    return out;
+}
+
+// What a handler that raised gets from wptserve: a 500.
+[[nodiscard]] resource_reply raised(std::string_view what) {
+    return reply("text/plain", std::string{what}, 500);
+}
+
+// Python's html.escape(s, quote=True).
+[[nodiscard]] std::string html_escape(std::string_view text) {
+    std::string out;
+    for (const char c : text) {
+        switch (c) {
+        case '&': out += "&amp;"; break;
+        case '<': out += "&lt;"; break;
+        case '>': out += "&gt;"; break;
+        case '"': out += "&quot;"; break;
+        case '\'': out += "&#x27;"; break;
+        default: out.push_back(c); break;
+        }
+    }
+    return out;
+}
+
+// --- the handlers ------------------------------------------------------------------
+
+// /FileAPI/file/resources/echo-content-escaped.py: the body with every
+// control and non-ASCII byte as `\xNN` (lowercase hex) and a backslash
+// doubled - and then each escaped CR LF put back as a real one.
+resource_reply echo_content_escaped(const resource_request & request, const params &) {
+    std::string escaped;
+    for (const char c : request.body) {
+        const auto byte = static_cast<unsigned char>(c);
+        if (byte <= 0x1F || byte >= 0x7F) {
+            std::array<char, 5> hex{};
+            std::snprintf(hex.data(), hex.size(), "\\x%02x", static_cast<unsigned>(byte));
+            escaped += hex.data();
+        } else if (c == '\\') {
+            escaped += "\\\\";
+        } else {
+            escaped.push_back(c);
+        }
+    }
+    std::string content;
+    for (std::size_t i = 0; i < escaped.size();) {
+        if (std::string_view{escaped}.substr(i).starts_with("\\x0d\\x0a")) {
+            content += "\r\n";
+            i += 8;
+        } else {
+            content.push_back(escaped[i++]);
+        }
+    }
+    return reply("text/plain; charset=UTF-8", std::move(content));
+}
+
+// /fetch/api/resources/echo-content.py: the body, as text/plain.
+resource_reply echo_content(const resource_request & request, const params &) {
+    return reply("text/plain", request.body);
+}
+
+// html/semantics/forms/form-submission-0/resources/form-submission.py: "OK"
+// when the body is the one the query says to expect. ITS OWN QUERY PARSE:
+// `dict(parse_qsl(query))` - blank values dropped, a later duplicate winning,
+// each value UTF-8 decoded with replacement - and then `.encode('UTF-8')`.
+resource_reply form_submission(const resource_request & request, const params &) {
+    std::string_view query = request.url;
+    query = query.substr(0, query.find('#'));
+    query = query.substr(std::min(query.find('?'), query.size()));
+    if (!query.empty()) { query.remove_prefix(1); }
+    const auto last = [&](std::string_view name) -> std::optional<std::string> {
+        std::optional<std::string> found;
+        for (const auto & [key, value] : parse_urlencoded(query)) {
+            if (!value.empty() && utf8_round_trip(key) == name) { found = utf8_round_trip(value); }
+        }
+        return found;
+    };
+    bool result = false;
+    if (last("query") == "1") {
+        if (request.content_type == "application/x-www-form-urlencoded") {
+            result = request.body == "foo=bara";
+        } else if (request.content_type == "text/plain") {
+            result = request.body == "qux=baz\r\n";
+        } else {
+            const std::string * foo = first(post_fields(request), "foo");
+            if (foo == nullptr) { return raised("KeyError: foo"); }
+            result = *foo == "bar";
+        }
+    } else if (const std::optional<std::string> expected = last("expected_body")) {
+        result = request.body == *expected;
+    }
+    return reply("text/plain", result ? "OK" : "FAIL");
+}
+
+// html/semantics/forms/form-submission-0/form-echo.py: the body's bytes as
+// two-digit lowercase hex, space separated.
+resource_reply form_echo(const resource_request & request, const params &) {
+    std::string out;
+    for (const char c : request.body) {
+        std::array<char, 3> hex{};
+        std::snprintf(hex.data(), hex.size(), "%02x",
+                      static_cast<unsigned>(static_cast<unsigned char>(c)));
+        if (!out.empty()) { out.push_back(' '); }
+        out += hex.data();
+    }
+    return reply("text/plain", std::move(out));
+}
+
+// html/semantics/forms/form-submission-0/resources/file-submission.py.
+resource_reply file_submission(const resource_request & request, const params &) {
+    const std::string * input = first(post_fields(request), "testinput");
+    if (input == nullptr) { return raised("KeyError: testinput"); }
+    // json.dumps of the isomorphic-decoded value: ASCII-only, so every byte
+    // above 0x7F is a \uXXXX escape.
+    std::string json = "\"";
+    for (const char c : *input) {
+        const auto byte = static_cast<unsigned char>(c);
+        if (c == '"' || c == '\\') {
+            json.push_back('\\');
+            json.push_back(c);
+        } else if (byte < 0x20 || byte > 0x7E) {
+            std::array<char, 7> hex{};
+            std::snprintf(hex.data(), hex.size(), "\\u%04x", static_cast<unsigned>(byte));
+            json += hex.data();
+        } else {
+            json.push_back(c);
+        }
+    }
+    json += "\"";
+    return reply("text/html", "<script>parent.postMessage(" + json + ", '*');</script>");
+}
+
+// dom/nodes/encoding.py: a document whose <meta charset> is the label,
+// isomorphic-decoded and escaped. No Content-Type is sent; `<!doctype html`
+// sniffs as HTML.
+resource_reply encoding_label(const resource_request &, const params & query) {
+    const std::string * label = first(query, "label");
+    if (label == nullptr) { return raised("KeyError: label"); }
+    return reply("text/html", "<!doctype html><meta charset=\"" +
+                                  html_escape(ctbrowser::isomorphic_decode(*label)) + "\">");
+}
+
+// dom/nodes/Document-contentType/support/contenttype_setter.py.
+resource_reply contenttype_setter(const resource_request &, const params & query) {
+    const std::string * type = first(query, "type");
+    const std::string * subtype = first(query, "subtype");
+    std::string content_type;
+    if (type != nullptr && subtype != nullptr && !type->empty() && !subtype->empty()) {
+        content_type = *type + "/" + *subtype;
+    }
+    if (const std::string * remove = first(query, "removeContentType");
+        remove != nullptr && !remove->empty()) {
+        content_type.clear();
+    }
+    std::string content = "<head>";
+    if (const std::string * mime = first(query, "mime"); mime != nullptr && !mime->empty()) {
+        content += "<meta http-equiv=\"Content-Type\" content=\"" + *mime + "; charset=utf-8\"/>";
+    }
+    content += "</head>";
+    // No Content-Type at all is sniffed; `<head` is one of the HTML patterns
+    // (MIME Sniffing 7.1).
+    return reply(content_type.empty() ? std::string{"text/html"} : content_type,
+                 std::move(content));
+}
+
+// html/semantics/forms/form-submission-target/form-target-iframe-helper.py.
+resource_reply form_target_helper(const resource_request &, const params &) {
+    return reply("text/plain", "OK");
+}
+
+// html/syntax/charset/resources/bogus-charset-http{,-valid-meta}.py: a
+// Content-Type whose charset names no encoding, over windows-125x bytes.
+resource_reply bogus_charset(const resource_request &, const params &) {
+    return reply("text/html;charset=this-is-not-a-charset", "\xA2\n");
+}
+resource_reply bogus_charset_valid_meta(const resource_request &, const params &) {
+    return reply("text/html;charset=this-is-not-a-charset", "<meta charset=windows-1251>\xA2\n");
+}
+
+// url/resources/percent-encoding.py: an <a> whose query and fragment are the
+// `value` - base64 of UTF-8 - as hexadecimal character references, in a
+// document the Content-Type says is in `encoding`.
+resource_reply percent_encoding(const resource_request &, const params & query) {
+    const std::string * value = first(query, "value");
+    const std::string * encoding = first(query, "encoding");
+    if (value == nullptr || encoding == nullptr) { return raised("KeyError"); }
+    // Undo the "magic" space for + replacement, as the handler does.
+    std::string base64 = *value;
+    std::ranges::replace(base64, ' ', '+');
+    const std::string text = ctbrowser::base64_decode(base64);
+    std::string references;
+    for (std::size_t at = 0; at < text.size();) {
+        const char32_t cp = ctbrowser::decode_utf8(text, at);
+        std::array<char, 16> hex{};
+        std::snprintf(hex.data(), hex.size(), "&#x%X;", static_cast<unsigned>(cp));
+        references += hex.data();
+    }
+    return reply("text/html;charset=" + *encoding,
+                 "<!doctype html>\n<a href=\"https://doesnotmatter.invalid/?" + references + "#" +
+                     references + "\">test</a>\n");
+}
+
+using handler = resource_reply (*)(const resource_request &, const params &);
+
+struct route {
+    std::string_view path;
+    handler answer;
+};
+
+constexpr route routes[] = {
+    {"/FileAPI/file/resources/echo-content-escaped.py", echo_content_escaped},
+    {"/fetch/api/resources/echo-content.py", echo_content},
+    {"/html/semantics/forms/form-submission-0/resources/form-submission.py", form_submission},
+    {"/html/semantics/forms/form-submission-0/form-echo.py", form_echo},
+    {"/html/semantics/forms/form-submission-0/resources/file-submission.py", file_submission},
+    {"/html/semantics/forms/form-submission-target/form-target-iframe-helper.py",
+     form_target_helper},
+    {"/dom/nodes/encoding.py", encoding_label},
+    {"/dom/nodes/Document-contentType/support/contenttype_setter.py", contenttype_setter},
+    {"/html/syntax/charset/resources/bogus-charset-http.py", bogus_charset},
+    {"/html/syntax/charset/resources/bogus-charset-http-valid-meta.py", bogus_charset_valid_meta},
+    {"/url/resources/percent-encoding.py", percent_encoding},
+};
+
+} // namespace
+
+// The URL's path as the server would have seen it: a `file:` URL under the
+// document root is that much of its path shorter, and one that is not -
+// `/FileAPI/...` resolved against a file: page is file:///FileAPI/... - is
+// already server-absolute, which is how the registry reads it too.
+std::string server_path(std::string_view url, std::string_view document_root) {
+    std::string_view path = url;
+    if (path.starts_with("file://")) {
+        path.remove_prefix(7);
+        path = path.substr(std::min(path.find('/'), path.size()));
+    } else if (const std::size_t scheme = path.find("://"); scheme != std::string_view::npos) {
+        path.remove_prefix(scheme + 3);
+        path = path.substr(std::min(path.find('/'), path.size()));
+    }
+    path = path.substr(0, std::min(path.find('?'), path.find('#')));
+    std::string decoded = ctbrowser::shell::percent_decode(path);
+    std::string root{document_root};
+    while (root.size() > 1 && root.back() == '/') { root.pop_back(); }
+    if (!root.empty() && decoded.starts_with(root) &&
+        (decoded.size() == root.size() || decoded[root.size()] == '/')) {
+        decoded.erase(0, root.size());
+    }
+    return decoded;
+}
+
+ctbrowser::shell::request_handler wpt_handlers(std::string document_root) {
+    return [root = std::move(document_root)](
+               const resource_request & request) -> std::optional<resource_reply> {
+        const std::string path = server_path(request.url, root);
+        for (const route & entry : routes) {
+            if (entry.path != path) { continue; }
+            std::string_view query = request.url;
+            query = query.substr(0, query.find('#'));
+            const std::size_t mark = query.find('?');
+            return entry.answer(request, mark == std::string_view::npos
+                                             ? params{}
+                                             : parse_urlencoded(query.substr(mark + 1)));
+        }
+        return std::nullopt;
+    };
+}
+
+} // namespace ctdrive

@@ -255,7 +255,8 @@ void test_transforms() {
     bad("translate", "100px 200px 300%");
     bad("translate", "100deg");
     ok("transform-origin", "bottom right 7px", "right bottom 7px");
-    ok("transform-origin", "bottom", "bottom");
+    ok("transform-origin", "bottom", "center bottom");
+    ok("transform-origin", "-4%", "-4% center");
     ok("transform-origin", "-1px bottom 5px", "-1px bottom 5px");
     bad("transform-origin", "top 1px");
     bad("transform-origin", "bottom 10% right 20%");

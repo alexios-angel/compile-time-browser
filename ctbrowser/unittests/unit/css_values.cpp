@@ -33,7 +33,7 @@ void test_numbers_integers_and_keywords() {
     bad("z-index", "3px");
     ok("opacity", "0.5", "0.5");
     ok("opacity", ".5", "0.5");
-    ok("opacity", "50%", "50%");
+    ok("opacity", "50%", "0.5"); // an <opacity-value>'s percentage is its number
     ok("flex-grow", "2", "2");
     bad("flex-grow", "-2"); // non-negative
     // A unitless number IS a line-height, which is the case that makes
@@ -752,6 +752,21 @@ void test_the_shape_function() {
                               0.5));
 }
 
+// An <opacity-value>'s percentage is the number it is, and a math function
+// over percentages alone has an answer; font-synthesis's style slot takes
+// `oblique-only`.
+void test_opacity_and_font_synthesis() {
+    ok("opacity", "50%", "0.5");
+    ok("opacity", "-100%", "-1");
+    ok("opacity", "min(50%, 0%)", "calc(0%)");
+    ok("opacity", "clamp(50%, 80%, 70%)", "calc(70%)");
+    ok("opacity", "calc(-50% - 50%)", "calc(-100%)");
+    ok("opacity", "calc(pi)", "calc(3.141593)");
+    ok("opacity", "progress(1%, (10% - 10%), 100%)", "calc(0.01)");
+    ok("font-synthesis", "oblique-only weight", "weight oblique-only");
+    bad("font-synthesis", "style oblique-only");
+}
+
 } // namespace
 
 int main() {
@@ -784,5 +799,6 @@ int main() {
     test_gap_rule_lists_and_their_neighbours();
     test_basic_shapes();
     test_the_shape_function();
+    test_opacity_and_font_synthesis();
     REPORT("css_values");
 }

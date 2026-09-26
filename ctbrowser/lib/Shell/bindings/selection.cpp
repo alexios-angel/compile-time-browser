@@ -66,7 +66,7 @@ constexpr std::string_view across_slot = "__across";
 // The document the selection is of - the page's, or a frame's.
 constexpr std::string_view document_slot = "__document";
 // Where a frame's window keeps its selection once one is asked for.
-constexpr std::string_view window_selection_key = "@@sym:ctbrowser:selection";
+constexpr std::string_view window_selection_key = CTBROWSER_SYMBOL_KEY("sym:ctbrowser:selection");
 
 [[nodiscard]] script::object_object * self_object(context & c) {
     const value self = c.current_this();
@@ -783,7 +783,8 @@ void dom_bindings::install_selection(context & cx) {
         }
         return made;
     });
-    proto->define("@@toStringTag", cx.string("Selection"), script::attr_configurable);
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Selection"),
+                  script::attr_configurable);
 
     auto * ctor =
         cx.allocate<script::native_object>("Selection", [](context & c, std::span<value>) {
@@ -895,6 +896,52 @@ void dom_bindings::install_selection(context & cx) {
         on->set("getSelection", value::object(method));
         on->set_attrs("getSelection", script::attr_builtin);
     }
+}
+
+// A SELECTION'S RANGE INSIDE A SHADOW TREE WHOSE HOST WAS JUST REMOVED - the
+// host itself or an ancestor of it - is no longer the selection's, even when
+// the host comes straight back (`host.replaceWith(host)`,
+// `parent.replaceChild(host, host)`). The live range steps leave the range
+// where it is, since its ends are not inclusive descendants of the removed
+// node, and the lazy check in range_of would find it connected again; so it
+// is let go here, from the removal's note, as the first two cases of
+// selection-range-in-shadow-after-the-shadow-removed let it go on removal
+// alone. A range whose end is a PLAIN descendant was moved to the parent by
+// the live range steps and stays. The page's Range object is untouched.
+void dom_bindings::forget_selection_under(node_id removed) {
+    if (cx_ == nullptr || doc_ == nullptr || !removed || !doc_->has_shadow_roots()) { return; }
+    context & c = *cx_;
+    const value selection = call_on(c, document_, "getSelection", {});
+    if (!selection.is_object()) { return; }
+    auto * self = static_cast<script::object_object *>(selection.as_heap());
+    const value range = held_slot(self, range_slot);
+    if (!range.is_object()) { return; }
+    bool inside = false;
+    for (const char * end : {"startContainer", "endContainer"}) {
+        const node_id node = handle_of(c.lookup_property(range, end));
+        const auto txn = doc_->read();
+        bool crossed = false;
+        for (node_id at = node; at && !inside;) {
+            if (at == removed) {
+                inside = crossed;
+                break;
+            }
+            if (const node_id up = txn.parent(at)) {
+                at = up;
+                continue;
+            }
+            const shadow_tree * tree = shadow_tree_of(at);
+            if (tree == nullptr) { break; }
+            crossed = true;
+            at = tree->host;
+        }
+    }
+    if (!inside) { return; }
+    for (const std::string_view slot :
+         {range_slot, anchor_node_slot, anchor_offset_slot, focus_node_slot, focus_offset_slot}) {
+        self->set(std::string{slot}, value::undefined());
+    }
+    self->set(std::string{across_slot}, value::boolean(false));
 }
 
 // AN EDITING HOST THAT GAINS FOCUS GETS A CARET, where every browser puts one

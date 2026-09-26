@@ -253,11 +253,12 @@ struct rotation {
 
 [[nodiscard]] std::vector<std::string_view> track_words(std::string_view text);
 
-[[nodiscard]] std::string blend_track(std::string_view x, std::string_view y, double p,
+[[nodiscard]] std::string blend_track(std::string_view x, std::string_view y, double wa, double wb,
                                       const css::length_context & ctx);
 
 [[nodiscard]] std::optional<std::string> interpolate_tracks(std::string_view from,
-                                                            std::string_view to, double p,
+                                                            std::string_view to, double wa,
+                                                            double wb,
                                                             const css::length_context & ctx);
 
 [[nodiscard]] std::optional<std::string> interpolate_ratio(std::string_view from,

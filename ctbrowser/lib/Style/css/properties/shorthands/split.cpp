@@ -852,6 +852,39 @@ split split_position_try(std::string_view value, std::vector<std::string> & out)
     return split::ok;
 }
 
+// `font-synthesis`, CSS Fonts 4 §4.7: `none | [ weight || [ style |
+// oblique-only ] || small-caps || position ]`, each word the `auto` - or,
+// for `oblique-only`, the value - of its longhand and every longhand not
+// named `none`.
+split split_font_synthesis(std::string_view value, std::vector<std::string> & out) {
+    out = {"none", "none", "none", "none"};
+    std::vector<std::string_view> words;
+    for (const std::string_view raw : split_top_level(value, html_whitespace)) {
+        if (!trim(raw, html_whitespace).empty()) { words.push_back(trim(raw, html_whitespace)); }
+    }
+    if (words.empty()) { return split::invalid; }
+    if (words.size() == 1 && ascii_iequals(words[0], "none")) { return split::ok; }
+    std::array<bool, 4> seen{};
+    for (const std::string_view word : words) {
+        std::size_t slot = 4;
+        std::string_view to = "auto";
+        if (ascii_iequals(word, "weight")) {
+            slot = 0;
+        } else if (ascii_iequals(word, "style") || ascii_iequals(word, "oblique-only")) {
+            slot = 1;
+            if (ascii_iequals(word, "oblique-only")) { to = "oblique-only"; }
+        } else if (ascii_iequals(word, "small-caps")) {
+            slot = 2;
+        } else if (ascii_iequals(word, "position")) {
+            slot = 3;
+        }
+        if (slot == 4 || seen[slot]) { return split::invalid; }
+        seen[slot] = true;
+        out[slot] = std::string{to};
+    }
+    return split::ok;
+}
+
 // `text-spacing`, CSS Text 4 §8.1: `none` is space-all and no-autospace,
 // `auto` both auto, and otherwise a text-spacing-trim keyword at one end
 // with text-autospace's words - or nothing, its initial - beside it.
@@ -1044,6 +1077,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::mask: return split_mask(value, out) ? split::ok : split::invalid;
     case shape::position_try: return split_position_try(value, out);
     case shape::text_spacing: return split_text_spacing(value, out);
+    case shape::font_synthesis: return split_font_synthesis(value, out);
     case shape::border_image: return split_border_image(value, out) ? split::ok : split::invalid;
     case shape::place: {
         std::string align, justify;

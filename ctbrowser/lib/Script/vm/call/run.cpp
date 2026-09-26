@@ -68,6 +68,44 @@ run_result context::run_reentrant(const program & prog) {
     return result;
 }
 
+bool context::global_declaration_instantiation(const program & prog) {
+    if (prog.kind != script_kind::classic || prog.eval_code ||
+        (prog.lexical_names.empty() && prog.function_names.empty() && prog.hoisted_vars.empty())) {
+        return true;
+    }
+    realm_record & realm = current_realm();
+    const auto refuse = [&](const std::string & name) {
+        throw_error("SyntaxError", "Identifier '" + name + "' has already been declared");
+        return false;
+    };
+    // HasRestrictedGlobalProperty (9.1.1.4.14): a non-configurable own
+    // property of the global object - `undefined`, `NaN`, one a page defined
+    // so - may not be shadowed by a `let`. Asked of the proxy's target, as
+    // declare_global_var asks it.
+    value holder = realm.global_this;
+    if (holder.is_kind(heap_kind::proxy)) {
+        holder = static_cast<proxy_object *>(holder.as_heap())->target;
+    }
+    for (const std::string & name : prog.lexical_names) {
+        if (realm.var_names.contains(name) || realm.lexical.contains(name)) { return refuse(name); }
+        property_descriptor own;
+        if (holder.is_object() && own_property(holder, name, own) && own.has_configurable &&
+            !own.configurable) {
+            return refuse(name);
+        }
+    }
+    for (const std::string & name : prog.hoisted_vars) {
+        if (realm.lexical.contains(name)) { return refuse(name); }
+    }
+    for (const std::string & name : prog.function_names) {
+        if (realm.lexical.contains(name)) { return refuse(name); }
+    }
+    for (const std::string & name : prog.lexical_names) { realm.lexical[name] = true; }
+    for (const std::string & name : prog.hoisted_vars) { realm.var_names[name] = true; }
+    for (const std::string & name : prog.function_names) { realm.var_names[name] = true; }
+    return true;
+}
+
 run_result context::run(const program & prog) {
     run_result result;
     if (!prog.ok) {
@@ -77,9 +115,18 @@ run_result context::run(const program & prog) {
     }
     failed_ = false;
     error_.clear();
-    // See program::hoisted_vars: the script's `var`s exist before it starts.
-    for (const std::string & name : prog.hoisted_vars) { declare_global_var(name, prog.eval_code); }
-    result.returned = execute(prog, prog.functions[0]);
+    // See program::hoisted_vars: the script's `var`s exist before it starts
+    // - once GlobalDeclarationInstantiation has found nothing to refuse. Its
+    // refusal is thrown with no frame and no handler, as execute() would
+    // leave them, so a dead program's `try` cannot catch it.
+    frames_.clear();
+    handlers_.clear();
+    if (global_declaration_instantiation(prog)) {
+        for (const std::string & name : prog.hoisted_vars) {
+            declare_global_var(name, prog.eval_code);
+        }
+        result.returned = execute(prog, prog.functions[0]);
+    }
     // THE END OF THE TURN. A script's promise handlers run after its last
     // statement, not between two of them - so the checkpoint is here, once the
     // top level has finished.

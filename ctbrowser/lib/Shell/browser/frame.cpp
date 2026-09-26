@@ -104,6 +104,10 @@ std::size_t browser::tick(double elapsed_ms) {
     // `load` handler is where WPT reads `frame.contentDocument`, so a frame
     // whose document is built with the timers - after that event - is a frame
     // that was never there when it was looked for. See bindings/frames.cpp.
+    // THE NAVIGATIONS FORMS PLANNED on an earlier turn come before that: a
+    // frame a submission navigates has its new document before this tick
+    // announces anything (bindings/frames.cpp, run_planned_navigations).
+    bindings_->run_planned_navigations();
     bindings_->reconcile_frames();
     if (load_event_pending_) {
         load_event_pending_ = false;

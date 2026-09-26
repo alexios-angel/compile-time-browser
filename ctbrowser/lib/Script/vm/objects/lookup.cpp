@@ -132,14 +132,18 @@ value context::key_value(const std::string & key) {
         return value::object(allocate<symbol_object>(
             at == std::string::npos ? std::string{} : key.substr(at + 1), key));
     }
-    if (key.starts_with("@@for:")) {
-        return value::object(allocate<symbol_object>(key.substr(6), key));
+    if (key.starts_with(registered_symbol_key_prefix)) {
+        return value::object(
+            allocate<symbol_object>(key.substr(registered_symbol_key_prefix.size()), key));
     }
-    if (key.starts_with("@@")) {
+    if (key.starts_with(symbol_key_mark)) {
         // A well-known symbol's [[Description]] is "Symbol.iterator" (6.1.5.1).
-        return value::object(allocate<symbol_object>("Symbol." + key.substr(2), key));
+        return value::object(
+            allocate<symbol_object>("Symbol." + key.substr(symbol_key_mark.size()), key));
     }
-    return string(key);
+    // A string key, or a private name's - which only the VM's own paths
+    // (a private accessor's SetFunctionName) ever ask for.
+    return minted_string(key);
 }
 
 value context::get_with_receiver(value base, const std::string & name, value receiver) {

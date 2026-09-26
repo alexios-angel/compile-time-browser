@@ -127,12 +127,51 @@ public:
     // CSS Syntax 3 §9 puts an empty comment between two tokens that would
     // otherwise merge, and so does every engine's serialisation of a custom
     // property (if-conditionals).
+    //
+    // WHICH PAIRS is CSS Syntax 3 §9.2's table, over the last token of the one
+    // and the first of the other: an ident before an ident, a function, a
+    // url, `-`, a number, a percentage, a dimension, `-->` or `(`; an
+    // at-keyword, a hash or a dimension before the same but `(`; `#` or `-`
+    // before an ident, function, url, `-` or a number of any kind (and `-`
+    // before `-->`); a number before an ident, function, url, number of any
+    // kind or `%`; `@` before an ident, function, url, `-` or `-->`; `.` or
+    // `+` before a number of any kind; and `/` before `*`
+    // (serialize-consecutive-tokens).
     static void join(std::string & left, std::string_view right) {
-        const auto name_char = [](char c) { return is_name(c) || c == '.' || c == '%'; };
-        if (!left.empty() && !right.empty() && name_char(left.back()) && name_char(right.front())) {
-            left += "/**/";
-        }
+        if (!left.empty() && !right.empty() && merges(left, right)) { left += "/**/"; }
         left += right;
+    }
+    [[nodiscard]] static bool merges(std::string_view left, std::string_view right) {
+        const token_stream a = tokenize(left);
+        const token_stream b = tokenize(right);
+        if (a.tokens.size() < 2 || b.tokens.size() < 2) { return false; }
+        const css_token & x = a.tokens[a.tokens.size() - 2]; // the last before eof
+        const css_token & y = b.tokens.front();
+        const auto delim = [](const token_stream & s, const css_token & t, char c) {
+            return t.type == token_type::delim && s.text_of(t) == std::string_view{&c, 1};
+        };
+        const bool y_word = y.type == token_type::ident || y.type == token_type::function ||
+                            y.type == token_type::url || y.type == token_type::bad_url;
+        const bool y_number = y.type == token_type::number || y.type == token_type::percentage ||
+                              y.type == token_type::dimension;
+        const bool y_minus = delim(b, y, '-');
+        const bool y_cdc = y.type == token_type::cdc;
+        switch (x.type) {
+        case token_type::ident:
+            return y_word || y_minus || y_number || y_cdc || y.type == token_type::open_paren;
+        case token_type::at_keyword:
+        case token_type::hash:
+        case token_type::dimension: return y_word || y_minus || y_number || y_cdc;
+        case token_type::number: return y_word || y_number || delim(b, y, '%');
+        case token_type::delim:
+            if (delim(a, x, '#')) { return y_word || y_minus || y_number; }
+            if (delim(a, x, '-')) { return y_word || y_minus || y_number || y_cdc; }
+            if (delim(a, x, '@')) { return y_word || y_minus || y_cdc; }
+            if (delim(a, x, '.') || delim(a, x, '+')) { return y_number; }
+            if (delim(a, x, '/')) { return delim(b, y, '*'); }
+            return false;
+        default: return false;
+        }
     }
 
     // THE PROPERTY THIS VALUE BELONGS TO, when it is a custom one, so that a

@@ -86,8 +86,9 @@ bool dom_bindings::dispatch(std::string_view type, node_id target) {
     // document.open() that reaches `load` again is already showing.
     script::object_object * window = window_object();
     if (window_load && window != nullptr &&
-        window->find("@@sym:ctbrowser:pageShowing") == nullptr) {
-        window->define("@@sym:ctbrowser:pageShowing", value::boolean(true), script::attr_none);
+        window->find(CTBROWSER_SYMBOL_KEY("sym:ctbrowser:pageShowing")) == nullptr) {
+        window->define(CTBROWSER_SYMBOL_KEY("sym:ctbrowser:pageShowing"), value::boolean(true),
+                       script::attr_none);
         const value shown = make_event(*cx_, "pageshow", node_id{});
         auto * held = static_cast<script::object_object *>(shown.as_heap());
         const value ctor = cx_->global("PageTransitionEvent");

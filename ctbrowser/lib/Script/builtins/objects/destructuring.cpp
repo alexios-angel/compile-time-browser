@@ -116,15 +116,15 @@ void install_using(context & cx) {
         value method = value::undefined();
         bool sync_fallback = false;
         if (async) {
-            method = c.lookup_property(v, "@@asyncDispose");
+            method = c.lookup_property(v, CTBROWSER_SYMBOL_KEY("asyncDispose"));
             if (c.throw_pending()) { return value::undefined(); }
             if (method.is_nullish()) {
-                method = c.lookup_property(v, "@@dispose");
+                method = c.lookup_property(v, CTBROWSER_SYMBOL_KEY("dispose"));
                 if (c.throw_pending()) { return value::undefined(); }
                 sync_fallback = true;
             }
         } else {
-            method = c.lookup_property(v, "@@dispose");
+            method = c.lookup_property(v, CTBROWSER_SYMBOL_KEY("dispose"));
             if (c.throw_pending()) { return value::undefined(); }
         }
         if (!method.is_callable()) {
@@ -200,7 +200,7 @@ void install_destructuring_iteration(context & cx) {
         if (!fast && v.is_object()) {
             auto * obj = static_cast<object_object *>(v.as_heap());
             fast = obj->find("__entries") != nullptr || obj->find("__items") != nullptr;
-            if (!fast && !c.lookup_property(v, "@@iterator").is_callable()) {
+            if (!fast && !c.lookup_property(v, CTBROWSER_SYMBOL_KEY("iterator")).is_callable()) {
                 const value * length = obj->find("length");
                 fast = length != nullptr && length->is_number();
             }
@@ -313,6 +313,12 @@ void install_destructuring_iteration(context & cx) {
         }
         c.set_prototype(a[2], proto_parent.is_null() ? value::undefined() : proto_parent);
         ctor->proto_link = parent;
+        // UNTIL class_defined: the body's methods are DEFINED on these two,
+        // whatever the parent's chain holds (object_object::defining_class).
+        ctor->defining_class = true;
+        if (a[2].is_object()) {
+            static_cast<object_object *>(a[2].as_heap())->defining_class = true;
+        }
         return value::undefined();
     });
     // See super_set_name.
@@ -465,7 +471,7 @@ void install_destructuring_iteration(context & cx) {
                 c.throw_error("TypeError", "the value is not async iterable");
                 return value::undefined();
             }
-            const value method = c.lookup_property(source, "@@asyncIterator");
+            const value method = c.lookup_property(source, CTBROWSER_SYMBOL_KEY("asyncIterator"));
             if (c.throw_pending()) { return value::undefined(); }
             if (!method.is_nullish()) {
                 if (!method.is_callable()) {
@@ -480,7 +486,7 @@ void install_destructuring_iteration(context & cx) {
                     return value::undefined();
                 }
             } else {
-                const value sync = c.lookup_property(source, "@@iterator");
+                const value sync = c.lookup_property(source, CTBROWSER_SYMBOL_KEY("iterator"));
                 if (c.throw_pending()) { return value::undefined(); }
                 if (!sync.is_callable()) {
                     c.throw_error("TypeError", "the value is not async iterable");
@@ -500,7 +506,7 @@ void install_destructuring_iteration(context & cx) {
                 auto * answer = c.allocate<native_object>(
                     "[Symbol.iterator]", [inner](context &, std::span<value>) { return inner; });
                 answer->retained.push_back(inner);
-                iterable->set("@@iterator", value::object(answer));
+                iterable->set(CTBROWSER_SYMBOL_KEY("iterator"), value::object(answer));
                 const value wrapped = value::object(iterable);
                 iterator = c.call(c.global(std::string{async_iterator_name}), {&wrapped, 1});
             }

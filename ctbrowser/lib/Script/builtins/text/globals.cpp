@@ -324,16 +324,20 @@ struct cloner {
             const value args[1] = {*ms};
             return remember(v, make("Date", args));
         }
-        if (source->find("@#RegExpSource") != nullptr) { // [[RegExpMatcher]]
+        if (source->find(CTBROWSER_PRIVATE_KEY("RegExpSource")) != nullptr) { // [[RegExpMatcher]]
             const value args[2] = {c.lookup_property(v, "source"), c.lookup_property(v, "flags")};
             if (c.throw_pending()) { return value::undefined(); }
             return remember(v, make("RegExp", args));
         }
         if (array_object * store = buffer_store(v)) { return copy_buffer(v, store); }
         if (source->find(data_view_store_key) != nullptr) { return copy_data_view(v, source); }
-        if (source->find("@#MapData") != nullptr) { return copy_keyed(v, source, true); }
-        if (source->find("@#SetData") != nullptr) { return copy_keyed(v, source, false); }
-        if (source->find("@#ErrorData") != nullptr) { return copy_error(v); }
+        if (source->find(CTBROWSER_PRIVATE_KEY("MapData")) != nullptr) {
+            return copy_keyed(v, source, true);
+        }
+        if (source->find(CTBROWSER_PRIVATE_KEY("SetData")) != nullptr) {
+            return copy_keyed(v, source, false);
+        }
+        if (source->find(CTBROWSER_PRIVATE_KEY("ErrorData")) != nullptr) { return copy_error(v); }
         // Anything else carrying an internal slot - a WeakMap, a Promise, a
         // generator - is not serializable (StructuredSerializeInternal step
         // 20). A private FIELD (`@#name:class`) is an ordinary property the
@@ -444,7 +448,9 @@ struct cloner {
         (void)remember(v, made);
         const value stack = c.lookup_property(v, "stack");
         if (c.throw_pending()) { return value::undefined(); }
-        if (stack.is_string()) { out->define("@#ErrorData", stack, attr_none); }
+        if (stack.is_string()) {
+            out->define(CTBROWSER_PRIVATE_KEY("ErrorData"), stack, attr_none);
+        }
         context::property_descriptor cause;
         if (c.own_property(v, "cause", cause) && cause.is_data()) {
             const value copied = copy(cause.held);

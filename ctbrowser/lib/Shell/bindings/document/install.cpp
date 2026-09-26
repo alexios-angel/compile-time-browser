@@ -45,7 +45,7 @@ void dom_bindings::install_document(context & cx) {
         // and its constructor is Element, not HTMLElement.
         const std::string type = content_type_.empty() ? "application/xhtml+xml" : content_type_;
         const node_ns kind = type == "application/xhtml+xml" ? node_ns::html : node_ns::other;
-        return wrap(c, doc_->create_element(atoms_->intern(name), kind));
+        return create_html_element(c, name, arg(args, 1), true, false, kind);
     });
     set_method(cx, *doc, "createTextNode", [this](context & c, std::span<value> args) {
         return wrap(c, doc_->create_text(arg_string(c, args, 0)));
@@ -82,6 +82,9 @@ void dom_bindings::install_document(context & cx) {
         const node_ns kind = ns == xhtml_namespace ? node_ns::html
                              : ns == svg_namespace ? node_ns::svg
                                                    : node_ns::other;
+        if (kind == node_ns::html) {
+            return create_html_element(c, qualified, arg(args, 2), true, prefixed);
+        }
         // INTERNED AS WRITTEN, not lowercased: the qualified name IS the tag
         // here, and folding it would lose the case an XML document depends on.
         const node_id made = doc_->create_element(atoms_->intern(qualified), kind, prefixed);

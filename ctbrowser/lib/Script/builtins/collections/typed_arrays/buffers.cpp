@@ -177,7 +177,7 @@ value species_constructor(context & cx, value o, value default_ctor) {
         cx.throw_error("TypeError", "object.constructor is not an object");
         return value::undefined();
     }
-    const value species = cx.lookup_property(ctor, "@@species");
+    const value species = cx.lookup_property(ctor, CTBROWSER_SYMBOL_KEY("species"));
     if (cx.throw_pending()) { return value::undefined(); }
     if (species.is_nullish()) { return default_ctor; }
     if (!is_constructor(species)) {
@@ -309,7 +309,7 @@ void install_array_buffer(context & cx) {
     });
     detail::constant(ctor, "prototype", value::object(proto));
     link_constructor(cx, proto, "ArrayBuffer", 1, value::object(ctor));
-    proto->define("@@toStringTag", cx.string("ArrayBuffer"), attr_configurable);
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("ArrayBuffer"), attr_configurable);
 
     // 25.1.5.3 get ArrayBuffer[@@species]
     {
@@ -317,8 +317,8 @@ void install_array_buffer(context & cx) {
             detail::method_native(cx, "get [Symbol.species]",
                                   [](context & c, std::span<value>) { return c.current_this(); });
         detail::install_arity(cx, species, 0);
-        ctor->define_accessor("@@species", value::object(species), value::undefined(),
-                              attr_configurable);
+        ctor->define_accessor(CTBROWSER_SYMBOL_KEY("species"), value::object(species),
+                              value::undefined(), attr_configurable);
     }
     // 25.1.5.1 ArrayBuffer.isView: a typed array or a DataView, by what the
     // object IS - an array_object with an element kind, or an object carrying

@@ -67,4 +67,24 @@ constexpr double infinity = std::numeric_limits<double>::infinity();
     return property;
 }
 
+// A SHADOW'S OMITTED COLOUR IS currentcolor (CSS Backgrounds 3 §7.1), which
+// no word in the text says: each shadow of a list with no colour of its own
+// takes `color` - the element's computed colour text - so `-15px -10px 25px`
+// pairs with `black 15px 10px 5px` as the colour it draws in
+// (box-shadow-interpolation), and every `currentcolor` is that colour too.
+[[nodiscard]] inline std::string shadows_in_color(std::string_view value, std::string_view color) {
+    if (ascii_iequals(trim(value, html_whitespace), "none")) { return std::string{value}; }
+    std::string shadows;
+    for (const std::string_view shadow : split_top_level(value, ",")) {
+        bool coloured = false;
+        for (const std::string_view part : split_top_level(shadow, html_whitespace)) {
+            coloured = coloured || ascii_iequals(part, "currentcolor") ||
+                       style::css::resolve_color(part, {}).has_value();
+        }
+        shadows += (shadows.empty() ? "" : ", ") + (coloured ? "" : std::string{color} + " ") +
+                   std::string{trim(shadow, html_whitespace)};
+    }
+    return style::with_currentcolor(shadows, color);
+}
+
 } // namespace ctbrowser::shell::animation_detail

@@ -185,7 +185,7 @@ value context::construct(value callee, std::span<const value> args, value new_ta
         // A BOUND FUNCTION (Function.prototype.bind, which says how `retained`
         // is laid out): [[Construct]] is the target's, with the bound
         // arguments in front and the bound `this` ignored (10.4.1.2).
-        if (const value * target = nat->find("@#BoundTargetFunction");
+        if (const value * target = nat->find(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"));
             target != nullptr && target->is_callable() && nat->retained.size() >= 3) {
             std::vector<value> all{nat->retained.begin() + 3, nat->retained.end()};
             all.insert(all.end(), args.begin(), args.end());

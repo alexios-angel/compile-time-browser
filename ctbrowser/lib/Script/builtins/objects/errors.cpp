@@ -13,7 +13,7 @@ namespace ctbrowser::script::builtins_detail {
 namespace {
 // [[ErrorData]], and the trace with it: a private key, invisible to every
 // property walk (value.hpp, private_key_prefix).
-constexpr std::string_view error_stack_slot = "@#ErrorData";
+constexpr std::string_view error_stack_slot = CTBROWSER_PRIVATE_KEY("ErrorData");
 } // namespace
 
 // `Error` and the standard subclasses. 239 `throw new` in p5.js, and every one

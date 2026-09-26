@@ -60,7 +60,11 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 named >= 0 && at(named).kind == vp::nk::func_expr) {
                 default_function_ = named;
             }
-            compile_expr(n.a, r);
+            // AN ANONYMOUS ONE IS NAMED "default" (16.2.3.7 NamedEvaluation;
+            // the same for `export default class {}` and a parenthesised
+            // function) - the name is the function's metadata, so this
+            // compiles to exactly what compile_expr would.
+            compile_named_expr(n.a, r, "default");
             proto().emit(instruction{op::cell_set, static_cast<std::uint16_t>(slot), r});
             // A named default also initialises the binding its name makes
             // (predeclare_locals).

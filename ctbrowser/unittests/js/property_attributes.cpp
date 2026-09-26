@@ -973,6 +973,22 @@ int main() {
     js_expect("(function(){class C { static v = C.make(); static make() { return 7; } static w; }"
               "return C.v + '/' + ('w' in C) + '/' + C.w;})()",
               "7/true/undefined");
+    // A class's static ACCESSOR is configurable, so `delete` removes it - it
+    // answered true and the getter stayed (a closure's accessors were never
+    // looked at).
+    js_expect("(function(){class C { static get x() { return 2; } }"
+              "var d = delete C.x; return d + '/' + C.x + '/' + ('x' in C);})()",
+              "true/undefined/false");
+
+    // A CLASS'S METHODS ARE DEFINED, not assigned (15.4.4 DefineMethodProperty):
+    // neither a setter nor a read-only property up the parent's chain sees
+    // them - `class S extends Set { size() {} }` defined no `size` at all.
+    js_expect("(function(){var hits = 0; class P { set m(v) { hits++; } static set s(v) {"
+              " hits++; } } class C extends P { m() { return 1; } static s() { return 2; } }"
+              "class S extends Set { size() { return 3; } }"
+              "return [hits, new C().m(), C.s(), new S().size(),"
+              " Object.getOwnPropertyDescriptor(C.prototype, 'm').enumerable].join();})()",
+              "0,1,2,3,false");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

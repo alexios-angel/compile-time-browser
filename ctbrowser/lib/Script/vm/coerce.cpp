@@ -137,7 +137,7 @@ std::string context::to_string(value v) {
 // `[].join.call({toString: () => ({}), valueOf: () => ({})})` refuses once
 // rather than falling back to "[object Object]" in one place and NaN in another.
 bool context::to_primitive_hint(value v, const char * hint, value & out) {
-    const value exotic = lookup_property(v, "@@toPrimitive");
+    const value exotic = lookup_property(v, CTBROWSER_SYMBOL_KEY("toPrimitive"));
     if (throw_pending()) { return false; }
     if (!exotic.is_nullish()) {
         if (!exotic.is_callable()) {
@@ -175,21 +175,13 @@ value context::to_primitive(value v) {
     // BigInt.prototype carries those methods - which is exactly what made
     // `1n + 2n` evaluate to "12" once it did.
     //
-    // A SYMBOL IS DELIBERATELY NOT LISTED HERE, though it is a primitive too.
-    // It should REFUSE this conversion outright (a TypeError), and it cannot
-    // until ToPropertyKey is separated from ToString - `o[sym]` resolves
-    // through the same call. Until then the toString walk at least yields
-    // "Symbol(x)" rather than the internal key, which is the nearer wrong
-    // answer; unittests/js/symbol_basics.cpp pins that and says so.
-    if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::bigint)) { return v; }
-    if (v.is_kind(heap_kind::symbol)) {
-        for (const char * name : {"valueOf", "toString"}) {
-            const value fn = lookup_property(v, name);
-            if (!fn.is_callable()) { continue; }
-            const value produced = call(fn, std::span<const value>{}, v);
-            if (produced.is_heap() && !produced.is_string()) { continue; }
-            return produced;
-        }
+    // AND SO IS A SYMBOL (7.1.1 step 2 answers any primitive as itself). It
+    // was walked through its toString into "Symbol(x)" while nothing refused
+    // one; now the operators that take this answer refuse a symbol themselves
+    // (binary_op, compare_relational - 7.1.17 and 7.1.4 are the TypeError),
+    // so it passes through as what it is.
+    if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::bigint) ||
+        v.is_kind(heap_kind::symbol)) {
         return v;
     }
     value out = value::undefined();
@@ -210,7 +202,14 @@ double context::to_number_value(value v) {
         throw_error("TypeError", "Cannot convert a BigInt value to a number");
         return std::nan("");
     }
-    if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::symbol)) { return to_number(v); }
+    // AND A SYMBOL REFUSES IT OUTRIGHT (7.1.4 step 2): `+sym`, `-sym`,
+    // `sym * 1`. A built-in's argument helpers refuse one before they get
+    // here (numeric_arg, internal.hpp), so this is the operators' refusal.
+    if (v.is_kind(heap_kind::symbol)) {
+        throw_error("TypeError", "Cannot convert a Symbol value to a number");
+        return std::nan("");
+    }
+    if (!v.is_heap() || v.is_string()) { return to_number(v); }
     value out = value::undefined();
     if (!to_primitive_hint(v, "number", out)) { return std::nan(""); }
     if (out.is_kind(heap_kind::bigint)) {
@@ -396,9 +395,20 @@ value context::binary_op(op kind, value lhs, value rhs) {
     const auto threw = [this, unwound, pending] {
         return (!pending && throw_pending()) || unwinds() != unwound;
     };
+    // A SYMBOL IS NEVER IMPLICITLY A STRING OR A NUMBER (7.1.17 step 2,
+    // 7.1.4 step 2): a template substitution, `+`, `-` and the relational
+    // operators all refuse one. to_string cannot - it is ToPropertyKey too,
+    // and hands a symbol's key back - so the operators ask here.
+    const auto refuse_symbol = [this](value a, value b, const char * to) {
+        if (!a.is_kind(heap_kind::symbol) && !b.is_kind(heap_kind::symbol)) { return false; }
+        throw_error("TypeError", std::string{"Cannot convert a Symbol value to a "} + to);
+        return true;
+    };
     if (kind == op::concat) {
+        if (refuse_symbol(lhs, lhs, "string")) { return value::undefined(); }
         std::string left = to_string(lhs);
         if (threw()) { return value::undefined(); }
+        if (refuse_symbol(rhs, rhs, "string")) { return value::undefined(); }
         return string(std::move(left) + to_string(rhs));
     }
 
@@ -415,6 +425,9 @@ value context::binary_op(op kind, value lhs, value rhs) {
         if (threw()) { return value::undefined(); }
         const value r = to_primitive(rhs);
         if (threw()) { return value::undefined(); }
+        if (refuse_symbol(l, r, l.is_string() || r.is_string() ? "string" : "number")) {
+            return value::undefined();
+        }
         // BEFORE the string-or-number decision: `1n + 1n` is addition and
         // `1n + 1` is a TypeError, neither of which is either arm below. Note
         // `1n + "a"` IS concatenation, so the string test still gets first
@@ -435,6 +448,7 @@ value context::binary_op(op kind, value lhs, value rhs) {
     if (threw()) { return value::undefined(); }
     const value r = numeric_operand(rhs);
     if (threw()) { return value::undefined(); }
+    if (refuse_symbol(l, r, "number")) { return value::undefined(); }
     if (value made; bigint_binary(kind, l, r, made)) { return made; }
     // `to_number_value`, NOT `to_number`: ToNumber runs valueOf/toString on
     // an object - none is left here - and a Symbol is its TypeError.
@@ -524,10 +538,20 @@ std::partial_ordering context::compare_relational(value a, value b) {
     const auto threw = [this, unwound, pending] {
         return (!pending && throw_pending()) || unwinds() != unwound;
     };
-    const value pa = to_primitive(a);
+    // WITH THE NUMBER HINT (7.2.13 steps 1-2: ToPrimitive(x, NUMBER)), which
+    // is numeric_operand's: the default hint turned two Dates into their
+    // strings - a Date's @@toPrimitive answers "default" as "string" - so
+    // `d1 < d2` compared weekday names.
+    const value pa = numeric_operand(a);
     if (threw()) { return std::partial_ordering::unordered; }
-    const value pb = to_primitive(b);
+    const value pb = numeric_operand(b);
     if (threw()) { return std::partial_ordering::unordered; }
+    // ToNumeric of a symbol (7.2.13 step 4 - two strings are the only pair
+    // compared without it) is the TypeError, as in binary_op.
+    if (pa.is_kind(heap_kind::symbol) || pb.is_kind(heap_kind::symbol)) {
+        throw_error("TypeError", "Cannot convert a Symbol value to a number");
+        return std::partial_ordering::unordered;
+    }
     // A BIGINT COMPARES AGAINST A NUMBER even though it cannot be added to one:
     // `1n < 2` is true. The comparison is EXACT rather than going through a
     // double, because a bigint past 2^53 must not round into equality with the

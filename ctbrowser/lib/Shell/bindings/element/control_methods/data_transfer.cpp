@@ -19,11 +19,11 @@ namespace ctbrowser::shell::detail {
 
 namespace {
 
-constexpr std::string_view files_key = "@#ctbrowser:file-list";
-constexpr std::string_view dt_items_key = "@#ctbrowser:data-transfer-items";
-constexpr std::string_view dt_list_key = "@#ctbrowser:data-transfer-item-list";
-constexpr std::string_view owner_key = "@#ctbrowser:data-transfer-owner";
-constexpr std::string_view dt_files_key = "@#ctbrowser:data-transfer-files";
+constexpr std::string_view files_key = CTBROWSER_PRIVATE_KEY("ctbrowser:file-list");
+constexpr std::string_view dt_items_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-transfer-items");
+constexpr std::string_view dt_list_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-transfer-item-list");
+constexpr std::string_view owner_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-transfer-owner");
+constexpr std::string_view dt_files_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-transfer-files");
 
 [[nodiscard]] script::object_object * as_object(value v) {
     return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
@@ -65,7 +65,7 @@ constexpr std::string_view dt_files_key = "@#ctbrowser:data-transfer-files";
         script::array_object * files = entries_of(cx.current_this(), files_key);
         return value::number(files == nullptr ? 0 : static_cast<double>(files->items.size()));
     });
-    on.define("@@iterator",
+    on.define(CTBROWSER_SYMBOL_KEY("iterator"),
               native(c, "values",
                      [](context & cx, std::span<value>) {
                          const value self = cx.current_this();
@@ -78,7 +78,7 @@ constexpr std::string_view dt_files_key = "@#ctbrowser:data-transfer-files";
                                                      : value::undefined();
                      }),
               script::attr_builtin);
-    on.define("@@toStringTag", c.string("FileList"), script::attr_configurable);
+    on.define(CTBROWSER_SYMBOL_KEY("toStringTag"), c.string("FileList"), script::attr_configurable);
     return proto;
 }
 
@@ -186,7 +186,7 @@ void control_helpers::install_data_transfer(context & cx) const {
         for (std::size_t i = 0; i < records->items.size(); ++i) {
             auto * item = c.allocate<script::object_object>();
             item->prototype = item_proto_value;
-            item->define("@#record", records->items[i], script::attr_none);
+            item->define(CTBROWSER_PRIVATE_KEY("record"), records->items[i], script::attr_none);
             item->define("kind", c.lookup_property(records->items[i], "kind"),
                          script::attr_enumerable);
             item->define("type", c.lookup_property(records->items[i], "type"),
@@ -259,18 +259,20 @@ void control_helpers::install_data_transfer(context & cx) const {
         }
         return value::undefined();
     });
-    list_proto->define("@@toStringTag", cx.string("DataTransferItemList"),
+    list_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("DataTransferItemList"),
                        script::attr_configurable);
 
     set_method(cx, *item_proto, "getAsFile", [](context & c, std::span<value>) {
         script::object_object * self = as_object(c.current_this());
-        const value * record = self == nullptr ? nullptr : self->find("@#record");
+        const value * record =
+            self == nullptr ? nullptr : self->find(CTBROWSER_PRIVATE_KEY("record"));
         if (record == nullptr || c.to_string(c.lookup_property(*record, "kind")) != "file") {
             return value::null();
         }
         return c.lookup_property(*record, "data");
     });
-    item_proto->define("@@toStringTag", cx.string("DataTransferItem"), script::attr_configurable);
+    item_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("DataTransferItem"),
+                       script::attr_configurable);
 
     // The transfer itself.
     define_getter(cx, *dt_proto, "items", [](context & c, std::span<value>) {
@@ -356,7 +358,8 @@ void control_helpers::install_data_transfer(context & cx) const {
         if (const value * list = self->find(std::string{dt_list_key})) { refresh(c, *list); }
         return value::undefined();
     });
-    dt_proto->define("@@toStringTag", cx.string("DataTransfer"), script::attr_configurable);
+    dt_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("DataTransfer"),
+                     script::attr_configurable);
 
     auto * ctor = cx.allocate<script::native_object>(
         "DataTransfer", [dt_proto_value, list_proto_value](context & c, std::span<value>) -> value {

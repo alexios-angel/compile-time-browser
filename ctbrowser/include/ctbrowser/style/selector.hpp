@@ -150,6 +150,11 @@ inline constexpr std::uint32_t structural_scope = 1u << 13;
 // style matcher is not told which names were defined. An upgraded custom
 // element is thus wrongly not `:defined`; see the engine's is_defined comment.
 inline constexpr std::uint32_t structural_defined = 1u << 14;
+// `:placeholder-shown` - Selectors 4 §13.3.2: an <input> or <textarea> with a
+// `placeholder` attribute, empty or not, whose value is empty - the value the
+// engine's control-value hook answers once edited, the attribute (or the
+// textarea's text) until then.
+inline constexpr std::uint32_t structural_placeholder_shown = 1u << 15;
 
 struct compiled_selector;
 

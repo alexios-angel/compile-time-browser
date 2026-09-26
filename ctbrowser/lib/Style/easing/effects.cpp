@@ -569,9 +569,8 @@ void promote(transform_fn & fn) {
 // Two lists blended as matrices (§15-16), decomposed as 4x4 matrices - the
 // decomposition that keeps a 2D pair's skew too: `matrix(1, 0, 0, 7, 0, 0)`
 // to `matrix(7, 0, 1, 1, 0, 0)` passes through `matrix(4, 0, 2, 4, 0, 0)` in
-// every engine (transform-interpolation-005) - and by the 2D algorithm when a
-// flat one is singular. nullopt, which is discrete, for a percentage, which
-// has no matrix until the box exists, and for a singular 3D matrix.
+// every engine (transform-interpolation-005). nullopt for a percentage, which
+// has no matrix until the box exists, and for a singular matrix.
 [[nodiscard]] std::optional<std::string> blend_lists(const std::vector<transform_fn> & a,
                                                      const std::vector<transform_fn> & b,
                                                      double p) {
@@ -585,28 +584,8 @@ void promote(transform_fn & fn) {
     const matrix3d x = matrix3d_of(a), y = matrix3d_of(b);
     const std::optional<decomposed3d> u = decompose3d(x);
     const std::optional<decomposed3d> v = decompose3d(y);
-    if (u && v) { return matrix_text(recompose3d(blend3d(*u, *v, p))); }
-    if (!flat(x) || !flat(y)) { return std::nullopt; }
-    const auto lerp = [p](double f, double t) { return (1 - p) * f + p * t; };
-    decomposed2d f = decompose(matrix2d{x[0], x[1], x[4], x[5], x[12], x[13]});
-    const decomposed2d t = decompose(matrix2d{y[0], y[1], y[4], y[5], y[12], y[13]});
-    // The rotation goes the short way round, and a flip of scale on one
-    // side is undone on the other (§12.2).
-    if ((f.sx < 0 && t.sy < 0) || (f.sy < 0 && t.sx < 0)) {
-        f.sx = -f.sx, f.sy = -f.sy;
-        f.angle += f.angle < 0 ? 180 : -180;
-    }
-    if (std::fabs(f.angle - t.angle) > 180) {
-        if (f.angle > t.angle) {
-            f.angle -= 360;
-        } else {
-            f.angle += 360;
-        }
-    }
-    const decomposed2d z{lerp(f.tx, t.tx),   lerp(f.ty, t.ty),       lerp(f.sx, t.sx),
-                         lerp(f.sy, t.sy),   lerp(f.angle, t.angle), lerp(f.m11, t.m11),
-                         lerp(f.m12, t.m12), lerp(f.m21, t.m21),     lerp(f.m22, t.m22)};
-    return matrix_text(recompose(z));
+    if (!u || !v) { return std::nullopt; }
+    return matrix_text(recompose3d(blend3d(*u, *v, p)));
 }
 
 // §15-16: function by function over the lists' longest common prefix of
@@ -627,6 +606,20 @@ void promote(transform_fn & fn) {
     if (p == 0 && !a->empty()) { return std::string{from}; }
     if (p == 1 && !b->empty()) { return std::string{to}; }
     const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
+    // Matrices that will not blend: a percentage is the caller's, and a
+    // singular matrix makes the whole animation discrete (CSS Transforms 1
+    // §10), a list's product taken whole (transform-matrix-composition).
+    const auto unblended = [&](const std::vector<transform_fn> & x,
+                               const std::vector<transform_fn> & y) -> std::optional<std::string> {
+        for (const std::vector<transform_fn> * list : {&x, &y}) {
+            for (const transform_fn & fn : *list) {
+                if (std::ranges::any_of(fn.pct, [](double v) { return v != 0; })) {
+                    return std::nullopt;
+                }
+            }
+        }
+        return std::string{p < 0.5 ? from : to};
+    };
     const std::size_t shorter = std::min(a->size(), b->size());
     std::size_t prefix = 0;
     while (prefix < shorter && primitive_of((*a)[prefix].name) == primitive_of((*b)[prefix].name)) {
@@ -648,7 +641,7 @@ void promote(transform_fn & fn) {
         if (i != 0) { out += ' '; }
         if (x.name == "matrix" || x.name == "matrix3d") {
             const std::optional<std::string> m = blend_lists({x}, {y}, p);
-            if (!m) { return std::nullopt; }
+            if (!m) { return unblended({x}, {y}); }
             out += *m;
             continue;
         }
@@ -713,11 +706,12 @@ void promote(transform_fn & fn) {
         out += function_text(fn);
     }
     if (prefix < a->size() || prefix < b->size()) {
-        const std::optional<std::string> rest = blend_lists(
-            std::vector<transform_fn>(a->begin() + static_cast<std::ptrdiff_t>(prefix), a->end()),
-            std::vector<transform_fn>(b->begin() + static_cast<std::ptrdiff_t>(prefix), b->end()),
-            p);
-        if (!rest) { return std::nullopt; }
+        const std::vector<transform_fn> x(a->begin() + static_cast<std::ptrdiff_t>(prefix),
+                                          a->end());
+        const std::vector<transform_fn> y(b->begin() + static_cast<std::ptrdiff_t>(prefix),
+                                          b->end());
+        const std::optional<std::string> rest = blend_lists(x, y, p);
+        if (!rest) { return unblended(x, y); }
         out += (out.empty() ? "" : " ") + *rest;
     }
     return out;
@@ -839,23 +833,79 @@ void promote(transform_fn & fn) {
     return out;
 }
 
+// Two WHOLE 2D lists accumulated as matrices (CSS Transforms 2 §16, for lists
+// that do not pair function by function): each decomposed into a translation,
+// a rotation, a skew - the shear of the rows once scaled out, which is the 2D
+// case of the 3D decomposition - and a scale; the translations, angles and
+// skews summed, the scales each summed less one, and recomposed.
+// `translateX(100px) rotate(90deg)` accumulating `translateX(100px)` is
+// `matrix(0, 1, -1, 0, 200, 0)` (transform-translate-composition). nullopt
+// for a percentage, a 3D list or a singular matrix.
+[[nodiscard]] std::optional<std::string> accumulate_as_matrices(
+    const std::vector<transform_fn> & a, const std::vector<transform_fn> & b) {
+    for (const std::vector<transform_fn> * list : {&a, &b}) {
+        for (const transform_fn & fn : *list) {
+            if (std::ranges::any_of(fn.pct, [](double v) { return v != 0; })) {
+                return std::nullopt;
+            }
+        }
+    }
+    const matrix3d x = matrix3d_of(a), y = matrix3d_of(b);
+    if (!flat(x) || !flat(y)) { return std::nullopt; }
+    struct parts {
+        double tx, ty, sx, sy, skew, angle;
+    };
+    const auto split = [](const matrix3d & m) -> std::optional<parts> {
+        double r0x = m[0], r0y = m[1], r1x = m[4], r1y = m[5];
+        parts out{m[12], m[13], std::hypot(r0x, r0y), 0, 0, 0};
+        if (out.sx == 0) { return std::nullopt; }
+        r0x /= out.sx, r0y /= out.sx;
+        out.skew = r0x * r1x + r0y * r1y;
+        r1x -= out.skew * r0x, r1y -= out.skew * r0y;
+        out.sy = std::hypot(r1x, r1y);
+        if (out.sy == 0) { return std::nullopt; }
+        r1x /= out.sy, r1y /= out.sy, out.skew /= out.sy;
+        if (r0x * r1y - r0y * r1x < 0) {
+            out.sx = -out.sx;
+            r0x = -r0x, r0y = -r0y;
+        }
+        out.angle = std::atan2(r0y, r0x) * 180.0 / std::numbers::pi;
+        return out;
+    };
+    const std::optional<parts> u = split(x), v = split(y);
+    if (!u || !v) { return std::nullopt; }
+    const double r = radians(u->angle + v->angle);
+    matrix2d m{1, 0, 0, 1, u->tx + v->tx, u->ty + v->ty};
+    m = multiply(m, {std::cos(r), std::sin(r), -std::sin(r), std::cos(r), 0, 0});
+    m = multiply(m, {1, 0, u->skew + v->skew, 1, 0, 0});
+    m = multiply(m, {u->sx + v->sx - 1, 0, 0, u->sy + v->sy - 1, 0, 0});
+    return matrix_text(m);
+}
+
 // CSS Transforms 2 §14, accumulation of two transform lists: function by
 // function when the lists match in length and primitive - a translate sums,
 // a scale sums its excess over 1, a rotate or skew sums its angles, a matrix
 // pair is decomposed, summed the same way and recomposed - and otherwise the
-// keyframe's list is appended to the underlying one. A matrix that cannot
-// be decomposed (singular) leaves the keyframe's value alone.
+// two whole lists as matrices, above; what neither can do is left to the
+// caller, which appends. A matrix that cannot be decomposed (singular)
+// leaves the keyframe's value alone.
 [[nodiscard]] std::optional<std::string> accumulate_transform(std::string_view underlying,
                                                               std::string_view value) {
-    const std::optional<std::vector<transform_fn>> a = parse_transforms(underlying);
-    const std::optional<std::vector<transform_fn>> b = parse_transforms(value);
+    std::optional<std::vector<transform_fn>> a = parse_transforms(underlying);
+    std::optional<std::vector<transform_fn>> b = parse_transforms(value);
     if (!a || !b) { return std::nullopt; }
     if (a->empty()) { return std::string{value}; }
     if (b->empty()) { return std::string{underlying}; }
-    if (a->size() != b->size()) { return std::nullopt; }
-    for (std::size_t i = 0; i < a->size(); ++i) {
-        if (primitive_of((*a)[i].name) != primitive_of((*b)[i].name)) { return std::nullopt; }
+    for (std::size_t i = 0; i < std::min(a->size(), b->size()); ++i) {
+        if (primitive_of((*a)[i].name) != primitive_of((*b)[i].name)) {
+            return accumulate_as_matrices(*a, *b);
+        }
     }
+    // A shorter list that pairs as far as it goes is padded with identities,
+    // as interpolation pads it: `rotate(45deg) skew(10deg, 20deg)` accumulating
+    // `rotate(45deg)` is `rotate(90deg) skew(10deg, 20deg)`.
+    for (std::size_t i = a->size(); i < b->size(); ++i) { a->push_back(identity_like((*b)[i])); }
+    for (std::size_t i = b->size(); i < a->size(); ++i) { b->push_back(identity_like((*a)[i])); }
     std::string out;
     for (std::size_t i = 0; i < a->size(); ++i) {
         transform_fn x = (*a)[i];
@@ -974,6 +1024,19 @@ void promote(transform_fn & fn) {
                css::serialize_number(tidy(z)) + " " + css::serialize_number(tidy(angle)) + "deg";
     };
     const auto near = [](double u, double v) { return std::fabs(u - v) < 1e-6; };
+    // A WHOLE NUMBER OF TURNS about one axis, against another axis, is a
+    // rotation by nothing too, and takes the other's axis: `1 2 3 360deg` to
+    // `0 1 0 100deg` is 200deg about y at 2 (rotate-composition).
+    // At its own end that nothing is the identity, which is `0deg` about z.
+    if (!(near(a->x, b->x) && near(a->y, b->y) && near(a->z, b->z))) {
+        if (std::fmod(a->angle, 360.0) == 0) {
+            if (p == 0) { return text(0, 0, 1, 0); }
+            *a = rotation{b->x, b->y, b->z, 0};
+        } else if (std::fmod(b->angle, 360.0) == 0) {
+            if (p == 1) { return text(0, 0, 1, 0); }
+            *b = rotation{a->x, a->y, a->z, 0};
+        }
+    }
     if (near(a->x, b->x) && near(a->y, b->y) && near(a->z, b->z)) {
         return text(a->x, a->y, a->z, (1 - p) * a->angle + p * b->angle);
     }

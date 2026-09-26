@@ -275,7 +275,7 @@ void install_data_view(context & cx) {
     });
     detail::constant(ctor, "prototype", value::object(proto));
     link_constructor(cx, proto, "DataView", 1, value::object(ctor));
-    proto->define("@@toStringTag", cx.string("DataView"), attr_configurable);
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("DataView"), attr_configurable);
 
     const auto getter = [&](const char * name, native_fn fn) {
         auto * made = detail::method_native(cx, std::string{"get "} + name, std::move(fn));

@@ -412,8 +412,11 @@ void dom_bindings::update_css_transitions(
                                              after.get(atoms_->intern("direction")));
         return physical.empty() ? std::string{name} : physical;
     };
+    // A property that is not animatable never transitions, allow-discrete or
+    // not (interpolate-size-interpolation).
     const auto consider = [&](std::string_view logical) {
         const std::string name = physical_of(logical);
+        if (!style::css::animatable(name)) { return; }
         if (std::ranges::find(candidates, name) == candidates.end()) {
             candidates.emplace_back(name);
         }
@@ -489,16 +492,30 @@ void dom_bindings::update_css_transitions(
 
         // Each side's `currentcolor` is that side's `color` (CSS Color 4
         // §7.1), for every property but `color` itself.
+        // ...and a shadow with no colour is in that colour too, so it pairs
+        // with a coloured one (box-shadow-interpolation).
         const auto resolved = [&](const style::computed_style & style, std::string_view text) {
-            return property == "color"
-                       ? std::string{text}
-                       : style::with_currentcolor(text, value_on(style, *atoms_, "color"));
+            if (property == "color") { return std::string{text}; }
+            const std::string_view color = value_on(style, *atoms_, "color");
+            if (property == "box-shadow" || property == "text-shadow") {
+                return animation_detail::shadows_in_color(text, color);
+            }
+            return style::with_currentcolor(text, color);
         };
         std::string before_value = resolved(before, value_on(before, *atoms_, property));
         for (const auto & [name, text] : current) {
             if (name == property) { before_value = trim(text, html_whitespace); }
         }
         const std::string after_value = resolved(after, value_on(after, *atoms_, property));
+        // Whether the pair interpolates is asked under the AFTER-CHANGE
+        // style's `interpolate-size` (CSS Values 5 §interpolate-size,
+        // interpolate-size-which-value).
+        style::css::length_context sizing;
+        sizing.interpolate_keywords =
+            ascii_iequals(value_on(after, *atoms_, "interpolate-size"), "allow-keywords");
+        const auto interpolates = [&](std::string_view from, std::string_view to) {
+            return style::interpolable_text(as, from, to, sizing);
+        };
 
         const auto start = [&](const std::string & from, const std::string & to, double start_delay,
                                double active, double factor, const std::string & reversing_start) {
@@ -538,7 +555,7 @@ void dom_bindings::update_css_transitions(
 
         if (existing == no_record) {
             if (before_value != after_value && combined > 0 &&
-                (discrete_ok || transitionable(as, before_value, after_value))) {
+                (discrete_ok || interpolates(before_value, after_value))) {
                 start(before_value, after_value, delay, duration, 1, before_value);
             }
             continue;
@@ -552,7 +569,7 @@ void dom_bindings::update_css_transitions(
             if (running.end_value == after_value) { continue; }
             cancel_record(existing);
             if (before_value != after_value && combined > 0 &&
-                (discrete_ok || transitionable(as, before_value, after_value))) {
+                (discrete_ok || interpolates(before_value, after_value))) {
                 start(before_value, after_value, delay, duration, 1, before_value);
             }
             continue;
@@ -561,7 +578,7 @@ void dom_bindings::update_css_transitions(
         // The running transition's end moved. Its current value is what the
         // before-change style carries.
         if (before_value == after_value || combined <= 0 ||
-            !(discrete_ok || transitionable(as, before_value, after_value))) {
+            !(discrete_ok || interpolates(before_value, after_value))) {
             cancel_record(existing);
             continue;
         }

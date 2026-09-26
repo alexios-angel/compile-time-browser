@@ -175,5 +175,14 @@ int main() {
     })())",
               "15,19");
 
+    // A RELATIONAL COMPARISON asks ToPrimitive for a NUMBER (7.2.13): two
+    // Dates compare as times, not as their strings, and @@toPrimitive is
+    // handed "number", left operand first.
+    js_expect("new Date(2020, 0, 1) < new Date(2020, 0, 2)", "true");
+    js_expect("(function () { var hints = []; function o(v) { var x = {};"
+              " x[Symbol.toPrimitive] = function (h) { hints.push(h); return v; }; return x; }"
+              " var r = o(1) >= o(2); return r + ':' + hints.join(); })()",
+              "false:number,number");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

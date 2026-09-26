@@ -133,6 +133,8 @@ struct app_options {
     // On by default - it is a browser - and CTBROWSER_NETWORK=0 turns it off,
     // which is what makes an example's ctest hermetic.
     bool network = true;
+    // shell::browser_options::on_request - ctdrive's WPT handler emulation.
+    shell::request_handler on_request{};
 
     // Called once before the first frame with the live browser, for
     // applications that want to inspect the document or drive it themselves.

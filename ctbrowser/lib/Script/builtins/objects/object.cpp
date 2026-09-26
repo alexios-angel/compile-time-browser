@@ -335,13 +335,13 @@ void install_object(context & cx) {
             const value describe = c.proxy_trap(self, "getOwnPropertyDescriptor", &failed);
             if (failed || c.throw_pending()) { return value::undefined(); }
             if (describe.is_callable()) {
-                const value args[2] = {p->target, c.string(key)};
+                const value args[2] = {p->target, c.key_value(key)};
                 return value::boolean(!c.call(describe, args, p->handler).is_undefined());
             }
             const value trap = c.proxy_trap(self, "has", &failed);
             if (failed || c.throw_pending()) { return value::undefined(); }
             if (trap.is_callable()) {
-                const value args[2] = {p->target, c.string(key)};
+                const value args[2] = {p->target, c.key_value(key)};
                 return value::boolean(c.truthy(c.call(trap, args, p->handler)));
             }
             return value::boolean(!c.lookup_property(p->target, key).is_undefined());
@@ -397,7 +397,8 @@ void install_object(context & cx) {
                   : slot->is_boolean() ? "Boolean"
                                        : "Object";
         } else if (self.is_object() &&
-                   static_cast<object_object *>(self.as_heap())->find("@#ErrorData") != nullptr) {
+                   static_cast<object_object *>(self.as_heap())
+                           ->find(CTBROWSER_PRIVATE_KEY("ErrorData")) != nullptr) {
             // [[ErrorData]] is the private slot every error constructor and
             // the engine's own throws record (errors.cpp; Error.isError asks
             // the same), so `EvalError.prototype` and
@@ -424,7 +425,7 @@ void install_object(context & cx) {
         // extension point `class X { get [Symbol.toStringTag]() {...} }` uses,
         // and the reason a Map prints as "[object Map]" without Object knowing
         // what a Map is.
-        const value custom = c.lookup_property(self, "@@toStringTag");
+        const value custom = c.lookup_property(self, CTBROWSER_SYMBOL_KEY("toStringTag"));
         if (custom.is_string()) { return c.string("[object " + c.to_string(custom) + "]"); }
         return c.string("[object " + std::string{tag} + "]");
     });
@@ -433,7 +434,8 @@ void install_object(context & cx) {
     // `delete Object.prototype.toString`. The `:` marks it engine data, as a
     // private field's key is, not an internal slot - without it
     // structuredClone(Object.prototype) refused to copy "an object of this kind".
-    object_proto->define("@#IntrinsicObjectToString:", *object_proto->find("toString"), attr_none);
+    object_proto->define(CTBROWSER_PRIVATE_KEY("IntrinsicObjectToString:"),
+                         *object_proto->find("toString"), attr_none);
     method(cx, object_proto, "valueOf", 0, [](context & c, std::span<value>) {
         const value self = c.current_this();
         if (!object_coercible(c, self, "Object.prototype.valueOf")) { return value::undefined(); }
@@ -776,7 +778,7 @@ void install_object(context & cx) {
     // symbols by `key`, which is what symbol_object's own comment says identity
     // IS here - and that file belongs to the object model, not to this one.
     //
-    // A WELL-KNOWN symbol key is `@@iterator`, not `@@sym:N:...`, so it is not
+    // A WELL-KNOWN symbol key is the mark and `iterator`, not symbol_key_prefix, so it is not
     // reported here and IS reported by getOwnPropertyNames. That is
     // value.hpp's `each_own_enumerable_key` filter, which for-in, JSON.stringify
     // and Object.keys all share; making this walk disagree with those four
@@ -1019,7 +1021,7 @@ void install_object(context & cx) {
         // GetIterator (step 4 of GroupBy): an object without a callable
         // @@iterator is a TypeError, not an empty result.
         if (a[0].is_object_like() && !a[0].is_array() &&
-            !c.lookup_property(a[0], "@@iterator").is_callable()) {
+            !c.lookup_property(a[0], CTBROWSER_SYMBOL_KEY("iterator")).is_callable()) {
             if (!c.throw_pending()) { c.throw_error("TypeError", "Object.groupBy: not iterable"); }
             return value::undefined();
         }

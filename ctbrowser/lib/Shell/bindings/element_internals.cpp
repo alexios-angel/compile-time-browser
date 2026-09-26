@@ -44,14 +44,14 @@ namespace {
 // Private-name keys (the `@#` the VM gives `#x`): no page can spell one, and
 // neither getOwnPropertyNames nor getOwnPropertySymbols reports them.
 using detail::internals_key;
-constexpr std::string_view target_key = "@#ctbrowser:internals-target";
-constexpr std::string_view validity_key = "@#ctbrowser:internals-validity";
-constexpr std::string_view message_key = "@#ctbrowser:internals-message";
-constexpr std::string_view form_value_key = "@#ctbrowser:internals-form-value";
-constexpr std::string_view form_state_key = "@#ctbrowser:internals-form-state";
-constexpr std::string_view states_key = "@#ctbrowser:internals-states";
-constexpr std::string_view behaviors_key = "@#ctbrowser:internals-behaviors";
-constexpr std::string_view aria_prefix = "@#ctbrowser:internals-aria:";
+constexpr std::string_view target_key = CTBROWSER_PRIVATE_KEY("ctbrowser:internals-target");
+constexpr std::string_view validity_key = CTBROWSER_PRIVATE_KEY("ctbrowser:internals-validity");
+constexpr std::string_view message_key = CTBROWSER_PRIVATE_KEY("ctbrowser:internals-message");
+constexpr std::string_view form_value_key = CTBROWSER_PRIVATE_KEY("ctbrowser:internals-form-value");
+constexpr std::string_view form_state_key = CTBROWSER_PRIVATE_KEY("ctbrowser:internals-form-state");
+constexpr std::string_view states_key = CTBROWSER_PRIVATE_KEY("ctbrowser:internals-states");
+constexpr std::string_view behaviors_key = CTBROWSER_PRIVATE_KEY("ctbrowser:internals-behaviors");
+constexpr std::string_view aria_prefix = CTBROWSER_PRIVATE_KEY("ctbrowser:internals-aria:");
 constexpr std::string_view flag_prefix = detail::internals_flag_prefix;
 
 // ValidityState's ten flags, HTML 4.10.20.3, in interface order.
@@ -528,7 +528,8 @@ void dom_bindings::install_element_internals(context & cx,
     // chains to Set.prototype for add/has/delete/clear/size/@@iterator.
     auto * states_proto = cx.allocate<script::object_object>();
     states_proto->prototype = cx.lookup_property(cx.global("Set"), "prototype");
-    states_proto->define("@@toStringTag", cx.string("CustomStateSet"), script::attr_configurable);
+    states_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("CustomStateSet"),
+                         script::attr_configurable);
     custom_state_set_prototype_ = value::object(states_proto);
     auto * states_ctor =
         cx.allocate<script::native_object>("CustomStateSet", [](context & c, std::span<value>) {
@@ -603,7 +604,8 @@ void dom_bindings::install_element_internals(context & cx,
         return held;
     });
 
-    proto->define("@@toStringTag", cx.string("ElementInternals"), script::attr_configurable);
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("ElementInternals"),
+                  script::attr_configurable);
     auto * ctor =
         cx.allocate<script::native_object>("ElementInternals", [](context & c, std::span<value>) {
             c.throw_error("TypeError", "Illegal constructor");

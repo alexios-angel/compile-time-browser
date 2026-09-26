@@ -499,11 +499,44 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(indent + (hanging ? " hanging" : "") + (each_line ? " each-line" : ""));
     }
 
-    // `<opacity-value>` (CSS Shapes 1 §5.1), whose percentage is written as
-    // the number it is: `50%` is `0.5`.
-    if (ascii_iequals(property, "shape-image-threshold") && found.significant.size() == 1 &&
+    // `<opacity-value>` (CSS Shapes 1 §5.1, CSS Color 4 §11.2, Filter Effects 1
+    // §9.4), whose percentage is written as the number it is: `50%` is `0.5`
+    // (opacity-valid, flood-opacity-valid).
+    if (ascii_iequals_any(property, {"shape-image-threshold", "opacity", "flood-opacity"}) &&
+        found.significant.size() == 1 &&
         ts.tokens[found.significant.front()].type == token_type::percentage) {
         return yes(serialize_number(ts.tokens[found.significant.front()].number / 100));
+    }
+    // ...and so a comparison over its percentages alone has an answer here,
+    // the percentage of one it is: `min(50%, 0%)` is `calc(0%)`, where a
+    // length's percentages could not be compared (opacity-valid). Only a
+    // min(), max() or clamp() of percentages - `progress()` of them is a
+    // ratio, not a percentage, and a constant like `pi` is no percentage.
+    if (ascii_iequals_any(property, {"shape-image-threshold", "opacity", "flood-opacity"}) &&
+        (ascii_istarts_with(simplified, "min(") || ascii_istarts_with(simplified, "max(") ||
+         ascii_istarts_with(simplified, "clamp("))) {
+        std::string as_numbers;
+        bool only_percentages = true;
+        bool any_percentage = false;
+        for (const css_token & t : ts.tokens) {
+            if (t.type == token_type::eof) { break; }
+            if (t.type == token_type::number || t.type == token_type::dimension) {
+                only_percentages = false;
+            }
+            any_percentage = any_percentage || t.type == token_type::percentage;
+            as_numbers += t.type == token_type::percentage ? serialize_number(t.number / 100)
+                                                           : std::string{ts.text_of(t)};
+        }
+        const std::string folded =
+            only_percentages && any_percentage ? simplify_math(as_numbers) : std::string{};
+        if (folded.starts_with("calc(") && folded.ends_with(')')) {
+            double v = 0;
+            const std::string_view inner{folded.data() + 5, folded.size() - 6};
+            const auto [end, ec] = std::from_chars(inner.data(), inner.data() + inner.size(), v);
+            if (ec == std::errc{} && end == inner.data() + inner.size()) {
+                return yes("calc(" + serialize_number(v * 100) + "%)");
+            }
+        }
     }
 
     // `[ clip | ellipsis | <string> | fade | <fade()> ]{1,2}`, CSS Overflow 4
