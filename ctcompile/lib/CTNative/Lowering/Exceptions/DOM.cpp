@@ -440,7 +440,9 @@ struct DOMAttributeProof {
         return booleanReads.contains(value) ||
                (constant && llvm::isa<ctjs::BooleanAttr>(constant.getValue()));
     }
-    bool stringValue(mlir::Value value) {
+    bool stringValue(mlir::Value value, unsigned depth = 0) {
+        if (!remaining || depth == 64) { return false; }
+        --remaining;
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
         auto call = value.getDefiningOp<ctjs::CallOp>();
         auto method =
@@ -448,11 +450,29 @@ struct DOMAttributeProof {
         // Saved getAttribute and Number.toString results may precede the protected
         // body. Reuse their charged origins; producer effects and initial method
         // identity still require the complete final DOM proof.
-        return stringReads.contains(value) ||
-               (constant && llvm::isa<ctjs::StringAttr, ctjs::NullAttr>(constant.getValue())) ||
-               (method && ctjs::constantKey(method.getKey()) == "getAttribute" &&
-                attributeCall(call)) ||
-               numberStringCall(call);
+        if (stringReads.contains(value) ||
+            (constant && llvm::isa<ctjs::StringAttr, ctjs::NullAttr>(constant.getValue())) ||
+            (method && ctjs::constantKey(method.getKey()) == "getAttribute" &&
+             attributeCall(call)) ||
+            numberStringCall(call)) {
+            return true;
+        }
+        // A saved prefix selection carries the selected owning String/null value.
+        // Prove the same result slot in every arm; this grants no effect authority
+        // to the condition or producers, which remain in the final DOM source.
+        auto result = llvm::dyn_cast<mlir::OpResult>(value);
+        auto branch =
+            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+        if (!branch) { return false; }
+        for (auto & region : branch->getRegions()) {
+            if (!region.hasOneBlock()) { return false; }
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+            if (!yield || yield.getNumOperands() != branch.getNumResults() ||
+                !stringValue(yield.getOperand(result.getResultNumber()), depth + 1)) {
+                return false;
+            }
+        }
+        return true;
     }
     static bool numberCallee(ctjs::CallOp call) {
         if (!call) { return false; }
