@@ -109,6 +109,12 @@ struct HostContract {
     // the original __ctbrowser_for_of_open,
     // __ctbrowser_iter_next and __ctbrowser_iter_close source-helper bindings. Source
     // replacement/escape and external script reentry still refuse the complete live proof.
+    // Computed custom methods additionally declare the original
+    // __ctbrowser_to_property_key and __ctbrowser_set_function_name bindings.
+    // Their recognition requires the exact well-known Symbol key and an
+    // unobserved private closure: key conversion preserves that Symbol, and
+    // naming changes only the closure's own name. These declarations authorize
+    // neither arbitrary conversions nor observable function-name mutation.
     std::vector<std::string> initialIntrinsics;
     bool realmGlobalThis = false;
     // The embedding invokes this entry as a classic script, with its stable

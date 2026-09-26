@@ -203,6 +203,124 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-number-boolean-number-return": """function customElements(anchor) {
+  try {
+    const saved = Number(Number(anchor.hasAttribute('flag')));
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-boolean-number-snapshot": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.hasAttribute('flag'));
+    anchor.setAttribute('flag', 'changed');
+    anchor.setAttribute('data-written', Number(saved));
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-number-divide-return": """function customElements(anchor) {
+  try {
+    const saved = 1 / Number(Number(anchor.getAttribute('data-number')));
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-string-return": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number')).toString();
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-string-snapshot": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number')).toString();
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-string-divide-return": """function customElements(anchor) {
+  try {
+    const saved = (1 / Number(anchor.getAttribute('data-number'))).toString();
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-string-prefix-return": """function customElements(anchor) {
+  const saved = Number(anchor.getAttribute('data-number')).toString();
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-string-prefix-snapshot": """function customElements(anchor) {
+  const saved = Number(anchor.getAttribute('data-number')).toString();
+  try {
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-string-prefix-divide-return": """function customElements(anchor) {
+  const saved = (1 / Number(anchor.getAttribute('data-number'))).toString();
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-string-read-snapshot": """function customElements(anchor) {
+  try {
+    const saved = anchor.getAttribute('data-number');
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-string-read-prefix-return": """function customElements(anchor) {
+  const saved = anchor.getAttribute('data-number');
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-string-read-prefix-snapshot": """function customElements(anchor) {
+  const saved = anchor.getAttribute('data-number');
+  try {
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-string-read-conditional-prefix-return": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null;
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-string-read-conditional-prefix-snapshot": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null;
+  try {
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -291,6 +409,15 @@ NUMBER_ARITHMETIC_RESULTS["write-number-read-arithmetic-conditional-callee"] = (
 NUMBER_ARITHMETIC_RESULTS["write-number-read-conditional-divide-return"] = (
     NUMBER_ARITHMETIC_RESULTS["write-number-read-protected-divide-return"]
 )
+NUMBER_ARITHMETIC_RESULTS["write-number-read-number-divide-return"] = NUMBER_ARITHMETIC_RESULTS[
+    "write-number-read-protected-divide-return"
+]
+NUMBER_ARITHMETIC_RESULTS["write-number-read-string-divide-return"] = NUMBER_ARITHMETIC_RESULTS[
+    "write-number-read-protected-divide-return"
+]
+NUMBER_ARITHMETIC_RESULTS["write-number-read-string-prefix-divide-return"] = (
+    NUMBER_ARITHMETIC_RESULTS["write-number-read-protected-divide-return"]
+)
 NUMBER_CONDITIONAL_READS = {
     "write-number-read-conditional": ("flag", "0"),
     "write-number-read-conditional-snapshot": ("flag", "0"),
@@ -298,6 +425,8 @@ NUMBER_CONDITIONAL_READS = {
     "write-number-read-conditional-return-snapshot": ("flag", "0"),
     "write-number-read-conditional-divide-return": ("flag", "Infinity"),
     "write-number-read-arithmetic-conditional-callee": ("data-closed", "1"),
+    "write-string-read-conditional-prefix-return": ("flag", "null"),
+    "write-string-read-conditional-prefix-snapshot": ("flag", "null"),
 }
 
 
@@ -338,6 +467,10 @@ WRITE_EXPECTED = {
         'result1="true:read:flag=true;write:data-written=Infinity;"\n'
     ),
 }
+WRITE_EXPECTED["write-number-boolean-number-return"] = WRITE_EXPECTED["write-number-boolean-return"]
+WRITE_EXPECTED["write-number-boolean-number-snapshot"] = WRITE_EXPECTED[
+    "write-number-boolean-snapshot"
+]
 
 WRITE_OBSERVER = """function observe(closed) {
   const saved = {};
@@ -416,6 +549,7 @@ def main():
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
     for name, source in SOURCES.items():
+        string_read = name.startswith("write-string-read-")
         number_inputs = (
             tuple(
                 zip(
@@ -427,6 +561,10 @@ def main():
             if name in NUMBER_ARITHMETIC_RESULTS
             else NUMBER_READ_INPUTS
         )
+        if string_read:
+            number_inputs = tuple(
+                (value, "null" if value is None else value) for value, _ in NUMBER_READ_INPUTS
+            )
         script = (
             source
             + "function observe(closed) { let reads = 0; "
@@ -436,7 +574,7 @@ def main():
         )
         if name.startswith("write-"):
             script = source + WRITE_OBSERVER
-        if name.startswith("write-number-"):
+        if name.startswith("write-number-") or string_read:
             script = source + NUMBER_WRITE_OBSERVER
         number_boolean = name.startswith("write-number-boolean-")
         if number_boolean:
@@ -447,7 +585,7 @@ def main():
                 "saved['data-closed'] = 'yes'", f"saved[{condition[0]!r}] = 'yes'"
             )
         number_read = name.startswith("write-number-read")
-        if number_read:
+        if number_read or string_read:
             script = script.replace(
                 "var result0 = observe(false), result1 = observe(true);",
                 "\n".join(
@@ -520,7 +658,7 @@ def main():
                 )
         if name in WRITE_EXPECTED:
             expected = WRITE_EXPECTED[name]
-        if number_read:
+        if number_read or string_read:
             expected = ""
             for index in (0, 1):
                 trace = "|".join(
@@ -671,6 +809,11 @@ def main():
                 "write-number-boolean-conditional-divide-return": [
                     ("data-written", '(closed ? "Infinity" : "1")')
                 ],
+                "write-number-boolean-number-return": [("data-written", '(closed ? "1" : "0")')],
+                "write-number-boolean-number-snapshot": [
+                    ("flag", '"changed"'),
+                    ("data-written", '(closed ? "1" : "0")'),
+                ],
             }[name]
             write_checks = "\n".join(
                 f'assert(writes[{index}].name == target.atoms().intern("{attribute}")); '
@@ -701,7 +844,7 @@ def main():
             )
             if number_boolean:
                 checks = checks.replace('"data-closed"', '"flag"')
-        if number_read:
+        if number_read or string_read:
             inputs = ",\n".join(
                 "{"
                 + ("nullptr" if value is None else json.dumps(value, ensure_ascii=False))
@@ -773,7 +916,7 @@ def main():
                 if "throw " in source_cpp or "catch (" in source_cpp:
                     raise RuntimeError("confined node escaped into a native exception")
                 dom.standalone(args, native, label, checks, compilers, includes, libraries)
-                if name == "helper-next-record" or name.startswith("write-number-"):
+                if name == "helper-next-record" or name.startswith("write-number-") or string_read:
                     dom.lower(
                         args,
                         ir,
@@ -903,6 +1046,197 @@ def main():
                     "effectful-branch",
                     "anchor.hasAttribute('flag')",
                     "anchor.hasAttribute('flag') ? (anchor.unknown(), true) : false",
+                ),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
+    number_body = SOURCES["write-number-boolean-number-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    refusals.update(
+        {
+            "write-number-boolean-number-" + name: number_body.replace(before, after)
+            for name, before, after in (
+                ("without-intrinsic", "Number", "Number"),
+                ("rebound-intrinsic", "try {", "try { Number = anchor;"),
+                ("coercing-input", "anchor.hasAttribute('flag')", "anchor"),
+                ("unknown-getter", "anchor.hasAttribute('flag')", "anchor.unknown"),
+                ("unknown-producer", "anchor.hasAttribute('flag')", "anchor.unknown()"),
+                (
+                    "extra-argument",
+                    "Number(Number(anchor.hasAttribute('flag')))",
+                    "Number(Number(anchor.hasAttribute('flag')), 0)",
+                ),
+                (
+                    "wrong-receiver",
+                    "Number(Number(anchor.hasAttribute('flag')))",
+                    "Number.call(anchor, Number(anchor.hasAttribute('flag')))",
+                ),
+                (
+                    "coercing-branch",
+                    "Number(anchor.hasAttribute('flag'))",
+                    "anchor.hasAttribute('flag') ? 1 : anchor",
+                ),
+                (
+                    "effectful-branch",
+                    "Number(anchor.hasAttribute('flag'))",
+                    "anchor.hasAttribute('flag') ? (anchor.unknown(), 1) : 0",
+                ),
+                (
+                    "different-callee",
+                    "Number(Number(anchor.hasAttribute('flag')))",
+                    "(anchor.hasAttribute('flag') ? Number : anchor)(1)",
+                ),
+                ("bigint-input", "Number(anchor.hasAttribute('flag'))", "1n"),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
+    string_body = SOURCES["write-number-read-string-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    refusals.update(
+        {
+            "write-number-read-string-" + name: string_body.replace(before, after)
+            for name, before, after in (
+                ("without-intrinsic", "Number", "Number"),
+                ("rebound-intrinsic", "try {", "try { Number = anchor;"),
+                ("coercing-input", "anchor.getAttribute('data-number')", "anchor"),
+                (
+                    "wrong-receiver",
+                    "const saved = Number(anchor.getAttribute('data-number')).toString()",
+                    "const number = Number(anchor.getAttribute('data-number')); const stringify = number.toString; const saved = stringify()",
+                ),
+                ("different-callee", ".toString()", ".toFixed()"),
+                ("radix", ".toString()", ".toString(16)"),
+                ("coercing-radix", ".toString()", ".toString(anchor)"),
+                (
+                    "effectful-branch",
+                    "Number(anchor.getAttribute('data-number'))",
+                    "(anchor.hasAttribute('flag') ? (anchor.unknown(), 1) : Number(anchor.getAttribute('data-number')))",
+                ),
+                (
+                    "rebound-method",
+                    "try {",
+                    "try { Number.prototype.toString = anchor;",
+                ),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
+    prefix_body = (
+        SOURCES["write-number-read-string-prefix-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    )
+    refusals.update(
+        {
+            "write-number-read-string-prefix-" + name: prefix_body.replace(before, after)
+            for name, before, after in (
+                ("without-intrinsic", "Number", "Number"),
+                ("rebound-intrinsic", "const saved =", "Number = anchor; const saved ="),
+                ("coercing-input", "anchor.getAttribute('data-number')", "anchor"),
+                (
+                    "wrong-receiver",
+                    "const saved = Number(anchor.getAttribute('data-number')).toString()",
+                    "const number = Number(anchor.getAttribute('data-number')); const stringify = number.toString; const saved = stringify()",
+                ),
+                ("different-callee", ".toString()", ".toFixed()"),
+                ("radix", ".toString()", ".toString(16)"),
+                ("coercing-radix", ".toString()", ".toString(anchor)"),
+                (
+                    "effectful-branch",
+                    "Number(anchor.getAttribute('data-number'))",
+                    "(anchor.hasAttribute('flag') ? (anchor.unknown(), 1) : Number(anchor.getAttribute('data-number')))",
+                ),
+                (
+                    "rebound-method",
+                    "const saved =",
+                    "Number.prototype.toString = anchor; const saved =",
+                ),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
+    raw_string_body = SOURCES["write-string-read-prefix-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    refusals.update(
+        {
+            "write-string-read-prefix-" + name: raw_string_body.replace(before, after)
+            for name, before, after in (
+                ("coercing-input", "anchor.getAttribute('data-number')", "anchor"),
+                (
+                    "wrong-receiver",
+                    "const saved = anchor.getAttribute('data-number')",
+                    "const read = anchor.getAttribute; const saved = read('data-number')",
+                ),
+                (
+                    "rebound-getter",
+                    "const saved =",
+                    "anchor.getAttribute = anchor.setAttribute; const saved =",
+                ),
+                ("missing-argument", "getAttribute('data-number')", "getAttribute()"),
+                (
+                    "extra-argument",
+                    "getAttribute('data-number')",
+                    "getAttribute('data-number', 'extra')",
+                ),
+                (
+                    "coercing-name",
+                    "getAttribute('data-number')",
+                    "getAttribute(anchor)",
+                ),
+                (
+                    "unknown-getter",
+                    "anchor.getAttribute('data-number')",
+                    "anchor.unknown",
+                ),
+                (
+                    "unknown-producer",
+                    "anchor.getAttribute('data-number')",
+                    "anchor.unknown()",
+                ),
+                ("prefix-effect", "const saved =", "anchor.unknown(); const saved ="),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
+    conditional_string_body = (
+        SOURCES["write-string-read-conditional-prefix-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    )
+    refusals.update(
+        {
+            "write-string-read-conditional-prefix-"
+            + name: conditional_string_body.replace(before, after)
+            for name, before, after in (
+                ("unknown-condition", "anchor.hasAttribute('flag')", "anchor.unknown"),
+                (
+                    "condition-effect",
+                    "anchor.hasAttribute('flag')",
+                    "(anchor.unknown(), anchor.hasAttribute('flag'))",
+                ),
+                (
+                    "then-effect",
+                    "anchor.getAttribute('data-number')",
+                    "(anchor.unknown(), anchor.getAttribute('data-number'))",
+                ),
+                ("else-effect", ": null;", ": (anchor.unknown(), null);"),
+                ("then-coercion", "anchor.getAttribute('data-number')", "anchor"),
+                ("else-coercion", ": null;", ": anchor;"),
+                (
+                    "wrong-receiver",
+                    "anchor.getAttribute('data-number')",
+                    "(0, anchor.getAttribute)('data-number')",
+                ),
+                (
+                    "rebound-getter",
+                    "const saved =",
+                    "anchor.getAttribute = anchor.setAttribute; const saved =",
+                ),
+                ("missing-argument", "getAttribute('data-number')", "getAttribute()"),
+                (
+                    "extra-argument",
+                    "getAttribute('data-number')",
+                    "getAttribute('data-number', 'extra')",
+                ),
+                (
+                    "coercing-name",
+                    "getAttribute('data-number')",
+                    "getAttribute(anchor)",
                 ),
                 ("invalid-name", "'data-written'", "'bad name'"),
             )

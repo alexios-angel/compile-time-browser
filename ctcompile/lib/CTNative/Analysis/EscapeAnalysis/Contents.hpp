@@ -129,45 +129,62 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                 compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
                 for (bool reversed : {false, true}) {
                     auto input = reversed ? compare.getRhs() : compare.getLhs();
-                    auto literal = (reversed ? compare.getLhs() : compare.getRhs())
-                                       .getDefiningOp<ctjs::ConstantOp>();
-                    auto boolean = literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
-                                           : ctjs::BooleanAttr{};
-                    if (!boolean) { continue; }
+                    ctjs::BooleanAttr boolean;
                     bool exactBoolean = true;
-                    llvm::SmallVector<mlir::Value, 4> pending{input};
-                    while (!pending.empty() && exactBoolean) {
-                        if (!spend(1)) { return {}; }
-                        auto current = pending.pop_back_val();
-                        if (directBoolean(current)) { continue; }
-                        auto selected = current.getDefiningOp<mlir::scf::IfOp>();
-                        if (!selected) {
-                            exactBoolean = false;
-                            break;
-                        }
-                        const auto position = llvm::cast<mlir::OpResult>(current).getResultNumber();
-                        for (mlir::Region & region : selected->getRegions()) {
+                    for (bool literalSide : {true, false}) {
+                        llvm::SmallVector<mlir::Value, 4> pending{
+                            literalSide ? (reversed ? compare.getLhs() : compare.getRhs()) : input};
+                        while (!pending.empty() && exactBoolean) {
                             if (!spend(1)) { return {}; }
-                            if (!llvm::hasSingleElement(region) || region.front().empty() ||
-                                region.front().getNumArguments() != 0) {
+                            auto current = pending.pop_back_val();
+                            if (literalSide) {
+                                auto literal = current.getDefiningOp<ctjs::ConstantOp>();
+                                auto leaf =
+                                    literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
+                                            : ctjs::BooleanAttr{};
+                                if (leaf) {
+                                    if (boolean && boolean != leaf) {
+                                        exactBoolean = false;
+                                        break;
+                                    }
+                                    boolean = leaf;
+                                    continue;
+                                }
+                            } else if (directBoolean(current)) {
+                                continue;
+                            }
+                            auto selected = current.getDefiningOp<mlir::scf::IfOp>();
+                            if (!selected) {
                                 exactBoolean = false;
                                 break;
                             }
-                            auto yield =
-                                llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                            if (!yield || yield.getNumOperands() != selected.getNumResults()) {
-                                exactBoolean = false;
-                                break;
+                            const auto position =
+                                llvm::cast<mlir::OpResult>(current).getResultNumber();
+                            for (mlir::Region & region : selected->getRegions()) {
+                                if (!spend(1)) { return {}; }
+                                if (!llvm::hasSingleElement(region) || region.front().empty() ||
+                                    region.front().getNumArguments() != 0) {
+                                    exactBoolean = false;
+                                    break;
+                                }
+                                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(
+                                    region.front().getTerminator());
+                                if (!yield || yield.getNumOperands() != selected.getNumResults()) {
+                                    exactBoolean = false;
+                                    break;
+                                }
+                                pending.push_back(yield.getOperand(position));
                             }
-                            pending.push_back(yield.getOperand(position));
                         }
                     }
                     // Equality with a Boolean preserves or reverses truthiness
                     // only when the other operand is already exactly Boolean.
                     // An opaque value, Number or read cannot borrow that tag.
-                    // Every nested carrier leaf must prove its Boolean tag;
+                    // Literal leaves must agree on one exact Boolean attribute;
+                    // no arm-local SSA value becomes a dominating representative.
+                    // Every nested input carrier leaf must prove its Boolean tag;
                     // correspondence and all arm effects are checked separately.
-                    if (exactBoolean) {
+                    if (exactBoolean && boolean) {
                         value = input;
                         negated ^= !boolean.getValue();
                         break;
@@ -194,18 +211,52 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
         // Strict comparison operands keep their exact value; Boolean conversion
         // and logical Not cannot be stripped here.
         if (left == right) { return true; }
-        if (!spend(2)) {
-            complete = false;
-            return false;
-        }
-        auto first = left.getDefiningOp<ctjs::ConstantOp>();
-        auto second = right.getDefiningOp<ctjs::ConstantOp>();
-        // Exact immutable primitive attributes supply the same comparison input.
+        // One exact SSA leaf or immutable primitive attribute supplies the same input.
         // No snapshot, coercion, signed-zero or BigInt spelling equivalence is inferred.
-        return first && second &&
-               llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr, ctjs::NumberAttr,
-                         ctjs::StringAttr, ctjs::BigIntAttr>(first.getValue()) &&
-               first.getValue() == second.getValue();
+        // All selected leaves must agree; no arm-local SSA representative escapes.
+        // The census and replay still validate every arm's producers and effects.
+        mlir::Attribute common;
+        mlir::Value identity;
+        llvm::SmallVector<mlir::Value, 4> pending{left, right};
+        while (!pending.empty()) {
+            if (!spend(1)) {
+                complete = false;
+                return false;
+            }
+            auto current = pending.pop_back_val();
+            if (auto literal = current.getDefiningOp<ctjs::ConstantOp>()) {
+                auto attribute = literal.getValue();
+                if (identity ||
+                    !llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
+                               ctjs::NumberAttr, ctjs::StringAttr, ctjs::BigIntAttr>(attribute) ||
+                    (common && common != attribute)) {
+                    return false;
+                }
+                common = attribute;
+                continue;
+            }
+            auto selected = current.getDefiningOp<mlir::scf::IfOp>();
+            if (!selected) {
+                if (common || (identity && identity != current)) { return false; }
+                identity = current;
+                continue;
+            }
+            const auto position = llvm::cast<mlir::OpResult>(current).getResultNumber();
+            for (mlir::Region & region : selected->getRegions()) {
+                if (!spend(1)) {
+                    complete = false;
+                    return false;
+                }
+                if (!llvm::hasSingleElement(region) || region.front().empty() ||
+                    region.front().getNumArguments() != 0) {
+                    return false;
+                }
+                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                if (!yield || yield.getNumOperands() != selected.getNumResults()) { return false; }
+                pending.push_back(yield.getOperand(position));
+            }
+        }
+        return bool(common) || bool(identity);
     };
     const auto sameComparison = [&](mlir::Value left, mlir::Value right) {
         auto first = left.getDefiningOp<ctjs::CompareOp>();

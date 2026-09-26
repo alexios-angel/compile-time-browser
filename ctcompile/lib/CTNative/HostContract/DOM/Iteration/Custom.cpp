@@ -650,6 +650,12 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     llvm::SmallVector<ctjs::SetPropertyOp> stateSlots;
     llvm::StringMap<unsigned> stateIndices;
     ctjs::SetPropertyOp iteratorSlot;
+    ctjs::CallOp iteratorKey, iteratorName;
+    const auto setupCall = [&](ctjs::CallOp call, llvm::StringRef name, unsigned arity) {
+        return spend() && call && helper(call) == name && undefined(call.getReceiver()) &&
+               call.getArgs().size() == arity &&
+               llvm::is_contained(contract.initialIntrinsics, name);
+    };
     for (mlir::Operation * user : llvm::make_early_inc_range(object->getUsers())) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
@@ -702,7 +708,17 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return error("DOM custom iterator has replaced or unsupported own slots");
             }
         } else {
-            auto read = store.getKey().getDefiningOp<ctjs::GetPropertyOp>();
+            mlir::Value key = store.getKey();
+            auto converted = key.getDefiningOp<ctjs::CallOp>();
+            if (converted) {
+                if (!setupCall(converted, "__ctbrowser_to_property_key", 1) ||
+                    converted->getBlock() != object->getBlock() ||
+                    !object->isBeforeInBlock(converted) || !converted->isBeforeInBlock(closure)) {
+                    return error("DOM iterator key requires its original ordered conversion");
+                }
+                key = converted.getArgs().front();
+            }
+            auto read = key.getDefiningOp<ctjs::GetPropertyOp>();
             auto symbol =
                 read ? read.getObject().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
             if (iteratorSlot || !symbol || symbol.getName() != "Symbol" ||
@@ -710,6 +726,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return error("DOM custom iterator requires its original Symbol.iterator slot");
             }
             iteratorSlot = store;
+            iteratorKey = converted;
         }
     }
     // State positions follow source order, independent of SSA use-list ordering.
@@ -760,8 +777,56 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return error("DOM iterator identity method is shared or symbolically observed");
     }
     for (mlir::Operation * user : identity->getUsers()) {
-        if (!spend() || (user != iteratorSlot && !llvm::isa<ctjs::RootOp>(user))) {
+        if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+        if (user == iteratorSlot || llvm::isa<ctjs::RootOp>(user)) { continue; }
+        auto named = llvm::dyn_cast<ctjs::CallOp>(user);
+        if (!iteratorKey || iteratorName || !setupCall(named, "__ctbrowser_set_function_name", 2) ||
+            named.getArgs()[0] != identity.getResult() ||
+            named.getArgs()[1] != iteratorKey.getResult() ||
+            named->getBlock() != identity->getBlock() || !identity->isBeforeInBlock(named) ||
+            !named->isBeforeInBlock(iteratorSlot)) {
             return error("DOM iterator identity method escapes its own slot");
+        }
+        iteratorName = named;
+    }
+    llvm::DenseSet<mlir::Operation *> iteratorSetup;
+    llvm::DenseSet<mlir::Value> iteratorSetupValues;
+    if (iteratorKey) {
+        if (!iteratorName) { return error("DOM iterator key lacks its original method naming"); }
+        // ToPropertyKey is identity for this exact well-known Symbol. Naming
+        // changes only the private closure discarded below; no name/key/result
+        // observer may acquire authority from recognizing these compiler helpers.
+        for (auto call : {iteratorKey, iteratorName}) {
+            auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+            if (!spend() || load->getBlock() != call->getBlock() || !load->isBeforeInBlock(call)) {
+                return error("DOM iterator setup helper lacks its original source order");
+            }
+            for (mlir::Operation * user : load->getUsers()) {
+                if (!spend() || (user != call && !llvm::isa<ctjs::RootOp>(user))) {
+                    return error("DOM iterator setup helper has another observer");
+                }
+            }
+            for (mlir::OpOperand & use : call.getResult().getUses()) {
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                auto * user = use.getOwner();
+                if (llvm::isa<ctjs::RootOp>(user)) { continue; }
+                if (call == iteratorKey &&
+                    ((user == iteratorSlot && use.getOperandNumber() == 1) ||
+                     (user == iteratorName && use.getOperandNumber() == 3))) {
+                    continue;
+                }
+                if (call == iteratorKey && invocation && llvm::isa<ctjs::InvokeExitOp>(user) &&
+                    user->getParentOp() == invocation && use.getOperandNumber() > 0) {
+                    // The proved opening call cannot throw. Its projection below
+                    // discards only this unwind state, including the saved key.
+                    continue;
+                }
+                return error("DOM iterator key or naming result has another observer");
+            }
+            iteratorSetup.insert(call);
+            iteratorSetup.insert(load);
+            iteratorSetupValues.insert(call.getResult());
+            iteratorSetupValues.insert(load.getResult());
         }
     }
     if (invocation) {
@@ -2666,7 +2731,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (!spend()) { return false; }
             }
             if (&operation == iteratorSlot || &operation == identity ||
-                stateStorage.contains(&operation) || llvm::is_contained(stateSlots, &operation)) {
+                iteratorSetup.contains(&operation) || stateStorage.contains(&operation) ||
+                llvm::is_contained(stateSlots, &operation)) {
                 continue;
             }
             auto read = llvm::dyn_cast<ctjs::CellGetOp>(operation);
@@ -2686,7 +2752,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (auto root = llvm::dyn_cast<ctjs::RootOp>(operation);
                 root &&
                 (root.getValue() == identity.getResult() || root.getValue() == open.getResult() ||
-                 capturedState.contains(root.getValue()))) {
+                 capturedState.contains(root.getValue()) ||
+                 iteratorSetupValues.contains(root.getValue()))) {
                 continue;
             }
             if (&operation == open) {

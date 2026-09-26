@@ -86,6 +86,8 @@ const llvm::StringSet<> & host_detail::domInitialIntrinsics() {
         "__ctbrowser_for_of_open",
         "__ctbrowser_iter_next",
         "__ctbrowser_iter_close",
+        "__ctbrowser_to_property_key",
+        "__ctbrowser_set_function_name",
     };
     return names;
 }

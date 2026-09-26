@@ -543,9 +543,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             if (!hasKind(invoke.getReceiver(), Kind::undefined) || arguments.size() != 1 ||
                 (!hasKind(arguments[0], Kind::string) && !hasKind(arguments[0], Kind::null) &&
                  !hasKind(arguments[0], Kind::optionalString) &&
-                 !hasKind(arguments[0], Kind::boolean))) {
+                 !hasKind(arguments[0], Kind::boolean) && !hasKind(arguments[0], Kind::number))) {
                 refusal = "Number call requires its initial builtin, undefined "
-                          "receiver and one String/null/Boolean input";
+                          "receiver and one String/null/Boolean/Number input";
                 return false;
             }
             provedCalls.push_back({invoke, HostDOMMethod::number, arguments[0]});

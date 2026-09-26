@@ -242,6 +242,42 @@ module {
             check(!invalid, "current document schema requires an in-range element index");
             if (!invalid) { llvm::consumeError(invalid.takeError()); }
         }
+        const std::string propertyKey = "__ctbrowser_to_property_key";
+        const std::string functionName = "__ctbrowser_set_function_name";
+        for (const auto & [identities, accepted] :
+             std::vector<std::pair<std::vector<std::string>, bool>>{
+                 {{propertyKey}, true},
+                 {{functionName}, true},
+                 {{propertyKey, functionName}, true},
+                 {{propertyKey, propertyKey}, false},
+                 {{functionName, functionName}, false},
+                 {{propertyKey + "x"}, false},
+                 {{functionName + "x"}, false}}) {
+            std::string declaration = "\"initial_intrinsics\":[";
+            for (const auto & name : identities) {
+                if (declaration.back() != '[') { declaration += ','; }
+                declaration += '"' + name + '"';
+            }
+            declaration += "],\"element_parameters\"";
+            auto helpers = parseHostContract(replaced(replaced(json, "ctbrowser-dom-v1", provider),
+                                                      "\"element_parameters\"", declaration));
+            check(static_cast<bool>(helpers) == accepted,
+                  "computed method declarations require exact unique helper names");
+            if (helpers) {
+                check(helpers->initialIntrinsics == identities &&
+                          DOMEntryAnalysis(*module, *helpers).proved(),
+                      "both DOM providers accept original computed method helper identities");
+            } else {
+                llvm::consumeError(helpers.takeError());
+            }
+            auto programmatic = contract;
+            programmatic.provider = llvm::StringRef(provider) == "ctbrowser-dom-v1"
+                                        ? HostContract::Provider::ctbrowserDOM
+                                        : HostContract::Provider::ctbrowserDOMSession;
+            programmatic.initialIntrinsics = identities;
+            check(DOMEntryAnalysis(*module, programmatic).proved() == accepted,
+                  "live DOM proof independently validates computed helper declarations");
+        }
         for (const auto identities :
              {"[\"__ctbrowser_class_defined\"]", "[\"__ctbrowser_class_defined\",\"Error\"]",
               "[\"Error\",\"__ctbrowser_class_defined\"]", "[\"Error\"]",
