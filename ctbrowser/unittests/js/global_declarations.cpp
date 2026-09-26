@@ -5,10 +5,12 @@
 // top-level `let`, `const` or `class` is a binding of that environment and
 // not a property of the global object.
 
+#include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/script/script.hpp>
 
 #include "check.hpp"
 
+#include <cstddef>
 #include <initializer_list>
 #include <string>
 #include <string_view>
@@ -104,5 +106,37 @@ int main() {
     check(compiler::compile_script("function f() { return new.target; }").ok,
           "a Script's function may return new.target");
     check(compiler::compile("return 1;").ok, "an embedder's program may return");
+
+    // ct_aot_global_set STORES AS op::set_global DOES (context::assign_global):
+    // into a data property the global object owns, not over a read-only one,
+    // and into the table otherwise.
+    {
+        context cx;
+        install_builtins(cx);
+        const program & setup = cx.own_program(compiler::compile(
+            "Object.defineProperty(globalThis, 'd', {value: 1, writable: true, configurable: "
+            "true});"
+            "Object.defineProperty(globalThis, 'r', {value: 1, writable: false, configurable: "
+            "true});"));
+        check(cx.run(setup).ok, "the global properties are defined");
+        alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
+        ctbrowser::aot::ct_aot_frame * frame = ctbrowser::aot::ct_aot_enter(
+            reinterpret_cast<ctbrowser::aot::ct_aot_ctx *>(&cx),
+            reinterpret_cast<const ctbrowser::aot::ct_aot_site *>(&setup.functions[0]), 1u,
+            value::undefined().bits(), storage);
+        check(frame != nullptr, "a frame is entered");
+        if (frame != nullptr) {
+            ctbrowser::aot::ct_aot_global_set(frame, "d", 1u, value::number(2).bits());
+            ctbrowser::aot::ct_aot_global_set(frame, "r", 1u, value::number(2).bits());
+            ctbrowser::aot::ct_aot_global_set(frame, "n", 1u, value::number(3).bits());
+            ctbrowser::aot::ct_aot_leave(frame);
+        }
+        const program & read = cx.own_program(compiler::compile(
+            "return Object.getOwnPropertyDescriptor(globalThis, 'd').value + ',' + d + ',' + r +"
+            " ',' + n;"));
+        const run_result ran = cx.run(read);
+        check(ran.ok && cx.to_string(ran.returned) == "2,2,1,3",
+              "a compiled global store lands where the interpreter's does");
+    }
     REPORT("global_declarations");
 }

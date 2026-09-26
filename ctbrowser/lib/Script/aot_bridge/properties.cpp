@@ -283,10 +283,12 @@ std::uint64_t aot_bridge::global_get_soft(aot::ct_aot_frame * f, const char * na
     return cx.global_or_named(std::string_view{name, name_len}, true).bits();
 }
 
-// ct_aot_global_set. VM_CASE(set_global) is
-// `globals_[names[in.bx()]] = reg(in.a)` (run_loop.cpp:235), and
-// context::define_global is that assignment - so a global created by
-// compiled code and one created by the interpreter are the same entry.
+// ct_aot_global_set. VM_CASE(set_global) is context::assign_global, and so
+// is this - the same store, so a global written by compiled code and one
+// written by the interpreter land in the same place: the table's binding, a
+// data property the global object owns, or a new table entry. Sloppy
+// (`strict` false), which is all the compiled tier is here: a read-only
+// global refuses the store silently, so nothing can throw.
 //
 // THE NAME IS COPIED because the map owns its keys and the caller's
 // characters are a `const char *` pointing into a generated translation
@@ -295,10 +297,7 @@ std::uint64_t aot_bridge::global_get_soft(aot::ct_aot_frame * f, const char * na
 void aot_bridge::global_set(aot::ct_aot_frame * f, const char * name, std::uint32_t name_len,
                             std::uint64_t v) {
     context & cx = *frame_of(f).ctx;
-    // As VM_CASE(set_global): a store to NaN, Infinity or undefined does
-    // nothing (the compiled tier is sloppy-only here).
-    if (context::immutable_global(std::string_view{name, name_len})) { return; }
-    cx.define_global(std::string{name, name_len}, value::from_bits(v));
+    cx.assign_global(cx.current_realm(), std::string{name, name_len}, value::from_bits(v), false);
 }
 
 std::int32_t aot_bridge::get_index(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,

@@ -29,6 +29,11 @@ public:
     [[nodiscard]] value iter_result(value v, bool done);
 
     void define_global(std::string name, value v);
+    // AN ASSIGNMENT TO A GLOBAL NAME - op::set_global, and the compiled tier's
+    // ct_aot_global_set, which is this with `strict` false: one store, so the
+    // two tiers cannot disagree about where a global's value went (see the
+    // definition). A strict store to a read-only global throws.
+    void assign_global(realm_record & realm, const std::string & name, value v, bool strict);
     // A PLATFORM name - an interface object, a namespace, an alias of one:
     // { writable, !enumerable, configurable } (realm_record::builtin).
     void define_builtin_global(std::string name, value v);
@@ -902,11 +907,6 @@ private:
     [[nodiscard]] bool unwind_to_handler();
     // Records throw_site_ for the throw unwind_to_handler is starting.
     void note_throw_site() noexcept;
-    // op::set_global for a name the binding table does not have: true when
-    // the global object's target owns it as a data property, which took the
-    // store (see the definition).
-    [[nodiscard]] bool store_global_property(realm_record & realm, const std::string & name,
-                                             value v, bool strict);
 
     void mark(value v);
     // Marks `o` and everything reachable from it. Iterative - see
