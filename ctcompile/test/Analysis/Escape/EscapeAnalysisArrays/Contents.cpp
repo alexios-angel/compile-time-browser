@@ -995,6 +995,20 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                          "strict_eq %operand, %zero");
     operandReads.insert(operandReads.find("    %secondCompare"),
                         selectedInput("%secondRead", "%secondRead", "", "", "%operand"));
+    const auto nestedOperandForwarding = selectedInput(
+        "%innerOperand", "%p", selectedInput("%p", "%p", "", "", "%innerOperand"), "", "%operand");
+    const auto nestedOperandGap = nestedSiblingStore(
+        "      %read = ctjs.get_property %guard[%one]\n" +
+        comparedInput("%read", "%two", "strict_eq %operand, %zero", nestedOperandForwarding));
+    auto nestedOperandReads = comparedReads();
+    nestedOperandReads.replace(nestedOperandReads.find("strict_eq %secondRead, %zero"),
+                               std::string{"strict_eq %secondRead, %zero"}.size(),
+                               "strict_eq %operand, %zero");
+    nestedOperandReads.insert(
+        nestedOperandReads.find("    %secondCompare"),
+        selectedInput("%innerOperand", "%secondRead",
+                      selectedInput("%secondRead", "%secondRead", "", "", "%innerOperand"), "",
+                      "%operand"));
     const auto equalOperandForwarding =
         selectedInput("%thenZero", "%elseZero", "      %thenZero = ctjs.constant #ctjs.number<0>\n",
                       "      %elseZero = ctjs.constant #ctjs.number<0>\n", "%operand");
@@ -3451,6 +3465,59 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                      selectedInput("%otherZero", "%otherZero", "", "", "%operand")))) +
                  done,
          .confinedNested = "fresh"},
+        {.what = "strict comparisons recognize nested branches with one saved SSA leaf",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     comparedInput("%zero", "%one", "strict_eq %operand, %zero",
+                                   selectedInput("%innerOperand", "%p",
+                                                 selectedInput("%p", "%p", "", "", "%innerOperand"),
+                                                 "", "%operand")))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested saved operands retain reversed comparison order and Not polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %zero, %operand", nestedOperandForwarding, 3))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested operand branches follow the corresponding saved SSA tuple slot",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %outerOperand, %zero",
+                     selectedInput("%operand#1", "%p", operandTuple, "", "%outerOperand")))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested operand branches cannot borrow another tuple slot's SSA identity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %outerOperand, %zero",
+                     selectedInput("%operand#0", "%p", operandTuple, "", "%outerOperand")))) +
+                 done,
+         .complete = false},
+        {.what = "nested saved operand leaves preserve distinct mutable read snapshots",
+         .body = loopValues + allocationLoop(nestedOperandReads) + done,
+         .complete = false},
+        {.what = "nested saved operand leaves cannot suppress inner then arm effects",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %operand, %zero",
+                     selectedInput("%innerOperand", "%p",
+                                   selectedInput("%p", "%p", "      %called = ctjs.call %p(%q)\n",
+                                                 "", "%innerOperand"),
+                                   "", "%operand")))) +
+                 done,
+         .complete = false},
+        {.what = "nested saved operand leaves cannot suppress inner else arm effects",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(comparedInput(
+                 "%zero", "%one", "strict_eq %operand, %zero",
+                 selectedInput("%innerOperand", "%p",
+                               selectedInput("%p", "%p", "", "      %called = ctjs.call %p(%q)\n",
+                                             "%innerOperand"),
+                               "", "%operand")))) +
+             done,
+         .complete = false},
         {.what = "strict comparisons recognize distinct equal Number operand leaves",
          .body =
              loopValues +
@@ -5519,6 +5586,80 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = operandMutation.what, .body = operandMutation.body, .expected = ""},
              "the identity operand mutation fixture did not parse");
     }
+    retention_row nestedOperandMutation{
+        .what = "nested saved operands reprove every SSA leaf, comparisons and guards",
+        .body = loopValues +
+                allocationLoop(nestedOperandGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto nestedOperandModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + nestedOperandMutation.body + "}\n", &context);
+    if (nestedOperandModule) {
+        ctjs::FuncOp function = *nestedOperandModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto compare = second.getCondition()
+                           .getDefiningOp<ctjs::TruthyOp>()
+                           .getValue()
+                           .getDefiningOp<ctjs::CompareOp>();
+        auto carrier = compare.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto inner = carrier.getThenRegion()
+                         .front()
+                         .getTerminator()
+                         ->getOperand(0)
+                         .getDefiningOp<mlir::scf::IfOp>();
+        auto * thenYield = inner.getThenRegion().front().getTerminator();
+        auto * elseYield = inner.getElseRegion().front().getTerminator();
+        auto * outerElse = carrier.getElseRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = thenYield->getOperand(0);
+        const mlir::Value otherInput = function.getBody().front().getArgument(4);
+        const mlir::Value originalRight = compare.getRhs();
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*nestedOperandModule))) {
+            fail(row{.what = nestedOperandMutation.what,
+                     .body = nestedOperandMutation.body,
+                     .expected = ""},
+                 "the nested saved operand stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 8; ++state) {
+            thenYield->setOperand(0, state == 1 ? otherInput : originalInput);
+            elseYield->setOperand(0, state == 2 ? otherInput : originalInput);
+            outerElse->setOperand(0, state == 3 ? otherInput : originalInput);
+            compare.setKindAttr(ctjs::CompareKindAttr::get(
+                &context, state == 4 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+            compare->setOperand(1, state == 5 ? originalPosition : originalRight);
+            load->setOperand(1, state == 6 ? zero : originalPosition);
+            nestedOperandMutation.complete = state == 0 || state == 7;
+            nestedOperandMutation.confinedNested = nestedOperandMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*nestedOperandModule, nestedOperandMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                nestedOperandMutation.complete) {
+                fail(row{.what = nestedOperandMutation.what,
+                         .body = nestedOperandMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied nested saved comparison operands");
+            }
+        }
+    } else {
+        fail(row{.what = nestedOperandMutation.what,
+                 .body = nestedOperandMutation.body,
+                 .expected = ""},
+             "the nested saved operand mutation fixture did not parse");
+    }
     retention_row literalOperandMutation{
         .what = "Boolean literal operands reprove live yields, tags, polarity and guards",
         .body = loopValues +
@@ -6254,8 +6395,9 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  "the strict comparison mutation fixture did not parse");
         }
     }
-    std::printf("array retention: %zu rows, three hundred ten live states, %zu budget cutoffs\n",
-                rows.size(), budgets);
+    std::printf(
+        "array retention: %zu rows, three hundred eighteen live states, %zu budget cutoffs\n",
+        rows.size(), budgets);
 }
 
 void checkObjectContents(mlir::MLIRContext & context) {

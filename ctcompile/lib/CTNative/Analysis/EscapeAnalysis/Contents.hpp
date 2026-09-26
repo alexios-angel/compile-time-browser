@@ -211,11 +211,12 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
         // Strict comparison operands keep their exact value; Boolean conversion
         // and logical Not cannot be stripped here.
         if (left == right) { return true; }
-        // Exact immutable primitive attributes supply the same comparison input.
+        // One exact SSA leaf or immutable primitive attribute supplies the same input.
         // No snapshot, coercion, signed-zero or BigInt spelling equivalence is inferred.
         // All selected leaves must agree; no arm-local SSA representative escapes.
         // The census and replay still validate every arm's producers and effects.
         mlir::Attribute common;
+        mlir::Value identity;
         llvm::SmallVector<mlir::Value, 4> pending{left, right};
         while (!pending.empty()) {
             if (!spend(1)) {
@@ -225,7 +226,8 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
             auto current = pending.pop_back_val();
             if (auto literal = current.getDefiningOp<ctjs::ConstantOp>()) {
                 auto attribute = literal.getValue();
-                if (!llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
+                if (identity ||
+                    !llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
                                ctjs::NumberAttr, ctjs::StringAttr, ctjs::BigIntAttr>(attribute) ||
                     (common && common != attribute)) {
                     return false;
@@ -234,7 +236,11 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                 continue;
             }
             auto selected = current.getDefiningOp<mlir::scf::IfOp>();
-            if (!selected) { return false; }
+            if (!selected) {
+                if (common || (identity && identity != current)) { return false; }
+                identity = current;
+                continue;
+            }
             const auto position = llvm::cast<mlir::OpResult>(current).getResultNumber();
             for (mlir::Region & region : selected->getRegions()) {
                 if (!spend(1)) {
@@ -250,7 +256,7 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                 pending.push_back(yield.getOperand(position));
             }
         }
-        return bool(common);
+        return bool(common) || bool(identity);
     };
     const auto sameComparison = [&](mlir::Value left, mlir::Value right) {
         auto first = left.getDefiningOp<ctjs::CompareOp>();
