@@ -796,7 +796,8 @@ void dom_bindings::install_double_reflection(context & cx) {
 // --- `control.form`: THE FORM OWNER, HTML 4.10.17.3 ---------------------------
 //
 // The `form` attribute names a form by id in the element's tree; otherwise the
-// nearest form ancestor; otherwise null. Read at each get rather than kept as
+// form the parser's form element pointer gave it, or the nearest form
+// ancestor; otherwise null. Read at each get rather than kept as
 // state - "reset the form owner" runs on every insertion in the specification,
 // and a walk up is what it amounts to. Node-appendChild-script-and-button-
 // from-div.html reads it from a script that ran the moment its div connected.
@@ -808,64 +809,32 @@ void dom_bindings::install_form_owner(context & cx) {
         if (!iface.is_object()) { continue; }
         auto * proto = static_cast<script::object_object *>(iface.as_heap());
         const bool legend = std::string_view{which} == "HTMLLegendElement";
-        proto->define_accessor(
-            "form",
-            value::object(cx.allocate<script::native_object>(
-                "form",
-                [this, legend](context & c, std::span<value>) {
-                    dom_bindings & self = target_owner(c.current_this());
-                    node_id id = self.receiver(c);
-                    if (!id) { return value::null(); }
-                    node_id owner;
-                    {
-                        const auto txn = self.doc_->read();
-                        // HTML 4.10.16: a <legend> is not listed - its `form`
-                        // is its PARENT fieldset's, and null under anything
-                        // else.
-                        if (legend) {
-                            id = txn.parent(id);
-                            if (!id ||
-                                txn.kind(id).value_or(node_kind::text) != node_kind::element ||
-                                txn.element_ns(id) != node_ns::html ||
-                                txn.local_name(id) != "fieldset") {
-                                return value::null();
-                            }
-                        }
-                        const atom form_attr = atoms_->intern("form");
-                        const std::string_view named = txn.attribute_value(id, form_attr);
-                        if (txn.has_attribute(id, form_attr)) {
-                            // HTML 4.10.17.3 "reset the form owner" step 3: the
-                            // FIRST element in the control's tree with that ID,
-                            // a form or nothing - `form=""` names nothing, and
-                            // a detached form holding the control is its tree
-                            // (form_attribute.html).
-                            const atom id_attr = atoms_->intern("id");
-                            node_id first;
-                            const auto walk = [&](auto && self, node_id at) -> void {
-                                if (first) { return; }
-                                if (!named.empty() && txn.attribute_value(at, id_attr) == named) {
-                                    first = at;
-                                    return;
-                                }
-                                for (const node_id child : txn.children(at)) { self(self, child); }
-                            };
-                            walk(walk, self.root_of_tree(txn, id, false));
-                            if (first && txn.element_ns(first) == node_ns::html &&
-                                txn.local_name(first) == "form") {
-                                owner = first;
-                            }
-                        } else {
-                            for (node_id at = txn.parent(id); at; at = txn.parent(at)) {
-                                if (txn.element_ns(at) == node_ns::html &&
-                                    txn.local_name(at) == "form") {
-                                    owner = at;
-                                    break;
-                                }
-                            }
-                        }
+        const auto get = [this, legend](context & c, std::span<value>) {
+            dom_bindings & self = target_owner(c.current_this());
+            node_id id = self.receiver(c);
+            if (!id) { return value::null(); }
+            node_id owner;
+            {
+                const auto txn = self.doc_->read();
+                // HTML 4.10.16: a <legend> is not listed - its `form` is its
+                // PARENT fieldset's, and null under anything else.
+                if (legend) {
+                    id = txn.parent(id);
+                    if (!id || txn.kind(id).value_or(node_kind::text) != node_kind::element ||
+                        txn.element_ns(id) != node_ns::html || txn.local_name(id) != "fieldset") {
+                        return value::null();
                     }
-                    return owner ? self.wrap(c, owner) : value::null();
-                })),
+                }
+                // HTML 4.10.17.3 "reset the form owner" - the `form`
+                // attribute's first element with that ID in the control's
+                // tree, the parser's association, the nearest form ancestor -
+                // is form_store's, the one algorithm submission and reset ask.
+                owner = form_store::owning_form(txn, *self.atoms_, id);
+            }
+            return owner ? self.wrap(c, owner) : value::null();
+        };
+        proto->define_accessor(
+            "form", value::object(cx.allocate<script::native_object>("form", get)),
             value::undefined());
     }
 }
