@@ -116,6 +116,11 @@ void tree_builder::close() {
 }
 
 void tree_builder::pump() {
+    ++pumping_;
+    const struct pump_scope {
+        int & depth;
+        ~pump_scope() { --depth; }
+    } scope{pumping_};
     while (!aborted_ && !finished_ && !paused_) {
         lexer_.set_input(std::string_view{stream_}.substr(0, limit()), truncated());
         const token t = lexer_.next();
@@ -143,6 +148,10 @@ void tree_builder::finish() {
 
 void tree_builder::run_script(node_id script) {
     if (!on_script_ || aborted_) { return; }
+    if (on_checkpoint_) {
+        on_checkpoint_();
+        if (aborted_) { return; }
+    }
     // "Let the old insertion point be the current one; set the insertion point
     // just before the next input character" - which is where the tokenizer is
     // now, past the `</script>`. Pushed rather than saved, because a write from

@@ -66,6 +66,36 @@ namespace {
 
 } // namespace
 
+// A NEW PARSER FOR THE DOCUMENT, the old one aborted ("stop document
+// loading") and kept until nothing of it is on the stack - document.open()
+// can be reached from inside the old parser's own pump.
+void dom_bindings::replace_parser() {
+    std::erase_if(retired_parsers_, [](const auto & held) { return !held->busy(); });
+    if (parser_ != nullptr) {
+        parser_->abort();
+        retired_parsers_.push_back(std::move(parser_));
+    }
+    parser_ = std::make_unique<html::tree_builder>(*doc_, *atoms_);
+    parser_->set_script_hook([this](node_id script) { prepare_parser_script(script); });
+    parser_->set_custom_element_hooks(
+        [this](std::string_view name, const std::vector<html::token_attribute> & attributes,
+               node_id parent) { return parser_create_custom_element(name, attributes, parent); },
+        [this](node_id element) { parser_inserted_custom_element(element); });
+    // 13.2.6.4.8 step 8: WHAT THE PARSER BUILT IS ANNOUNCED, THEN A MICROTASK
+    // CHECKPOINT, THEN THE SCRIPT IS PREPARED - so a mutation observer's
+    // callback sees the <script> before it runs and may change its type
+    // (microtask_before_prepare_the_script_element-01.html) or document.write
+    // with no insertion point, which opens the document and aborts this
+    // parse (document-write/mutation-observer.html). The checkpoint is only
+    // performed when no script is on the stack; inside a written script it
+    // waits for that script's end.
+    parser_->set_checkpoint_hook([this] {
+        doc_->note_unversioned_change();
+        mutated();
+        if (cx_ != nullptr && cx_->current_stack().empty()) { cx_->drain_microtasks(); }
+    });
+}
+
 parse_result dom_bindings::parse_document(std::string_view html) {
     deferred_scripts_.clear();
     asap_scripts_.clear();
@@ -73,20 +103,18 @@ parse_result dom_bindings::parse_document(std::string_view html) {
     // A NAVIGATION'S DOCUMENT, so a `<template shadowrootmode>` in the page is
     // a shadow root (HTML 7.4.6.4 "create and initialize a Document object").
     doc_->set_allow_declarative_shadow_roots(true);
-    parser_ = std::make_unique<html::tree_builder>(*doc_, *atoms_);
-    parser_->set_script_hook([this](node_id script) { prepare_parser_script(script); });
-    parser_->set_custom_element_hooks(
-        [this](std::string_view name, const std::vector<html::token_attribute> & attributes,
-               node_id parent) { return parser_create_custom_element(name, attributes, parent); },
-        [this](node_id element) { parser_inserted_custom_element(element); });
+    replace_parser();
     // THE BYTES, DECODED (HTML 13.2.3.1): the loader sniffed the encoding
     // into the document's name; a windows-1251 page reaches the tokenizer as
     // UTF-8 here, and a UTF-8 one passes through untouched.
-    parser_->begin(decode_document_bytes(html, doc_->encoding()), false);
+    // THIS parser's results: a script it ran may have document.open()ed and
+    // put another in parser_.
+    html::tree_builder & parser = *parser_;
+    parser.begin(decode_document_bytes(html, doc_->encoding()), false);
     parse_result out;
-    out.root = parser_->document_element();
-    out.svg_sources = parser_->foreign_sources();
-    if (parser_->finished()) { parser_finished(true); }
+    out.root = parser.document_element();
+    out.svg_sources = parser.foreign_sources();
+    if (parser.finished()) { parser_finished(true); }
     return out;
 }
 
@@ -95,15 +123,9 @@ parse_result dom_bindings::parse_document(std::string_view html) {
 // browser's runner (a classic script) or, for a module, its loader.
 void dom_bindings::prepare_parser_script(node_id script) {
     if (parser_ == nullptr || parser_->aborted()) { return; }
-    // 13.2.6.4.8 step 8: WHAT THE PARSER BUILT IS ANNOUNCED, THEN A
-    // MICROTASK CHECKPOINT, THEN THE SCRIPT IS PREPARED - so a mutation
-    // observer's callback sees the <script> before it runs and may change its
-    // type (microtask_before_prepare_the_script_element-01.html does exactly
-    // that). The checkpoint is only performed when no script is on the stack;
-    // inside a written script it waits for that script's end.
-    doc_->note_unversioned_change();
-    mutated();
-    if (cx_ != nullptr && cx_->current_stack().empty()) { cx_->drain_microtasks(); }
+    // The parser whose </script> this is: the pending-script steps below
+    // belong to it. (Its checkpoint hook ran first - see replace_parser.)
+    html::tree_builder * const parser = parser_.get();
     const atom src_name = atoms_->intern("src");
     const bool svg = doc_->read().element_ns(script) == node_ns::svg;
     parser_script prepared{script, {}, {}, false};
@@ -222,7 +244,7 @@ void dom_bindings::prepare_parser_script(node_id script) {
     // "Execute the script element" step 8: `load` at the element for an
     // external script, once it has run; an inline classic script fires
     // nothing at all.
-    const auto execute = [this, script, external, prepared = std::move(prepared)] {
+    const auto execute = [this, parser, script, external, prepared = std::move(prepared)] {
         if (!run_script_) {
             // A FRAME'S DOCUMENT HAS NO RUNNER - the browser's is the page's -
             // but it has a realm, and its parser pauses at this `</script>`
@@ -234,7 +256,7 @@ void dom_bindings::prepare_parser_script(node_id script) {
             return;
         }
         if (!run_script_(prepared)) {
-            if (parser_ != nullptr) { parser_->abort(); }
+            parser->abort();
             return;
         }
         if (external) { announce_load(script, true); }
@@ -245,7 +267,7 @@ void dom_bindings::prepare_parser_script(node_id script) {
     // writing script for one document.write wrote (script_005.html and
     // friends: [1, 2, 3, 4], not [1, 3, 2, 4]).
     if (external) {
-        parser_->set_pending_blocking_script(execute);
+        parser->set_pending_blocking_script(execute);
         return;
     }
     execute();
@@ -379,12 +401,7 @@ void dom_bindings::document_open(context & cx) {
     deferred_scripts_.clear();
     asap_scripts_.clear();
     parser_script_created_ = true;
-    parser_ = std::make_unique<html::tree_builder>(*doc_, *atoms_);
-    parser_->set_script_hook([this](node_id script) { prepare_parser_script(script); });
-    parser_->set_custom_element_hooks(
-        [this](std::string_view name, const std::vector<html::token_attribute> & attributes,
-               node_id parent) { return parser_create_custom_element(name, attributes, parent); },
-        [this](node_id element) { parser_inserted_custom_element(element); });
+    replace_parser();
     parser_->begin({}, true, !secondary_);
     doc_->note_unversioned_change();
     mutated();

@@ -222,6 +222,12 @@ public:
     void set_pending_blocking_script(std::function<void()> run) {
         pending_blocking_ = std::move(run);
     }
+    // BEFORE a script's end tag moves the insertion point and the nesting
+    // level (13.2.6.4.8): what the parser built is announced and, with no
+    // script on the stack, a microtask checkpoint runs - so a mutation
+    // observer sees the <script> first, and a document.write there has no
+    // insertion point and opens the document, aborting this parser.
+    void set_checkpoint_hook(std::function<void()> hook) { on_checkpoint_ = std::move(hook); }
 
     // "CREATE AN ELEMENT FOR A TOKEN" FOR A CUSTOM ELEMENT (13.2.6.1 steps
     // 7-11), which only the shell can do: it owns the registry and runs the
@@ -274,6 +280,10 @@ public:
     // The spec's "script nesting level": how many parser-run scripts are on
     // the C++ stack right now. `document.open()` from one is a no-op.
     [[nodiscard]] int script_nesting() const noexcept { return nesting_; }
+    // Whether any call into this parser is still on the stack - a
+    // document.open() from a mutation observer's callback replaces the
+    // parser while its own pump is running, and it must outlive that.
+    [[nodiscard]] bool busy() const noexcept { return pumping_ > 0; }
     [[nodiscard]] node_id document_element() const noexcept { return root_; }
 
 private:
@@ -553,7 +563,9 @@ private:
     bool aborted_ = false;
     int nesting_ = 0;
     std::function<void()> pending_blocking_;
+    std::function<void()> on_checkpoint_;
     bool paused_ = false; // the parser pause flag
+    int pumping_ = 0;     // see busy()
 };
 
 } // namespace ctbrowser::html
