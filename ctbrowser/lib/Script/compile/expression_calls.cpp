@@ -448,7 +448,12 @@ bool compiler_impl::compile_param_eval(const vp::node & n, std::uint16_t dst) {
 // The shape changes only in functions that contain `eval(`, which no native
 // pipeline compiles anyway.
 bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
-    if (!is_direct_eval_call(n) || frames_.size() < 2 || !with_scopes_.empty()) { return false; }
+    // AT A PROGRAM'S TOP LEVEL only inside a direct eval's program, whose
+    // caller's bindings a nested `eval` sees too.
+    if (!is_direct_eval_call(n) || (frames_.size() < 2 && eval_outer_names_.empty()) ||
+        !with_scopes_.empty()) {
+        return false;
+    }
     const std::size_t level = frames_.size() - 1;
     // `eval` that is a local or an upvalue is somebody else's function.
     if (find_local_entry(fn(), "eval") != nullptr || resolve_upvalue(level, "eval") >= 0) {
@@ -456,12 +461,7 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
     }
     const std::span<const std::int32_t> args = kids(n);
     if (any_spread(args)) { return false; }
-    const auto usable = [](std::string_view name) {
-        if (name.empty() || name == "this") { return false; }
-        const auto c = static_cast<unsigned char>(name[0]);
-        return c == '_' || c == '$' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-               c >= 0x80;
-    };
+    const auto usable = eval_reachable;
     std::string descriptor = fn().is_strict ? "strict" : "sloppy";
     std::vector<std::string> seen;
     std::vector<const local *> handed; // this frame's, in descriptor order
@@ -493,6 +493,16 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
             descriptor += "\nU " + std::to_string(up) + " " + name;
             seen.push_back(name);
         }
+    }
+    // Inside a direct eval's program, the bindings ITS caller handed over.
+    std::vector<std::string> handed_down = eval_outer_names_;
+    std::ranges::sort(handed_down);
+    for (const std::string & name : handed_down) {
+        if (taken(name)) { continue; }
+        const int up = resolve_upvalue(level, name);
+        if (up < 0) { continue; }
+        descriptor += "\nU " + std::to_string(up) + " " + name;
+        seen.push_back(name);
     }
     const std::uint32_t mark = reg_mark();
     const std::uint16_t base = alloc_reg();

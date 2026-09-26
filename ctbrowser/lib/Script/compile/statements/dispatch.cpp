@@ -114,7 +114,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         // The local path below boxes it and makes a fresh cell per
         // iteration, exactly as it already did inside a function. `var` is
         // function-scoped, so at any depth it is still the script's.
-        if (frames_.size() == 1 && !module_scope_ &&
+        if (frames_.size() == 1 && !top_level_is_scope_ &&
             (n.text == "var" || fn().scope_marks.size() <= 1)) {
             // NOT `declaring_` around the loop: an initialiser is an
             // expression, and `'use strict'; var a = b = 1;` must still refuse

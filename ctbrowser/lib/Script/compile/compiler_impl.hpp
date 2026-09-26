@@ -1013,6 +1013,13 @@ public:
     // strict. Empty for every other program.
     std::vector<std::string> eval_outer_names_;
     bool eval_outer_strict_ = false;
+    // THE TOP LEVEL IS A SCOPE, not the global one: a module's, and a STRICT
+    // eval's, whose `var`s and functions are its own (19.2.1.1 step 17: a new
+    // variable environment) - set by compile_program.
+    bool top_level_is_scope_ = false;
+    // A name source text can spell, so a direct eval can reach it - not a
+    // pattern parameter's empty one, nor a synthetic "@super:" slot.
+    [[nodiscard]] static bool eval_reachable(std::string_view name);
     std::size_t handler_depth_ = 0;
 };
 

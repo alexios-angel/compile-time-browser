@@ -233,7 +233,8 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     // top-level `var x` does - a local scoped to the loop left `x` unbound
     // after it, so the next `for (x in o)` in strict code was an assignment
     // to an unresolvable name. Written as a declaration (declaring_).
-    const bool var_global = declares && (n.d & 57) == 0 && frames_.size() == 1 && !module_scope_;
+    const bool var_global =
+        declares && (n.d & 57) == 0 && frames_.size() == 1 && !top_level_is_scope_;
     const std::uint16_t item = (declares && !is_shape && !var_global)
                                    ? declare_local(std::string{target.text})
                                    : alloc_reg();
@@ -367,7 +368,8 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     // top-level `var x` does - a local scoped to the loop left `x` unbound
     // after it, so the next `for (x in o)` in strict code was an assignment
     // to an unresolvable name. Written as a declaration (declaring_).
-    const bool var_global = declares && (n.d & 57) == 0 && frames_.size() == 1 && !module_scope_;
+    const bool var_global =
+        declares && (n.d & 57) == 0 && frames_.size() == 1 && !top_level_is_scope_;
     const std::uint16_t item = (declares && !is_shape && !var_global)
                                    ? declare_local(std::string{target.text})
                                    : alloc_reg();

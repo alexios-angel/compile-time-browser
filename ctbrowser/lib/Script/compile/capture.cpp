@@ -29,6 +29,12 @@ void compiler_impl::build_capture_index() {
     std::ranges::sort(eval_ticks_);
 }
 
+bool compiler_impl::eval_reachable(std::string_view name) {
+    if (name.empty() || name == "this") { return false; }
+    const auto c = static_cast<unsigned char>(name[0]);
+    return c == '_' || c == '$' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 0x80;
+}
+
 bool compiler_impl::is_direct_eval_call(const vp::node & n) const {
     if (n.kind != vp::nk::call || n.a < 0) { return false; }
     const vp::node & callee = at(n.a);
@@ -144,9 +150,11 @@ bool compiler_impl::is_captured(std::string_view name) const {
     const interval where = frames_.back().captures;
     if (where.empty()) { return false; }
     // A direct eval in this function, or in one inside it, can reach every
-    // local here - `lo` INCLUSIVE, since an eval in the function itself does.
+    // named local here - `lo` INCLUSIVE, since an eval in the function itself
+    // does. Not a pattern parameter's register: boxing it made the pattern
+    // destructure the cell ("object is not iterable").
     if (const auto e = std::ranges::lower_bound(eval_ticks_, where.lo);
-        e != eval_ticks_.end() && *e < where.hi) {
+        e != eval_ticks_.end() && *e < where.hi && eval_reachable(name)) {
         return true;
     }
     const auto found = mentions_.find(name);

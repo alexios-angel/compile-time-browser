@@ -35,5 +35,17 @@ int main() {
     js_expect("(function(){ var c = 0; var inc = eval('(function(){ return ++c; })');"
               " inc(); inc(); return c; })()",
               "2");
+    // A STRICT eval's `var` is its own (a new variable environment), whether
+    // the caller or the source is strict.
+    js_expect("(function(){ 'use strict'; var n = 0; eval('var n = 1'); return n; })()", "0");
+    js_expect("(function(){ var n = 0; eval(\"'use strict'; var n = 1; n\"); return n; })()", "0");
+    js_expect("(function(){ 'use strict'; return eval('var n = 2; function g() { return n; } g()');"
+              " })()",
+              "2");
+    // An eval inside the eval sees what the outer one was handed.
+    js_expect("(function(){ var v = 'a'; return eval(\"var v = 'b'; eval('v')\"); })()", "b");
+    // A pattern parameter's register is nobody's binding, and is not boxed.
+    js_expect("(function(...[a = 1]){ eval(''); return a; })()", "1");
+    js_expect("(function({k}){ eval(''); return k; })({k: 'k'})", "k");
     REPORT("direct_eval");
 }
