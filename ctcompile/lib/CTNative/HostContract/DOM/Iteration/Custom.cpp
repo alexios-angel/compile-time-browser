@@ -1,6 +1,7 @@
 #include "../../../Analysis/StringNumber.h"
 #include "../../Prefix.h"
 #include "../Source/Proof.hpp"
+#include "ctbrowser/core/symbol.hpp"
 #include "ctcompile/CTNative/Runtime/String.hpp"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Verifier.h"
@@ -690,7 +691,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto constant = store.getValue().getDefiningOp<ctjs::ConstantOp>();
             auto name = ctjs::constantKey(store.getKey());
             // The interpreter's well-known Symbol spelling shares this slot.
-            if (name == "@@iterator") {
+            if (name == CTBROWSER_SYMBOL_KEY("iterator")) {
                 return error("DOM custom iterator state aliases its iterator method");
             }
             if (!constant || !llvm::isa<ctjs::NumberAttr>(constant.getValue()) ||

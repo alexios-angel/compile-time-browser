@@ -4,6 +4,7 @@
 #include "../../../../lib/CTNative/HostContract/Preparation.h"
 #include "ClassTransactions.hpp"
 #include "DOMObservedState.hpp"
+#include "ctbrowser/core/symbol.hpp"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
@@ -3076,8 +3077,9 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                 ctjs::StoreGlobalOp::create(at, call.getLoc(), "holder", escaped);
             } else if (control == 9) {
                 at.setInsertionPoint(attempt);
-                auto key = ctjs::ConstantOp::create(at, call.getLoc(),
-                                                    ctjs::StringAttr::get(&context, "@@iterator"));
+                auto key = ctjs::ConstantOp::create(
+                    at, call.getLoc(),
+                    ctjs::StringAttr::get(&context, CTBROWSER_SYMBOL_KEY("iterator")));
                 auto number =
                     ctjs::ConstantOp::create(at, call.getLoc(), ctjs::NumberAttr::get(&context, 0));
                 ctjs::SetPropertyOp::create(at, call.getLoc(), holder, key, number);

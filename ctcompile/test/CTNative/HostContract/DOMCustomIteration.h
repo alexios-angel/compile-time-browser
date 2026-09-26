@@ -2,6 +2,7 @@
 
 #include "../../../lib/CTNative/HostContract/Preparation.h"
 #include "HostContractFixtures.h"
+#include "ctbrowser/core/symbol.hpp"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
@@ -1585,6 +1586,47 @@ module {
         return empty;
     };
     constexpr unsigned completeBudget = 100000;
+
+    // Ordinary source spelling and compiler-minted Symbol keys are distinct.
+    // Rewrite every state access so refusal cannot come from a missing field.
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        for (const auto key :
+             {llvm::StringRef("@@iterator"), llvm::StringRef(CTBROWSER_SYMBOL_KEY("iterator"))}) {
+            mlir::OwningOpRef<mlir::ModuleOp> input(receiver->clone());
+            input->walk([&](ctjs::ConstantOp constant) {
+                auto name = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
+                if (name && name.getValue() == "emitted") {
+                    constant.setValueAttr(ctjs::StringAttr::get(&context, key));
+                }
+            });
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            const auto fingerprint = request.moduleSha256;
+            auto failure = prepareDOMEntry(*input, request, completeBudget);
+            if (key == "@@iterator") {
+                check(!failure, "ordinary iterator String state remains distinct from Symbol");
+                if (failure) {
+                    llvm::errs() << llvm::toString(std::move(failure)) << '\n';
+                    continue;
+                }
+                check(DOMEntryAnalysis(*input, request).proved() &&
+                          mlir::succeeded(mlir::verify(*input)),
+                      "ordinary iterator String state completes fresh DOM admission");
+            } else {
+                check(static_cast<bool>(failure) &&
+                          hostContractFingerprint(*input) == fingerprint &&
+                          request.moduleSha256 == fingerprint,
+                      "reserved Symbol state refuses without publishing source or contract");
+                if (failure) {
+                    check(llvm::toString(std::move(failure))
+                                  .find("state aliases its iterator method") != std::string::npos,
+                          "reserved state refuses at the Symbol alias guard");
+                }
+            }
+        }
+    }
     // The protected close keeps both outcomes and the original saved throw.
     // Native publication still requires the downstream effect/payload proof.
     const std::string abruptTail = R"MLIR(
