@@ -220,10 +220,9 @@ private:
     void track_promise_rejection(value promise, bool handled);
     // At a checkpoint's end (install_promise_rejections).
     void queue_rejection_notification();
-    std::vector<value> rejections_to_notify_;    // roots until the task ran
-    std::vector<value> outstanding_rejections_;  // notified, still unhandled
-    std::vector<value> rejections_handled_late_; // roots until the task ran
-    bool rejection_task_queued_ = false;
+    bool fire_rejection_event(context & c, std::string_view type, value promise, bool cancelable);
+    std::vector<value> rejections_to_notify_;   // until the checkpoint takes them
+    std::vector<value> outstanding_rejections_; // notified, still unhandled
     // A <details> whose `open` came or went: its toggle task, and the state
     // before the first change that task stands for (handler_attributes.cpp).
     struct details_toggle {

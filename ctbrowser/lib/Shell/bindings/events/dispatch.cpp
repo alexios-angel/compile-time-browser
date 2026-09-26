@@ -552,8 +552,13 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // listener that resolves a promise has its handlers run before the next
     // event is dispatched, not at some later frame. NOT from inside the
     // mutation observer microtask, though: a checkpoint does not nest
-    // (HTML's "performing a microtask checkpoint" flag).
-    if (!primary().delivering_mutations_) { cx.drain_microtasks(); }
+    // (HTML's "performing a microtask checkpoint" flag). And ONLY WITH AN
+    // EMPTY STACK ("clean up after running script"): an event a script
+    // dispatches - `el.click()`, an AbortController's `abort` - runs the
+    // queue after that script, not in the middle of it (testharness aborts a
+    // signal as each test ends, and every test after the first ran its
+    // predecessors' microtasks mid-script).
+    if (!primary().delivering_mutations_ && cx.current_stack().empty()) { cx.drain_microtasks(); }
     note_callback_fault(type);
     return prevented(event);
 }
