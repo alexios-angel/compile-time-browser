@@ -238,6 +238,14 @@ struct rotation {
 
 [[nodiscard]] std::optional<double> ratio_of(std::string_view text);
 
+// --- clip's rect() (CSS Masking 1 §7.1) ---
+
+[[nodiscard]] std::optional<std::vector<std::string_view>> rect_parts(std::string_view text);
+
+[[nodiscard]] std::optional<std::string> blend_rects(std::string_view from, std::string_view to,
+                                                     double wa, double wb,
+                                                     const css::length_context & ctx);
+
 // --- grid track lists (CSS Grid 2 §7.2.5) ---
 
 [[nodiscard]] std::vector<std::string_view> track_words(std::string_view text);

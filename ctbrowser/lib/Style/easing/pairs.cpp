@@ -120,6 +120,52 @@ struct gap_shape {
     return out;
 }
 
+// --- clip's rect() (CSS Masking 1 §7.1) ---
+
+// The four components of a `rect()`, comma- or space-separated as CSS 2.1
+// allowed; nullopt for anything else.
+[[nodiscard]] std::optional<std::vector<std::string_view>> rect_parts(std::string_view text) {
+    text = trim(text, html_whitespace);
+    if (!ascii_istarts_with(text, "rect(") || !text.ends_with(')')) { return std::nullopt; }
+    const std::string_view body = text.substr(5, text.size() - 6);
+    std::vector<std::string_view> parts = split_top_level(body, ",");
+    if (parts.size() == 1) { parts = split_top_level(body, html_whitespace); }
+    std::vector<std::string_view> out;
+    for (const std::string_view part : parts) {
+        if (!trim(part, html_whitespace).empty()) { out.push_back(trim(part, html_whitespace)); }
+    }
+    if (out.size() != 4) { return std::nullopt; }
+    return out;
+}
+
+// Two rects, component by component - `wa * a + wb * b` - and nullopt when
+// an `auto` meets a length, which makes the pair discrete.
+[[nodiscard]] std::optional<std::string> blend_rects(std::string_view from, std::string_view to,
+                                                     double wa, double wb,
+                                                     const css::length_context & ctx) {
+    const std::optional<std::vector<std::string_view>> a = rect_parts(from);
+    const std::optional<std::vector<std::string_view>> b = rect_parts(to);
+    if (!a || !b) { return std::nullopt; }
+    std::string out = "rect(";
+    for (std::size_t i = 0; i < 4; ++i) {
+        std::string one;
+        if (ascii_iequals((*a)[i], "auto") || ascii_iequals((*b)[i], "auto")) {
+            if (!ascii_iequals((*a)[i], (*b)[i])) { return std::nullopt; }
+            one = "auto";
+        } else {
+            const std::optional<numeric_pair> n = numeric_of((*a)[i], (*b)[i], ctx);
+            if (!n) { return std::nullopt; }
+            css::calc_result v = n->a;
+            v.px = wa * n->a.px + wb * n->b.px;
+            v.percent = wa * n->a.percent + wb * n->b.percent;
+            v.has_percent = n->a.has_percent || n->b.has_percent;
+            one = css::serialize_calc(v);
+        }
+        out += (i == 0 ? "" : ", ") + one;
+    }
+    return out + ")";
+}
+
 // --- grid track lists (CSS Grid 2 §7.2.5) ---
 
 // The top-level words of a track list: a `[names]` block, a `repeat(...)` or
@@ -364,6 +410,14 @@ struct gap_shape {
             return *r;
         }
     }
+    // TWO RECTS blend component by component (clip-interpolation).
+    if (property == "clip") {
+        if (const std::optional<std::string> r = blend_rects(from, to, 1 - p, p, ctx)) {
+            return *r;
+        }
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
+    }
     // TWO TRACK LISTS OF ONE SHAPE blend track by track (CSS Grid 2 §7.2.5);
     // two shapes are discrete.
     if (property == "grid-template-columns" || property == "grid-template-rows") {
@@ -472,6 +526,9 @@ struct gap_shape {
     if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
         return css::blend_basic_shapes(property, underlying, value, 1, 1)
             .value_or(std::string{value});
+    }
+    if (property == "clip") {
+        return blend_rects(underlying, value, 1, 1, ctx).value_or(std::string{value});
     }
     const bool single = comma_items(underlying).size() == 1 && comma_items(value).size() == 1;
     if (const auto a = single ? css::resolve_color(underlying, {}) : std::nullopt,
