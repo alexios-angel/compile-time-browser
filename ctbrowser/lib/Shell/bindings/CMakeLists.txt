@@ -3,6 +3,7 @@ target_sources(ctbrowser-shell PRIVATE
   animation_effects.cpp
   animations.cpp
   canvas.cpp
+  canvas_path2d.cpp
   css.cpp
   custom_element_reactions.cpp
   custom_elements.cpp
