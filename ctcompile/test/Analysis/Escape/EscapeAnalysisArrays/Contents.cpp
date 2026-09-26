@@ -997,6 +997,42 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                         selectedInput("%secondRead", "%secondRead", "", "", "%operand"));
     const auto nestedOperandForwarding = selectedInput(
         "%innerOperand", "%p", selectedInput("%p", "%p", "", "", "%innerOperand"), "", "%operand");
+    const auto nestedTruthiness =
+        selectedInput("%operand", "%p", nestedOperandForwarding, "", "%truthiness") +
+        "    %secondFlag = ctjs.truthy %truthiness\n";
+    const auto nestedTruthinessGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", nestedTruthiness));
+    auto nestedTruthinessNot = nestedTruthiness;
+    nestedTruthinessNot.replace(nestedTruthinessNot.find("    %secondFlag ="),
+                                std::string{"    %secondFlag = ctjs.truthy %truthiness\n"}.size(),
+                                notChain(3, "%truthiness"));
+    const auto nestedTruthinessTuple =
+        selectedInput("%middleOperand", "%p",
+                      selectedInput("%operand#1", "%p", operandTuple, "", "%middleOperand"), "",
+                      "%truthiness") +
+        "    %secondFlag = ctjs.truthy %truthiness\n";
+    auto otherTruthinessSlot = nestedTruthinessTuple;
+    otherTruthinessSlot.replace(otherTruthinessSlot.find("%operand#1"),
+                                std::string{"%operand#1"}.size(), "%operand#0");
+    auto nestedTruthinessReads = reloadedConditions("");
+    nestedTruthinessReads.replace(
+        nestedTruthinessReads.find("    %secondFlag ="),
+        std::string{"    %secondFlag = ctjs.truthy %secondRead\n"}.size(),
+        selectedInput(
+            "%readOperand", "%secondRead",
+            selectedInput("%innerRead", "%secondRead",
+                          selectedInput("%secondRead", "%secondRead", "", "", "%innerRead"), "",
+                          "%readOperand"),
+            "", "%truthiness") +
+            "    %secondFlag = ctjs.truthy %truthiness\n");
+    auto nestedTruthinessThenEffect = nestedTruthiness;
+    nestedTruthinessThenEffect.insert(nestedTruthinessThenEffect.find("      scf.yield %p"),
+                                      "      %called = ctjs.call %p(%q)\n");
+    auto nestedTruthinessElseEffect = nestedTruthiness;
+    nestedTruthinessElseEffect.insert(nestedTruthinessElseEffect.find("    } else {\n") +
+                                          std::string{"    } else {\n"}.size(),
+                                      "      %called = ctjs.call %p(%q)\n");
     const auto nestedOperandGap = nestedSiblingStore(
         "      %read = ctjs.get_property %guard[%one]\n" +
         comparedInput("%read", "%two", "strict_eq %operand, %zero", nestedOperandForwarding));
@@ -3444,6 +3480,45 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         {.what = "strict comparison operands forward an identical saved SSA value",
          .body = loopValues + allocationLoop(operandKeys) + done,
          .confinedNested = "fresh"},
+        {.what = "three nested selections preserve one saved SSA truthiness",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", nestedTruthiness))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested saved truthiness preserves Not polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", nestedTruthinessNot, true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested saved truthiness follows the corresponding tuple slot",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", nestedTruthinessTuple))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested saved truthiness cannot borrow another tuple slot",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", otherTruthinessSlot))) +
+                 done,
+         .complete = false},
+        {.what = "nested saved truthiness keeps distinct mutable read snapshots",
+         .body = loopValues + allocationLoop(nestedTruthinessReads) + done,
+         .complete = false},
+        {.what = "nested saved truthiness cannot suppress inner then effects",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", nestedTruthinessThenEffect))) +
+                 done,
+         .complete = false},
+        {.what = "nested saved truthiness cannot suppress inner else effects",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", nestedTruthinessElseEffect))) +
+                 done,
+         .complete = false},
         {.what = "identity operands preserve the corresponding tuple slot and Not polarity",
          .body = loopValues +
                  allocationLoop(selectedStore(comparedInput(
@@ -5586,6 +5661,82 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = operandMutation.what, .body = operandMutation.body, .expected = ""},
              "the identity operand mutation fixture did not parse");
     }
+    retention_row nestedTruthinessMutation{
+        .what = "nested saved truthiness reproves every leaf, guard and current condition",
+        .body = loopValues +
+                allocationLoop(nestedTruthinessGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto nestedTruthinessModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + nestedTruthinessMutation.body + "}\n", &context);
+    if (nestedTruthinessModule) {
+        ctjs::FuncOp function = *nestedTruthinessModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto truthy = second.getCondition().getDefiningOp<ctjs::TruthyOp>();
+        auto outer = truthy.getValue().getDefiningOp<mlir::scf::IfOp>();
+        auto middle = outer.getThenRegion()
+                          .front()
+                          .getTerminator()
+                          ->getOperand(0)
+                          .getDefiningOp<mlir::scf::IfOp>();
+        auto inner = middle.getThenRegion()
+                         .front()
+                         .getTerminator()
+                         ->getOperand(0)
+                         .getDefiningOp<mlir::scf::IfOp>();
+        auto * thenYield = inner.getThenRegion().front().getTerminator();
+        auto * elseYield = inner.getElseRegion().front().getTerminator();
+        auto * middleElse = middle.getElseRegion().front().getTerminator();
+        auto * outerElse = outer.getElseRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = thenYield->getOperand(0);
+        const mlir::Value otherInput = function.getBody().front().getArgument(4);
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*nestedTruthinessModule))) {
+            fail(row{.what = nestedTruthinessMutation.what,
+                     .body = nestedTruthinessMutation.body,
+                     .expected = ""},
+                 "the nested truthiness stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 8; ++state) {
+            thenYield->setOperand(0, state == 1 ? otherInput : originalInput);
+            elseYield->setOperand(0, state == 2 ? otherInput : originalInput);
+            middleElse->setOperand(0, state == 3 ? otherInput : originalInput);
+            outerElse->setOperand(0, state == 4 ? otherInput : originalInput);
+            truthy->setOperand(0, state == 5 ? otherInput : outer.getResult(0));
+            load->setOperand(1, state == 6 ? zero : originalPosition);
+            nestedTruthinessMutation.complete = state == 0 || state == 7;
+            nestedTruthinessMutation.confinedNested =
+                nestedTruthinessMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*nestedTruthinessModule, nestedTruthinessMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                nestedTruthinessMutation.complete) {
+                fail(row{.what = nestedTruthinessMutation.what,
+                         .body = nestedTruthinessMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied nested truthiness identity");
+            }
+        }
+    } else {
+        fail(row{.what = nestedTruthinessMutation.what,
+                 .body = nestedTruthinessMutation.body,
+                 .expected = ""},
+             "the nested truthiness mutation fixture did not parse");
+    }
     retention_row nestedOperandMutation{
         .what = "nested saved operands reprove every SSA leaf, comparisons and guards",
         .body = loopValues +
@@ -6396,7 +6547,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         }
     }
     std::printf(
-        "array retention: %zu rows, three hundred eighteen live states, %zu budget cutoffs\n",
+        "array retention: %zu rows, three hundred twenty-six live states, %zu budget cutoffs\n",
         rows.size(), budgets);
 }
 
