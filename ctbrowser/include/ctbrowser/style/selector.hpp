@@ -155,6 +155,12 @@ inline constexpr std::uint32_t structural_defined = 1u << 14;
 // engine's control-value hook answers once edited, the attribute (or the
 // textarea's text) until then.
 inline constexpr std::uint32_t structural_placeholder_shown = 1u << 15;
+// `:valid` / `:invalid` - HTML §4.16.3: a candidate for constraint validation
+// that satisfies its constraints or does not, and a <form> or <fieldset> by
+// whether an element it covers fails. The form store knows, so the engine's
+// validity hook answers; with no hook neither ever matches.
+inline constexpr std::uint32_t structural_valid = 1u << 16;
+inline constexpr std::uint32_t structural_invalid = 1u << 17;
 
 struct compiled_selector;
 
