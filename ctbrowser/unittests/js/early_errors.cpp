@@ -143,6 +143,10 @@ int main() {
     refused("'use strict'; function f() {} f() = 1;");
     refused("function f() {} f() &&= 1;");
     refused("var a; a?.b() = 1;");
+    // A binding the parser took leniently from a token that is no name.
+    refused("var 1 = 1;");
+    refused("function f(1, 1) {}");
+    accepted("var $a, _b, \\u0061c, \xc3\xa9t\xc3\xa9;");
 
     // ================================================================
     // 1. DUPLICATE LEXICAL DECLARATIONS - 14.2.1, 15.2.1, 16.1.1

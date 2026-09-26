@@ -381,6 +381,18 @@ void checker::check_identifier_reference(std::string_view name, std::int32_t nod
 }
 
 void checker::check_strict_binding(std::string_view name, std::int32_t node, bool trusted) {
+    // A BINDING THAT IS NOT AN IDENTIFIER AT ALL - the parser takes whatever
+    // token stands where a name should, so `var 1 = 1` and `function (1, 1)`
+    // arrived as bindings named "1" (13.1 BindingIdentifier: IdentifierStart
+    // is a letter, `$`, `_`, an escape or a non-ASCII code point).
+    if (trusted && !name.empty()) {
+        const auto first = static_cast<unsigned char>(name.front());
+        if (!(std::isalpha(first) != 0 || first == '$' || first == '_' || first == '\\' ||
+              first >= 0x80)) {
+            report("unexpected token " + quoted(name) + " where a name was expected", node);
+            return;
+        }
+    }
     // A BINDING named with a reserved word is one the parser took leniently
     // (`var default`) or an escaped spelling; either is the SyntaxError, and
     // no valid program declares one.
