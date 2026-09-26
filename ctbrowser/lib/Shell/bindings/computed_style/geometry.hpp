@@ -494,6 +494,27 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
          ascii_iequals(text, "thick"))) {
         return px_text(border_width_px(text, at.font_size));
     }
+    // ...and each is a line width, snapped as one item by item (CSS Gaps 1
+    // §3.3): `14.1px` is `14px`. A list with a repeat() is left as it is.
+    if (property == "column-rule-width" || property == "row-rule-width") {
+        style::css::length_context lengths;
+        lengths.font_size = at.font_size;
+        std::string widths;
+        for (const std::string_view raw : split_top_level(text, ",")) {
+            const std::string_view item = trim(raw, html_whitespace);
+            const std::optional<float> px =
+                ascii_iequals_any(item, {"thin", "medium", "thick"})
+                    ? std::optional<float>{border_width_px(item, at.font_size)}
+                    : style::css::length_text_to_px(item, lengths);
+            if (!px || ascii_istarts_with(item, "repeat(")) {
+                widths.clear();
+                break;
+            }
+            widths +=
+                (widths.empty() ? "" : ", ") + px_text(snapped_line_width(std::max(0.0f, *px)));
+        }
+        if (!widths.empty()) { return widths; }
+    }
     if (text.empty()) { return std::string{}; }
     // 3. LENGTHS, through layout's own parser against layout's own basis.
     //    `auto` stays `auto`, which is what Chrome returns for a margin that
