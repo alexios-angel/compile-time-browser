@@ -183,7 +183,7 @@ void compiler_impl::emit_finally_dispatch(const finally_context & open) {
     // 1 - rethrow.
     {
         const std::size_t skip = branch_if_kind(1);
-        emit_rethrow(open.value_reg);
+        emit_rethrow(open.value_reg, true);
         patch_here(skip);
     }
     // 2 - return. `wrap_promise` is re-applied here for the same reason the
@@ -220,7 +220,14 @@ void compiler_impl::emit_finally_dispatch(const finally_context & open) {
     // 0 - fall through, which is the whole of the normal path.
 }
 
-void compiler_impl::emit_rethrow(std::uint16_t value_reg) {
+void compiler_impl::emit_caught_throw(std::uint16_t value_reg) {
+    if (proto().debug_offsets) {
+        proto().rethrows.push_back(static_cast<std::uint32_t>(proto().code.size()));
+    }
+    proto().emit(instruction{op::throw_value, value_reg});
+}
+
+void compiler_impl::emit_rethrow(std::uint16_t value_reg, bool caught) {
     // A catch/finally inside the iterator gets the exception before the iterator
     // closes. Its eventual rethrow comes back here at the surrounding depth.
     const std::uint32_t mark = reg_mark();
@@ -241,7 +248,11 @@ void compiler_impl::emit_rethrow(std::uint16_t value_reg) {
         patch_here(suppressed);
         release_to(mark);
     }
-    proto().emit(instruction{op::throw_value, value_reg});
+    if (caught) {
+        emit_caught_throw(value_reg);
+    } else {
+        proto().emit(instruction{op::throw_value, value_reg});
+    }
 }
 
 bool compiler_impl::route_return_through_finally(std::uint16_t value_reg) {
@@ -290,7 +301,7 @@ bool compiler_impl::route_return_through_finally(std::uint16_t value_reg) {
             proto().emit(instruction{op::pop_handler});
             patch_here(suppress);
         }
-        proto().emit(instruction{op::throw_value, caught});
+        emit_caught_throw(caught);
         patch_here(done);
         release_to(mark);
     }

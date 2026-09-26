@@ -447,6 +447,13 @@ struct function_proto {
     // between them is made once per FUNCTION: the prologue and the implicit
     // return are emitted with no statement in hand.
     bool debug_offsets = false;
+    // THE COMPILER'S OWN RETHROWS: the index of each op::throw_value that
+    // throws again a value a handler caught - a finally's, an iterator close's
+    // - rather than a `throw` the source wrote. In emission order, so sorted.
+    // Kept beside code_offsets and only when it is, for the one reader that
+    // needs it: context::note_throw_site, where such a throw keeps the site of
+    // the throw it caught.
+    std::vector<std::uint32_t> rethrows;
 
     // THE COMPILED BODY, or null, which is almost always. Runtime-only: the
     // compiler never sets it, no image ever carries it, and `image_fingerprint`

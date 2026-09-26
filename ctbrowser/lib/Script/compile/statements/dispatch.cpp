@@ -441,7 +441,7 @@ void compiler_impl::compile_throw(const vp::node & n) {
     // uncaught throw was reported at (context::last_throw_site). Positions
     // only: this moves an entry of code_offsets, not an instruction.
     const at_source here{*this, n.a};
-    emit_rethrow(r);
+    emit_rethrow(r, false);
     release_to(mark);
 }
 

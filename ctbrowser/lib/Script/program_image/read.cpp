@@ -482,6 +482,17 @@ load_result load_image(std::span<const std::byte> bytes,
         for (std::uint32_t i = 0; i < offset_count && !in.bad; ++i) {
             fn.code_offsets.push_back(in.u32());
         }
+        // Only searched (note_throw_site), never indexed by, so a bad entry
+        // misattributes one throw's position and cannot read out of bounds.
+        const std::uint32_t rethrow_count = in.u32();
+        if (!in.need(static_cast<std::size_t>(rethrow_count) * 4u)) {
+            in.fail(where() + "the rethrow table claims more entries than the image holds");
+            break;
+        }
+        fn.rethrows.reserve(rethrow_count);
+        for (std::uint32_t i = 0; i < rethrow_count && !in.bad; ++i) {
+            fn.rethrows.push_back(in.u32());
+        }
         if (in.bad) { break; }
     }
     if (in.bad) {

@@ -955,7 +955,8 @@ private:
     // The program being executed, so a call from C++ can find the string
     // tables a nested frame needs.
     const program * program_ = nullptr;
-    throw_site throw_site_; // see last_throw_site
+    throw_site throw_site_;              // see last_throw_site
+    std::uint64_t throw_site_value_ = 0; // the bits of the value thrown there (note_throw_site)
     std::vector<std::unique_ptr<program>> owned_programs_;
     flat_map<const void *, flat_map<std::uint32_t, value>> string_cache_;
     // The same for BigInt literals, keyed and swept the same way.

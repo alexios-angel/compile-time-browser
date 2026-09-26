@@ -445,6 +445,11 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
         if (keep_offsets) {
             for (const std::uint32_t offset : fn.code_offsets) { out.u32(offset); }
         }
+        // And the table only the offsets give a meaning to.
+        out.u32(keep_offsets ? static_cast<std::uint32_t>(fn.rethrows.size()) : 0u);
+        if (keep_offsets) {
+            for (const std::uint32_t at : fn.rethrows) { out.u32(at); }
+        }
     }
     return std::move(out.bytes);
 }

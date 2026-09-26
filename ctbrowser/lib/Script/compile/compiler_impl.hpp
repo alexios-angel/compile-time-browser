@@ -727,7 +727,11 @@ public:
     // Returns false when there is none and the caller should just emit `ret`.
     [[nodiscard]] bool route_return_through_finally(std::uint16_t value_reg);
     // Close iterators exited before the nearest handler, then throw the saved value.
-    void emit_rethrow(std::uint16_t value_reg);
+    // `caught`: the value is one a handler caught, thrown on - a finally's, an
+    // iterator close's - not a `throw` statement's (function_proto::rethrows).
+    void emit_rethrow(std::uint16_t value_reg, bool caught);
+    // The throw_value of such a rethrow, recorded in function_proto::rethrows.
+    void emit_caught_throw(std::uint16_t value_reg);
     // The same for a loop exit. `loop` must be one of loops_.
     [[nodiscard]] bool route_exit_through_finally(std::size_t loop_index, bool is_continue);
     // The tail of a finally: run the completion it was handed.
