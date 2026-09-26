@@ -380,7 +380,46 @@ void checker::check_identifier_reference(std::string_view name, std::int32_t nod
     }
 }
 
-void checker::check_strict_binding(std::string_view name, std::int32_t node, bool trusted) {
+namespace {
+// An identifier as the lexer left it may still spell its code points with
+// `\uXXXX` or `\u{...}` escapes; the rules below are about the NAME, so
+// `var \u0070ublic` in strict code is `public`, reserved (12.7.1.1: an
+// escaped reserved word is still that word). ASCII is all a reserved word
+// can be, so anything past it just stays as it was written.
+std::string unescape_identifier(std::string_view raw) {
+    std::string out;
+    for (std::size_t i = 0; i < raw.size(); ++i) {
+        if (raw[i] != '\\' || i + 1 >= raw.size() || raw[i + 1] != 'u') {
+            out.push_back(raw[i]);
+            continue;
+        }
+        std::size_t j = i + 2;
+        const bool braced = j < raw.size() && raw[j] == '{';
+        if (braced) { ++j; }
+        std::uint32_t code = 0;
+        std::size_t digits = 0;
+        while (j < raw.size() && (braced ? raw[j] != '}' : digits < 4) &&
+               ctbrowser::hex_value(raw[j]) >= 0) {
+            code = code * 16 + static_cast<std::uint32_t>(ctbrowser::hex_value(raw[j]));
+            ++j;
+            ++digits;
+        }
+        if (braced && j < raw.size() && raw[j] == '}') { ++j; }
+        if (digits == 0 || code >= 0x80) {
+            out.append(raw.substr(i, j - i));
+        } else {
+            out.push_back(static_cast<char>(code));
+        }
+        i = j - 1;
+    }
+    return out;
+}
+} // namespace
+
+void checker::check_strict_binding(std::string_view spelled, std::int32_t node, bool trusted) {
+    const std::string decoded =
+        spelled.find('\\') == std::string_view::npos ? std::string{} : unescape_identifier(spelled);
+    const std::string_view name = decoded.empty() ? spelled : std::string_view{decoded};
     // A BINDING THAT IS NOT AN IDENTIFIER AT ALL - the parser takes whatever
     // token stands where a name should, so `var 1 = 1` and `function (1, 1)`
     // arrived as bindings named "1" (13.1 BindingIdentifier: IdentifierStart

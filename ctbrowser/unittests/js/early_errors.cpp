@@ -156,6 +156,10 @@ int main() {
     refused("'use strict'; label1: label2: function f() {}");
     refused("if (1) label1: function f() {}");
     refused("function f(1, 1) {}");
+    // An escaped reserved word is still that word (12.7.1.1).
+    refused("var \\u{69}\\u{6d}port = 1;");
+    refused("'use strict'; var \\u0070ublic = 1;");
+    accepted("var \\u0070ublic = 1, \\u0061b = 2;");
     accepted("var $a, _b, \\u0061c, \xc3\xa9t\xc3\xa9;");
 
     // ================================================================

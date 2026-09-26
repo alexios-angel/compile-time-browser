@@ -240,7 +240,7 @@ private:
     // `interface`, `package`, `private`, `protected`, `public` are reserved.
     // `trusted` says the spelling may be judged against the reserved words
     // too - a binding always is; a reference only when `escaped` (see there).
-    void check_strict_binding(std::string_view name, std::int32_t node, bool trusted = true);
+    void check_strict_binding(std::string_view spelled, std::int32_t node, bool trusted = true);
     // 12.7.2: the ReservedWords that are never an identifier, in any mode.
     // The contextual ones (`let`, `static`, `async`, `of`, `get`, `set`,
     // `yield`, `await`) are not here: they are identifiers in sloppy code,
