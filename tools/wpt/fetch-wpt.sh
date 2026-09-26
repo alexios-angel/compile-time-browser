@@ -187,6 +187,11 @@ at=$(git -C "$WPT_DIR" rev-parse HEAD)
   echo "checked out $at, wanted $WPT_COMMIT" >&2
   exit 1
 }
+# WPTSERVE'S ONE ALIAS THE HARNESSES USE: `/resources/WebIDLParser.js` is served
+# from resources/webidl2/lib/webidl2.js (tools/serve's alias table); there is no
+# such file in the tree. Every idlharness test loads it, and without it each one
+# was "WebIDL2 is not defined" before its first subtest.
+ln -sf webidl2/lib/webidl2.js "$WPT_DIR/resources/WebIDLParser.js"
 # ON DISK, not in the index. `git ls-files` lists the whole TREE - 162,834
 # entries here - whatever the sparse checkout materialised, so it reported a
 # number two orders of magnitude larger than the thing it was describing and
