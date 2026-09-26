@@ -73,7 +73,7 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
     // records whether the branch reverses the exact input's truthiness.
     auto truthy = condition.getDefiningOp<ctjs::TruthyOp>();
     if (!truthy) { return {condition, false}; }
-    const auto booleanInput = [&](mlir::Value value) -> std::pair<mlir::Value, bool> {
+    const auto stripBoolean = [&](mlir::Value value) -> std::pair<mlir::Value, bool> {
         bool negated = false;
         while (true) {
             // The shared budget bounds traversal; exhaustion supplies no partial key.
@@ -88,12 +88,28 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
             value = unary.getOperand();
             negated = !negated;
         }
+        return {value, negated};
+    };
+    const auto sameComparison = [](mlir::Value left, mlir::Value right) {
+        auto first = left.getDefiningOp<ctjs::CompareOp>();
+        auto second = right.getDefiningOp<ctjs::CompareOp>();
+        return first && second && first.getKind() == ctjs::CompareKind::StrictEq &&
+               second.getKind() == ctjs::CompareKind::StrictEq &&
+               ((first.getLhs() == second.getLhs() && first.getRhs() == second.getRhs()) ||
+                (first.getLhs() == second.getRhs() && first.getRhs() == second.getLhs()));
+    };
+    const auto booleanInput = [&](mlir::Value operand) -> std::pair<mlir::Value, bool> {
+        auto [value, negated] = stripBoolean(operand);
+        if (!value) { return {}; }
+        const bool inputNegated = negated;
         auto compare = value.getDefiningOp<ctjs::CompareOp>();
         if (compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
             // Strict equality is total and noncoercing, including opaque objects.
             // Prefixes before enclosing Ifs dominate this producer. Choose the
             // outermost first match, so local duplicates share its replay snapshot.
-            // Never cross a loop or borrow a sibling/following producer's choice.
+            // An earlier If result can also represent matching comparisons in
+            // both arms. Its completed result owns the choice, not a sibling op.
+            // Never cross a loop or borrow a following producer's choice.
             // ponytail: linear prefix scans; cache keys only if profiling warrants it.
             mlir::Operation * boundary = compare;
             while (true) {
@@ -101,14 +117,45 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                     if (!spend(1)) { return {}; }
                     if (&operation == boundary) { break; }
                     auto previous = llvm::dyn_cast<ctjs::CompareOp>(operation);
-                    if (previous && previous.getKind() == ctjs::CompareKind::StrictEq &&
-                        ((previous.getLhs() == compare.getLhs() &&
-                          previous.getRhs() == compare.getRhs()) ||
-                         (previous.getLhs() == compare.getRhs() &&
-                          previous.getRhs() == compare.getLhs()))) {
+                    if (previous && sameComparison(previous.getResult(), compare.getResult())) {
                         value = previous.getResult();
+                        negated = inputNegated;
                         break;
                     }
+                    auto selected = llvm::dyn_cast<mlir::scf::IfOp>(operation);
+                    if (!selected) { continue; }
+                    for (mlir::OpResult result : selected.getResults()) {
+                        std::optional<bool> polarity;
+                        for (mlir::Region & region : selected->getRegions()) {
+                            if (!spend(1)) { return {}; }
+                            if (!llvm::hasSingleElement(region) || region.front().empty() ||
+                                region.front().getNumArguments() != 0) {
+                                polarity.reset();
+                                break;
+                            }
+                            auto yield =
+                                llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                            if (!yield || yield.getNumOperands() != selected.getNumResults()) {
+                                polarity.reset();
+                                break;
+                            }
+                            const auto incoming =
+                                stripBoolean(yield.getOperand(result.getResultNumber()));
+                            if (!incoming.first) { return {}; }
+                            if (!sameComparison(incoming.first, compare.getResult()) ||
+                                (polarity && *polarity != incoming.second)) {
+                                polarity.reset();
+                                break;
+                            }
+                            polarity = incoming.second;
+                        }
+                        if (polarity) {
+                            value = result;
+                            negated = inputNegated != *polarity;
+                            break;
+                        }
+                    }
+                    if (value.getDefiningOp() == selected) { break; }
                 }
                 auto enclosing = llvm::dyn_cast<mlir::scf::IfOp>(boundary->getParentOp());
                 if (!enclosing) { break; }
@@ -159,6 +206,11 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                         common = {guard ? mlir::Value(guard.getValue())
                                         : mlir::Value(branch.getCondition()),
                                   thenValue.getValue() == common.second};
+                    } else if (common.second == incoming.second &&
+                               sameComparison(common.first, incoming.first)) {
+                        // Both arms compute this same Boolean. Retain the If
+                        // result as a dominating snapshot for later comparisons.
+                        common = {input, false};
                     } else {
                         common = {};
                     }
@@ -166,7 +218,7 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                 }
                 common = incoming;
             }
-            if (common.first) {
+            if (common.first && common.first != input) {
                 input = common.first;
                 negated ^= common.second;
                 continue;
