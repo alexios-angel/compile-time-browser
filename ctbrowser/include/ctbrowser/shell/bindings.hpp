@@ -631,6 +631,9 @@ private:
     // depth, and the page's for anything else. "Report the exception" and
     // `reportError` fire at one particular global - frames.cpp.
     [[nodiscard]] dom_bindings & bindings_of(value window);
+    // ...or null when `window` is no window of this page any more: a removed
+    // frame's - frames.cpp.
+    [[nodiscard]] dom_bindings * find_bindings_of(value window);
     // The bindings that made the node wrapper `wrapper` - the page's or a
     // frame's, at any depth - or null for anything else. A member installed on
     // a SHARED interface prototype captures the bindings that installed it

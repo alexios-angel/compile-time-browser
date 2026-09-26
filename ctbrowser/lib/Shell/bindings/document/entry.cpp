@@ -87,6 +87,7 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     }
     for (const timer & t : timers_) {
         mark(t.callback);
+        mark(t.window);
         for (const value held : t.arguments) { mark(held); }
     }
     // A QUEUED FETCH holds the only reference to the promise a page is

@@ -293,6 +293,34 @@ void test_report_error_fires_at_its_this_window() {
     if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"frame:x"}); }
 }
 
+void test_a_removed_frames_callbacks() {
+    // settimeout-detached-iframe.html: a timer set on a frame that is then
+    // removed never fires - the attached frame's does. And an animation
+    // frame callback of a frame's realm reports its throw at the FRAME
+    // (callback-cross-realm-report-exception.html).
+    browser page{browser_options{400, 300}};
+    page.load_html(
+        "<!DOCTYPE html><html><body><div id=c></div><script>"
+        "var ran = [];"
+        "function make(detach) { var f = document.createElement('iframe');"
+        "  document.getElementById('c').appendChild(f); var w = f.contentWindow;"
+        "  if (detach) { f.remove(); } return w; }"
+        "var kept = make(false), gone = make(true);"
+        "kept.setTimeout(function () { ran.push('kept'); }, 0);"
+        "gone.setTimeout(function () { ran.push('gone'); }, 0);"
+        "addEventListener('error', function (e) { ran.push('top'); e.preventDefault(); });"
+        "kept.addEventListener('error', function (e) { ran.push('frame');"
+        "  e.preventDefault(); });"
+        "kept.requestAnimationFrame(new kept.Function('throw 1'));"
+        "setTimeout(function () { setTimeout(function () {"
+        "  console.log(ran.join()); }, 0); }, 0);"
+        "</script></body></html>");
+    for (int i = 0; i < 6; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"kept,frame"}); }
+}
+
 void test_a_named_frame_is_its_window_on_the_window() {
     // nameditem-02.html: `window.x` for `<iframe name=x>` is the frame's
     // WindowProxy - HTML 7.3.3 puts child navigables first - while an id
@@ -457,6 +485,7 @@ int main() {
     test_a_frame_runs_its_scripts_in_its_own_realm();
     test_windows_post_messages_to_each_other();
     test_report_error_fires_at_its_this_window();
+    test_a_removed_frames_callbacks();
     test_a_frame_window_scrolls_its_own_viewport();
     test_a_frames_function_and_eval_are_the_frames();
     test_a_form_submits_into_a_named_frame();

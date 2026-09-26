@@ -28,6 +28,9 @@ struct timer {
     double interval_ms = 0;
     bool repeating = false;
     bool cancelled = false;
+    // A FRAME'S window it was set on, or undefined: a timer of a frame that has
+    // since been removed never fires (its document is not fully active).
+    value window = value::undefined();
 };
 
 // WHICH EVENT TARGET A LISTENER IS ON. The document and the window are not

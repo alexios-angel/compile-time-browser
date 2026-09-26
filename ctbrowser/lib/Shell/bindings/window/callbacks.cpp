@@ -142,6 +142,12 @@ std::size_t dom_bindings::run_due_callbacks() {
         const auto still = std::ranges::find_if(
             timers_, [&](const timer & x) { return x.id == t.id && !x.cancelled; });
         if (still == timers_.end()) { continue; }
+        // A REMOVED FRAME'S TIMER is dropped, not run: its task's document is
+        // no longer fully active (settimeout-detached-iframe.html).
+        if (still->window.is_heap() && find_bindings_of(still->window) == nullptr) {
+            still->cancelled = true;
+            continue;
+        }
         if (still->repeating) {
             still->due_ms = now_ms_ + still->interval_ms;
         } else {
@@ -227,7 +233,10 @@ std::size_t dom_bindings::run_due_callbacks() {
             const std::string fault = cx_->failed()
                                           ? cx_->take_error()
                                           : "uncaught " + detail::describe_thrown(*cx_, thrown);
-            const bool handled = dispatch_error_value(fault, thrown);
+            // At the CALLBACK's window, as a timer's is: a frame's callback
+            // reports to the frame (callback-cross-realm-report-exception).
+            const bool handled = bindings_of(callback_global(*cx_, frame.callback))
+                                     .dispatch_error_value(fault, thrown);
             if (!handled && callback_error_.empty()) {
                 callback_error_ = "requestAnimationFrame callback: " + fault;
             }
@@ -334,6 +343,12 @@ void dom_bindings::install_timers(context & cx) {
         if (args.size() > 2 && handler.is_callable()) {
             timers_.back().arguments.assign(args.begin() + 2, args.end());
         }
+        // `frame.contentWindow.setTimeout(...)`, or a frame's own script's -
+        // the natives are shared, so the window is `this`, else the realm's.
+        const value self = c.current_this().is_heap() ? c.current_this() : c.global_this();
+        if (const dom_bindings * at = find_bindings_of(self); at != nullptr && at != &primary()) {
+            timers_.back().window = self;
+        }
         return value::number(id);
     };
     cx.define_native("setTimeout", [schedule](context & c, std::span<value> args) {
@@ -417,7 +432,8 @@ std::uint32_t dom_bindings::add_timer(value callback, double delay_ms, bool repe
                             now_ms_ + std::max(0.0, delay_ms),
                             std::max(0.0, delay_ms),
                             repeating,
-                            false});
+                            false,
+                            value::undefined()});
     return id;
 }
 
