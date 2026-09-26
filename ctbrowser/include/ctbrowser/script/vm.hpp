@@ -979,6 +979,14 @@ private:
 // closure, or a proxy whose target is one. Defined in vm/call/construct.cpp.
 [[nodiscard]] bool is_constructor(value v);
 
+// OrdinarySet(o, name, v, receiver), 10.1.9.2, for a receiver that is not
+// `o` - a setter on the way runs with the receiver as `this`, a proxy is asked
+// with it, and a data property lands on the receiver. False is a refusal
+// (strict code's TypeError); a throw answers true. vm/objects/store.cpp; the
+// bindings' own [[Set]] traps (a collection written through an object that
+// inherits from it) end in it too.
+bool set_for_receiver(context & cx, value o, const std::string & name, value v, value receiver);
+
 } // namespace ctbrowser::script
 
 #include "vm/execution_inline.hpp"

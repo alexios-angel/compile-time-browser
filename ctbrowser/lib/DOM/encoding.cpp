@@ -503,10 +503,64 @@ std::string prescan_encoding(std::string_view bytes) {
     return xml_declaration_encoding(bytes);
 }
 
+namespace {
+
+// THE ENCODING STANDARD'S UTF-8 DECODER (4.2), error mode "replacement". A
+// byte that cannot start a sequence, and a sequence cut short, are ONE U+FFFD
+// each: the longest prefix that could still have become a code point is used
+// up and the byte that broke it is read again as a lead. The bounds on the
+// second byte are the decoder's `lower` and `upper` - E0 A0, ED 9F, F0 90 and
+// F4 8F are what refuse overlongs, surrogates and anything past U+10FFFF - so
+// `ED A0 80` is three replacements and `E2 82 41` is one and an "A".
+// Well-formed input comes back byte for byte.
+[[nodiscard]] std::string decode_utf8_replacing(std::string_view bytes) {
+    std::string out;
+    out.reserve(bytes.size());
+    std::size_t at = 0;
+    while (at < bytes.size()) {
+        const auto lead = static_cast<unsigned char>(bytes[at]);
+        if (lead < 0x80) {
+            out += bytes[at++];
+            continue;
+        }
+        std::size_t needed = 0;
+        unsigned char lower = 0x80;
+        unsigned char upper = 0xBF;
+        if (lead >= 0xC2 && lead <= 0xDF) {
+            needed = 1;
+        } else if (lead >= 0xE0 && lead <= 0xEF) {
+            needed = 2;
+            if (lead == 0xE0) { lower = 0xA0; }
+            if (lead == 0xED) { upper = 0x9F; }
+        } else if (lead >= 0xF0 && lead <= 0xF4) {
+            needed = 3;
+            if (lead == 0xF0) { lower = 0x90; }
+            if (lead == 0xF4) { upper = 0x8F; }
+        }
+        std::size_t seen = 0;
+        while (seen < needed && at + 1 + seen < bytes.size()) {
+            const auto next = static_cast<unsigned char>(bytes[at + 1 + seen]);
+            if (next < lower || next > upper) { break; }
+            lower = 0x80;
+            upper = 0xBF;
+            ++seen;
+        }
+        if (needed != 0 && seen == needed) {
+            out.append(bytes.substr(at, needed + 1));
+        } else {
+            out += "\xEF\xBF\xBD";
+        }
+        at += 1 + seen;
+    }
+    return out;
+}
+
+} // namespace
+
 std::string decode_document_bytes(std::string_view bytes, std::string_view name) {
     if (name == "UTF-8" || name.empty()) {
         if (bytes.starts_with("\xEF\xBB\xBF")) { bytes.remove_prefix(3); }
-        return std::string{bytes};
+        return decode_utf8_replacing(bytes);
     }
     std::string out;
     if (name == "UTF-16LE" || name == "UTF-16BE") {

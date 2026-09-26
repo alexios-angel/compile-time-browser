@@ -381,11 +381,26 @@ bool dom_bindings::click(node_id target) {
             }
         }
     }
+    // THE CLICK IN PROGRESS FLAG, steps 2-4 of `click()`: a click() on an
+    // element whose click() is still running returns without dispatching. A
+    // <label>'s activation behaviour clicks the control it labels, and a
+    // control with none of its own - a <textarea> - hands that click's
+    // activation straight back to the label, which would click it again for
+    // ever: `<label>Notes <textarea>` hung the page on its first click.
+    // ponytail: a thread-local stack of (bindings, element) stands in for the
+    // flag, which only ever lives across one synchronous dispatch; a bit on
+    // the element if that stack ever gets deep.
+    static thread_local std::vector<std::pair<const dom_bindings *, node_id>> clicking;
+    const std::pair<const dom_bindings *, node_id> self{this, target};
+    if (std::ranges::find(clicking, self) != clicking.end()) { return false; }
+    clicking.push_back(self);
     value event = make_mouse_event(*cx_, "click", target, input_event{}, false);
     // "with the not trusted flag set" - it came from script, whoever asked.
     static_cast<script::object_object *>(event.as_heap())
         ->set(std::string{trusted_property}, value::boolean(false));
-    return dispatch_to(event, path_step{target, listen_on::node});
+    const bool result = dispatch_to(event, path_step{target, listen_on::node});
+    clicking.pop_back();
+    return result;
 }
 
 bool dom_bindings::is_connected(node_id target) const {
