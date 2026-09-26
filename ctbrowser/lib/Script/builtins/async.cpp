@@ -754,23 +754,34 @@ void install_promise(context & cx) {
         detail::promise::settle_capability(c, cap, arg_at(a, 0), true);
         return cap.promise;
     });
-    // 27.2.4.9 Promise.try: the callback runs NOW, and its return or throw
-    // settles the promise.
+    // 27.2.4.9 Promise.try: the callback runs NOW; a throw is a rejected
+    // promise of `this`, and a return goes through PromiseResolve - so a
+    // promise the callback hands back is returned as it is when its
+    // constructor is `this`, not wrapped in a second one (the 2026 "avoid
+    // wrapping" revision; before it, the capability was made first).
     method(cx, promise_new, "try", 1, [](context & c, std::span<value> a) {
         const value ctor = c.current_this();
         if (!ctor.is_object_like()) {
             c.throw_error("TypeError", "Promise.try called on a non-object");
             return value::undefined();
         }
-        capability cap;
-        if (!detail::promise::new_capability(c, ctor, cap)) { return value::undefined(); }
-        const context::rooted keep{c, cap.promise};
         bool threw = false;
         value thrown = value::undefined();
         const std::span<const value> rest =
             a.size() > 1 ? std::span<const value>{a}.subspan(1) : std::span<const value>{};
         const value produced = c.call_fenced(arg_at(a, 0), rest, value::undefined(), threw, thrown);
-        detail::promise::settle_capability(c, cap, threw ? thrown : produced, threw);
+        const context::rooted keep_value{c, threw ? thrown : produced};
+        if (!threw) {
+            value out = value::undefined();
+            if (!detail::promise::promise_resolve(c, ctor, produced, out)) {
+                return value::undefined();
+            }
+            return out;
+        }
+        capability cap;
+        if (!detail::promise::new_capability(c, ctor, cap)) { return value::undefined(); }
+        const context::rooted keep{c, cap.promise};
+        detail::promise::settle_capability(c, cap, thrown, true);
         return cap.promise;
     });
     method(cx, promise_new, "all", 1,

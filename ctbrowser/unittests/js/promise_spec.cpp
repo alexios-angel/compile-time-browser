@@ -122,6 +122,9 @@ int main() {
     expect_after_turn("var result = ''; Promise.try(() => { throw 'x'; })"
                       ".catch(e => { result = e; });",
                       "x");
+    // A promise the callback returns is not wrapped in another.
+    js_expect("(function(){ var p = Promise.resolve(); return Promise.try(() => p) === p; })()",
+              "true");
     expect_after_turn("var result = ''; Promise.reject('r').finally(() => 'ignored')"
                       ".catch(e => { result = e; });",
                       "r");
