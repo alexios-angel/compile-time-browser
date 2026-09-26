@@ -172,6 +172,10 @@ inline constexpr std::string_view handle_property = "__node";
 // GC traces them with no new heap kind, and a page can be shown what it built.
 inline constexpr std::string_view path_commands_property = "__cmds";
 
+// An ImageBitmap's handle into the image store (window/image_bitmap.cpp), which
+// image_argument answers drawImage from.
+inline constexpr std::string_view image_bitmap_property = "@#ImageBitmap";
+
 // THE BYTES BEHIND A BufferSource - an ArrayBuffer, or any view onto one with
 // its offset and length applied (window/encoding.cpp). False for anything else.
 [[nodiscard]] bool buffer_source_bytes(context & c, value source, std::vector<std::uint8_t> & out);

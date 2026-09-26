@@ -4,6 +4,26 @@
 
 namespace ctbrowser::shell {
 
+// An interface's constructor and prototype, wired the WebIDL way: `prototype`
+// on the constructor, `constructor` and `@@toStringTag` on the prototype, and
+// the constructor a global. `construct` may be empty and set afterwards, when
+// it needs the constructor itself (TextEncoder's `new` check).
+struct interface_pair {
+    script::native_object * ctor;
+    script::object_object * proto;
+};
+
+[[nodiscard]] inline interface_pair make_interface(context & cx, const char * name,
+                                                   script::native_fn construct = {}) {
+    auto * proto = cx.allocate<script::object_object>();
+    auto * ctor = cx.allocate<script::native_object>(name, std::move(construct));
+    ctor->define("prototype", value::object(proto), script::attr_none);
+    proto->define("constructor", value::object(ctor), script::attr_builtin);
+    proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+    cx.define_global(name, value::object(ctor));
+    return {ctor, proto};
+}
+
 // `URL` and `URLSearchParams`, the URL Standard's two interfaces (§6), as thin
 // adapters over shell/net/url.hpp - defined in url.cpp, installed as globals.
 // Answers the URL constructor so install_window can hang the two blob methods

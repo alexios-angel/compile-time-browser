@@ -363,21 +363,6 @@ struct decoded {
     return obj;
 }
 
-struct interface_pair {
-    script::native_object * ctor;
-    script::object_object * proto;
-};
-
-[[nodiscard]] interface_pair make_interface(context & cx, const char * name) {
-    auto * proto = cx.allocate<script::object_object>();
-    auto * ctor = cx.allocate<script::native_object>(name, script::native_fn{});
-    ctor->define("prototype", value::object(proto), script::attr_none);
-    proto->define("constructor", value::object(ctor), script::attr_builtin);
-    proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
-    cx.define_global(name, value::object(ctor));
-    return {ctor, proto};
-}
-
 void install_text_encoder(context & cx) {
     const interface_pair made = make_interface(cx, "TextEncoder");
     auto * ctor = made.ctor;

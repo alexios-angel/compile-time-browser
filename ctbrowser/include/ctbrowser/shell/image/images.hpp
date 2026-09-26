@@ -126,8 +126,42 @@ public:
         return cache_[slot].second ? static_cast<int>(slot) : -1;
     }
     [[nodiscard]] std::shared_ptr<const paint::bitmap> at(int handle) const {
+        if (handle <= -2) {
+            const auto slot = static_cast<std::size_t>(-2 - static_cast<long long>(handle));
+            return slot < adopted_.size() ? adopted_[slot] : nullptr;
+        }
         if (handle < 0 || static_cast<std::size_t>(handle) >= cache_.size()) { return nullptr; }
         return cache_[static_cast<std::size_t>(handle)].second;
+    }
+
+    // BYTES THAT CAME FROM NO ASSET - a Blob's, for createImageBitmap: the same
+    // formats in the same order as a load. Empty for bytes that are no image.
+    [[nodiscard]] paint::bitmap decode(std::span<const std::byte> bytes,
+                                       std::string_view name) const {
+        if (bytes.empty()) { return {}; }
+        paint::bitmap decoded = decode_bmp(bytes);
+        // PNG BEFORE THE HOOK, deliberately: it means a headless test and an
+        // application with SDL3_image decode the same file with the same
+        // library and get the same pixels. A format whose result depended on
+        // whether SDL was found is one a golden cannot compare.
+        if (decoded.empty() && looks_like_png(bytes)) { decoded = decode_png(bytes); }
+        if (decoded.empty() && looks_like_jpeg(bytes)) { decoded = decode_jpeg(bytes); }
+        if (decoded.empty() && decoder_) { decoded = decoder_(bytes, name); }
+        return decoded;
+    }
+
+    // A BITMAP A SCRIPT MADE (an ImageBitmap), under a handle of its own below
+    // -1, so `at` - what drawImage asks - answers it too. ponytail: released on
+    // close() only; an ImageBitmap the page drops keeps its pixels until the
+    // store goes (a weak slot swept with the wrapper when that matters).
+    [[nodiscard]] int adopt(std::shared_ptr<const paint::bitmap> image) {
+        adopted_.push_back(std::move(image));
+        return -2 - static_cast<int>(adopted_.size() - 1);
+    }
+    void release(int handle) {
+        if (handle > -2) { return; }
+        const auto slot = static_cast<std::size_t>(-2 - static_cast<long long>(handle));
+        if (slot < adopted_.size()) { adopted_[slot] = nullptr; }
     }
 
 private:
@@ -138,18 +172,8 @@ private:
         }
         const std::vector<std::byte> bytes = assets.load(name);
         std::shared_ptr<const paint::bitmap> image;
-        if (!bytes.empty()) {
-            paint::bitmap decoded = decode_bmp(bytes);
-            // PNG BEFORE THE HOOK, deliberately: it means a headless test and an
-            // application with SDL3_image decode the same file with the same
-            // library and get the same pixels. A format whose result depended on
-            // whether SDL was found is one a golden cannot compare.
-            if (decoded.empty() && looks_like_png(bytes)) { decoded = decode_png(bytes); }
-            if (decoded.empty() && looks_like_jpeg(bytes)) { decoded = decode_jpeg(bytes); }
-            if (decoded.empty() && decoder_) { decoded = decoder_(bytes, name); }
-            if (!decoded.empty()) {
-                image = std::make_shared<const paint::bitmap>(std::move(decoded));
-            }
+        if (paint::bitmap decoded = decode(bytes, name); !decoded.empty()) {
+            image = std::make_shared<const paint::bitmap>(std::move(decoded));
         }
         // A FAILED load is cached too, as a null. Otherwise a page with a
         // missing sprite re-reads the filesystem every frame.
@@ -158,6 +182,7 @@ private:
     }
 
     std::vector<std::pair<std::string, std::shared_ptr<const paint::bitmap>>> cache_;
+    std::vector<std::shared_ptr<const paint::bitmap>> adopted_; // see adopt
     decode_fn decoder_;
 };
 

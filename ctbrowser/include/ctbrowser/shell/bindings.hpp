@@ -740,6 +740,7 @@ private:
                                       std::vector<std::byte> body);
 
     void install_timers(context & cx);
+    void install_image_bitmap(context & cx); // window/image_bitmap.cpp
 
     [[nodiscard]] std::uint32_t add_timer(value callback, double delay_ms, bool repeating);
 

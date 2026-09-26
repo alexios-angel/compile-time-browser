@@ -123,25 +123,6 @@ void store_list(context & c, script::object_object & params, const form_pairs & 
     return out;
 }
 
-// The interface's constructor and prototype, wired the WebIDL way: `prototype`
-// on the constructor, `constructor` and `@@toStringTag` on the prototype, and
-// the constructor a global.
-struct interface_pair {
-    script::native_object * ctor;
-    script::object_object * proto;
-};
-
-[[nodiscard]] interface_pair make_interface(context & cx, const char * name,
-                                            script::native_fn construct) {
-    auto * proto = cx.allocate<script::object_object>();
-    auto * ctor = cx.allocate<script::native_object>(name, std::move(construct));
-    ctor->define("prototype", value::object(proto), script::attr_none);
-    proto->define("constructor", value::object(ctor), script::attr_builtin);
-    proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
-    cx.define_global(name, value::object(ctor));
-    return {ctor, proto};
-}
-
 // --- URLSearchParams -------------------------------------------------------------
 
 // The iterator `entries()`, `keys()`, `values()` and `@@iterator` return: LIVE,
@@ -203,7 +184,7 @@ struct interface_pair {
 }
 
 void install_search_params(context & cx, const value iterator_proto) {
-    const interface_pair made = make_interface(cx, "URLSearchParams", {});
+    const interface_pair made = make_interface(cx, "URLSearchParams");
     auto * ctor = made.ctor;
     // §6.2 "new URLSearchParams(init)": a sequence of pairs, a record, or a
     // string with one leading `?` dropped - the WebIDL union, told apart the
@@ -447,7 +428,7 @@ script::native_object * install_url(context & cx) {
     install_search_params(cx, iterator_proto);
     const value params_ctor = cx.global("URLSearchParams");
 
-    const interface_pair made = make_interface(cx, "URL", {});
+    const interface_pair made = make_interface(cx, "URL");
     auto * ctor = made.ctor;
     // Captured below, so retained here for the same reason: a page that deletes
     // the `URLSearchParams` global must not take `new URL()`'s query object

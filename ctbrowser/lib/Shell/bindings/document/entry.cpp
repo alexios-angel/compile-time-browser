@@ -210,6 +210,7 @@ void dom_bindings::install(context & cx) {
     // `dom_exception_prototype_` and hang their state off `document_`.
     install_style_sheets(cx);
     install_timers(cx);
+    install_image_bitmap(cx);
     install_resources(cx);
     install_navigation(cx);
     // AND THE INTERFACE OBJECTS, LAST AND EAGERLY.

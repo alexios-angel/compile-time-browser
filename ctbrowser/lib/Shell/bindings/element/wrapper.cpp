@@ -245,6 +245,9 @@ std::shared_ptr<const paint::bitmap> dom_bindings::image_argument(value v) {
     if (v.is_number()) { return images_->at(static_cast<int>(context::to_number(v))); }
     if (!v.is_object()) { return nullptr; }
     auto * wrapper = static_cast<script::object_object *>(v.as_heap());
+    if (const value * bitmap = wrapper->find(image_bitmap_property)) { // an ImageBitmap
+        return images_->at(static_cast<int>(context::to_number(*bitmap)));
+    }
     const value * handle = wrapper->find(handle_property);
     if (handle == nullptr || assets_ == nullptr) { return nullptr; }
     const node_id id = unpack(static_cast<std::uint64_t>(context::to_number(*handle)));
