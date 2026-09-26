@@ -1423,7 +1423,10 @@ void dom_bindings::install_canvas_2d(context & cx) {
     // --- text -------------------------------------------------------------------
 
     // fillText and strokeText(text, x, y [, maxWidth]): nothing for a
-    // non-finite coordinate, or a maxWidth that is not positive.
+    // non-finite coordinate, or a maxWidth that is not positive. An undefined
+    // maxWidth is a MISSING one (WebIDL, an optional argument with no
+    // default) - Chart.js passes `opts.maxWidth` on every label, and it is
+    // usually undefined.
     const auto text_op = [&](const std::string & name, bool stroke) {
         canvas_operation(cx, proto, name, 3, [target, stroke](context & c, std::span<value> a) {
             canvas_context * canvas = target(c);
@@ -1431,7 +1434,7 @@ void dom_bindings::install_canvas_2d(context & cx) {
             const std::string text = c.to_string(arg(a, 0));
             if (c.throw_pending()) { return value::undefined(); }
             std::array<double, 3> v{};
-            const std::size_t count = a.size() > 3 ? 3 : 2;
+            const std::size_t count = a.size() > 3 && !a[3].is_undefined() ? 3 : 2;
             if (!read_numbers(c, a.subspan(1), count, v.data()) || !all_finite(v.data(), count)) {
                 return value::undefined();
             }
