@@ -665,6 +665,47 @@ value_check check_declaration(std::string_view property, std::string_view value,
                 return yes(ascii_lower_copy(ts.text_of(only)));
             }
         }
+        // A PAINT'S url() - fill and stroke, SVG 2 §13.2: `<url> [ none |
+        // <color> ]?`, the second being what a paint server that does not
+        // load falls back to.
+        if (ascii_iequals_any(property, {"fill", "stroke"}) && !found.significant.empty()) {
+            const std::size_t first = found.significant.front();
+            const css_token & head = ts.tokens[first];
+            std::size_t after = first + 1;
+            if (head.type == token_type::function && ascii_iequals(ts.text_of(head), "url(")) {
+                int depth = 0;
+                for (std::size_t j = first; j < ts.tokens.size(); ++j) {
+                    const token_type type = ts.tokens[j].type;
+                    if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+                    if (type == token_type::close_paren && --depth == 0) {
+                        after = j + 1;
+                        break;
+                    }
+                }
+            } else if (head.type != token_type::url) {
+                after = 0;
+            }
+            if (after != 0) {
+                std::string out = normalize_value_tokens(ts, text, nullptr, first, after);
+                const css_token & last = ts.tokens[after - 1];
+                const std::size_t end = last.text + last.length;
+                const std::string_view rest =
+                    end <= ts.source_length
+                        ? trim(std::string_view{ts.pool}.substr(end, ts.source_length - end),
+                               html_whitespace)
+                        : std::string_view{};
+                if (rest.empty()) { return yes(std::move(out)); }
+                if (ascii_iequals(rest, "none")) { return yes(out + " none"); }
+                const token_stream fallback = tokenize(rest);
+                const scan fallback_found = scan_tokens(fallback);
+                std::string color;
+                if (!fallback_found.malformed &&
+                    match_color(fallback, fallback_found, rest, color)) {
+                    return yes(out + " " + color);
+                }
+                return {};
+            }
+        }
         std::string serialized;
         if (match_color(ts, found, simplified, serialized)) { return yes(std::move(serialized)); }
         return {};

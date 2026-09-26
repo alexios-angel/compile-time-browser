@@ -728,6 +728,27 @@ constexpr pair_grammar pair_grammars[] = {
     return out;
 }
 
+// `<length [0,∞]>{1,2}` (CSS Tables 3 §border-spacing): the horizontal
+// spacing and the vertical one, which is the horizontal when omitted - kept as
+// written, one value or two (border-spacing-valid).
+[[nodiscard]] std::optional<std::string> border_spacing(const token_stream & ts,
+                                                        const scan & found) {
+    static constexpr property_syntax spacing{"", k::length, "", "", false, true};
+    std::vector<std::string> parts;
+    for (std::size_t k = 0; k < found.significant.size(); ++k) {
+        std::string one;
+        if (match_typed(ts, ts.tokens[found.significant[k]], spacing, one)) {
+            parts.push_back(std::move(one));
+            continue;
+        }
+        std::optional<std::string> math = math_component(ts, found, k, numeric_type::length);
+        if (!math) { return std::nullopt; }
+        parts.push_back(std::move(*math));
+    }
+    if (parts.empty() || parts.size() > 2) { return std::nullopt; }
+    return parts.size() == 1 ? parts[0] : parts[0] + " " + parts[1];
+}
+
 // `auto | rect( [ <length> | auto ]#{4} )` (CSS Masking 1, the CSS 2.1
 // property). The comma-separated form is the only one: `rect(10px 20px, 30px
 // 40px)` is a syntax error however many engines once took it.
@@ -936,11 +957,27 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
         handled = true;
         answer = clip_rect(ts, found);
     }
+    if (!handled && ascii_iequals(property, "border-spacing")) {
+        handled = true;
+        answer = border_spacing(ts, found);
+    }
     if (!handled) { return false; }
     out = answer.value_or(std::string{});
     return true;
 }
 
 } // namespace detail
+
+std::optional<std::string_view> font_width_percentage(std::string_view keyword) {
+    static constexpr std::pair<std::string_view, std::string_view> table[] = {
+        {"ultra-condensed", "50%"},  {"extra-condensed", "62.5%"}, {"condensed", "75%"},
+        {"semi-condensed", "87.5%"}, {"normal", "100%"},           {"semi-expanded", "112.5%"},
+        {"expanded", "125%"},        {"extra-expanded", "150%"},   {"ultra-expanded", "200%"}};
+    keyword = trim(keyword, html_whitespace);
+    for (const auto & [name, percentage] : table) {
+        if (ascii_iequals(name, keyword)) { return percentage; }
+    }
+    return std::nullopt;
+}
 
 } // namespace ctbrowser::style::css

@@ -179,6 +179,15 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                                 pad.right.resolve(at.basis, up_box->font_size);
                     at.basis_height -= pad.top.resolve(at.basis, up_box->font_size) +
                                        pad.bottom.resolve(at.basis, up_box->font_size);
+                    // ...AND THE BORDERS: the fragment is the border box, and
+                    // a 2px border counted into the content height made
+                    // `top: 10%` of a 100px box 10.4px
+                    // (getComputedStyle-insets-relative).
+                    const layout::side_lengths & border = up_box->border;
+                    at.basis -= border.left.resolve(0, up_box->font_size) +
+                                border.right.resolve(0, up_box->font_size);
+                    at.basis_height -= border.top.resolve(0, up_box->font_size) +
+                                       border.bottom.resolve(0, up_box->font_size);
                 }
             }
         }
@@ -699,6 +708,44 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             bases.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
             std::string computed = style::css::computed_basic_shape(property, text, bases);
             if (!computed.empty()) { return computed; }
+        }
+        // 4f. A BORDER SPACING IS ONE OR TWO ABSOLUTE LENGTHS, never
+        //     negative (CSS Tables 3 §border-spacing): `0` is `0px`, and
+        //     `calc(10px - 0.5em)` under a 40px font is `0px`.
+        if (property == "border-spacing") {
+            style::css::length_context bases;
+            bases.font_size = at.font_size;
+            bases.root_font_size = at.root_font_size;
+            bases.viewport_width = static_cast<float>(viewport_width_);
+            bases.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
+            std::string out;
+            for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+                const std::string_view part = trim(raw, html_whitespace);
+                if (part.empty()) { continue; }
+                const style::css::math_answer answer = style::css::evaluate_math(part, bases);
+                if (answer.outcome != style::css::math_outcome::resolved ||
+                    answer.value.has_percent) {
+                    return collapse_keyword(text);
+                }
+                out += (out.empty() ? "" : " ") +
+                       px_text(static_cast<float>(std::max(answer.value.px, 0.0)));
+            }
+            return out.empty() ? collapse_keyword(text) : out;
+        }
+        // 4b''. A FONT WIDTH IS A PERCENTAGE (CSS Fonts 4 §2.3): a keyword is
+        //     the one it names, and a calc() folds and stops at zero
+        //     (font-width-computed).
+        if (property == "font-width" || property == "font-stretch") {
+            const std::string_view given = trim(text, html_whitespace);
+            if (const auto named = style::css::font_width_percentage(given)) {
+                return std::string{*named};
+            }
+            const style::css::math_answer answer = style::css::evaluate_math(given, {});
+            if (answer.outcome == style::css::math_outcome::resolved && answer.value.has_percent &&
+                answer.value.px == 0) {
+                return number_text(static_cast<float>(std::max(answer.value.percent, 0.0))) + "%";
+            }
+            return collapse_keyword(text);
         }
         // 4c. AN OVERFLOW AXIS BESIDE A SCROLLING ONE: CSS Overflow 3 §3.1 -
         //     when either axis is neither `visible` nor `clip`, `visible`

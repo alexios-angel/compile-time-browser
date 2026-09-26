@@ -256,6 +256,27 @@ namespace ctbrowser::style::easing_detail {
 
 [[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text,
                                          const css::length_context & ctx) {
+    // A BORDER SPACING IS A PAIR, the vertical the horizontal when omitted, and
+    // it interpolates as one: `10px` to `20px` passes `15px 15px`
+    // (border-spacing-interpolation).
+    if (property == "border-spacing") {
+        const std::vector<std::string_view> parts = split_top_level(text, html_whitespace);
+        std::vector<std::string_view> words;
+        for (const std::string_view part : parts) {
+            if (!trim(part, html_whitespace).empty()) {
+                words.push_back(trim(part, html_whitespace));
+            }
+        }
+        if (words.size() == 1) { return std::string{words[0]} + " " + std::string{words[0]}; }
+        return std::string{text};
+    }
+    // A font width's keyword IS its percentage, which is what interpolates:
+    // `normal` to `ultra-expanded` is 100% to 200% (font-stretch-interpolation).
+    if (property == "font-width" || property == "font-stretch") {
+        if (const std::optional<std::string_view> percentage = css::font_width_percentage(text)) {
+            return std::string{*percentage};
+        }
+    }
     if (image_sides(property)) {
         const css::value_check checked = css::check_declaration(property, text, false);
         if (!checked.valid) { return std::string{text}; }

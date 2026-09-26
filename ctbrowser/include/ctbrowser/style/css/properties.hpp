@@ -221,6 +221,9 @@ struct color_context {
 // Shapes 1 §3.2): lengths absolute, the position from the top left in
 // percentages and calc()s, xywh() and rect() as their inset(). Empty for a
 // value that is not one.
+// The percentage a font-width keyword names (CSS Fonts 4 §2.3) - `normal`
+// is 100%, `condensed` 75% - or nothing for any other text.
+[[nodiscard]] std::optional<std::string_view> font_width_percentage(std::string_view keyword);
 [[nodiscard]] std::string computed_basic_shape(std::string_view property, std::string_view text,
                                                const length_context & ctx);
 // Two COMPUTED basic shapes of one function, blended component by
