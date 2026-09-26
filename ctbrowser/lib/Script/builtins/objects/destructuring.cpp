@@ -105,7 +105,10 @@ void install_using(context & cx) {
         const value v = a[1];
         const bool async = a.size() > 2 && context::truthy(a[2]);
         if (v.is_nullish()) { return v; }
-        if (!v.is_object()) {
+        // AN OBJECT IS ANY OBJECT - a function, an array, a proxy too (9.13.1
+        // step 1.b: "If V is not an Object"); `using f = function () {}` with
+        // a [Symbol.dispose] on it is as good a resource as `{}`.
+        if (!v.is_object_like()) {
             c.throw_error("TypeError",
                           "`using` needs an object, not " + std::string{context::type_of(v)});
             return value::undefined();

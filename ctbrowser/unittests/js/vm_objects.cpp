@@ -89,6 +89,11 @@ void test_class_fields_are_per_instance() {
         "C.prototype, 'g'); return ['prototype' in C.prototype.m, 'prototype' in d.get,"
         " 'prototype' in C.prototype.gen, typeof C.prototype].join();",
         "false,false,true,object");
+    // a function is an object a `using` declaration may hold
+    expect_result("Function.prototype[Symbol.dispose] = function () { this.gone = true; };"
+                  " var f; { using g = function () {}; f = g; }"
+                  " delete Function.prototype[Symbol.dispose]; return f.gone + ':' + f.name;",
+                  "true:g");
     // a heritage that is no constructor is the TypeError, named without
     // running its code (a proxy's `get` trap would throw instead)
     expect_result("const p = new Proxy(() => {}, { get() { throw 'trap'; } });"
