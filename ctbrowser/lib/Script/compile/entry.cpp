@@ -199,24 +199,35 @@ void compiler_impl::compile_program() {
     // HoistableDeclaration[+Default]), instantiated before the module's first
     // statement - a module importing itself, or a cycle, calls it before its
     // text. A parenthesised function is an expression and is not hoisted; the
-    // parser gives the two the same node, so the byte before the function
-    // says which.
+    // parser gives the two the same node, so the TOKEN before the function
+    // says which: `default`, or a `(`. A token and not a byte, because a
+    // comment may sit between them and may hold either one - so the text up to
+    // the function is lexed again, which only a module with a default-exported
+    // function pays for, once.
     const auto hoisted_default = [this](std::int32_t s) {
         const vp::node & n = at(s);
         if (!module_scope_ || n.kind != vp::nk::export_decl || n.c != 1 || n.a < 0 ||
             at(n.a).kind != vp::nk::func_expr) {
             return false;
         }
-        std::size_t i = at(n.a).begin;
-        if (i == 0 || i > source_view_.size()) { return false; }
-        while (i > 0 && (source_view_[i - 1] == ' ' || source_view_[i - 1] == '\t' ||
-                         source_view_[i - 1] == '\n' || source_view_[i - 1] == '\r')) {
-            --i;
-        }
-        return i > 0 && source_view_[i - 1] != '(';
+        const std::size_t begin = at(n.a).begin;
+        if (begin == 0 || begin > source_view_.size()) { return false; }
+        const std::vector<vp::token> before = vp::lex(source_view_.substr(0, begin));
+        const auto last = std::ranges::find_if(
+            before.rbegin(), before.rend(), [](const auto & t) { return t.kind != vp::tk::end; });
+        return last != before.rend() && !(last->kind == vp::tk::punct && last->s == "(");
     };
+    std::int32_t default_declaration = -1;
     for (const std::int32_t s : kids(root)) {
-        if (at(declared_by(s)).kind == vp::nk::func_decl || hoisted_default(s)) { compile_stmt(s); }
+        if (hoisted_default(s)) {
+            default_declaration = s;
+            break;
+        }
+    }
+    for (const std::int32_t s : kids(root)) {
+        if (at(declared_by(s)).kind == vp::nk::func_decl || s == default_declaration) {
+            compile_stmt(s);
+        }
     }
     const std::span<const std::int32_t> body = kids(root);
     // `eval("a; b")` is b, and `eval("1; if (x) {}")` is undefined: the
@@ -246,7 +257,7 @@ void compiler_impl::compile_program() {
         return;
     }
     for (const std::int32_t s : body) {
-        if (at(declared_by(s)).kind == vp::nk::func_decl || hoisted_default(s)) { continue; }
+        if (at(declared_by(s)).kind == vp::nk::func_decl || s == default_declaration) { continue; }
         compile_stmt(s);
     }
     ret_completion();
