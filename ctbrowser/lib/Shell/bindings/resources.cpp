@@ -158,7 +158,8 @@ bool fill_headers(context & c, header_list & list, value init, const char * wher
         list.emplace_back(std::move(name), *normalized);
         return true;
     };
-    if (const value method = c.lookup_property(init, "@@iterator"); method.is_callable()) {
+    if (const value method = c.lookup_property(init, CTBROWSER_SYMBOL_KEY("iterator"));
+        method.is_callable()) {
         const value items = c.iterable_values(init);
         if (c.throw_pending()) { return false; }
         // COPIED AND ROOTED, both levels: iterable_values hands an Array
@@ -510,12 +511,13 @@ void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
     switch (waiting.kind) {
     case read_kind::text:
     case read_kind::binary_string:
-        // readAsText decodes UTF-8 (the stored text is UTF-8 already); a
-        // "binary string" is each byte as the code unit of the same value -
-        // Infra's isomorphic decode - which is what btoa takes back.
-        reader->set(
-            "result",
-            cx.string(waiting.kind == read_kind::binary_string ? isomorphic_decode(bytes) : bytes));
+        // readAsText DECODES (FileAPI "decode": a BOM decides, else UTF-8,
+        // each ill-formed subsequence one U+FFFD); a "binary string" is each
+        // byte as the code unit of the same value - Infra's isomorphic
+        // decode - which is what btoa takes back.
+        reader->set("result", cx.string(waiting.kind == read_kind::binary_string
+                                            ? isomorphic_decode(bytes)
+                                            : detail::decode_body(bytes, "UTF-8")));
         break;
     case read_kind::data_url: {
         std::string type = "application/octet-stream";
@@ -611,7 +613,8 @@ void dom_bindings::install_resources(context & cx) {
         auto * ctor = cx.allocate<script::native_object>(name, script::native_fn{});
         ctor->define("prototype", value::object(proto), script::attr_none);
         proto->define("constructor", value::object(ctor), script::attr_builtin);
-        proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+        proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name),
+                      script::attr_configurable);
         cx.define_builtin_global(name, value::object(ctor));
         return ctor;
     };
@@ -790,11 +793,11 @@ void dom_bindings::install_resources(context & cx) {
                 }
             }
             const context::rooted keep{c, out};
-            return c.call(c.lookup_property(out, "@@iterator"), {}, out);
+            return c.call(c.lookup_property(out, CTBROWSER_SYMBOL_KEY("iterator")), {}, out);
         });
     }
     if (const value * entries = headers_proto->find("entries"); entries != nullptr) {
-        headers_proto->define("@@iterator", *entries, script::attr_builtin);
+        headers_proto->define(CTBROWSER_SYMBOL_KEY("iterator"), *entries, script::attr_builtin);
     }
 
     // The Body mixin, on both prototypes. blob() is the one that needs the

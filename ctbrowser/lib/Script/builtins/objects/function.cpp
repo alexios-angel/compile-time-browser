@@ -51,14 +51,14 @@ void install_function(context & cx) {
     method(cx, function_proto, "call", 1,
            [this_function, bind_this](context & c, std::span<value> a) {
                const value self = this_function(c, "call");
-               if (!self.is_callable()) { return value::undefined(); }
+               if (!self.is_callable() || c.refuse_class_call(self)) { return value::undefined(); }
                const std::vector<value> rest(a.begin() + (a.empty() ? 0 : 1), a.end());
                return c.call(self, rest, bind_this(c, self, arg_at(a, 0)));
            });
     method(cx, function_proto, "apply", 2,
            [this_function, bind_this](context & c, std::span<value> a) {
                const value self = this_function(c, "apply");
-               if (!self.is_callable()) { return value::undefined(); }
+               if (!self.is_callable() || c.refuse_class_call(self)) { return value::undefined(); }
                // CreateListFromArrayLike, 7.3.18, which this did not do: it read
                // `items` off a real Array and passed NO arguments for anything else,
                // so `f.apply(o, arguments)` and `f.apply(o, {length: 1, 0: x})` both
@@ -148,7 +148,7 @@ void install_function(context & cx) {
                // constructs the target with the bound arguments prepended (10.4.1.2),
                // reading them off `retained` as laid out above. A bound function is
                // a constructor exactly when its target is (10.4.1.3 step 5).
-               fn->define("@#BoundTargetFunction", self, attr_none);
+               fn->define(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"), self, attr_none);
                fn->is_constructor = is_constructor(self);
                fn->proto_link = proto;
                // 20.2.3.2: a bound function's `length` is the target's less the
@@ -228,7 +228,7 @@ void install_function(context & cx) {
         // A symbol-named built-in's name is "[Symbol.x]", which is not an
         // IdentifierName; the specification permits omitting it (the
         // IdentifierName is optional), so it is left out.
-        if (!name.empty() && (name.front() == '[' || name.starts_with("@@") ||
+        if (!name.empty() && (name.front() == '[' || name.starts_with(symbol_key_mark) ||
                               name.find(' ') != std::string::npos)) {
             name.clear();
         }
@@ -250,8 +250,9 @@ void install_function(context & cx) {
             value subject = arg_at(a, 0);
             if (!ctor.is_callable()) { return value::boolean(false); }
             if (ctor.is_kind(heap_kind::native)) {
-                if (const value * bound = static_cast<native_object *>(ctor.as_heap())
-                                              ->find("@#BoundTargetFunction")) {
+                if (const value * bound =
+                        static_cast<native_object *>(ctor.as_heap())
+                            ->find(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"))) {
                     return value::boolean(c.instance_of(subject, *bound));
                 }
             }
@@ -275,7 +276,8 @@ void install_function(context & cx) {
         });
     detail::install_arity(cx, has_instance, 1);
     has_instance->is_constructor = false;
-    function_proto->define("@@hasInstance", value::object(has_instance), attr_none);
+    function_proto->define(CTBROWSER_SYMBOL_KEY("hasInstance"), value::object(has_instance),
+                           attr_none);
     // 10.2.4 AddRestrictedFunctionProperties: `caller` and `arguments` on
     // Function.prototype are accessors whose getter and setter are
     // %ThrowTypeError% - `f.caller` on a strict function (a class, an arrow, a
@@ -626,7 +628,7 @@ void install_dynamic_function(context & cx) {
         if (object_object * fn_proto = cx.prototype(context::proto_kind::function)) {
             table->prototype = value::object(fn_proto);
         }
-        table->define("@@toStringTag", cx.string(name), attr_configurable);
+        table->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name), attr_configurable);
         auto * ctor = cx.allocate<native_object>(name, [keyword](context & c, std::span<value> a) {
             return dynamic_function(c, a, keyword);
         });
@@ -649,6 +651,40 @@ void install_dynamic_function(context & cx) {
               "async function*", context::proto_kind::async_generator);
     intrinsic(context::proto_kind::async_function, "AsyncFunction", "async function",
               context::proto_kind::count_);
+    // %AbstractModuleSource% (source phase imports, 28.1.1): not a global -
+    // the abstract class every module source class extends. Constructing it
+    // is the TypeError of 28.1.1.1 whether or not `new` is used, and its
+    // prototype's @@toStringTag getter answers a source's
+    // [[ModuleSourceClassName]], undefined for any value without one. This
+    // engine makes no module source yet, so nothing has the slot; the host
+    // reaches the intrinsic through Function.prototype's private key
+    // (ct262's $262.AbstractModuleSource).
+    if (object_object * fn_proto = cx.prototype(context::proto_kind::function)) {
+        object_object * table = detail::new_table(cx);
+        auto * ctor =
+            cx.allocate<native_object>("AbstractModuleSource", [](context & c, std::span<value>) {
+                c.throw_error("TypeError", "%AbstractModuleSource% is abstract - it cannot be "
+                                           "called or constructed");
+                return value::undefined();
+            });
+        ctor->define("length", value::number(0), attr_configurable);
+        ctor->define("name", cx.string("AbstractModuleSource"), attr_configurable);
+        ctor->define("prototype", value::object(table), attr_none);
+        table->define("constructor", value::object(ctor), attr_writable | attr_configurable);
+        auto * tag = detail::method_native(
+            cx, "get [Symbol.toStringTag]", [](context & c, std::span<value>) {
+                const value self = c.current_this();
+                if (!self.is_object()) { return value::undefined(); }
+                const value * name = static_cast<object_object *>(self.as_heap())
+                                         ->find(CTBROWSER_PRIVATE_KEY("ModuleSourceClassName"));
+                return name == nullptr ? value::undefined() : *name;
+            });
+        detail::install_arity(cx, tag, 0);
+        table->define_accessor(CTBROWSER_SYMBOL_KEY("toStringTag"), value::object(tag),
+                               value::undefined(), attr_configurable);
+        fn_proto->define(CTBROWSER_PRIVATE_KEY("AbstractModuleSource"), value::object(ctor),
+                         attr_none);
+    }
 }
 
 // See class_defined_name: the class's own members, made non-enumerable.
@@ -656,6 +692,8 @@ void install_class_defined(context & cx) {
     cx.define_native(std::string{class_defined_name}, [](context &, std::span<value> a) {
         if (a.empty() || !a[0].is_kind(heap_kind::function)) { return value::undefined(); }
         auto * ctor = static_cast<closure_object *>(a[0].as_heap());
+        ctor->class_constructor = true;
+        ctor->defining_class = false; // see class_heritage_name
         for (std::size_t i = 0; i < ctor->props.size(); ++i) {
             const std::string & key = ctor->props[i].first;
             ctor->set_attrs(key, static_cast<std::uint8_t>(ctor->attrs_of(key) & ~attr_enumerable));
@@ -666,6 +704,7 @@ void install_class_defined(context & cx) {
         value * proto = ctor->find("prototype");
         if (proto == nullptr || !proto->is_object()) { return value::undefined(); }
         auto * table = static_cast<object_object *>(proto->as_heap());
+        table->defining_class = false;
         std::vector<std::pair<std::string, std::uint8_t>> entries;
         table->each_own_entry(
             [&](const std::string & key, std::uint8_t attrs) { entries.emplace_back(key, attrs); });
@@ -709,9 +748,10 @@ void install_generator(context & cx) {
     detail::method(cx, table, "return", 1, driver(context::resume_mode::returned));
     // A GENERATOR IS ITS OWN ITERATOR, which is what `for (x of gen())` needs
     // and what makes `[...gen()]` work.
-    detail::method(cx, table, "@@iterator", 0,
+    detail::method(cx, table, CTBROWSER_SYMBOL_KEY("iterator"), 0,
                    [](context & c, std::span<value>) { return c.current_this(); });
-    table->define("@@toStringTag", cx.string("Generator"), attr_configurable); // 27.5.1.5
+    table->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Generator"),
+                  attr_configurable); // 27.5.1.5
     cx.set_prototype(context::proto_kind::generator, table);
 
     // %AsyncGeneratorPrototype%, 27.6.1: the same three, each answering a
@@ -727,9 +767,10 @@ void install_generator(context & cx) {
     detail::method(cx, async_table, "next", 1, async_driver(context::resume_mode::next));
     detail::method(cx, async_table, "throw", 1, async_driver(context::resume_mode::thrown));
     detail::method(cx, async_table, "return", 1, async_driver(context::resume_mode::returned));
-    detail::method(cx, async_table, "@@asyncIterator", 0,
+    detail::method(cx, async_table, CTBROWSER_SYMBOL_KEY("asyncIterator"), 0,
                    [](context & c, std::span<value>) { return c.current_this(); });
-    async_table->define("@@toStringTag", cx.string("AsyncGenerator"), attr_configurable);
+    async_table->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("AsyncGenerator"),
+                        attr_configurable);
     cx.set_prototype(context::proto_kind::async_generator, async_table);
 }
 

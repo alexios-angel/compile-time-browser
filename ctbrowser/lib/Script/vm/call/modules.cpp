@@ -77,7 +77,7 @@ value context::module_namespace(module_record & of) {
                                 })),
                             value::undefined(), attr_enumerable);
     }
-    ns->define("@@toStringTag", string("Module"), attr_none);
+    ns->define(CTBROWSER_SYMBOL_KEY("toStringTag"), string("Module"), attr_none);
     ns->extensible = false;
     return of.namespace_object;
 }
@@ -106,7 +106,7 @@ value context::deferred_module_namespace(module_record & of) {
     for (const std::string & name : names) {
         target->define(name, value::undefined(), attr_writable | attr_enumerable);
     }
-    target->define("@@toStringTag", string("Deferred Module"), attr_none);
+    target->define(CTBROWSER_SYMBOL_KEY("toStringTag"), string("Deferred Module"), attr_none);
     target->extensible = false;
     object_object * const handler = allocate<object_object>();
     const rooted keep_handler{*this, value::object(handler)};
@@ -204,7 +204,7 @@ value context::deferred_module_namespace(module_record & of) {
         const value keys = c.make_array();
         auto * list = static_cast<array_object *>(keys.as_heap());
         for (const std::string & name : names) { list->items.push_back(c.string(name)); }
-        list->items.push_back(c.key_value("@@toStringTag"));
+        list->items.push_back(c.key_value(CTBROWSER_SYMBOL_KEY("toStringTag")));
         return keys;
     });
     trap("set", [](context &, std::span<value>) { return value::boolean(false); });

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ctbrowser::script {
@@ -16,6 +17,9 @@ void context::execute_call(instruction in, call_frame * vm_frame, const function
         {
             value callee = reg(in.a);
             value receiver = value::undefined();
+            // Taken whatever the callee turns out to be, so a super() into a
+            // native parent leaves nothing behind for the next call.
+            const bool super_call = std::exchange(super_call_, false);
             // THE LOOKUP CAN THROW - a getter, a proxy trap, or a nullish
             // receiver - and a throw has already unwound to its handler by
             // the time it returns. Calling `undefined` after that would
@@ -73,6 +77,22 @@ void context::execute_call(instruction in, call_frame * vm_frame, const function
                 reg(in.a) = produced;
                 break;
             }
+            // A PROXY OVER A CALLABLE is called through its [[Call]] - the
+            // `apply` trap or its target - which invoke owns. A throw out of
+            // either has landed on a handler by the time it returns
+            // (unwinds_), and then the register is not ours to write.
+            if (callee.is_kind(heap_kind::proxy) && callee.is_callable()) {
+                const rooted keep_callee{*this, callee};
+                const rooted keep_receiver{*this, receiver};
+                std::vector<value> args{registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
+                                        registers_.begin() +
+                                            static_cast<std::ptrdiff_t>(arg_base + in.b)};
+                const rooted_values keep_args{*this, args};
+                const value produced = invoke(callee, args, receiver, /*constructing*/ false);
+                if (unwinds_ != unwound || throw_pending()) { break; }
+                reg(in.a) = produced;
+                break;
+            }
             if (!callee.is_kind(heap_kind::function)) {
                 {
                     std::string what =
@@ -106,6 +126,7 @@ void context::execute_call(instruction in, call_frame * vm_frame, const function
                 }
                 break;
             }
+            if (refuse_class_call(callee, super_call)) { break; }
             auto * fnobj = static_cast<closure_object *>(callee.as_heap());
             const function_proto & target = *fnobj->proto;
             // CALLING A GENERATOR RUNS NOTHING. It hands back an object over a

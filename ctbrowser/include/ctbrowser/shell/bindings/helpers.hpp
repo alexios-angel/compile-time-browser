@@ -198,7 +198,7 @@ inline constexpr std::string_view path_commands_property = "__cmds";
 
 // An ImageBitmap's handle into the image store (window/image_bitmap.cpp), which
 // image_argument answers drawImage from.
-inline constexpr std::string_view image_bitmap_property = "@#ImageBitmap";
+inline constexpr std::string_view image_bitmap_property = CTBROWSER_PRIVATE_KEY("ImageBitmap");
 
 // THE BYTES BEHIND A BufferSource - an ArrayBuffer, or any view onto one with
 // its offset and length applied (window/encoding.cpp). False for anything else.

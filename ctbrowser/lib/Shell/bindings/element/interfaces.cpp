@@ -362,9 +362,9 @@ void dom_bindings::install_dom_interfaces(context & cx) {
             proto->set("constructor", ctor_value);
             proto->set_attrs("constructor", script::attr_builtin);
         }
-        if (proto->find("@@toStringTag") == nullptr) {
-            proto->set("@@toStringTag", cx.string(name));
-            proto->set_attrs("@@toStringTag", script::attr_builtin);
+        if (proto->find(CTBROWSER_SYMBOL_KEY("toStringTag")) == nullptr) {
+            proto->set(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name));
+            proto->set_attrs(CTBROWSER_SYMBOL_KEY("toStringTag"), script::attr_builtin);
         }
     }
 
@@ -456,7 +456,7 @@ void dom_bindings::install_dom_interfaces(context & cx) {
                 // Not one the CHAIN already answers: appendChild is Node's and
                 // addEventListener is EventTarget's, and Document.prototype
                 // must not grow its own copies of either.
-                if (held != nullptr && held->is_callable() && !key.starts_with("@@") &&
+                if (held != nullptr && held->is_callable() && !key.starts_with(symbol_key_mark) &&
                     cx.lookup_property(proto_value, key).is_undefined()) {
                     names.push_back(key);
                 }

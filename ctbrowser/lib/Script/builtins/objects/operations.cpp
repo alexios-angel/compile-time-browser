@@ -20,8 +20,8 @@ namespace ctbrowser::script::detail {
 namespace {
 
 [[nodiscard]] inline bool wanted_key(key_filter which, const std::string & key) {
-    if (is_private_key(key)) { return false; } // a private name is not a property key
-    const bool symbol = key.starts_with("@@"); // "@@sym:<n>:" or a well-known "@@iterator"
+    if (is_private_key(key)) { return false; }            // a private name is not a property key
+    const bool symbol = key.starts_with(symbol_key_mark); // Symbol(), Symbol.for or well-known
     return which == key_filter::all || (which == key_filter::symbols) == symbol;
 }
 
@@ -129,8 +129,9 @@ namespace {
         // 10.1.11.1 OrdinaryOwnPropertyKeys: integer keys ascending (the walk's
         // own order), then strings, then SYMBOLS, each in creation order.
         if (which == key_filter::all) {
-            std::stable_partition(out.begin(), out.end(),
-                                  [](const std::string & k) { return !k.starts_with("@@"); });
+            std::stable_partition(out.begin(), out.end(), [](const std::string & k) {
+                return !k.starts_with(symbol_key_mark);
+            });
         }
         return out;
     }
@@ -166,8 +167,9 @@ namespace {
                     out.push_back(k);
                 }
             });
-            std::stable_partition(out.begin() + static_cast<std::ptrdiff_t>(named_from), out.end(),
-                                  [](const std::string & k) { return !k.starts_with("@@"); });
+            std::stable_partition(
+                out.begin() + static_cast<std::ptrdiff_t>(named_from), out.end(),
+                [](const std::string & k) { return !k.starts_with(symbol_key_mark); });
         }
         return out;
     }
@@ -234,7 +236,7 @@ namespace {
             if (key == "__home" || !wanted_key(which, key)) { return; }
             if (std::ranges::find(taken, key) != taken.end()) { return; }
             std::uint32_t at = 0;
-            if (key.starts_with("@@")) {
+            if (key.starts_with(symbol_key_mark)) {
                 symbols.push_back(key);
             } else if (object_object::array_index_key(key, at)) {
                 indices.push_back(key);

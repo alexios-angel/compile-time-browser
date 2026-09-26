@@ -45,6 +45,16 @@ program compiler::compile_for_direct_eval(std::string_view source,
 namespace {
 program compile_source(std::string_view source, script_kind kind, const eval_site * site,
                        std::span<const eval_binding> outer) {
+    // SOURCE TEXT IS TEXT: a stray 0xFF in a file handed over as bytes is the
+    // U+FFFD decoding makes of it, before a string literal or a regular
+    // expression can carry it into a constant and spell an internal key
+    // (core/symbol.hpp). Everything below reads the decoded copy.
+    std::string decoded;
+    if (source.find(internal_key_lead) != std::string_view::npos) [[unlikely]] {
+        decoded = std::string{source};
+        replace_internal_key_lead(decoded);
+        source = decoded;
+    }
     const vp::ast tree = vp::parse(source);
     program out;
     out.kind = kind;

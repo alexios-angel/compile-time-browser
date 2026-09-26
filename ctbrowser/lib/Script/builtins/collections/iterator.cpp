@@ -36,7 +36,8 @@ void install_iterator(context & cx) {
            [](context & c, std::span<value>) { return helper_next(c); });
     method(cx, helper_proto, "return", 0,
            [](context & c, std::span<value>) { return helper_return(c); });
-    helper_proto->define("@@toStringTag", cx.string("Iterator Helper"), attr_configurable);
+    helper_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Iterator Helper"),
+                         attr_configurable);
     const value helper_proto_value = value::object(helper_proto);
     // %WrapForValidIteratorPrototype%, 27.1.3.2.1.2: what Iterator.from hands
     // back for an iterator that is not already an Iterator - `next` and
@@ -130,7 +131,7 @@ void install_iterator(context & cx) {
                 c.throw_error("TypeError", "Iterator.concat: argument is not an object");
                 return value::undefined();
             }
-            const value method = c.lookup_property(item, "@@iterator");
+            const value method = c.lookup_property(item, CTBROWSER_SYMBOL_KEY("iterator"));
             if (c.throw_pending()) { return value::undefined(); }
             if (!method.is_callable()) {
                 c.throw_error("TypeError", "Iterator.concat: argument is not iterable");
@@ -341,8 +342,8 @@ void install_iterator(context & cx) {
                                attr_configurable);
     };
     accessor_pair("constructor", ctor_value);
-    accessor_pair("@@toStringTag", cx.string("Iterator"));
-    method(cx, proto, "@@iterator", 0,
+    accessor_pair(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Iterator"));
+    method(cx, proto, CTBROWSER_SYMBOL_KEY("iterator"), 0,
            [](context & c, std::span<value>) { return c.current_this(); });
 
     // The receiver as an object, or the TypeError of step 2.
@@ -579,7 +580,7 @@ void install_iterator(context & cx) {
                 return value::undefined();
             });
         detail::install_arity(cx, dispose, 0);
-        proto->define("@@dispose", value::object(dispose), attr_builtin);
+        proto->define(CTBROWSER_SYMBOL_KEY("dispose"), value::object(dispose), attr_builtin);
     }
     cx.define_global("Iterator", ctor_value);
 }

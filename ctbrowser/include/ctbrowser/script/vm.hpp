@@ -43,6 +43,12 @@ public:
     // A SCRIPT's `var` (`configurable` false) is also enumerable and cannot be
     // deleted; an eval's (true) can.
     void declare_global_var(std::string name, bool configurable = true);
+    // GlobalDeclarationInstantiation's refusals (16.1.7 steps 3-6): a
+    // classic script whose lexical name is already a var, a lexical or a
+    // non-configurable global property, or whose var or function name is
+    // already lexical, is a SyntaxError and creates no binding. False with
+    // the SyntaxError thrown; true once the script's names are recorded.
+    bool global_declaration_instantiation(const program & prog);
 
     // THE THREE VALUE PROPERTIES OF THE GLOBAL OBJECT (19.1): NaN, Infinity
     // and undefined are { writable: false, enumerable: false, configurable:
@@ -362,6 +368,13 @@ public:
 
     [[nodiscard]] value lookup_property(value target, const std::string & name);
     [[nodiscard]] value key_value(const std::string & key);
+    // 10.2.1 [[Call]] step 2: a CLASS CONSTRUCTOR called without `new` is a
+    // TypeError - thrown here, and true. A `super()` call is the one that
+    // reaches it with a pending new.target, and is let through. Asked by the
+    // callers a page reaches it from: op::call, the spread call, and
+    // Function.prototype.call/apply and Reflect.apply. An embedder's own
+    // context::call does not ask (the custom-element upgrade [[Call]]s one).
+    bool refuse_class_call(value callee, bool super_call = false);
     // Assign through the chain, honouring a setter. Returns false when nothing
     // took the write, so the caller can fall back to defining an own property.
     bool assign_through_accessor(value target, const std::string & name, value v);
@@ -715,6 +728,10 @@ public:
 
 private:
     value invoke(value callable, std::span<const value> args, value this_value, bool constructing);
+    // context::string without the lead-byte guard: a string the VM minted
+    // from its own text - a compiled constant, a property key handed back
+    // (key_value) - which may be a private name's key and must stay one.
+    [[nodiscard]] value minted_string(std::string s);
 
     friend struct aot_bridge;
     friend class executing_as;
@@ -872,6 +889,11 @@ private:
     // Set by `op::pass_new_target` and consumed by the very next frame push, so
     // a super() call hands its own new.target to the base constructor.
     value pending_new_target_ = value::undefined();
+    // THE NEXT CALL IS A `super()` - set by op::pass_new_target, taken by
+    // the call that follows it. Not pending_new_target_ alone: from an
+    // arrow in a constructor that is the arrow frame's undefined, and the
+    // parent class's constructor would read as called without `new`.
+    bool super_call_ = false;
     value pending_closure_ = value::undefined();
 
     std::size_t pending_argv_base_ = 0;

@@ -8,8 +8,8 @@ namespace ctbrowser::script::builtins_detail::temporal_js {
 
 namespace {
 
-constexpr std::string_view slot_key = "@#Temporal";
-constexpr std::string_view prototypes_key = "@#TemporalPrototypes";
+constexpr std::string_view slot_key = CTBROWSER_PRIVATE_KEY("Temporal");
+constexpr std::string_view prototypes_key = CTBROWSER_PRIVATE_KEY("TemporalPrototypes");
 
 constexpr const char * kind_names[] = {"Temporal.Duration",       "Temporal.PlainDate",
                                        "Temporal.PlainTime",      "Temporal.PlainDateTime",
@@ -1554,7 +1554,8 @@ class_parts make_class(context & cx, object_object & ns, kind k, const char * na
     parts.ctor = cx.allocate<native_object>(name, std::move(construct));
     detail::constant(parts.ctor, "prototype", value::object(parts.proto));
     link_constructor(cx, parts.proto, name, arity, value::object(parts.ctor));
-    parts.proto->define("@@toStringTag", cx.string(kind_names[int(k)]), attr_configurable);
+    parts.proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(kind_names[int(k)]),
+                        attr_configurable);
     ns.define(name, value::object(parts.ctor), attr_builtin);
     set_prototype(cx, k, parts.proto);
     return parts;

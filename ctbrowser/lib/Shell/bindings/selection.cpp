@@ -66,7 +66,7 @@ constexpr std::string_view across_slot = "__across";
 // The document the selection is of - the page's, or a frame's.
 constexpr std::string_view document_slot = "__document";
 // Where a frame's window keeps its selection once one is asked for.
-constexpr std::string_view window_selection_key = "@@sym:ctbrowser:selection";
+constexpr std::string_view window_selection_key = CTBROWSER_SYMBOL_KEY("sym:ctbrowser:selection");
 
 [[nodiscard]] script::object_object * self_object(context & c) {
     const value self = c.current_this();
@@ -783,7 +783,8 @@ void dom_bindings::install_selection(context & cx) {
         }
         return made;
     });
-    proto->define("@@toStringTag", cx.string("Selection"), script::attr_configurable);
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Selection"),
+                  script::attr_configurable);
 
     auto * ctor =
         cx.allocate<script::native_object>("Selection", [](context & c, std::span<value>) {

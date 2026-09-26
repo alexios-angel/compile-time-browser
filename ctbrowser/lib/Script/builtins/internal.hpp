@@ -246,6 +246,9 @@ inline void set_function_name(context & cx, value fn, value key, std::string_vie
         name = described ? "[" + std::string{*described} + "]" : "";
     } else {
         name = cx.to_string(key);
+        // A Private Name is named by its description, `#y` (10.2.9 step 3):
+        // its key (value/base.hpp) less the lead byte and the `:<class>`.
+        if (is_private_key(name)) { name = name.substr(1, name.find(':') - 1); }
     }
     if (!prefix.empty()) { name = std::string{prefix} + " " + name; }
     closure->define("name", cx.string(std::move(name)), attr_configurable);
@@ -586,7 +589,7 @@ struct generic_walk {
 [[nodiscard]] inline bool is_arguments_object(value v) {
     if (!v.is_array()) { return false; }
     const auto * arr = static_cast<const array_object *>(v.as_heap());
-    return arr->named && arr->named->find("@#Arguments") != nullptr;
+    return arr->named && arr->named->find(CTBROWSER_PRIVATE_KEY("Arguments")) != nullptr;
 }
 [[nodiscard]] inline bool is_array_value(context & cx, value v, bool & out) {
     for (int hops = 0; hops < 64 && v.is_kind(heap_kind::proxy); ++hops) {
@@ -643,7 +646,7 @@ struct generic_walk {
         ctor = cx.lookup_property(original, "constructor");
         if (watch.threw()) { return value::undefined(); }
         if (ctor.is_object_like()) {
-            ctor = cx.lookup_property(ctor, "@@species");
+            ctor = cx.lookup_property(ctor, CTBROWSER_SYMBOL_KEY("species"));
             if (watch.threw()) { return value::undefined(); }
             if (ctor.is_null()) { ctor = value::undefined(); }
         }
@@ -739,11 +742,12 @@ inline void global_fn(context & cx, std::string name, double arity, native_fn fn
 // be a native carrying properties, and its statics are installed exactly like
 // a table's.
 //
-// A method KEYED BY A WELL-KNOWN SYMBOL - `"@@iterator"` - is NAMED
+// A method KEYED BY A WELL-KNOWN SYMBOL - `Symbol.iterator` - is NAMED
 // "[Symbol.iterator]" (10.2.8 SetFunctionName on a symbol with a
 // description); the key stays the key.
 [[nodiscard]] inline std::string method_name_for_key(const std::string & key) {
-    if (key.starts_with("@@") && !key.starts_with("@@sym:") && !key.starts_with("@@for:")) {
+    if (key.starts_with(symbol_key_mark) && !key.starts_with(symbol_key_prefix) &&
+        !key.starts_with(registered_symbol_key_prefix)) {
         return "[Symbol." + key.substr(2) + "]";
     }
     return key;

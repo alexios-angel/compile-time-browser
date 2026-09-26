@@ -43,12 +43,12 @@ enum class kind : std::uint8_t {
 
 constexpr std::string_view slot_of(kind k) {
     switch (k) {
-    case kind::map: return "@#MapData";
-    case kind::set: return "@#SetData";
-    case kind::weak_map: return "@#WeakMapData";
-    case kind::weak_set: return "@#WeakSetData";
+    case kind::map: return CTBROWSER_PRIVATE_KEY("MapData");
+    case kind::set: return CTBROWSER_PRIVATE_KEY("SetData");
+    case kind::weak_map: return CTBROWSER_PRIVATE_KEY("WeakMapData");
+    case kind::weak_set: return CTBROWSER_PRIVATE_KEY("WeakSetData");
     }
-    return "@#MapData";
+    return CTBROWSER_PRIVATE_KEY("MapData");
 }
 constexpr const char * name_of(kind k) {
     switch (k) {
@@ -88,11 +88,12 @@ constexpr bool weak(kind k) {
 }
 
 // CanBeHeldWeakly, 9.13: an object, or a symbol that is not registered with
-// Symbol.for (whose key is "@@for:<description>", text/symbol.cpp).
+// Symbol.for (whose key starts registered_symbol_key_prefix, text/symbol.cpp).
 [[nodiscard]] bool can_be_held_weakly(value v) {
     if (v.is_object_like()) { return true; }
     if (!v.is_kind(heap_kind::symbol)) { return false; }
-    return !static_cast<symbol_object *>(v.as_heap())->key.starts_with("@@for:");
+    return !static_cast<symbol_object *>(v.as_heap())
+                ->key.starts_with(registered_symbol_key_prefix);
 }
 
 [[nodiscard]] value * find_pair(array_object & entries, value key) {
@@ -287,12 +288,12 @@ void entries_cleared(const array_object & entries) {
 // dropped - an iterator abandoned half-way (`m.keys().next().value`) is
 // otherwise held for the collection's life. One dropped past the cap walks on
 // unadjusted; a weak list is the upgrade if a page ever holds 32 at once.
-inline constexpr std::string_view live_iterators_key = "@#LiveIterators";
-inline constexpr std::string_view iter_index_key = "@#CollectionNextIndex";
-inline constexpr std::string_view iter_kind_key = "@#CollectionIterationKind";
+inline constexpr std::string_view live_iterators_key = CTBROWSER_PRIVATE_KEY("LiveIterators");
+inline constexpr std::string_view iter_index_key = CTBROWSER_PRIVATE_KEY("CollectionNextIndex");
+inline constexpr std::string_view iter_kind_key = CTBROWSER_PRIVATE_KEY("CollectionIterationKind");
 inline constexpr std::size_t max_live_iterators = 32;
 constexpr std::string_view iterated_slot(bool map) {
-    return map ? "@#IteratedMap" : "@#IteratedSet";
+    return map ? CTBROWSER_PRIVATE_KEY("IteratedMap") : CTBROWSER_PRIVATE_KEY("IteratedSet");
 }
 
 [[nodiscard]] array_object * live_iterators(value collection) {
@@ -515,7 +516,8 @@ void install_collections(context & cx) {
         detail::install_arity(cx, ctor, 0);
         // 24.1.3.13 / 24.2.3.12 / 24.3.3.6 / 24.4.3.5: the tag
         // Object.prototype.toString reads.
-        proto->define("@@toStringTag", cx.string(name_of(k)), attr_configurable);
+        proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name_of(k)),
+                      attr_configurable);
         if (!weak(k)) {
             cx.set_prototype(keyed(k) ? context::proto_kind::map : context::proto_kind::set, proto);
             // 24.1.2.2 / 24.2.2.2 get [@@species]: `this`.
@@ -523,8 +525,8 @@ void install_collections(context & cx) {
                 cx, "get [Symbol.species]",
                 [](context & c, std::span<value>) { return c.current_this(); });
             detail::install_arity(cx, species, 0);
-            ctor->define_accessor("@@species", value::object(species), value::undefined(),
-                                  attr_configurable);
+            ctor->define_accessor(CTBROWSER_SYMBOL_KEY("species"), value::object(species),
+                                  value::undefined(), attr_configurable);
         }
         cx.define_global(name_of(k), value::object(ctor));
         return std::pair{proto, ctor};
@@ -666,7 +668,7 @@ void install_collections(context & cx) {
         // object - which is what Array.from and any hand-driven iteration reach
         // for (for-of and spread take context::iterable_values' shortcut).
         if (value * entries = proto->find("entries")) {
-            proto->define("@@iterator", *entries, attr_builtin);
+            proto->define(CTBROWSER_SYMBOL_KEY("iterator"), *entries, attr_builtin);
         }
         {
             auto * getter =
@@ -693,7 +695,7 @@ void install_collections(context & cx) {
             // object whose @@iterator is not callable is a TypeError, not the
             // array-like iterable_values would walk instead.
             if (a[0].is_object_like() && !a[0].is_array() &&
-                !c.lookup_property(a[0], "@@iterator").is_callable()) {
+                !c.lookup_property(a[0], CTBROWSER_SYMBOL_KEY("iterator")).is_callable()) {
                 if (!watch.threw()) { c.throw_error("TypeError", "Map.groupBy: not iterable"); }
                 return value::undefined();
             }
@@ -805,7 +807,7 @@ void install_collections(context & cx) {
             // Adding the first alias can reallocate the property vector.
             const value values_fn = *values;
             proto->define("keys", values_fn, attr_builtin);
-            proto->define("@@iterator", values_fn, attr_builtin);
+            proto->define(CTBROWSER_SYMBOL_KEY("iterator"), values_fn, attr_builtin);
         }
         // A Set's `entries` pairs each member WITH ITSELF, which looks odd and
         // is the spec: it exists so a Set and a Map can be walked by one code.

@@ -41,7 +41,7 @@ void dom_bindings::install_css_interface(context & cx) {
     // `CSS.toString()` is `[object CSS]`. Own, non-writable, configurable: a
     // page may redefine or delete it, and `CSS-namespace-object-class-string`
     // does both.
-    css->define("@@toStringTag", cx.string("CSS"), script::attr_configurable);
+    css->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("CSS"), script::attr_configurable);
 
     // BOTH ARITIES, because they are different questions. One argument is a
     // `<supports-condition>` - `(display: flex) and (color: red)`, parentheses

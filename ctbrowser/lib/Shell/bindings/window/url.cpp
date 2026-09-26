@@ -149,7 +149,7 @@ void store_list(context & c, script::object_object & params, const form_pairs & 
         const value base = cx.lookup_property(iterator, "prototype");
         if (base.is_object()) { proto->prototype = base; }
     }
-    proto->define("@@toStringTag", cx.string("URLSearchParams Iterator"),
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("URLSearchParams Iterator"),
                   script::attr_configurable);
     set_method(
         cx, *proto, "next",
@@ -180,8 +180,8 @@ void store_list(context & c, script::object_object & params, const form_pairs & 
         },
         script::attr_builtin);
     set_method(
-        cx, *proto, "@@iterator", [](context & c, std::span<value>) { return c.current_this(); },
-        script::attr_builtin);
+        cx, *proto, CTBROWSER_SYMBOL_KEY("iterator"),
+        [](context & c, std::span<value>) { return c.current_this(); }, script::attr_builtin);
     return proto;
 }
 
@@ -203,7 +203,8 @@ void install_search_params(context & cx, const value iterator_proto) {
         form_pairs list;
         if (init.is_object_like()) {
             const context::rooted keep{c, init};
-            if (const value method = c.lookup_property(init, "@@iterator"); method.is_callable()) {
+            if (const value method = c.lookup_property(init, CTBROWSER_SYMBOL_KEY("iterator"));
+                method.is_callable()) {
                 const value items = c.iterable_values(init);
                 if (c.throw_pending()) { return value::undefined(); }
                 const context::rooted keep_items{c, items};
@@ -395,7 +396,7 @@ void install_search_params(context & cx, const value iterator_proto) {
     }
     // `URLSearchParams.prototype[Symbol.iterator] === ...entries`, per WebIDL.
     if (const value * entries = made.proto->find("entries"); entries != nullptr) {
-        made.proto->define("@@iterator", *entries, script::attr_builtin);
+        made.proto->define(CTBROWSER_SYMBOL_KEY("iterator"), *entries, script::attr_builtin);
     }
     // THE ITERATOR PROTOTYPE IS A ROOT AND NOTHING ELSE POINTS AT IT. It lives
     // in the `entries`/`keys`/`values` lambdas' C++ captures, which a precise

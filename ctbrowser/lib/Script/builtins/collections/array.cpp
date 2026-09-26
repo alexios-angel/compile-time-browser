@@ -129,8 +129,8 @@ void install_array(context & cx) {
             detail::method_native(cx, "get [Symbol.species]",
                                   [](context & c, std::span<value>) { return c.current_this(); });
         detail::install_arity(cx, species, 0);
-        array_ctor->define_accessor("@@species", value::object(species), value::undefined(),
-                                    attr_configurable);
+        array_ctor->define_accessor(CTBROWSER_SYMBOL_KEY("species"), value::object(species),
+                                    value::undefined(), attr_configurable);
     }
     static_method("isArray", 1, [](context & c, std::span<value> a) {
         bool answer = false;
@@ -265,9 +265,9 @@ void install_array(context & cx) {
         }
         // Each ROOTED before the next allocates: a collection between the two
         // would free the first.
-        const value async_key = c.key_value("@@asyncIterator");
+        const value async_key = c.key_value(CTBROWSER_SYMBOL_KEY("asyncIterator"));
         const context::rooted keep_async{c, async_key};
-        const value sync_key = c.key_value("@@iterator");
+        const value sync_key = c.key_value(CTBROWSER_SYMBOL_KEY("iterator"));
         const context::rooted keep_sync{c, sync_key};
         const value args[5] = {arg_at(a, 0), arg_at(a, 1), arg_at(a, 2), async_key, sync_key};
         return c.call(helper, args, c.current_this()); // `this` may be a constructor
@@ -289,7 +289,7 @@ void install_array(context & cx) {
             if (!detail::coercible_this(c, items, "from")) { return value::undefined(); }
             // Step 4, GetMethod(items, @@iterator): a throwing getter propagates
             // and a non-callable, non-nullish method is a TypeError.
-            const value using_iterator = c.lookup_property(items, "@@iterator");
+            const value using_iterator = c.lookup_property(items, CTBROWSER_SYMBOL_KEY("iterator"));
             if (c.throw_pending()) { return value::undefined(); }
             if (!using_iterator.is_nullish() && !using_iterator.is_callable()) {
                 c.throw_error("TypeError", "Symbol.iterator is not a function");
@@ -936,7 +936,8 @@ void install_array(context & cx) {
                                   "Cannot perform 'get' on a proxy that has been revoked");
                     return false;
                 }
-                const value flag = c.lookup_property(item, "@@isConcatSpreadable");
+                const value flag =
+                    c.lookup_property(item, CTBROWSER_SYMBOL_KEY("isConcatSpreadable"));
                 if (c.throw_pending()) { return false; }
                 if (!flag.is_undefined()) {
                     spreadable = context::truthy(flag);

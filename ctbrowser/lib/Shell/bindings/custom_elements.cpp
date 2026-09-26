@@ -145,7 +145,7 @@ constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
     }
     // GetMethod(V, @@iterator): a method that is present and not callable -
     // `{[Symbol.iterator]: 1}` - is a TypeError, not an empty list.
-    const value method = cx.lookup_property(from, "@@iterator");
+    const value method = cx.lookup_property(from, CTBROWSER_SYMBOL_KEY("iterator"));
     if (cx.throw_pending()) { return false; }
     if (!method.is_callable()) {
         cx.throw_error("TypeError", "The provided value cannot be converted to a sequence.");

@@ -36,7 +36,8 @@ constexpr std::uint32_t magic = 0x43544243; // 'CTBC'
 // function that build 2 would read as the next field, so the right refusal
 // names the format. The version check runs before the fingerprint for exactly
 // this reason.
-constexpr std::uint32_t format_version = 6; // 6: function_proto::length
+// 7: program::lexical_names and function_names, after hoisted_vars.
+constexpr std::uint32_t format_version = 7; // 6: function_proto::length
 
 // WHAT A CONSTANT IS ALLOWED TO BE - one rule, read by the writer and by the
 // reader, because a pool entry is EIGHT BYTES OF A FILE REINTERPRETED AS A

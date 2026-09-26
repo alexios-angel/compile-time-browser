@@ -35,7 +35,7 @@ script::object_object * cssom_interface(context & cx, script::object_object * in
     // `rule.toString()` - reads: `[object CSSFontFaceRule]`, not
     // `[object Object]`. The same key element/interfaces.cpp stamps on the
     // element prototypes; Web IDL puts one on every interface prototype.
-    proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name), script::attr_configurable);
     internals->set(std::string{name} + ".prototype", value::object(proto));
     internals->set(std::string{name}, value::object(ctor));
     cx.define_builtin_global(name, value::object(ctor));
@@ -50,7 +50,7 @@ script::object_object * cssom_interface(context & cx, script::object_object * in
 // over the snapshot iterable_values already takes.
 void cssom_iterable(context & cx, script::object_object * on) {
     set_method(
-        cx, *on, "@@iterator",
+        cx, *on, CTBROWSER_SYMBOL_KEY("iterator"),
         [](context & c, std::span<value>) {
             const value items = c.iterable_values(c.current_this());
             return c.call(c.lookup_property(items, "values"), std::span<const value>{}, items);

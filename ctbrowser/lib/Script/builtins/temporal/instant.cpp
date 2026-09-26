@@ -247,7 +247,7 @@ void install_instant(context & cx, object_object & ns) {
 
 void install_now(context & cx, object_object & ns) {
     object_object * now = detail::new_table(cx);
-    now->define("@@toStringTag", cx.string("Temporal.Now"), attr_configurable);
+    now->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Temporal.Now"), attr_configurable);
     detail::method(cx, now, "timeZoneId", 0,
                    [](context & c, std::span<value>) { return c.string("UTC"); });
     detail::method(cx, now, "instant", 0,

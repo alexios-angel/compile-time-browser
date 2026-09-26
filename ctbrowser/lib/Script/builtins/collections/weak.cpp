@@ -13,16 +13,17 @@ namespace ctbrowser::script::builtins_detail {
 
 namespace {
 
-constexpr std::string_view weak_ref_slot = "@#WeakRefTarget";
-constexpr std::string_view registry_slot = "@#FinalizationRegistryCells";
+constexpr std::string_view weak_ref_slot = CTBROWSER_PRIVATE_KEY("WeakRefTarget");
+constexpr std::string_view registry_slot = CTBROWSER_PRIVATE_KEY("FinalizationRegistryCells");
 
 // CanBeHeldWeakly, 9.13: an object, or a symbol that is not registered with
-// Symbol.for (whose key is "@@for:<description>", text/symbol.cpp). The same
+// Symbol.for (whose key starts registered_symbol_key_prefix, text/symbol.cpp). The same
 // test keyed.cpp makes for WeakMap and WeakSet.
 [[nodiscard]] bool can_be_held_weakly(value v) {
     if (v.is_object_like()) { return true; }
     if (!v.is_kind(heap_kind::symbol)) { return false; }
-    return !static_cast<symbol_object *>(v.as_heap())->key.starts_with("@@for:");
+    return !static_cast<symbol_object *>(v.as_heap())
+                ->key.starts_with(registered_symbol_key_prefix);
 }
 
 // RequireInternalSlot: the receiver's slot, or null with the TypeError in flight.
@@ -63,7 +64,8 @@ void install_weak_refs(context & cx) {
         const value * held = slot_of(c, weak_ref_slot, "WeakRef.prototype.deref");
         return held == nullptr ? value::undefined() : *held;
     });
-    ref_proto->define("@@toStringTag", cx.string("WeakRef"), attr_configurable); // 26.1.3.3
+    ref_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("WeakRef"),
+                      attr_configurable); // 26.1.3.3
     detail::constant(ref_ctor, "prototype", value::object(ref_proto));
     link_constructor(cx, ref_proto, "WeakRef", 1, value::object(ref_ctor));
     cx.define_global("WeakRef", value::object(ref_ctor));
@@ -83,7 +85,7 @@ void install_weak_refs(context & cx) {
             }
             auto * made = static_cast<object_object *>(self.as_heap());
             made->define(registry_slot, c.make_array(), attr_none);
-            made->define("@#CleanupCallback", a[0], attr_none);
+            made->define(CTBROWSER_PRIVATE_KEY("CleanupCallback"), a[0], attr_none);
             return self;
         });
     // 26.2.3.2 register(target, heldValue [, unregisterToken]): a cell per
@@ -135,7 +137,7 @@ void install_weak_refs(context & cx) {
         });
         return value::boolean(list.size() != before);
     });
-    registry_proto->define("@@toStringTag", cx.string("FinalizationRegistry"),
+    registry_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("FinalizationRegistry"),
                            attr_configurable); // 26.2.3.4
     detail::constant(registry_ctor, "prototype", value::object(registry_proto));
     link_constructor(cx, registry_proto, "FinalizationRegistry", 1, value::object(registry_ctor));

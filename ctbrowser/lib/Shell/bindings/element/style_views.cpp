@@ -369,7 +369,7 @@ value dom_bindings::make_style_view(context & cx, node_id id) {
 void dom_bindings::install_style_accessor(context & cx) {
     if (secondary_) { return; }
     const auto view_of = [this](context & c, value self) -> value {
-        constexpr std::string_view key = "@@sym:ctbrowser:style";
+        constexpr std::string_view key = CTBROWSER_SYMBOL_KEY("sym:ctbrowser:style");
         if (!self.is_object()) { return value::undefined(); }
         dom_bindings & owner = target_owner(self);
         const node_id id = owner.handle_of(self);
@@ -378,7 +378,7 @@ void dom_bindings::install_style_accessor(context & cx) {
         // The cached view is THIS document's: a node adopted into another
         // document keeps its wrapper, and a view built over the old document
         // would write the old node (style-attr-update-across-documents.html).
-        constexpr std::string_view owner_key = "@@sym:ctbrowser:style-owner";
+        constexpr std::string_view owner_key = CTBROWSER_SYMBOL_KEY("sym:ctbrowser:style-owner");
         const value * held = wrapper->find(key);
         const value * made_by = wrapper->find(owner_key);
         if (held != nullptr && made_by != nullptr && made_by->bits() == owner.document_.bits()) {

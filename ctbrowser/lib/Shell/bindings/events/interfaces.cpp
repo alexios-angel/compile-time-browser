@@ -328,8 +328,9 @@ void dom_bindings::install_event_interfaces(context & cx) {
         // `@@toStringTag` is the interface's name (WebIDL 3.7.3), which is
         // what `assert_class_string(event, "Event")` reads through
         // Object.prototype.toString.
-        if (proto->find("@@toStringTag") == nullptr) {
-            proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+        if (proto->find(CTBROWSER_SYMBOL_KEY("toStringTag")) == nullptr) {
+            proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name),
+                          script::attr_configurable);
         }
         cx.define_builtin_global(name, value::object(ctor));
         return ctor;

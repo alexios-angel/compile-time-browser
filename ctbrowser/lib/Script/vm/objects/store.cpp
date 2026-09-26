@@ -382,6 +382,14 @@ void context::store_property(value target, const std::string & name, value v) {
         return;
     }
     if (target.is_object()) {
+        // A METHOD BEING INSTALLED on a class that is being defined - see
+        // object_object::defining_class - is an own definition, whatever the
+        // chain holds.
+        if (static_cast<object_object *>(target.as_heap())->defining_class) [[unlikely]] {
+            static_cast<object_object *>(target.as_heap())
+                ->define_over_accessor(name, v, attr_default);
+            return;
+        }
         if (assign_through_accessor(target, name, v)) { return; }
         auto * obj = static_cast<object_object *>(target.as_heap());
         // --- [[Set]], 10.1.9, AND THE THREE BITS IT CONSULTS ---------------
@@ -696,7 +704,11 @@ void context::store_property(value target, const std::string & name, value v) {
             store_rejected_ = true;
             return;
         }
-        if (inherited_set(get_prototype(target))) { return; } // see inherited_set
+        // A static method of a class being defined is defined, not handed
+        // to the parent class's setter (closure_object::defining_class).
+        if (!closure->defining_class && inherited_set(get_prototype(target))) {
+            return; // see inherited_set
+        }
         if (!closure->extensible) {
             store_rejected_ = true;
             return;

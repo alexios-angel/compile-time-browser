@@ -168,7 +168,7 @@ inline auto context::track_promise_rejection(value promise, bool handled) -> voi
 [[nodiscard]] inline auto context::promise_is_handled(value promise) -> bool {
     if (!promise.is_object()) { return true; }
     const value * flag = static_cast<object_object *>(promise.as_heap())
-                             ->find(std::string_view{"@#PromiseIsHandled"});
+                             ->find(std::string_view{CTBROWSER_PRIVATE_KEY("PromiseIsHandled")});
     return flag != nullptr && truthy(*flag);
 }
 
@@ -182,7 +182,8 @@ inline auto context::mark_promise_handled(value promise) -> void {
     if (settled != nullptr && truthy(*settled) && rejected != nullptr && truthy(*rejected)) {
         track_promise_rejection(promise, true);
     }
-    p->define(std::string_view{"@#PromiseIsHandled"}, value::boolean(true), attr_none);
+    p->define(std::string_view{CTBROWSER_PRIVATE_KEY("PromiseIsHandled")}, value::boolean(true),
+              attr_none);
 }
 
 // A PENDING promise, and settling one. What a host needs to model work that

@@ -36,7 +36,7 @@ bool is_regexp(context & cx, value v, bool & out) {
     out = false;
     if (!v.is_object_like()) { return true; }
     const detail::unwind_watch watch{cx};
-    const value matcher = cx.lookup_property(v, "@@match");
+    const value matcher = cx.lookup_property(v, CTBROWSER_SYMBOL_KEY("match"));
     if (watch.threw()) { return false; }
     out = matcher.is_undefined() ? has_regexp_matcher(v) : context::truthy(matcher);
     return true;
@@ -296,8 +296,8 @@ void install_regexp(context & cx) {
             detail::method_native(cx, "get [Symbol.species]",
                                   [](context & c, std::span<value>) { return c.current_this(); });
         detail::install_arity(cx, species, 0);
-        regexp_ctor->define_accessor("@@species", value::object(species), value::undefined(),
-                                     attr_configurable);
+        regexp_ctor->define_accessor(CTBROWSER_SYMBOL_KEY("species"), value::object(species),
+                                     value::undefined(), attr_configurable);
     }
     // THE LEGACY STATIC PROPERTIES (Annex B, the legacy RegExp features):
     // RegExp.input/$_, lastMatch/$&, lastParen/$+, leftContext/$`,
@@ -551,7 +551,8 @@ void install_regexp(context & cx) {
     // RegExpExec falls back to (22.2.7.1 step 4) when a page has set `exec`
     // to something that is not callable. The `:` marks it engine data, as
     // Object.prototype's intrinsic toString does.
-    regexp_proto->define("@#IntrinsicRegExpExec:", *regexp_proto->find("exec"), attr_none);
+    regexp_proto->define(CTBROWSER_PRIVATE_KEY("IntrinsicRegExpExec:"), *regexp_proto->find("exec"),
+                         attr_none);
     // 22.2.6.16: `test` is RegExpExec, so a subclass's `exec` is what it asks.
     method(cx, regexp_proto, "test", 1, [](context & c, std::span<value> a) -> value {
         const value self = c.current_this();
@@ -614,16 +615,17 @@ void install_regexp(context & cx) {
     // --- the Symbol methods -------------------------------------------------
     //
     // Named "[Symbol.match]" and so on (their `name` properties), installed
-    // under the `@@` keys the symbol machinery uses (value.hpp).
-    const auto symbol_method = [&](const char * key, const char * name, double arity,
-                                   native_fn fn) {
-        auto * made = detail::method_native(cx, name, std::move(fn));
+    // under the well-known symbol's key (core/symbol.hpp).
+    const auto symbol_method = [&](std::string_view symbol, double arity, native_fn fn) {
+        auto * made =
+            detail::method_native(cx, "[Symbol." + std::string{symbol} + "]", std::move(fn));
         detail::install_arity(cx, made, arity);
-        regexp_proto->define(key, value::object(made), attr_builtin);
+        regexp_proto->define(std::string{symbol_key_mark} + std::string{symbol},
+                             value::object(made), attr_builtin);
     };
 
     // 22.2.6.8 [@@match](string)
-    symbol_method("@@match", "[Symbol.match]", 1, [](context & c, std::span<value> a) -> value {
+    symbol_method("match", 1, [](context & c, std::span<value> a) -> value {
         const value rx = c.current_this();
         if (!object_this(c, rx, "RegExp.prototype[Symbol.match]")) { return value::undefined(); }
         if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }
@@ -669,60 +671,58 @@ void install_regexp(context & cx) {
         iterator_proto->prototype = iterator_base->prototype; // %IteratorPrototype%
     }
     method(cx, iterator_proto, "next", 0, regexp_string_iterator_next);
-    iterator_proto->define("@@toStringTag", cx.string("RegExp String Iterator"), attr_configurable);
-    symbol_method(
-        "@@matchAll", "[Symbol.matchAll]", 1,
-        [iterator_proto](context & c, std::span<value> a) -> value {
-            const value rx = c.current_this();
-            if (!object_this(c, rx, "RegExp.prototype[Symbol.matchAll]")) {
-                return value::undefined();
+    iterator_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("RegExp String Iterator"),
+                           attr_configurable);
+    symbol_method("matchAll", 1, [iterator_proto](context & c, std::span<value> a) -> value {
+        const value rx = c.current_this();
+        if (!object_this(c, rx, "RegExp.prototype[Symbol.matchAll]")) { return value::undefined(); }
+        if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }
+        const detail::unwind_watch watch{c};
+        const value subject = c.string(c.to_string(arg_at(a, 0)));
+        if (watch.threw()) { return value::undefined(); }
+        const context::rooted keep{c, subject};
+        const value ctor = species_constructor(c, rx, c.global("RegExp"));
+        if (ctor.is_undefined()) { return value::undefined(); }
+        std::string flags;
+        if (!read_flags(c, rx, flags)) { return value::undefined(); }
+        const value flags_value = c.string(flags);
+        const context::rooted keep_flags{c, flags_value};
+        const value args[2] = {rx, flags_value};
+        const value matcher = c.construct(ctor, args);
+        if (watch.threw()) { return value::undefined(); }
+        const context::rooted keep_matcher{c, matcher};
+        double last = 0;
+        if (!get_last_index(c, rx, last) || !set_last_index(c, matcher, last)) {
+            return value::undefined();
+        }
+        // %RegExpStringIteratorPrototype%.[[Prototype]] is
+        // %IteratorPrototype% (22.2.9.2) - found now, at first
+        // use, because Iterator installs after RegExp does.
+        if (!iterator_proto->prototype.is_object()) {
+            if (const value iterator = c.global("Iterator"); iterator.is_object_like()) {
+                const value base = c.lookup_property(iterator, "prototype");
+                if (base.is_object()) { iterator_proto->prototype = base; }
             }
-            if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }
-            const detail::unwind_watch watch{c};
-            const value subject = c.string(c.to_string(arg_at(a, 0)));
-            if (watch.threw()) { return value::undefined(); }
-            const context::rooted keep{c, subject};
-            const value ctor = species_constructor(c, rx, c.global("RegExp"));
-            if (ctor.is_undefined()) { return value::undefined(); }
-            std::string flags;
-            if (!read_flags(c, rx, flags)) { return value::undefined(); }
-            const value flags_value = c.string(flags);
-            const context::rooted keep_flags{c, flags_value};
-            const value args[2] = {rx, flags_value};
-            const value matcher = c.construct(ctor, args);
-            if (watch.threw()) { return value::undefined(); }
-            const context::rooted keep_matcher{c, matcher};
-            double last = 0;
-            if (!get_last_index(c, rx, last) || !set_last_index(c, matcher, last)) {
-                return value::undefined();
-            }
-            // %RegExpStringIteratorPrototype%.[[Prototype]] is
-            // %IteratorPrototype% (22.2.9.2) - found now, at first
-            // use, because Iterator installs after RegExp does.
-            if (!iterator_proto->prototype.is_object()) {
-                if (const value iterator = c.global("Iterator"); iterator.is_object_like()) {
-                    const value base = c.lookup_property(iterator, "prototype");
-                    if (base.is_object()) { iterator_proto->prototype = base; }
-                }
-            }
-            value made = c.make_object();
-            auto * it = static_cast<object_object *>(made.as_heap());
-            it->prototype = value::object(iterator_proto);
-            it->define("@#IteratingRegExp", matcher, attr_none);
-            it->define("@#IteratedString", subject, attr_none);
-            it->define("@#Global", value::boolean(flags.find('g') != std::string::npos), attr_none);
-            it->define("@#FullUnicode",
-                       value::boolean(flags.find('u') != std::string::npos ||
-                                      flags.find('v') != std::string::npos),
-                       attr_none);
-            it->define("@#Done", value::boolean(false), attr_none);
-            return made;
-        });
-    method(cx, iterator_proto, "@@iterator", 0,
+        }
+        value made = c.make_object();
+        auto * it = static_cast<object_object *>(made.as_heap());
+        it->prototype = value::object(iterator_proto);
+        it->define(CTBROWSER_PRIVATE_KEY("IteratingRegExp"), matcher, attr_none);
+        it->define(CTBROWSER_PRIVATE_KEY("IteratedString"), subject, attr_none);
+        it->define(CTBROWSER_PRIVATE_KEY("Global"),
+                   value::boolean(flags.find('g') != std::string::npos), attr_none);
+        it->define(CTBROWSER_PRIVATE_KEY("FullUnicode"),
+                   value::boolean(flags.find('u') != std::string::npos ||
+                                  flags.find('v') != std::string::npos),
+                   attr_none);
+        it->define(CTBROWSER_PRIVATE_KEY("Done"), value::boolean(false), attr_none);
+        return made;
+    });
+    method(cx, iterator_proto, CTBROWSER_SYMBOL_KEY("iterator"), 0,
            [](context & c, std::span<value>) { return c.current_this(); });
 
     // 22.2.6.11 [@@replace](string, replaceValue)
-    symbol_method("@@replace", "[Symbol.replace]", 2, [](context & c, std::span<value> a) -> value {
+    symbol_method("replace", 2, [](context & c, std::span<value> a) -> value {
         const value rx = c.current_this();
         if (!object_this(c, rx, "RegExp.prototype[Symbol.replace]")) { return value::undefined(); }
         if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }
@@ -856,7 +856,7 @@ void install_regexp(context & cx) {
     });
 
     // 22.2.6.12 [@@search](string): lastIndex is put back however it was.
-    symbol_method("@@search", "[Symbol.search]", 1, [](context & c, std::span<value> a) -> value {
+    symbol_method("search", 1, [](context & c, std::span<value> a) -> value {
         const value rx = c.current_this();
         if (!object_this(c, rx, "RegExp.prototype[Symbol.search]")) { return value::undefined(); }
         if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }
@@ -893,7 +893,7 @@ void install_regexp(context & cx) {
     // 22.2.6.14 [@@split](string, limit): a STICKY species copy walks the
     // subject one position at a time, which is what makes an empty match and
     // a lookahead at a boundary come out the way they do.
-    symbol_method("@@split", "[Symbol.split]", 2, [](context & c, std::span<value> a) -> value {
+    symbol_method("split", 2, [](context & c, std::span<value> a) -> value {
         const value rx = c.current_this();
         if (!object_this(c, rx, "RegExp.prototype[Symbol.split]")) { return value::undefined(); }
         if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }

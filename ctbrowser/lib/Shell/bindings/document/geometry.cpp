@@ -121,7 +121,7 @@ struct interface_pair {
     auto * ctor = cx.allocate<script::native_object>(name, std::move(construct));
     ctor->define("prototype", value::object(proto), script::attr_none);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
-    proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name), script::attr_configurable);
     cx.define_builtin_global(name, value::object(ctor));
     return {ctor, proto};
 }

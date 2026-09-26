@@ -27,7 +27,7 @@ namespace {
 } // namespace
 
 value iterator_kind_prototype(context & cx, const char * tag, native_fn next) {
-    const std::string key = std::string{"@#IteratorPrototype:"} + tag;
+    const std::string key = std::string{CTBROWSER_PRIVATE_KEY("IteratorPrototype:")} + tag;
     object_object * home = nullptr; // null only once a page has deleted `Array`
     if (const value array = cx.global("Array"); array.is_object_like()) {
         if (const value proto = cx.lookup_property(array, "prototype"); proto.is_object()) {
@@ -41,7 +41,8 @@ value iterator_kind_prototype(context & cx, const char * tag, native_fn next) {
         const value proto = cx.lookup_property(iterator, "prototype");
         if (proto.is_object()) { made->prototype = proto; }
     }
-    made->define("@@toStringTag", cx.string(std::string{tag}), attr_configurable);
+    made->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(std::string{tag}),
+                 attr_configurable);
     detail::method(cx, made, "next", 0, std::move(next));
     if (home != nullptr) { home->define(key, value::object(made), attr_none); }
     return value::object(made);
@@ -56,9 +57,9 @@ namespace {
 // CreateArrayIterator's state (23.1.5.1), as private slots on the iterator.
 // [[IteratedArrayLike]] undefined means the closure has RETURNED: exhausted,
 // or ended by a throw, and every later `next` is done.
-inline constexpr std::string_view iterated_key = "@#IteratedArrayLike";
-inline constexpr std::string_view next_index_key = "@#ArrayLikeNextIndex";
-inline constexpr std::string_view kind_key = "@#ArrayLikeIterationKind";
+inline constexpr std::string_view iterated_key = CTBROWSER_PRIVATE_KEY("IteratedArrayLike");
+inline constexpr std::string_view next_index_key = CTBROWSER_PRIVATE_KEY("ArrayLikeNextIndex");
+inline constexpr std::string_view kind_key = CTBROWSER_PRIVATE_KEY("ArrayLikeIterationKind");
 
 // %ArrayIteratorPrototype%.next (23.1.5.2.1): one step of CreateArrayIterator's
 // closure, LIVE over the array-like. `length` is read on EVERY step (a
@@ -650,7 +651,8 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         if (!fn.is_callable()) {
             object_object * table = c.prototype(context::proto_kind::object);
             const value * intrinsic =
-                table == nullptr ? nullptr : table->find("@#IntrinsicObjectToString:");
+                table == nullptr ? nullptr
+                                 : table->find(CTBROWSER_PRIVATE_KEY("IntrinsicObjectToString:"));
             if (intrinsic == nullptr) { return c.string("[object Object]"); }
             fn = *intrinsic;
         }
@@ -681,7 +683,8 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     // `for await`, spread of an array into a Map, and anything driving the
     // protocol by hand does.
     if (value * values = array_proto->find("values")) {
-        array_proto->define("@@iterator", *values, attr_writable | attr_configurable);
+        array_proto->define(CTBROWSER_SYMBOL_KEY("iterator"), *values,
+                            attr_writable | attr_configurable);
     }
     // 23.1.3.41 Array.prototype[@@unscopables]: a null-prototype object naming
     // the methods a `with (array)` block must not resolve, each `true` and
@@ -696,7 +699,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
                                   "keys", "toReversed", "toSorted", "toSpliced", "values"}) {
             blocked->set(name, value::boolean(true));
         }
-        array_proto->define("@@unscopables", made, attr_configurable);
+        array_proto->define(CTBROWSER_SYMBOL_KEY("unscopables"), made, attr_configurable);
     }
     // --- THE FIVE THAT WERE NOT HERE AT ALL ---------------------------------
     //

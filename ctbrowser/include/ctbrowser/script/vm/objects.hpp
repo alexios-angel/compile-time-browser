@@ -57,6 +57,14 @@ struct realm_record {
     // enumerable and NOT configurable, so `delete` refuses them (16.1.7
     // CreateGlobalVarBinding).
     string_flat_map<bool> declared;
+    // THE GLOBAL ENVIRONMENT'S TWO NAME LISTS (9.1.1.4): every `var` and
+    // function a script declared ([[VarNames]]) and every top-level `let`,
+    // `const` and `class` ([[DeclarativeRecord]]'s names). A later script
+    // colliding with either is refused before it runs
+    // (context::global_declaration_instantiation), and a lexical name is not
+    // a property of the global object, though its value lives in `globals`.
+    string_flat_map<bool> var_names;
+    string_flat_map<bool> lexical;
     // THE PLATFORM'S NAMES - every intrinsic (clause 19) and every interface
     // object or namespace a binding installed (WebIDL 3.7.1): { writable,
     // !enumerable, configurable }. Any other binding is a script's plain
@@ -287,6 +295,14 @@ struct closure_object final : heap_object {
     // flag above has the same story.
     bool name_erased = false;
     bool length_erased = false;
+    // A DERIVED CLASS'S CONSTRUCTOR WHILE ITS BODY IS BEING EVALUATED: a
+    // static method is defined on it, not [[Set]] through the parent class's
+    // statics - see object_object::defining_class.
+    bool defining_class = false;
+    // A CLASS'S CONSTRUCTOR (15.7.14 step 12: [[IsClassConstructor]]), set
+    // by the class_defined native once the class exists: it has no [[Call]]
+    // (10.2.1 step 2), which context::refuse_class_call enforces.
+    bool class_constructor = false;
 
     const function_proto * proto = nullptr;
     // WHICH PROGRAM ITS NESTED FUNCTIONS LIVE IN. `op::closure` names a

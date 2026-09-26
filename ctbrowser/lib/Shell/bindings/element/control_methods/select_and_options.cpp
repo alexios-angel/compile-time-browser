@@ -455,7 +455,8 @@ void dom_bindings::install_control_select_options(context & cx) {
                 traps->set("set", value::object(trap));
             }
         }
-        c.store_property(list, "@@sym:ctbrowser:options-owner", b->wrap(c, select));
+        c.store_property(list, CTBROWSER_SYMBOL_KEY("sym:ctbrowser:options-owner"),
+                         b->wrap(c, select));
         helpers.set_slot(c, b, select, "__options", list);
         return list;
     };
@@ -610,12 +611,10 @@ void dom_bindings::install_control_select_options(context & cx) {
     if (!secondary_) {
         if (auto * on = helpers.proto("HTMLOptionsCollection")) {
             const auto owner_select = [this](context & c) -> std::pair<dom_bindings *, node_id> {
-                const value select =
-                    c.lookup_property(c.current_this(), "@@sym:ctbrowser:options-owner");
+                const value select = c.lookup_property(
+                    c.current_this(), CTBROWSER_SYMBOL_KEY("sym:ctbrowser:options-owner"));
                 dom_bindings * b = owner_of(select);
-                if (b == nullptr) {
-                    return {nullptr, node_id{}};
-                }
+                if (b == nullptr) { return {nullptr, node_id{}}; }
                 return {b, b->handle_of(select)};
             };
             on->define_accessor(

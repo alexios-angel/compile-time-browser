@@ -14,6 +14,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <ctbrowser/script/vm.hpp>
@@ -121,6 +122,26 @@ value context::invoke(value callable, std::span<const value> args, value this_va
         // native's call site: the enclosing fence or handler, or a fault.
         if (rethrow_pending()) { return value::undefined(); }
         return out;
+    }
+    // A PROXY'S [[Call]] (10.5.12): the `apply` trap with (target, this,
+    // argsArray) and the handler as `this`, or - no trap - Call(target, ...),
+    // which is how a proxy over a proxy over a bound function reaches it. A
+    // revoked one is proxy_trap's TypeError. `typeof` already said "function"
+    // for any proxy over a callable (value::is_callable); this is what makes
+    // calling one agree, from `.call`/`.apply` and from op::call alike.
+    if (callable.is_kind(heap_kind::proxy)) {
+        auto * p = static_cast<proxy_object *>(callable.as_heap());
+        if (!p->target.is_callable()) { return value::undefined(); }
+        const rooted keep_callable{*this, callable};
+        bool failed = false;
+        const value trap = proxy_trap(callable, "apply", &failed);
+        if (failed || throw_pending()) { return value::undefined(); }
+        if (!trap.is_callable()) { return call(p->target, args, this_value); }
+        const rooted keep_trap{*this, trap};
+        const value list = make_array();
+        static_cast<array_object *>(list.as_heap())->items.assign(args.begin(), args.end());
+        const value trap_args[3] = {p->target, this_value, list};
+        return call(trap, trap_args, p->handler);
     }
     if (!callable.is_kind(heap_kind::function) || program_ == nullptr) {
         return value::undefined();
@@ -433,29 +454,49 @@ value context::iterable_values(value v) {
     const bool materialising =
         std::find_if(materialising_.begin(), materialising_.end(),
                      [&](value held) { return held.bits() == v.bits(); }) != materialising_.end();
-    if (const value method = lookup_property(v, "@@iterator");
-        method.is_callable() && !materialising) {
+    // EVERY STEP BELOW CAN THROW, and from the interpreter a throw lands on
+    // the page's handler at once - throw_pending never sees it, only
+    // unwinds_ does (contract-17). Whatever landed is the answer: one more
+    // step, or a TypeError of our own on top, would be a second throw that
+    // unwinds past the handler the first one reached.
+    const std::size_t unwound = unwinds_;
+    const auto threw = [&] { return unwinds_ != unwound || throw_pending(); };
+    // GetMethod once (7.3.10): a getter runs one time, and a method that is
+    // there but not callable - `null` included - is the TypeError of
+    // GetIterator. Only an ABSENT one falls through to the array-like walk.
+    const value method = lookup_property(v, CTBROWSER_SYMBOL_KEY("iterator"));
+    if (threw()) { return make_array(); }
+    if (!method.is_undefined() && !method.is_callable()) {
+        throw_error("TypeError", std::string{type_of(v)} + " is not iterable");
+        return make_array();
+    }
+    if (method.is_callable() && !materialising) {
         materialising_.push_back(v);
-        const value iterator = get_iterator(v);
-        const rooted keep_iterator{*this, iterator};
         value out = make_array();
         const rooted keep{*this, out}; // see the generator branch above
-        if (iterator.is_object()) {
+        const value iterator = call(method, {}, v);
+        const rooted keep_iterator{*this, iterator};
+        // 7.4.2 GetIteratorFromMethod step 3: any Object, a proxy or a
+        // function included.
+        if (!threw() && !iterator.is_object_like()) {
+            throw_error("TypeError", "Result of the Symbol.iterator method is not an object");
+        }
+        const value next = threw() ? value::undefined() : lookup_property(iterator, "next");
+        const rooted keep_next{*this, next};
+        if (!threw()) {
             auto * items = static_cast<array_object *>(out.as_heap());
-            const value next = lookup_property(iterator, "next");
-            const rooted keep_next{*this, next};
             std::size_t guard = 0;
-            for (; guard < 1u << 20 && !throw_pending(); ++guard) {
+            for (; guard < 1u << 20; ++guard) {
                 bool done = false;
                 const value item = iterator_step(iterator, next, done);
-                if (done || throw_pending()) { break; }
+                if (done) { break; } // the end, or a throw - iterator_step says done for both
                 items->items.push_back(item);
             }
             // An iterator that never finishes is an infinite loop under an
             // eager materialisation; a diagnosable throw beats an
             // out-of-memory kill (test262's for-of IteratorClose tests are
             // exactly this shape: `next` never says done and the body breaks).
-            if (guard == 1u << 20 && !throw_pending()) {
+            if (guard == 1u << 20 && !threw()) {
                 throw_error("RangeError", "iterator did not finish in 1,048,576 steps - "
                                           "for-of materialises its source (docs/script.md)");
             }
@@ -490,7 +531,7 @@ value context::get_iterator(value v) {
         return value::undefined();
     }
     const std::size_t unwound = unwinds_;
-    const value method = lookup_property(v, "@@iterator");
+    const value method = lookup_property(v, CTBROWSER_SYMBOL_KEY("iterator"));
     if (unwinds_ != unwound || throw_pending()) { return value::undefined(); } // a getter threw
     if (!method.is_callable()) {
         // A TYPED ARRAY, A Map, A Set OR AN ARRAY-LIKE THE LIBRARY OWNS has
@@ -513,7 +554,7 @@ value context::get_iterator(value v) {
             return value::undefined();
         }
         const value items = iterable_values(v);
-        if (throw_pending()) { return value::undefined(); }
+        if (unwinds_ != unwound || throw_pending()) { return value::undefined(); }
         const rooted keep{*this, items};
         auto * state = static_cast<object_object *>(make_object().as_heap());
         const rooted keep_state{*this, value::object(state)};
@@ -535,8 +576,11 @@ value context::get_iterator(value v) {
         it->set("state", value::object(state)); // keeps the list reachable
         return iterator;
     }
+    // The call's throw has LANDED when the interpreter is what asked (the
+    // run loop's handler took it, contract-17) - a TypeError on top of it
+    // would be a second throw, unwinding past that handler.
     const value iterator = call(method, {}, v);
-    if (throw_pending()) { return value::undefined(); }
+    if (unwinds_ != unwound || throw_pending()) { return value::undefined(); }
     // ANY OBJECT - a proxy, a function, an array - not only an ordinary one
     // (7.4.2 GetIteratorFromMethod step 3: "is not an Object").
     if (!iterator.is_object_like()) {
@@ -547,20 +591,29 @@ value context::get_iterator(value v) {
 }
 
 value context::iterator_step(value iterator, value next, bool & done) {
+    // DONE ON A THROW TOO, as IteratorStep leaves the record's [[Done]] - so a
+    // caller's loop stops whether the throw is pending or has already landed
+    // on an interpreted handler, which throw_pending cannot see (the unwinds_
+    // test below is what can).
     done = true;
     if (!next.is_callable()) {
         throw_error("TypeError", "iterator.next is not a function");
         return value::undefined();
     }
+    const std::size_t unwound = unwinds_;
+    const auto threw = [&] { return unwinds_ != unwound || throw_pending(); };
     const value result = call(next, {}, iterator);
-    if (throw_pending()) { return value::undefined(); }
+    if (threw()) { return value::undefined(); }
     if (!result.is_object_like()) {
         throw_error("TypeError", "Iterator result is not an object");
         return value::undefined();
     }
-    done = truthy(lookup_property(result, "done"));
-    if (done || throw_pending()) { return value::undefined(); }
-    return lookup_property(result, "value");
+    const value finished = lookup_property(result, "done");
+    if (threw() || truthy(finished)) { return value::undefined(); }
+    const value item = lookup_property(result, "value");
+    if (threw()) { return value::undefined(); }
+    done = false;
+    return item;
 }
 
 std::vector<value> context::spread_arguments(value arg_array) {
@@ -571,7 +624,21 @@ std::vector<value> context::spread_arguments(value arg_array) {
     return static_cast<array_object *>(arg_array.as_heap())->items;
 }
 
+bool context::refuse_class_call(value callee, bool super_call) {
+    if (super_call || !callee.is_kind(heap_kind::function) || !pending_new_target_.is_undefined()) {
+        return false;
+    }
+    const auto * closure = static_cast<const closure_object *>(callee.as_heap());
+    if (!closure->class_constructor) { return false; }
+    const std::string name = closure->proto != nullptr ? closure->proto->display_name() : "";
+    throw_error("TypeError", "Class constructor " +
+                                 (name.empty() ? std::string{"(anonymous)"} : name) +
+                                 " cannot be invoked without 'new'");
+    return true;
+}
+
 value context::call_spread(value callee, value arg_array, value receiver) {
+    if (refuse_class_call(callee, std::exchange(super_call_, false))) { return callee; }
     const std::vector<value> args = spread_arguments(arg_array);
     if (!callee.is_callable()) {
         // AND THE DESTINATION IS LEFT ALONE, which is why this answers the
@@ -625,10 +692,11 @@ value context::make_arguments_object(call_frame & fr, const value * slots, std::
         items->prototype = value::object(table);
     }
     object_object & named = items->named_table();
-    named.define("@#Arguments", value::boolean(true), attr_none);
+    named.define(CTBROWSER_PRIVATE_KEY("Arguments"), value::boolean(true), attr_none);
     if (object_object * table = prototype(proto_kind::array)) {
         if (value * values = table->find("values")) {
-            named.define("@@iterator", *values, attr_writable | attr_configurable);
+            named.define(CTBROWSER_SYMBOL_KEY("iterator"), *values,
+                         attr_writable | attr_configurable);
         }
     }
     const function_proto * proto = fr.proto;

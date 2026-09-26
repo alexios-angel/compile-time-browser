@@ -292,7 +292,7 @@ void dom_bindings::install_animations(context & cx) {
     // §3.7.3): `assert_class_string(getAnimations()[0], "CSSTransition")` is
     // how css-properties-values-api asks what a transition is, and without it
     // an Animation answered with the EventTarget's tag it inherits.
-    timeline_proto->define("@@toStringTag", cx.string("DocumentTimeline"),
+    timeline_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("DocumentTimeline"),
                            script::attr_configurable);
     cx.define_builtin_global("DocumentTimeline", value::object(timeline_ctor));
     auto * timeline = cx.allocate<script::object_object>();
@@ -451,7 +451,8 @@ void dom_bindings::install_animations(context & cx) {
         });
     effect_ctor->define("prototype", keyframe_effect_prototype_, script::attr_none);
     effect_proto->define("constructor", value::object(effect_ctor), script::attr_builtin);
-    effect_proto->define("@@toStringTag", cx.string("KeyframeEffect"), script::attr_configurable);
+    effect_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("KeyframeEffect"),
+                         script::attr_configurable);
     cx.define_builtin_global("KeyframeEffect", value::object(effect_ctor));
 
     // --- Animation ------------------------------------------------------------
@@ -698,7 +699,8 @@ void dom_bindings::install_animations(context & cx) {
         });
     ctor->define("prototype", animation_prototype_, script::attr_none);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
-    proto->define("@@toStringTag", cx.string("Animation"), script::attr_configurable);
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Animation"),
+                  script::attr_configurable);
     cx.define_builtin_global("Animation", value::object(ctor));
     animation_interface_ = ctor;
 
@@ -724,7 +726,8 @@ void dom_bindings::install_animations(context & cx) {
             });
         sub_ctor->define("prototype", value::object(sub), script::attr_none);
         sub->define("constructor", value::object(sub_ctor), script::attr_builtin);
-        sub->define("@@toStringTag", cx.string(name), script::attr_configurable);
+        sub->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name),
+                    script::attr_configurable);
         cx.define_builtin_global(name, value::object(sub_ctor));
         return value::object(sub);
     };

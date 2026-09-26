@@ -249,33 +249,36 @@ private:
     mutable std::unique_ptr<utf16_mark[]> marks_;
 };
 
-// The spelling that marks a property key as a SYMBOL rather than a string:
+// The spellings that mark a property key as a SYMBOL rather than a string:
 // the enumeration walk, the JSON writer and the code that mints them all
-// recognise it.
+// recognise them (core/symbol.hpp).
+using ctbrowser::registered_symbol_key_prefix;
+using ctbrowser::symbol_key_mark;
 using ctbrowser::symbol_key_prefix;
-// A PRIVATE NAME'S KEY. `#x` is a property of the object here, not a slot in
-// a per-class private environment - but its key is `@#x`, which no source
-// text can spell as a property name, so `o["#x"]`, `"#x" in o`,
-// hasOwnProperty, Object.keys/getOwnPropertyNames/getOwnPropertySymbols,
-// for-in and JSON.stringify never see it (7.3.28-ish: private elements are
-// not properties). What is NOT modelled is the brand: an instance of another
-// evaluation of the same class body answers rather than throwing TypeError.
-inline constexpr std::string_view private_key_prefix = "@#";
+// A PRIVATE NAME'S KEY, and an INTERNAL SLOT'S. `#x` is a property of the
+// object here, not a slot in a per-class private environment - but its key is
+// the internal lead byte, `#` and `x` (core/symbol.hpp), which no JS string
+// can hold, so `o["#x"]`, `"#x" in o`, hasOwnProperty,
+// Object.keys/getOwnPropertyNames/getOwnPropertySymbols, for-in and
+// JSON.stringify never see it (7.3.28-ish: private elements are not
+// properties). A built-in's slot - [[ErrorData]], a RegExp String Iterator's
+// [[IteratedString]] - is the same kind of key, spelled
+// CTBROWSER_PRIVATE_KEY("ErrorData"), and exactly as out of a page's reach.
+#define CTBROWSER_PRIVATE_KEY(text) CTBROWSER_INTERNAL_KEY_LEAD "#" text
+inline constexpr std::string_view private_key_prefix = CTBROWSER_PRIVATE_KEY("");
 [[nodiscard]] inline bool is_private_key(std::string_view key) noexcept {
     return key.starts_with(private_key_prefix);
 }
 
-// A SYMBOL IS A PROPERTY KEY NOBODY CAN WRITE BY ACCIDENT.
+// A SYMBOL IS A PROPERTY KEY NOBODY CAN WRITE BY ACCIDENT - OR ON PURPOSE.
 //
-// Its identity is `key`, a string chosen so no source literal can collide with
-// it: `@@iterator` for the well-known ones, `@@sym:<n>:<description>` for the
-// rest. Property access already goes through to_string() for a computed key, so
-// a symbol-keyed property works through the existing string-keyed machinery
-// with no change to the object model at all.
-//
-// What that trades away, said out loud: a symbol is not truly unforgeable - a
-// page that writes `o["@@iterator"]` reaches the same slot - and printing one
-// shows its key. `typeof` is still "symbol", which is what code branches on.
+// Its identity is `key`, a string no JS string can equal: the internal lead
+// byte, `@`, then the well-known name (`iterator`) or `sym:<n>:<description>`
+// or `for:<key>` (core/symbol.hpp). Property access already goes through
+// to_string() for a computed key, so a symbol-keyed property works through the
+// existing string-keyed machinery with no change to the object model at all.
+// `typeof` is "symbol", and ToPropertyKey hands the key back as the symbol
+// (context::key_value), never as a string a page could hold.
 struct symbol_object final : heap_object, ctbrowser::symbol_value {
     symbol_object(std::string d, std::string k)
         : heap_object(heap_kind::symbol), symbol_value(std::move(d), std::move(k)) {}

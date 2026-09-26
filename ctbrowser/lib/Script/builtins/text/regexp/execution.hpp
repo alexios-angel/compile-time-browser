@@ -7,21 +7,21 @@ namespace ctbrowser::script::builtins_detail::regexp_detail {
 
 using regex_cache = std::map<std::string, std::shared_ptr<rx::rx_prog>>;
 
-inline constexpr std::string_view slot_source = "@#RegExpSource";
+inline constexpr std::string_view slot_source = CTBROWSER_PRIVATE_KEY("RegExpSource");
 
-inline constexpr std::string_view slot_flags = "@#RegExpFlags";
+inline constexpr std::string_view slot_flags = CTBROWSER_PRIVATE_KEY("RegExpFlags");
 
 // [[LegacyFeaturesEnabled]] (the legacy RegExp features, Annex B): present on
 // an instance RegExpAlloc made with %RegExp% itself as new.target - a literal,
 // `RegExp(p)`, `new RegExp(p)` - and absent on a subclass's.
-inline constexpr std::string_view slot_legacy = "@#RegExpLegacyFeatures";
+inline constexpr std::string_view slot_legacy = CTBROWSER_PRIVATE_KEY("RegExpLegacyFeatures");
 // %RegExp%'s legacy static slots ([[RegExpInput]], [[RegExpLastMatch]], ...)
 // as ONE record on the INTRINSIC %RegExp.prototype% - which a page can neither
 // replace nor spell - beside %RegExp% itself, which their accessors compare
 // the receiver against. The record is an array laid out as legacy_field says;
 // undefined in its place is the "empty" an invalidation leaves.
-inline constexpr std::string_view slot_legacy_record = "@#RegExpLegacyStatics";
-inline constexpr std::string_view slot_intrinsic = "@#RegExpIntrinsic";
+inline constexpr std::string_view slot_legacy_record = CTBROWSER_PRIVATE_KEY("RegExpLegacyStatics");
+inline constexpr std::string_view slot_intrinsic = CTBROWSER_PRIVATE_KEY("RegExpIntrinsic");
 enum legacy_field : std::size_t {
     legacy_input,
     legacy_last_match,
