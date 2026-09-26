@@ -159,6 +159,24 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-number-read-conditional-return-snapshot": """function customElements(anchor) {
+  let saved = 0;
+  try {
+    saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null);
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-conditional-divide-return": """function customElements(anchor) {
+  try {
+    const saved = 1 / Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null);
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "write-number-read-arithmetic-conditional-callee": "function customElements(anchor) { try { const saved = Number(anchor.hasAttribute('data-closed') ? anchor.getAttribute('data-number') : null) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; } }\n",
     "helper-next-record": """function customElements(anchor) {
   function next() {
@@ -245,10 +263,15 @@ NUMBER_ARITHMETIC_RESULTS = {
 NUMBER_ARITHMETIC_RESULTS["write-number-read-arithmetic-conditional-callee"] = (
     NUMBER_ARITHMETIC_RESULTS["write-number-read-protected-add"]
 )
+NUMBER_ARITHMETIC_RESULTS["write-number-read-conditional-divide-return"] = (
+    NUMBER_ARITHMETIC_RESULTS["write-number-read-protected-divide-return"]
+)
 NUMBER_CONDITIONAL_READS = {
     "write-number-read-conditional": ("flag", "0"),
     "write-number-read-conditional-snapshot": ("flag", "0"),
     "write-number-read-conditional-return": ("flag", "0"),
+    "write-number-read-conditional-return-snapshot": ("flag", "0"),
+    "write-number-read-conditional-divide-return": ("flag", "Infinity"),
     "write-number-read-arithmetic-conditional-callee": ("data-closed", "1"),
 }
 
@@ -688,17 +711,6 @@ def main():
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
                 label = f"caught-node-{name}-{provider}-{optimize}"
-                # Keep this complete witness: checked-invocation state still needs proof.
-                if name == "write-number-read-conditional-return":
-                    dom.lower(
-                        args,
-                        ir,
-                        dict(contract, provider=provider),
-                        label,
-                        optimize=optimize,
-                        success=False,
-                    )
-                    continue
                 native = dom.lower(
                     args, ir, dict(contract, provider=provider), label, optimize=optimize
                 )
@@ -794,6 +806,16 @@ def main():
             "mixed-protected-throw-call": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { decodeURIComponent('%'); throw anchor; } } catch (error) { return error === anchor; } return false;",
             "mixed-rethrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { throw error; } return false;",
             "mixed-return-borrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { return error; } return false;",
+        }
+    )
+    # The same effects and callable origins must refuse with a normal protected return.
+    refusals.update(
+        {
+            name.replace("conditional-", "conditional-return-", 1): body.replace(
+                "throw anchor;", "return true;"
+            )
+            for name, body in refusals.items()
+            if name.startswith("write-number-read-conditional-")
         }
     )
     nested_body = SOURCES["mixed-node-nested-state"].split("{", 1)[1].rsplit("}", 1)[0]
