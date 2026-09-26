@@ -109,6 +109,31 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-number-read-protected-add": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number')) + 1;
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-protected-arithmetic-snapshot": """function customElements(anchor) {
+  try {
+    const saved = -(+((Number(anchor.getAttribute('data-number')) * 2 - 1) / 2)) % 3;
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-protected-divide-return": """function customElements(anchor) {
+  try {
+    const saved = 1 / Number(anchor.getAttribute('data-number'));
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -140,6 +165,55 @@ NUMBER_READ_INPUTS = (
     ("invalid", "NaN"),
     ("\u00a042\ufeff", "42"),
 )
+
+
+NUMBER_ARITHMETIC_RESULTS = {
+    "write-number-read-protected-add": (
+        "1",
+        "1",
+        "1",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "17",
+        "4",
+        "8.5",
+        "1.0000001",
+        "1e+21",
+        "NaN",
+        "43",
+    ),
+    "write-number-read-protected-arithmetic-snapshot": (
+        "0.5",
+        "0.5",
+        "0.5",
+        "NaN",
+        "NaN",
+        "NaN",
+        "-0.5",
+        "-2.5",
+        "-1",
+        "0.4999999",
+        "-1",
+        "NaN",
+        "-2.5",
+    ),
+    "write-number-read-protected-divide-return": (
+        "Infinity",
+        "Infinity",
+        "-Infinity",
+        "NaN",
+        "0",
+        "0",
+        "0.0625",
+        "0.3333333333333333",
+        "0.13333333333333333",
+        "10000000",
+        "1e-21",
+        "NaN",
+        "0.023809523809523808",
+    ),
+}
 
 
 WRITE_EXPECTED = {
@@ -245,6 +319,17 @@ def main():
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
     for name, source in SOURCES.items():
+        number_inputs = (
+            tuple(
+                zip(
+                    (value for value, _ in NUMBER_READ_INPUTS),
+                    NUMBER_ARITHMETIC_RESULTS[name],
+                    strict=True,
+                )
+            )
+            if name in NUMBER_ARITHMETIC_RESULTS
+            else NUMBER_READ_INPUTS
+        )
         script = (
             source
             + "function observe(closed) { let reads = 0; "
@@ -339,7 +424,7 @@ def main():
                 + "write:data-written="
                 + result
                 + ";"
-                for value, result in NUMBER_READ_INPUTS
+                for value, result in number_inputs
             )
             expected = "".join(
                 f"result{index}={json.dumps(trace, ensure_ascii=False)}\n" for index in (0, 1)
@@ -504,7 +589,7 @@ def main():
                 + ", "
                 + json.dumps(result)
                 + "}"
-                for value, result in NUMBER_READ_INPUTS
+                for value, result in number_inputs
             )
             checks = (
                 r"""
@@ -611,6 +696,20 @@ def main():
             "write-number-read-protected-wrong-number-receiver": "try { const saved = Number.call(anchor, anchor.getAttribute('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
             "write-number-read-protected-invalid-name": "try { const saved = Number(anchor.getAttribute('data-number')); anchor.setAttribute('bad name', saved); throw anchor; } catch (error) { return error === anchor; }",
             "write-number-read-protected-mixed-join": "try { const saved = Number(anchor.hasAttribute('data-closed') ? anchor.getAttribute('data-number') : anchor); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-without-intrinsic": "try { const saved = Number(anchor.getAttribute('data-number')) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-rebound-intrinsic": "try { Number = anchor; const saved = Number(anchor.getAttribute('data-number')) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-rebound-getter": "try { anchor.getAttribute = anchor.setAttribute; const saved = Number(anchor.getAttribute('data-number')) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-coercing-input": "try { const saved = Number(anchor) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-coercing-add": "try { const saved = Number(anchor.getAttribute('data-number')) + anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-string-add": "try { const saved = Number(anchor.getAttribute('data-number')) + '1'; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-bigint-add": "try { const saved = Number(anchor.getAttribute('data-number')) + 1n; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-mixed-join": "try { const saved = (anchor.hasAttribute('data-closed') ? Number(anchor.getAttribute('data-number')) : '1') + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-unknown-getter": "try { const saved = Number(anchor.getAttribute('data-number')) + anchor.unknown; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-unknown-producer": "try { const saved = Number(anchor.getAttribute('data-number')) + anchor.unknown(); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-unary-coercion": "try { const saved = +anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-negate-coercion": "try { const saved = -anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-divide-coercion": "try { const saved = 1 / anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-conditional-callee": "try { const saved = Number(anchor.hasAttribute('data-closed') ? anchor.getAttribute('data-number') : null) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
             "mixed-protected-throw-call": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { decodeURIComponent('%'); throw anchor; } } catch (error) { return error === anchor; } return false;",
             "mixed-rethrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { throw error; } return false;",
             "mixed-return-borrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { return error; } return false;",
