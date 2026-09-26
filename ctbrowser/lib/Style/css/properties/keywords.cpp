@@ -728,6 +728,131 @@ constexpr pair_grammar pair_grammars[] = {
     return out;
 }
 
+// `[ <family-name> | <generic-family> ]#` (CSS Fonts 4 §2.1): a family is a
+// string or a run of identifiers, none of them a generic family or a
+// CSS-wide keyword - `cursive serif` is no family - and a generic family is
+// one identifier, which is ASCII case-insensitive and folds (`Serif` is
+// `serif`). Anything else between the commas - `Red/Black`, `test@foo`, a
+// string with a word after it - is invalid. serialize_font_family writes it.
+[[nodiscard]] std::optional<std::string> font_family(const token_stream & ts, const scan & found) {
+    static constexpr std::string_view generics =
+        "serif sans-serif cursive fantasy monospace system-ui emoji math fangsong ui-serif "
+        "ui-sans-serif ui-monospace ui-rounded";
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return std::nullopt; }
+    std::string out;
+    for (const std::vector<std::size_t> & item : *items) {
+        std::string one;
+        if (item.size() == 1 && ts.tokens[item[0]].type == token_type::string) {
+            one = normalize_value_tokens(ts, ts.text_of(ts.tokens[item[0]]), nullptr, item[0],
+                                         item[0] + 1);
+        } else {
+            for (const std::size_t at : item) {
+                const css_token & t = ts.tokens[at];
+                if (t.type != token_type::ident) { return std::nullopt; }
+                const std::string_view word = ts.text_of(t);
+                if (item.size() == 1 && has_keyword(generics, word)) {
+                    one = ascii_lower_copy(word);
+                    break;
+                }
+                if (has_keyword(generics, word) || is_wide_keyword(word) ||
+                    ascii_iequals(word, "default")) {
+                    return std::nullopt;
+                }
+                one += (one.empty() ? "" : " ") + std::string{word};
+            }
+        }
+        out += (out.empty() ? "" : ", ") + one;
+    }
+    return serialize_font_family(out);
+}
+
+// A four-character ASCII <string>, the OpenType tag of a feature or an axis
+// (CSS Fonts 4 §6.12, §7.2); its canonical spelling, or nullopt.
+[[nodiscard]] std::optional<std::string> opentype_tag(const token_stream & ts,
+                                                      const css_token & t) {
+    if (t.type != token_type::string) { return std::nullopt; }
+    const std::string_view tag = ts.value_of(t);
+    if (tag.size() != 4) { return std::nullopt; }
+    for (const char c : tag) {
+        if (c < 0x20 || c > 0x7e) { return std::nullopt; }
+    }
+    return "\"" + std::string{tag} + "\"";
+}
+
+// `normal | <feature-tag-value>#`, <feature-tag-value> = <opentype-tag>
+// [ <integer [0,∞]> | on | off ]? (CSS Fonts 4 §6.12): a value of 1 - `on`
+// or none at all - is left unwritten, and `off` is 0.
+[[nodiscard]] std::optional<std::string> font_feature_settings(const token_stream & ts,
+                                                               const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.size() == 1 && ts.tokens[at[0]].type == token_type::ident &&
+        ascii_iequals(ts.text_of(ts.tokens[at[0]]), "normal")) {
+        return "normal";
+    }
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return std::nullopt; }
+    std::string out;
+    for (const std::vector<std::size_t> & item : *items) {
+        if (item.empty() || item.size() > 2) { return std::nullopt; }
+        std::optional<std::string> tag = opentype_tag(ts, ts.tokens[item[0]]);
+        if (!tag) { return std::nullopt; }
+        std::string value;
+        if (item.size() == 2) {
+            const css_token & v = ts.tokens[item[1]];
+            if (v.type == token_type::ident && ascii_iequals(ts.text_of(v), "on")) {
+                value.clear();
+            } else if (v.type == token_type::ident && ascii_iequals(ts.text_of(v), "off")) {
+                value = "0";
+            } else if (v.type == token_type::number && (v.flags & flag_integer) != 0 &&
+                       v.number >= 0) {
+                value = v.number == 1 ? std::string{} : serialize_number(v.number);
+            } else {
+                return std::nullopt;
+            }
+        }
+        out += (out.empty() ? "" : ", ") + *tag + (value.empty() ? "" : " " + value);
+    }
+    return out;
+}
+
+// `normal | [ <opentype-tag> <number> ]#` (CSS Fonts 4 §7.2).
+[[nodiscard]] std::optional<std::string> font_variation_settings(const token_stream & ts,
+                                                                 const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.size() == 1 && ts.tokens[at[0]].type == token_type::ident &&
+        ascii_iequals(ts.text_of(ts.tokens[at[0]]), "normal")) {
+        return "normal";
+    }
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return std::nullopt; }
+    std::string out;
+    for (const std::vector<std::size_t> & item : *items) {
+        if (item.size() != 2) { return std::nullopt; }
+        std::optional<std::string> tag = opentype_tag(ts, ts.tokens[item[0]]);
+        const css_token & v = ts.tokens[item[1]];
+        if (!tag || v.type != token_type::number) { return std::nullopt; }
+        out += (out.empty() ? "" : ", ") + *tag + " " + serialize_number(v.number);
+    }
+    return out;
+}
+
+// `normal | light | dark | <palette-identifier> | <palette-mix()>` (CSS
+// Fonts 4 §9.1), a <palette-identifier> being a <dashed-ident>.
+[[nodiscard]] std::optional<std::string> font_palette(const token_stream & ts, const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.empty()) { return std::nullopt; }
+    const css_token & first = ts.tokens[at[0]];
+    if (first.type == token_type::function && ascii_iequals(ts.text_of(first), "palette-mix(")) {
+        return std::string{run_text(ts, at)};
+    }
+    if (at.size() != 1 || first.type != token_type::ident) { return std::nullopt; }
+    const std::string_view word = ts.text_of(first);
+    if (ascii_iequals_any(word, {"normal", "light", "dark"})) { return ascii_lower_copy(word); }
+    if (word.starts_with("--")) { return std::string{word}; }
+    return std::nullopt;
+}
+
 // `<length [0,∞]>{1,2}` (CSS Tables 3 §border-spacing): the horizontal
 // spacing and the vertical one, which is the horizontal when omitted - kept as
 // written, one value or two (border-spacing-valid).
@@ -960,6 +1085,27 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
     if (!handled && ascii_iequals(property, "border-spacing")) {
         handled = true;
         answer = border_spacing(ts, found);
+    }
+    // ...a family list with a function in it - `random-item()` - is the
+    // function's to check, and the free-form path below keeps it.
+    if (!handled && ascii_iequals(property, "font-family") &&
+        std::ranges::none_of(found.significant, [&ts](std::size_t i) {
+            return ts.tokens[i].type == token_type::function;
+        })) {
+        handled = true;
+        answer = font_family(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "font-feature-settings")) {
+        handled = true;
+        answer = font_feature_settings(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "font-variation-settings")) {
+        handled = true;
+        answer = font_variation_settings(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "font-palette")) {
+        handled = true;
+        answer = font_palette(ts, found);
     }
     if (!handled) { return false; }
     out = answer.value_or(std::string{});
