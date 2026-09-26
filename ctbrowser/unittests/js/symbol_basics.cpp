@@ -9,9 +9,9 @@
 // and stores it in the ordinary property table. That works for lookup - a
 // symbol key round-trips - and leaks everywhere the representation is
 // observable: Object.keys sees it, JSON.stringify serialises it, and
-// `String(sym)` prints it. Symbols also fail to be UNCOERCIBLE: the specified
-// behaviour is that implicit conversion THROWS, which is what stops one
-// reaching page output by accident. All pinned below.
+// `String(sym)` prints it. Those leaks are closed now, the key's lead byte
+// is one no JS string holds, and implicit conversion THROWS as specified,
+// which is what stops one reaching page output by accident. All pinned below.
 
 #include "js_expect.hpp"
 
@@ -125,14 +125,22 @@ int main() {
               " return [new A().sum(), A.has(new A()), A.has({})].join(); })()",
               "3,true,false");
 
-    // --- KNOWN WRONG: a symbol must REFUSE implicit conversion ----------------
-    // `"" + sym` and `sym + 1` are specified to throw TypeError, and that is a
-    // feature: it is what stops a symbol silently reaching page output. Here
-    // they coerce through the internal spelling instead.
+    // --- a symbol REFUSES implicit conversion --------------------------------
+    // `"" + sym` and `sym + 1` throw TypeError (7.1.17, 7.1.4), and that is a
+    // feature: it is what stops a symbol silently reaching page output. So do
+    // a template substitution, `-`, unary `+` and a relational comparison;
+    // String(sym) is the one conversion that describes it.
     js_expect("(function(){try{return \"\"+Symbol(\"x\")}catch(e){return \"THROWS \"+e.name}})()",
-              "Symbol(x)"); // V8: THROWS TypeError
+              "THROWS TypeError");
     js_expect("(function(){try{return Symbol(\"x\")+1}catch(e){return \"THROWS \"+e.name}})()",
-              "Symbol(x)1"); // V8: THROWS TypeError
+              "THROWS TypeError");
+    js_expect("(function () { var s = Symbol('x'), out = [];"
+              " [function () { return `${s}`; }, function () { return s - 1; },"
+              " function () { return +s; }, function () { return s < 1; },"
+              " function () { return 3n > s; }].forEach(function (f) {"
+              " try { out.push(f()); } catch (e) { out.push(e.name); } });"
+              " return out.join(); })()",
+              "TypeError,TypeError,TypeError,TypeError,TypeError");
 
     // An ABSENT description is undefined, an empty one is "" (20.4.3.2 -
     // the prototype's getter tells them apart by the key).
