@@ -62,22 +62,33 @@ namespace {
     std::vector<std::pair<std::string, context::property_descriptor>> wanted;
     for (const std::string & key : own_property_names(cx, from, key_filter::all)) {
         context::property_descriptor found;
-        if (!cx.own_property(from, key, found) || !found.enumerable) { continue; }
+        const bool own = cx.own_property(from, key, found);
+        if (cx.throw_pending()) { return false; } // a getOwnPropertyDescriptor trap threw
+        if (!own || !found.enumerable) { continue; }
         // An own DATA property's [[Get]] is its value; only an accessor has to
         // be called. Reading every key back by NAME would have missed an
         // array's elements, whose values do not come out of lookup_property -
         // `Object.defineProperties(o, [{value: 1}])` is legal and defines "0".
-        const value descriptor = found.is_accessor() ? cx.lookup_property(from, key) : found.held;
+        // A PROXY's [[Get]] is its `get` trap, asked after the descriptor
+        // (20.1.2.3.1 steps 3.b.ii-iii), whatever the descriptor said.
+        const value descriptor = found.is_accessor() || from.is_kind(heap_kind::proxy)
+                                     ? cx.lookup_property(from, key)
+                                     : found.held;
+        if (cx.throw_pending()) { return false; }
         if (!descriptor.is_object_like()) {
             cx.throw_error("TypeError", "Property description must be an object");
             return false;
         }
         const context::property_descriptor read = cx.to_property_descriptor(descriptor);
-        if (!valid_descriptor(cx, read)) { return false; }
+        if (cx.throw_pending() || !valid_descriptor(cx, read)) { return false; }
         wanted.emplace_back(key, read);
     }
+    // A trap that throws answers true, and the walk stops there.
+    const std::size_t before = cx.unwinds();
     for (const auto & [key, descriptor] : wanted) {
-        if (!cx.define_own_property(target, key, descriptor)) {
+        const bool defined = cx.define_own_property(target, key, descriptor);
+        if (cx.throw_pending() || cx.unwinds() != before) { return false; }
+        if (!defined) {
             cx.throw_error("TypeError", "Cannot redefine property: " + key);
             return false;
         }
@@ -100,7 +111,7 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
     if (of.is_array()) {
         auto * arr = static_cast<array_object *>(of.as_heap());
         for (std::size_t i = 0; i < arr->length(); ++i) {
-            if (!arr->element_attrs.empty()) {
+            if (!arr->element_attrs.empty() || arr->has_hole_run()) {
                 const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
                 if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
             }
@@ -128,8 +139,10 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
         // answers `undefined` for a string's INDEX - `"ab"[0]` goes through
         // lookup_index, which is a different entry point - so reading back by
         // name would have made `Object.values('ab')` two undefineds. An
-        // accessor is the one case that has to be a call.
-        visit(key, found.is_accessor() ? cx.lookup_property(of, key) : found.held);
+        // accessor has to be a call, and so does a PROXY's every property:
+        // step 2.c.ii.2 is a [[Get]], and its `get` trap is observable.
+        visit(key, found.is_accessor() || of.is_kind(heap_kind::proxy) ? cx.lookup_property(of, key)
+                                                                       : found.held);
     }
 }
 
@@ -145,15 +158,27 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
         if (failed || cx.throw_pending()) { return false; }
         if (trap.is_callable()) {
             const value args[1] = {p->target};
+            const std::size_t before = cx.unwinds();
             const bool ok = context::truthy(cx.call(trap, args, p->handler));
-            if (cx.throw_pending()) { return false; }
+            if (cx.throw_pending() || cx.unwinds() != before) { return false; }
             if (!ok) {
                 cx.throw_error("TypeError", std::string{called} +
                                                 ": 'preventExtensions' on proxy returned false");
                 return false;
             }
+            // 10.5.4 step 8: `true` over a target that is still extensible.
+            const bool extensible = cx.is_extensible(p->target);
+            if (cx.throw_pending() || cx.unwinds() != before) { return false; }
+            if (extensible) {
+                cx.throw_error("TypeError", std::string{called} +
+                                                ": 'preventExtensions' on proxy returned truish "
+                                                "but the proxy target is extensible");
+                return false;
+            }
             return true;
         }
+        // No trap: the TARGET's [[PreventExtensions]], which may be a proxy's.
+        return prevent_extensions_or_throw(cx, p->target, called);
     }
     cx.prevent_extensions(target);
     return true;
@@ -162,6 +187,40 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
 // 7.3.15 SetIntegrityLevel. `frozen` false is "sealed": configurable off
 // everywhere, writable left alone.
 inline void set_integrity(context & cx, value target, bool frozen) {
+    // A PROXY IS WALKED AS 7.3.15 WRITES IT - OwnPropertyKeys, then per key
+    // [[GetOwnProperty]] (frozen only) and DefinePropertyOrThrow - because
+    // every one of those steps is a trap its handler can observe. Its
+    // [[PreventExtensions]] already ran, trap and all, in
+    // prevent_extensions_or_throw. SO IS A FUNCTION: its `length`, `name`
+    // and `prototype` are synthesised rather than held (descriptors.cpp),
+    // and only [[DefineOwnProperty]] pins one - an attribute sweep over the
+    // table never saw them, so a frozen function still reported them
+    // configurable and Object.isFrozen answered false.
+    if (target.is_kind(heap_kind::proxy) || target.is_kind(heap_kind::function) ||
+        target.is_kind(heap_kind::native)) {
+        const std::size_t before = cx.unwinds();
+        const auto thrown = [&] { return cx.throw_pending() || cx.unwinds() != before; };
+        const std::vector<std::string> keys = own_property_names(cx, target, key_filter::all);
+        for (const std::string & key : keys) {
+            if (thrown()) { return; }
+            context::property_descriptor wanted;
+            wanted.has_configurable = true;
+            if (frozen) {
+                context::property_descriptor current;
+                const bool has = cx.own_property(target, key, current);
+                if (thrown()) { return; }
+                if (!has) { continue; }
+                wanted.has_writable = !current.is_accessor();
+            }
+            const bool defined = cx.define_own_property(target, key, wanted);
+            if (thrown()) { return; }
+            if (!defined) {
+                cx.throw_error("TypeError", "Cannot redefine property: " + key);
+                return;
+            }
+        }
+        return;
+    }
     cx.prevent_extensions(target);
     if (target.is_object()) {
         auto * obj = static_cast<object_object *>(target.as_heap());
@@ -185,34 +244,9 @@ inline void set_integrity(context & cx, value target, bool frozen) {
             arr->elements_writable = false;
             arr->length_writable = false;
         }
+        // An array's NAMED properties (`arr.foo`) live in their own table.
+        if (arr->named) { set_integrity(cx, value::object(arr->named.get()), frozen); }
         return;
-    }
-    if (target.is_kind(heap_kind::native)) {
-        auto * fn = static_cast<native_object *>(target.as_heap());
-        if (fn->attrs.size() < fn->props.size()) {
-            fn->attrs.resize(fn->props.size(), attr_default);
-        }
-        for (std::uint8_t & a : fn->attrs) {
-            a = static_cast<std::uint8_t>(a & ~attr_configurable);
-            if (frozen) { a = static_cast<std::uint8_t>(a & ~attr_writable); }
-        }
-        for (accessor_entry & entry : fn->accessors.entries) {
-            entry.attrs = static_cast<std::uint8_t>(entry.attrs & ~attr_configurable);
-        }
-        return;
-    }
-    if (target.is_kind(heap_kind::function)) {
-        auto * closure = static_cast<closure_object *>(target.as_heap());
-        if (closure->attrs.size() < closure->props.size()) {
-            closure->attrs.resize(closure->props.size(), attr_default);
-        }
-        for (std::uint8_t & a : closure->attrs) {
-            a = static_cast<std::uint8_t>(a & ~attr_configurable);
-            if (frozen) { a = static_cast<std::uint8_t>(a & ~attr_writable); }
-        }
-        for (accessor_entry & entry : closure->accessors.entries) {
-            entry.attrs = static_cast<std::uint8_t>(entry.attrs & ~attr_configurable);
-        }
     }
 }
 
@@ -226,8 +260,25 @@ inline void set_integrity(context & cx, value target, bool frozen) {
     // question about all of them.
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
-        return !arr->elements_configurable && (!frozen || !arr->elements_writable) &&
-               (!frozen || !arr->length_writable);
+        if (arr->elements_configurable || (frozen && arr->elements_writable) ||
+            (frozen && arr->length_writable)) {
+            return false;
+        }
+        // ...and its named table's properties, which set_integrity pins
+        // separately. Only the properties: the array's own [[Extensible]]
+        // was asked above, and a table pinned by hand (a template object's
+        // `raw`) never had its own flag cleared.
+        bool pinned = true;
+        if (arr->named) {
+            object_object & named = *arr->named;
+            named.each_own_entry([&](const std::string & key, std::uint8_t a) {
+                if ((a & attr_configurable) != 0 ||
+                    (frozen && (a & attr_writable) != 0 && named.find_accessor(key) == nullptr)) {
+                    pinned = false;
+                }
+            });
+        }
+        return pinned;
     }
     // EVERY own key, symbols included: 7.3.16 walks OwnPropertyKeys, and a
     // symbol-keyed property that is still configurable makes the object neither
@@ -334,24 +385,26 @@ void install_object(context & cx) {
             tag = "Number";
         } else if (self.is_boolean()) {
             tag = "Boolean";
-        } else if (self.is_kind(heap_kind::symbol)) {
-            tag = "Symbol";
         } else if (value * slot = primitive_slot(self); slot != nullptr) {
             // A WRAPPER answers for what it wraps (20.1.3.6 steps 6-11); a
-            // Symbol or BigInt wrapper reaches its @@toStringTag below.
+            // Symbol or BigInt wrapper reaches its @@toStringTag below - as
+            // a Symbol itself does: it has no builtin tag (step 14 leaves it
+            // "Object"), only Symbol.prototype's, which a page may delete.
             tag = slot->is_number()    ? "Number"
                   : slot->is_string()  ? "String"
                   : slot->is_boolean() ? "Boolean"
                                        : "Object";
-            // [[ErrorData]] and [[RegExpMatcher]] are slots this engine does not
-            // have: an error and a regular expression are both ordinary objects
-            // here, distinguishable only by the prototype they were built on.
-            // That is exact for everything the constructors make, and it also
-            // answers "Error" for `Object.create(TypeError.prototype)`, which a
-            // real slot would not. The alternative is a marker property, which
-            // a page could see.
-        } else if (inherits_from(c, self, c.prototype(context::proto_kind::error))) {
+        } else if (self.is_object() &&
+                   static_cast<object_object *>(self.as_heap())->find("@#ErrorData") != nullptr) {
+            // [[ErrorData]] is the private slot every error constructor and
+            // the engine's own throws record (errors.cpp; Error.isError asks
+            // the same), so `EvalError.prototype` and
+            // `Object.create(TypeError.prototype)` - ordinary objects - are
+            // "[object Object]" as step 14 has them.
             tag = "Error";
+            // [[RegExpMatcher]] is a slot this engine does not have: a regular
+            // expression is an ordinary object here, distinguishable only by
+            // the prototype it was built on.
         } else if (inherits_from(c, self, c.prototype(context::proto_kind::regexp))) {
             tag = "RegExp";
         } else if (self.is_object() && static_cast<object_object *>(self.as_heap())->find("__ms")) {
@@ -373,6 +426,12 @@ void install_object(context & cx) {
         if (custom.is_string()) { return c.string("[object " + c.to_string(custom) + "]"); }
         return c.string("[object " + std::string{tag} + "]");
     });
+    // %Object.prototype.toString% by a name no page can reach or delete: what
+    // Array.prototype.toString falls back to (23.1.3.36 step 3) even after
+    // `delete Object.prototype.toString`. The `:` marks it engine data, as a
+    // private field's key is, not an internal slot - without it
+    // structuredClone(Object.prototype) refused to copy "an object of this kind".
+    object_proto->define("@#IntrinsicObjectToString:", *object_proto->find("toString"), attr_none);
     method(cx, object_proto, "valueOf", 0, [](context & c, std::span<value>) {
         const value self = c.current_this();
         if (!object_coercible(c, self, "Object.prototype.valueOf")) { return value::undefined(); }
@@ -539,11 +598,21 @@ void install_object(context & cx) {
         // object, and a primitive is BOXED (ToObject) - see
         // detail::wrap_primitive.
         const value v = arg_at(a, 0);
-        if (v.is_object_like()) { return v; }
         // 20.1.1.1 step 1: under `new` from a subclass (`class O extends
-        // Object`, reached through super()) the instance [[Construct]] made
-        // from NewTarget IS the answer; a plain `new Object()` or a call
-        // makes a fresh one, which the instance also is.
+        // Object`, reached through super(), or Reflect.construct with a
+        // NewTarget) the instance [[Construct]] made from NewTarget IS the
+        // answer, WHATEVER the argument - `new O({a: 1}).a` is undefined.
+        const value self = c.current_this();
+        if (detail::constructing_this(self)) {
+            const value proto = static_cast<object_object *>(self.as_heap())->prototype;
+            if (proto.is_object_like() &&
+                proto.as_heap() != c.prototype(context::proto_kind::object)) {
+                return self;
+            }
+        }
+        if (v.is_object_like()) { return v; }
+        // A plain `new Object()` or a call makes a fresh one, which the
+        // instance also is.
         if (v.is_nullish()) {
             return detail::constructing_this(c.current_this()) ? c.current_this() : c.make_object();
         }
@@ -760,9 +829,16 @@ void install_object(context & cx) {
         const context::rooted keep_iterator{c, iterator};
         const value next = c.lookup_property(iterator, "next");
         if (c.throw_pending()) { return value::undefined(); }
+        // IteratorClose (7.4.11) with a THROW completion: `return` is called
+        // and whatever it does is dropped for the throw already in hand.
+        // FENCED, because a getter's or a toString's throw is parked by then
+        // and context::call runs nothing while one is.
         const auto close = [&] {
             const value ret = c.lookup_property(iterator, "return");
-            if (ret.is_callable()) { (void)c.call(ret, std::span<const value>{}, iterator); }
+            if (!ret.is_callable()) { return; }
+            bool threw = false;
+            value ignored = value::undefined();
+            (void)c.call_fenced(ret, std::span<const value>{}, iterator, threw, ignored);
         };
         for (;;) {
             bool done = false;
@@ -880,46 +956,45 @@ void install_object(context & cx) {
         return out;
     });
     method(cx, object_ctor, "assign", 2, [](context & c, std::span<value> a) {
-        const value target = arg_at(a, 0);
-        // 20.1.2.1 step 1 is ToObject(target), so null and undefined throw. A
-        // primitive target is returned as itself here: there is no wrapper to
-        // hand back and the writes have nowhere to land.
-        if (!object_coercible(c, target, "Object.assign")) { return value::undefined(); }
-        if (!target.is_object_like()) { return detail::box_primitive(c, target); }
+        // 20.1.2.1 step 1 is ToObject(target), so null and undefined throw and
+        // a primitive is BOXED: `Object.assign(12, "ab")` is a Number wrapper
+        // with the two characters on it, and a String wrapper's read-only
+        // indices refuse a source's with the TypeError Set(..., true) owes.
+        if (!object_coercible(c, arg_at(a, 0), "Object.assign")) { return value::undefined(); }
+        const value target = detail::box_primitive(c, arg_at(a, 0));
+        const context::rooted keep_target{c, target};
         for (std::size_t i = 1; i < a.size(); ++i) {
             // Step 4.a: a null or undefined source is SKIPPED rather than an
             // error, which is what makes `Object.assign({}, maybe)` idiomatic.
             if (a[i].is_nullish()) { continue; }
-            // A SNAPSHOT, because storing into the target can run a setter that
-            // mutates the source; ENUMERABLE own keys only (7.3.24 step 5);
-            // and through store_property rather than set(), because
-            // Object.assign is specified as [[Set]] and a frozen target must
-            // therefore reject the write.
-            std::vector<std::pair<std::string, value>> entries;
-            // SYMBOL KEYS INCLUDED: 7.3.24 walks OwnPropertyKeys, which reports
-            // them - the same exception object spread needs - and any SOURCE,
-            // so `Object.assign({}, 'ab')` copies the two characters.
-            for (const std::string & key : own_property_names(c, a[i], key_filter::all)) {
+            // 20.1.2.1 step 4.b-c: OwnPropertyKeys ONCE (symbols included -
+            // the exception spread makes - and any source, so
+            // `Object.assign({}, 'ab')` copies the two characters), then per
+            // key, INTERLEAVED: [[GetOwnProperty]], and for an enumerable one
+            // [[Get]] and Set(to, key, v, true). A setter on the target that
+            // deletes a later source key therefore stops it being copied, and
+            // a source getter sees every earlier write.
+            const value source = detail::box_primitive(c, a[i]);
+            const context::rooted keep_source{c, source};
+            const detail::unwind_watch watch{c};
+            const std::vector<std::string> keys = own_property_names(c, source, key_filter::all);
+            if (watch.threw()) { return value::undefined(); }
+            for (const std::string & key : keys) {
                 context::property_descriptor found;
-                if (!c.own_property(a[i], key, found) || !found.enumerable) { continue; }
-                entries.emplace_back(key, found.is_accessor() ? c.lookup_property(a[i], key)
-                                                              : found.held);
-            }
-            // THE SNAPSHOT IS A ROOT. A [[Set]] on the target can run a page's
-            // setter, which can allocate, which can collect - and until it is
-            // stored, a copied value's only reference is this vector, which no
-            // root of context::each_root reaches.
-            std::vector<value> held;
-            held.reserve(entries.size());
-            for (const auto & entry : entries) { held.push_back(entry.second); }
-            const context::rooted_values keep{c, held};
-            // Set(to, key, value, TRUE) - 20.1.2.1 step 4.c.iii: a write the
-            // target refuses is a TypeError, sloppy or not.
-            for (const auto & [key, item] : entries) {
+                const bool present = c.own_property(source, key, found);
+                if (watch.threw()) { return value::undefined(); }
+                if (!present || !found.enumerable) { continue; }
+                const value item = found.is_accessor() || source.is_kind(heap_kind::proxy)
+                                       ? c.lookup_property(source, key)
+                                       : found.held;
+                if (watch.threw()) { return value::undefined(); }
+                const context::rooted keep_item{c, item};
+                // Set(to, key, value, TRUE): a write the target refuses is a
+                // TypeError, sloppy or not.
                 c.clear_store_rejected();
                 c.store_property(target, key, item);
                 c.strict_store_check(key);
-                if (c.throw_pending()) { return target; }
+                if (watch.threw()) { return value::undefined(); }
             }
         }
         return target;
@@ -927,8 +1002,8 @@ void install_object(context & cx) {
     // 20.1.2.9 Object.groupBy - GroupBy with property keys: every value of
     // the iterable goes to the callback with its index, and the answer is an
     // object of arrays keyed by ToPropertyKey of what it returned, in first-
-    // seen order. (The specification gives it a null prototype; this engine
-    // cannot make one - see prototype_of.)
+    // seen order, on a NULL prototype (step 2: OrdinaryObjectCreate(null)) so
+    // a group named "toString" is not shadowing anything.
     method(cx, object_ctor, "groupBy", 2, [](context & c, std::span<value> a) {
         if (!object_coercible(c, arg_at(a, 0), "Object.groupBy")) { return value::undefined(); }
         const value callback = arg_at(a, 1);
@@ -947,6 +1022,7 @@ void install_object(context & cx) {
         if (c.throw_pending() || !items.is_array()) { return value::undefined(); }
         const context::rooted keep_items{c, items};
         object_object * out = new_table(c);
+        out->prototype = value::undefined(); // an EXPLICIT null (object_object::prototype)
         const value made = value::object(out);
         const context::rooted keep{c, made};
         // A COPY, ROOTED: the callback may empty the very array `items` is.
@@ -954,8 +1030,17 @@ void install_object(context & cx) {
         const context::rooted_values keep_snapshot{c, snapshot};
         for (std::size_t i = 0; i < snapshot.size(); ++i) {
             const value args[2] = {snapshot[i], value::number(static_cast<double>(i))};
-            const value key = c.call(callback, args);
+            value key = c.call(callback, args);
             if (c.throw_pending()) { return value::undefined(); }
+            // ToPropertyKey: ToPrimitive with the string hint, then a symbol
+            // stays itself and anything else is ToString'd.
+            if (key.is_object_like()) {
+                const context::rooted keep_key{c, key};
+                const detail::unwind_watch watch{c};
+                if (!c.to_primitive_hint(key, "string", key) || watch.threw()) {
+                    return value::undefined();
+                }
+            }
             const std::string name = c.to_string(key);
             value * group = out->find(name);
             if (group == nullptr) {

@@ -295,6 +295,9 @@ std::uint64_t aot_bridge::global_get_soft(aot::ct_aot_frame * f, const char * na
 void aot_bridge::global_set(aot::ct_aot_frame * f, const char * name, std::uint32_t name_len,
                             std::uint64_t v) {
     context & cx = *frame_of(f).ctx;
+    // As VM_CASE(set_global): a store to NaN, Infinity or undefined does
+    // nothing (the compiled tier is sloppy-only here).
+    if (context::immutable_global(std::string_view{name, name_len})) { return; }
     cx.define_global(std::string{name, name_len}, value::from_bits(v));
 }
 

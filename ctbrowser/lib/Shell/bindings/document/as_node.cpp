@@ -872,6 +872,7 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         dom_bindings & fresh = *top.secondary_documents_.back();
         fresh.doc_->set_xml(doc_->xml());
         fresh.doc_->set_quirks(doc_->quirks());
+        fresh.doc_->set_allow_declarative_shadow_roots(doc_->allow_declarative_shadow_roots());
         fresh.content_type_ = content_type_;
         if (auto * mine = document_object();
             mine != nullptr && fresh.document_object() != nullptr) {

@@ -253,9 +253,22 @@ public:
     struct container_size {
         float width = 0;
         float height = 0;
+        std::uint8_t scrollable = 0; // css::scroll_* - where it can still scroll
+        [[nodiscard]] friend bool operator==(const container_size &,
+                                             const container_size &) = default;
     };
     using container_size_query = std::function<std::optional<container_size>(node_id)>;
     void set_container_size(container_size_query query) { container_size_ = std::move(query); }
+    // DID A LAYOUT MOVE A CONTAINER a query was asked of? Every size the last
+    // cascade asked for is asked again - of the layout that has run since -
+    // and any answer that differs means the cascade read a stale box and has
+    // to run again. False at once for a page no size query asked about.
+    [[nodiscard]] bool container_sizes_changed() const {
+        for (const auto & [node, was] : container_answers_) {
+            if ((container_size_ ? container_size_(node) : std::nullopt) != was) { return true; }
+        }
+        return false;
+    }
 
     // SHORTHAND EXPANSION. `margin: 1px 2px` becomes four longhand
     // declarations, emitted in place of the shorthand.
@@ -346,10 +359,18 @@ public:
     // --- element facts -----------------------------------------------------
     [[nodiscard]] element_facts facts_of(const read_txn & txn, node_id id) const;
 
-    // Which properties INHERIT. Not the whole CSS list - the ones a consumer in this
-    // tree can produce a value for, plus custom properties, caught by the `--` prefix
-    // rather than by name. `font-size` inherits as the px the pre-pass in resolve()
-    // computed, so a relative unit never compounds down the tree.
+    // Which properties INHERIT: the property table's own column, which is each
+    // specification's "Inherited: yes", plus custom properties, caught by the
+    // `--` prefix rather than by name. `font-size` inherits as the px the
+    // pre-pass in resolve() computed, so a relative unit never compounds down
+    // the tree.
+    //
+    // It was a hand-kept list of the twenty-five names a consumer here read,
+    // and every other inherited property - `word-break`, `quotes`, `hyphens`,
+    // `caret-color` - then neither inherited nor answered `unset` with its
+    // parent's value, which is what every module's `inheritance.html` asks.
+    // (A text decoration does not inherit: it PROPAGATES to the descendants'
+    // text, CSS Text Decoration 3 §2, and layout's box builder carries that.)
     [[nodiscard]] bool inherits(std::string_view property) const {
         if (property.starts_with("--")) {
             // A registered custom property says whether it does (CSS Properties
@@ -358,20 +379,7 @@ public:
                 registration_of(atoms_->intern(property));
             return registered == nullptr || registered->inherits;
         }
-        static constexpr std::string_view names[] = {
-            "border-collapse", "border-spacing", "caption-side",    "color",
-            "cursor",          "direction",      "empty-cells",     "font-family",
-            "font-size",       "font-style",     "font-variant",    "font-weight",
-            "letter-spacing",  "line-height",    "list-style",      "list-style-position",
-            "list-style-type", "text-align",     "text-decoration", "text-indent",
-            "text-transform",  "visibility",     "white-space",     "word-spacing",
-            "writing-mode"};
-        for (const std::string_view name : names) {
-            if (name == property) { return true; }
-        }
-        // The `white-space` shorthand's inherited longhands (CSS Text 4 §3).
-        return property == "white-space-collapse" || property == "text-wrap-mode" ||
-               property == "text-wrap-style";
+        return css::inherited_property(property);
     }
 
     // --- the single-element path -------------------------------------------
@@ -394,6 +402,8 @@ public:
         ctx.root_zero_advance = root_zero_advance_;
         ctx.viewport_width = environment_.viewport_width;
         ctx.viewport_height = environment_.viewport_height;
+        ctx.container_width = cq_width_;
+        ctx.container_height = cq_height_;
         ctx.sibling_index = sibling_index_;
         ctx.sibling_count = sibling_count_;
         ctx.element_key = element_key_;
@@ -447,8 +457,12 @@ public:
     // `element` (the element's resolved style). No box is made for it; this is
     // what getComputedStyle(el, "::before") reads. Empty when `node` is not an
     // element in a tree.
+    // `styles`, when given, is the map the element's own style came from: the
+    // ancestors' styles in it are what an `@container` around the rule asks,
+    // the originating element being a container of its pseudo-element.
     [[nodiscard]] computed_style_ptr resolve_pseudo(const read_txn & txn, node_id node, atom pseudo,
-                                                    const computed_style_ptr & element);
+                                                    const computed_style_ptr & element,
+                                                    const style_map * styles = nullptr);
 
     // --- selector matching, for `querySelector` -------------------------------
     //
@@ -505,6 +519,9 @@ public:
     // non-element branch would clear the level a text node happens to sit in and
     // lose every sibling before it.
     void enter_level(const read_txn & txn, node_id parent, std::size_t depth);
+    // The element at `depth` resolved: its style on the chain, and the size
+    // containers its descendants' `cq*` units measure.
+    void note_chain(std::size_t depth, node_id node, const computed_style_ptr & resolved);
     // A parentless element at depth 0 - the document element - is one of one.
     void root_facts(const read_txn & txn, node_id node, std::size_t depth,
                     element_facts & facts) const;
@@ -718,6 +735,9 @@ private:
     // with the condition true of its box and computed style; and the
     // enclosing `@container`s likewise.
     [[nodiscard]] bool container_holds(const read_txn & txn, std::uint16_t c, std::size_t depth);
+    // One condition of an `@container`'s list, for the element at `depth`.
+    [[nodiscard]] bool container_query_holds(const read_txn & txn, const css::container_query & q,
+                                             std::size_t depth, atom type_key, atom name_key);
 
     // Everything a compound can require, of the element at (depth, index).
     //
@@ -795,6 +815,15 @@ private:
     std::uint32_t sibling_count_ = 0;
     // ...and which element it is, for what `random()` is random per.
     std::uint64_t element_key_ = 0;
+    // THE QUERY CONTAINERS `cqw` AND ITS KIN MEASURE (CSS Conditional 5 §4):
+    // `cq_chain_[d]` is the nearest size container on the inline axis and on
+    // the block axis for the CHILDREN of the element at depth d, itself
+    // included - kept as resolve_subtree descends, as chain_styles_ is - and
+    // `cq_width_`/`cq_height_` their content boxes for the element being
+    // resolved, negative for none.
+    std::vector<std::pair<node_id, node_id>> cq_chain_;
+    float cq_width_ = -1.0f;
+    float cq_height_ = -1.0f;
     std::vector<compiled_selector> selectors_;
     std::vector<declaration> declarations_;
     rule_index index_;
@@ -835,6 +864,11 @@ private:
     // set_container_size.
     std::vector<css::container_condition> containers_{css::container_condition{}};
     container_size_query container_size_;
+    // What the hook answered for each container since the last resolve_all -
+    // asked once per container per cascade, and what container_sizes_changed
+    // holds the next layout to.
+    std::vector<std::pair<node_id, std::optional<container_size>>> container_answers_;
+    [[nodiscard]] std::optional<container_size> container_size_of(node_id node);
     // THE STYLES OF THE CHAIN: `chain_styles_[d]` is the resolved style of the
     // element at depth d of the current traversal, set as resolve_subtree
     // descends, which is what a container query reads `container-type` and a

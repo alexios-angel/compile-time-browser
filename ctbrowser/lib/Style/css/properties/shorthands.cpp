@@ -4,6 +4,87 @@ namespace ctbrowser::style::css {
 
 using namespace shorthand_detail;
 
+bool detail::match_background(std::string_view value, std::string & out) {
+    std::vector<std::string> parts;
+    if (!split_background(value, parts)) { return false; }
+    out = fold_background(parts);
+    return true;
+}
+
+bool detail::match_border_radius(std::string_view value, bool shorthand, std::string & out) {
+    std::vector<std::string> parts;
+    if (shorthand) {
+        if (!split_radius(value, parts)) { return false; }
+        out = fold_radius(parts);
+    } else {
+        if (!radius_components(value, 2, parts)) { return false; }
+        out = parts.front() == parts.back() ? parts.front() : join(parts);
+    }
+    return true;
+}
+
+bool detail::match_border_image(std::string_view property, std::string_view value,
+                                std::string & out) {
+    if (property == "border-image") {
+        std::vector<std::string> parts;
+        if (!split_border_image(value, parts)) { return false; }
+        out = fold_border_image(parts);
+        return true;
+    }
+    if (property == "border-image-source") {
+        const token_stream ts = tokenize(value);
+        const scan found = scan_tokens(ts);
+        if (found.significant.empty()) { return false; }
+        const css_token & first = ts.tokens[found.significant.front()];
+        if (first.type == token_type::ident && ascii_iequals(ts.text_of(first), "none") &&
+            found.significant.size() == 1) {
+            out = "none";
+            return true;
+        }
+        if (first.type != token_type::url &&
+            (first.type != token_type::function ||
+             !ascii_iequals_any(
+                 ts.text_of(first),
+                 {"url(", "image(", "image-set(", "-webkit-image-set(", "cross-fade(",
+                  "-webkit-cross-fade(", "element(", "-moz-element(", "paint(", "light-dark(",
+                  "linear-gradient(", "repeating-linear-gradient(", "radial-gradient(",
+                  "repeating-radial-gradient(", "conic-gradient(", "repeating-conic-gradient("}))) {
+            return false;
+        }
+        int depth = 0;
+        for (const std::size_t at : found.significant) {
+            if (depth == 0 && at != found.significant.front()) { return false; }
+            const token_type type = ts.tokens[at].type;
+            if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+            if (type == token_type::close_paren) { --depth; }
+        }
+        if (!match_image_list(ts, found, out)) { out = std::string{value}; }
+        return !out.empty();
+    }
+    auto parts = split_top_level(value, html_whitespace);
+    bool fill = false;
+    if (property == "border-image-slice" && !parts.empty()) {
+        if (ascii_iequals(parts.front(), "fill")) {
+            fill = true;
+            parts.erase(parts.begin());
+        } else if (ascii_iequals(parts.back(), "fill")) {
+            fill = true;
+            parts.pop_back();
+        }
+    }
+    if (parts.empty() || parts.size() > 4) { return false; }
+    const property_syntax & syntax = *find_property(property);
+    std::vector<std::string> values;
+    for (const std::string_view part : parts) {
+        std::string one;
+        if (!typed_component(part, syntax, one)) { return false; }
+        values.push_back(std::move(one));
+    }
+    out = fold_sides(values);
+    if (fill) { out += " fill"; }
+    return true;
+}
+
 // CSS Multicol 2: auto does not choose width or count until the other
 // component is known; the slash introduces a separate, optional height.
 bool detail::split_columns(std::string_view value, std::vector<std::string> & out) {
@@ -46,6 +127,7 @@ bool detail::split_columns(std::string_view value, std::vector<std::string> & ou
 }
 
 std::span<const std::string_view> longhands_of(std::string_view shorthand) {
+    shorthand = radius_name(shorthand);
     const expansion * e = expansion_of(shorthand);
     return e == nullptr ? std::span<const std::string_view>{} : e->longhands;
 }
@@ -73,6 +155,7 @@ void parse_declaration_block(declaration_block & block, std::string_view text,
 }
 
 std::string remove_declaration(declaration_block & block, std::string_view name, bool & removed) {
+    name = radius_name(name);
     std::string was = declaration_value(block, name);
     const std::span<const std::string_view> longhands = longhands_of(name);
     removed = erase_named(block, std::array<std::string_view, 1>{name});
@@ -81,6 +164,7 @@ std::string remove_declaration(declaration_block & block, std::string_view name,
 }
 
 std::string declaration_value(const declaration_block & block, std::string_view name) {
+    name = radius_name(name);
     if (const std::size_t at = index_of(block, name); at < block.size()) { return block[at].value; }
     const expansion * e = name.starts_with("--") ? nullptr : expansion_of(name);
     if (e == nullptr) { return {}; }
@@ -97,6 +181,7 @@ std::string declaration_value(const declaration_block & block, std::string_view 
 }
 
 std::string declaration_priority(const declaration_block & block, std::string_view name) {
+    name = radius_name(name);
     if (const std::size_t at = index_of(block, name); at < block.size()) {
         return block[at].important ? "important" : "";
     }

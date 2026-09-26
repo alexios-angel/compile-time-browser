@@ -93,6 +93,11 @@ void test_interpolation() {
     CHECK(interpolate_text("left", "0px", "100px", -0.25, context) == "-25px");
     CHECK(interpolate_text("left", "0px", "100px", 1.25, context) == "125px");
     CHECK(interpolate_text("left", "1em", "40px", 0.5, context) == "30px");
+    // A lone colour is not a gap rule list, whatever commas it holds inside -
+    // this recursed until the stack ran out.
+    CHECK_EQ(
+        interpolate_text("column-rule-color", "rgb(170, 70, 70)", "rgb(70, 170, 70)", 0.3, context),
+        std::string{"rgba(140.0000, 100.0000, 70.0000, 1.0000)"});
     CHECK(interpolate_text("left", "calc(50% - 25px)", "calc(100% - 10px)", 0.5, context) ==
           "calc(75% - 17.5px)");
     CHECK(interpolate_text("opacity", "0", "1", 0.25, context) == "0.25");
@@ -105,6 +110,20 @@ void test_interpolation() {
         CHECK(interpolate_text(property, "10", "20", 0.05, context) == "11");
     }
     CHECK(interpolate_text("width", "0px", "100px", -0.5, context) == "0px");
+    for (const auto property :
+         {"width", "border-image-width", "border-image-slice", "border-top-left-radius"}) {
+        CHECK(interpolate_text(property, "0%", "20%", -0.5, context) == "0%");
+        CHECK(interpolate_text(property, "10%", "20%", 1.5, context) == "25%");
+    }
+    CHECK(interpolate_text("border-image-slice", "0% 10 20% 30 fill", "40% 50 60% 70 fill", -0.5,
+                           context) == "0% 0 0% 10 fill");
+    CHECK(interpolate_text("left", "0%", "20%", -0.5, context) == "-10%");
+    for (const auto property : {"background-size", "mask-size"}) {
+        CHECK(interpolate_text(property, "10px 10px", "20px 0px", 1.25, context) == "22.5px 0px");
+        CHECK(interpolate_text(property, "0% 20%", "20% 40%", -0.5, context) == "0% 10%");
+        CHECK(interpolate_text(property, "calc(100px + 10%) auto", "30% auto", 1.5, context) ==
+              "calc(40% - 50px) auto");
+    }
     CHECK(interpolate_text("font-weight", "100", "900", 2, context) == "1000");
     CHECK(interpolate_text("font-weight", "100", "900", -1, context) == "1");
     CHECK(interpolate_text("left", "calc(2 * 3px)", "12px", 0, context) == "6px");
@@ -168,6 +187,12 @@ void test_interpolation() {
     // A background layer list repeats to match the longer one.
     CHECK(interpolate_text("background-position", "10px 10px", "30px 30px, 50px 50px", 0.5,
                            context) == "20px 20px, 30px 30px");
+    CHECK(interpolate_text("background-position-x", "10px, 20px", "100px, 200px, 300px", 0.5,
+                           context) == "55px, 110px, 155px, 60px, 105px, 160px");
+    CHECK(interpolate_text("background-position-x", "100px, 200px, 300px", "10px, 20px", 0.5,
+                           context) == "55px, 110px, 155px, 60px, 105px, 160px");
+    CHECK(composite_text("background-position-x", "10px, 20px", "100px, 200px, 300px",
+                         composite_op::add, context) == "110px, 220px, 310px, 120px, 210px, 320px");
     CHECK(with_currentcolor("currentcolor 1px 1px, red 2px 2px", "rgb(1, 2, 3)") ==
           "rgb(1, 2, 3) 1px 1px, red 2px 2px");
     CHECK(with_currentcolor("CurrentColor", "blue") == "blue");
@@ -175,6 +200,24 @@ void test_interpolation() {
 
 void test_composition() {
     ctbrowser::style::css::length_context context;
+    // Border-image side lists expand before addition and fold after interpolation.
+    for (const auto property :
+         {"border-image-outset", "border-image-width", "border-image-slice"}) {
+        const auto from =
+            composite_text(property, "100 200 300 400", "100", composite_op::add, context);
+        const auto to = composite_text(property, "100 200 300 400", "200 300 500",
+                                       composite_op::accumulate, context);
+        CHECK(from == "200 300 400 500");
+        CHECK(to == "300 500 800 700");
+        CHECK(interpolate_text(property, from, to, 0.5, context) == "250 400 600 600");
+        CHECK(interpolate_text(property, "1 2 3 4", "101 102 103 104", -0.25, context) == "0");
+        CHECK(interpolable_text(property, "1", "2 3 4"));
+    }
+    CHECK(composite_text("border-image-slice", "100 200 300 400 fill", "fill 100",
+                         composite_op::add, context) == "200 300 400 500 fill");
+    CHECK(!interpolable_text("border-image-slice", "10 fill", "20"));
+    CHECK(composite_text("border-image-width", "auto 1", "2 auto", composite_op::add, context) ==
+          "2 auto");
     CHECK(composite_text("width", "50px", "100px", composite_op::add, context) == "150px");
     CHECK(composite_text("width", "10%", "100px", composite_op::accumulate, context) ==
           "calc(10% + 100px)");
@@ -189,6 +232,12 @@ void test_composition() {
                          context) == "rgb(4, 5, 6) 3px 4px 0px 0px");
     CHECK(composite_text("border-width", "1px 2px", "10px 20px", composite_op::add, context) ==
           "11px 22px");
+    CHECK(composite_text("border-image-slice", "1 2 3 4", "1 2 3 4", composite_op::add, context) ==
+          "2 4 6 8");
+    CHECK(composite_text("border-image-width", "auto 2", "auto 2", composite_op::accumulate,
+                         context) == "auto 4");
+    CHECK(composite_text("background-position", "10% 20%", "10% 20%", composite_op::add, context) ==
+          "20% 40%");
     CHECK(composite_text("background-size", "40px 40px", "60px 60px, 260px 260px",
                          composite_op::add, context) == "100px 100px, 300px 300px");
     // The individual transform properties: a scale multiplies, `none` is 1 1 1.
@@ -219,6 +268,8 @@ void test_composition() {
     CHECK(interpolate_text("transform", "none", "none", 0.5, context) == "none");
     CHECK(interpolate_text("transform", "translateY(70%)", "translateY(90%)", 1, context) ==
           "translateY(90%)");
+    CHECK(interpolate_text("transform", "translateY(70%)", "translateY(90%)", 0.5, context) ==
+          "translateY(80%)");
     CHECK(interpolate_text("transform", "translate(12px, 70%)", "translate(13px, 90%)", 0.25,
                            context) == "translate(12.25px, 75%)");
     CHECK(composite_text("transform", "rotate(30deg)", "scale(2)", composite_op::add, context) ==

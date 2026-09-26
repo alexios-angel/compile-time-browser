@@ -41,6 +41,7 @@ struct or_grammar {
     std::string_view collapse_to = {};      // ...and the short form
     std::string_view collapse2_from = {};
     std::string_view collapse2_to = {};
+    bool first_group_required = false; // `[ a | b ] && c?`: the first group must be there
 };
 
 constexpr or_grammar or_grammars[] = {
@@ -78,6 +79,35 @@ constexpr or_grammar or_grammars[] = {
      {"jis78 jis83 jis90 jis04 simplified traditional", "full-width proportional-width", "ruby"},
      true},
     {"text-underline-position", "auto", {"from-font under", "left right"}, true},
+    // CSS Box 4 §4: `none | block | block-start || block-end`, the two ends
+    // together being `block`. (The inline keywords are at risk and no
+    // engine takes them.)
+    {"margin-trim",
+     "none block",
+     {"block-start", "block-end"},
+     true,
+     "block-start block-end",
+     "block"},
+    // `none | [ space | ideographic-space ] && auto-phrase?`, CSS Text 4 §8.2.
+    {"word-space-transform",
+     "none",
+     {"space ideographic-space", "auto-phrase"},
+     true,
+     {},
+     {},
+     {},
+     {},
+     true},
+    // `none | all | [ start || end ]`, CSS Text Decoration 4 §2.6.
+    {"text-decoration-skip-spaces", "none all", {"start", "end"}, true},
+    // `fill | none | [ contain | cover ] || scale-down`, CSS Images 4 §5.5:
+    // `contain scale-down` is `scale-down`, the same box either way.
+    {"object-fit",
+     "fill none",
+     {"contain cover", "scale-down"},
+     true,
+     "contain scale-down",
+     "scale-down"},
     {"hanging-punctuation", "none", {"first", "force-end allow-end", "last"}, false},
     {"text-emphasis-position", "auto", {"over under", "right left"}, true},
     {"ruby-position", "inter-character", {"alternate", "over under"}, true},
@@ -124,6 +154,7 @@ constexpr or_grammar or_grammars[] = {
     } else {
         for (const std::string & w : in_order) { out += (out.empty() ? "" : " ") + w; }
     }
+    if (g.first_group_required && chosen[0].empty()) { return std::nullopt; }
     if (out == g.collapse_from) { return std::string{g.collapse_to}; }
     if (out == g.collapse2_from) { return std::string{g.collapse2_to}; }
     return out;
@@ -217,14 +248,14 @@ constexpr or_grammar or_grammars[] = {
             const css_token & last = ts.tokens[at[end - 1]];
             const std::string_view text =
                 std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
+            // The SPECIFIED value keeps the function (CSS Values 4 §10.12);
+            // it is rounded to its integer when it computes, in the cascade.
             const math_answer answer = evaluate_math(text, length_context{});
             if (answer.outcome == math_outcome::invalid) { return std::nullopt; }
-            if (answer.outcome == math_outcome::resolved) {
-                if (!answer.value.is_number) { return std::nullopt; }
-                count = serialize_number(std::round(answer.value.px));
-            } else {
-                count = simplify_math(text);
+            if (answer.outcome == math_outcome::resolved && !answer.value.is_number) {
+                return std::nullopt;
             }
+            count = simplify_math(text);
             k = end;
         } else if (reversed) {
             // A reversed counter with no number counts down from its end.
@@ -354,6 +385,8 @@ constexpr ident_grammar ident_grammars[] = {
     {"page", "auto", "", false, false},
     {"view-transition-group", "normal contain nearest none", "", false, false},
     {"view-transition-class", "none", "", true, false},
+    // `none | match-element | <custom-ident>`, CSS View Transitions 2 §3.1.
+    {"view-transition-name", "none match-element auto", "", false, false},
     {"transition-property", "none", "all", true, true},
 };
 
@@ -379,7 +412,9 @@ constexpr ident_grammar ident_grammars[] = {
         if (reserved_ident(word)) { return std::nullopt; }
         if (++count > 1 && !g.list) { return std::nullopt; }
         out += (out.empty() ? "" : (g.comma ? ", " : " "));
-        out += has_keyword(g.lowercase, word) ? ascii_lower_copy(word) : std::string{word};
+        // The ident as CSSOM serialises one (§2.1): `ident(3 "myident")` made
+        // the word `3myident`, which written bare would read back as a number.
+        out += has_keyword(g.lowercase, word) ? ascii_lower_copy(word) : serialize_identifier(word);
         want_ident = !g.comma;
     }
     if (out.empty() || (g.comma && want_ident)) { return std::nullopt; }
@@ -487,6 +522,7 @@ struct pair_grammar {
 
 constexpr pair_grammar pair_grammars[] = {
     {"border-image-repeat", "stretch repeat round space"},
+    {"mask-border-repeat", "stretch repeat round space"},
 };
 
 [[nodiscard]] std::optional<std::string> keyword_pair(const pair_grammar & g,
@@ -747,6 +783,63 @@ constexpr pair_grammar pair_grammars[] = {
     return out + ")";
 }
 
+// `normal | [ stylistic(<feature-value-name>) || historical-forms ||
+// styleset(<feature-value-name>#) || character-variant(<feature-value-name>#) ||
+// swash(<feature-value-name>) || ornaments(<feature-value-name>) ||
+// annotation(<feature-value-name>) ]`, CSS Fonts 4 §6.8: each at most once,
+// one name in all but the two lists, and written back in that order.
+[[nodiscard]] std::optional<std::string> font_variant_alternates(const token_stream & ts,
+                                                                 const scan & found) {
+    static constexpr std::array<std::string_view, 7> slots = {
+        "stylistic(", "historical-forms", "styleset(",  "character-variant(",
+        "swash(",     "ornaments(",       "annotation("};
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.size() == 1 && ts.tokens[at[0]].type == token_type::ident &&
+        ascii_iequals(ts.text_of(ts.tokens[at[0]]), "normal")) {
+        return "normal";
+    }
+    std::array<std::string, 7> given;
+    for (std::size_t k = 0; k < at.size(); ++k) {
+        const css_token & t = ts.tokens[at[k]];
+        const std::string word = ascii_lower_copy(ts.text_of(t));
+        const auto slot = std::ranges::find(slots, word);
+        if (slot == slots.end()) { return std::nullopt; }
+        std::string & out = given[static_cast<std::size_t>(slot - slots.begin())];
+        if (!out.empty()) { return std::nullopt; }
+        if (t.type == token_type::ident && word == "historical-forms") {
+            out = word;
+            continue;
+        }
+        if (t.type != token_type::function) { return std::nullopt; }
+        const bool list = word == "styleset(" || word == "character-variant(";
+        out = word;
+        bool want_name = true;
+        std::size_t names = 0;
+        for (++k; k < at.size() && ts.tokens[at[k]].type != token_type::close_paren; ++k) {
+            const css_token & a = ts.tokens[at[k]];
+            if (want_name) {
+                if (a.type != token_type::ident || reserved_ident(ts.text_of(a))) {
+                    return std::nullopt;
+                }
+                out += (names++ == 0 ? "" : ", ") + serialize_identifier(ts.text_of(a));
+                want_name = false;
+            } else if (!list || a.type != token_type::comma) {
+                return std::nullopt;
+            } else {
+                want_name = true;
+            }
+        }
+        if (k == at.size() || want_name) { return std::nullopt; }
+        out += ')';
+    }
+    std::string joined;
+    for (const std::string & one : given) {
+        if (!one.empty()) { joined += (joined.empty() ? "" : " ") + one; }
+    }
+    if (joined.empty()) { return std::nullopt; }
+    return joined;
+}
+
 } // namespace
 
 namespace detail {
@@ -764,6 +857,10 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
     if (!handled && ascii_iequals(property, "font-size-adjust")) {
         handled = true;
         answer = font_size_adjust(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "font-variant-alternates")) {
+        handled = true;
+        answer = font_variant_alternates(ts, found);
     }
     if (!handled && ascii_iequals(property, "will-change")) {
         handled = true;

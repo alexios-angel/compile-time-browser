@@ -193,18 +193,6 @@ void dom_bindings::install_element_child_views(context & cx, script::object_obje
             reflect_size("height", 150);
         } else if (tag == "img") {
             install_image_views(cx, obj, id);
-        } else if (tag == "input" && txn.attribute_value(id, atoms_->intern("type")) == "file") {
-            // AN EMPTY FileList, and it has to EXIST. There is no user here to
-            // choose a file, so this is always empty - but `event.target.files`
-            // is what every change handler iterates, and undefined there is a
-            // TypeError on the first line of the handler rather than a quiet
-            // nothing-was-chosen.
-            const value files = cx.make_array();
-            static_cast<script::array_object *>(files.as_heap())->items.clear();
-            // Readonly, as every [SameObject] attribute here is: a page that
-            // assigns to `input.files` must not be able to put a string where
-            // the next `for (const f of input.files)` looks.
-            obj.define("files", files, script::attr_enumerable | script::attr_configurable);
         } else if ((txn.has_attribute(id, atoms_->intern("width")) ||
                     txn.has_attribute(id, atoms_->intern("height"))) &&
                    !interface_reflects_size(tag)) {

@@ -55,8 +55,15 @@ namespace ctbrowser::script {
     cx.throw_error("TypeError", "Cannot convert a Symbol value to a string");
     return false;
 }
-// ToString of an argument: a symbol refuses, everything else converts.
+// ToString of an argument: ToPrimitive first, then reject even a Symbol
+// returned by an object. context::to_string also serves ToPropertyKey and
+// deliberately preserves Symbols there.
 [[nodiscard]] inline std::string string_arg(context & cx, value v) {
+    if (v.is_object_like()) {
+        const context::rooted keep{cx, v};
+        const context::reentry_scope guard{cx};
+        if (guard.overflowed() || !cx.to_primitive_hint(v, "string", v)) { return {}; }
+    }
     return stringable_arg(cx, v) ? cx.to_string(v) : std::string{};
 }
 [[nodiscard]] inline std::string str_at(context & cx, std::span<value> args, std::size_t i) {
@@ -132,6 +139,12 @@ inline constexpr double max_array_length = 4294967295.0; // 2^32 - 1
     if (truncated <= 0.0) { return 0.0; }
     return truncated > max_safe_integer ? max_safe_integer : truncated;
 }
+
+// Could anything on an ordinary array's prototype chain answer an index - a
+// setter, a read-only property, a proxy? Defined in vm/objects/store.cpp,
+// beside the write that asks it; the fast paths that ADD elements (push,
+// unshift) ask it too before they skip the [[Set]] they stand in for.
+[[nodiscard]] bool array_chain_holds_indices(context & cx, const array_object & arr);
 
 namespace detail {
 
@@ -239,6 +252,13 @@ inline void adopt_subclass_prototype(context & cx, value made, const object_obje
 // String.prototype[@@iterator] answers over the characters. Defined in
 // collections/array_iteration.cpp, which says why it answers both protocols.
 [[nodiscard]] value list_iterator(context & cx, value items, const char * tag);
+// CreateArrayIterator (23.1.5.1): a LIVE iterator over an array-like or a
+// typed array - `kind` 0 keys, 1 values, 2 entries - sharing the one
+// %ArrayIteratorPrototype%. Also in collections/array_iteration.cpp.
+[[nodiscard]] value array_iterator(context & cx, value target, double kind);
+// The one prototype of an iterator kind - %MapIteratorPrototype% and the rest
+// - made on first use with `next` and the tag (array_iteration.cpp).
+[[nodiscard]] value iterator_kind_prototype(context & cx, const char * tag, native_fn next);
 
 // --- AN Array.prototype METHOD'S RECEIVER, WHICH NEED NOT BE AN ARRAY ------
 //
@@ -276,7 +296,10 @@ inline void adopt_subclass_prototype(context & cx, value made, const object_obje
         const bool shadowed = arr->elements != element_kind::none && arr->named &&
                               (arr->named->find("length") != nullptr ||
                                arr->named->find_accessor("length") != nullptr);
-        if (!shadowed) { return static_cast<double>(arr->length()); }
+        // js_length, not the vector's size: a sparse tail (past dense_limit)
+        // is length the vector does not hold, and `x.length = 4294967295`
+        // read back as 0 here.
+        if (!shadowed) { return static_cast<double>(arr->js_length()); }
     }
     const value raw = cx.lookup_property(self, "length");
     if (!numeric_arg(cx, raw)) { return 0.0; }
@@ -318,18 +341,24 @@ struct unwind_watch {
     std::size_t before;
     explicit unwind_watch(context & c) : cx(c), before(c.unwinds()) {}
     [[nodiscard]] bool threw() const { return cx.throw_pending() || cx.unwinds() != before; }
+    // AFTER A CALLBACK THAT DID NOT THROW: one that threw and caught inside
+    // itself moved the count, and the next read must not take that for its own.
+    void rearm() { before = cx.unwinds(); }
 };
 [[nodiscard]] inline array_object * dense_array_this(value self); // below
 [[nodiscard]] inline bool put_element(context & cx, value self, double i, value v) {
     if (self.is_array()) {
         auto * arr = static_cast<array_object *>(self.as_heap());
         // A typed array coerces and drops out of range, never refuses; an
-        // ordinary dense one that is extensible and writable never refuses an
-        // index at or below its size. Neither can run a line of JavaScript.
+        // ordinary one with no element attributes of its own that is
+        // extensible and writable never refuses an index at or below its size
+        // - a hole there included (array_object::holes_begin). Neither can
+        // run a line of JavaScript.
         const bool typed = arr->is_view() || arr->elements != element_kind::none;
         if (typed ||
-            (dense_array_this(self) != nullptr && arr->extensible && arr->elements_writable &&
-             i >= 0 && i <= static_cast<double>(arr->items.size()))) {
+            (arr->element_attrs.empty() && arr->length_writable && arr->extensible &&
+             arr->elements_writable && i >= 0 && i <= static_cast<double>(arr->items.size()) &&
+             !array_chain_holds_indices(cx, *arr))) {
             cx.store_index(self, value::number(i), v);
             return true;
         }
@@ -346,39 +375,53 @@ struct unwind_watch {
 // rather than refused; the refusal is a TypeError. A dense array takes
 // put_element's fast path, which is the same operation there.
 [[nodiscard]] inline bool create_element(context & cx, value target, double k, value v) {
-    if (target.is_array() && dense_array_this(target) != nullptr) {
+    // The same operation as a [[Set]] on a dense array - unless its chain
+    // holds an index, which a Set would ask and a define must not
+    // (Array.prototype[0] read-only does not stop `[].concat(x)`).
+    if (array_object * dense = dense_array_this(target);
+        dense != nullptr && !array_chain_holds_indices(cx, *dense)) {
         return put_element(cx, target, k, v);
     }
     context::property_descriptor wanted;
     wanted.has_value = wanted.has_writable = wanted.has_enumerable = wanted.has_configurable = true;
     wanted.held = v;
     wanted.writable = wanted.enumerable = wanted.configurable = true;
-    if (cx.define_own_property(target, number_to_string(k), wanted)) { return true; }
-    if (!cx.throw_pending()) {
-        cx.throw_error("TypeError", "Cannot define element " + number_to_string(k));
-    }
+    // A THROWING defineProperty TRAP ANSWERS TRUE (context::define_own_property
+    // says why), so true alone is not success: splice's species copy onto a
+    // proxy whose trap throws at "2" walked on through 2^53 indices.
+    const unwind_watch watch{cx};
+    const bool defined = cx.define_own_property(target, number_to_string(k), wanted);
+    if (watch.threw()) { return false; }
+    if (defined) { return true; }
+    cx.throw_error("TypeError", "Cannot define element " + number_to_string(k));
     return false;
 }
 // HasProperty over an index - what makes the iteration methods SKIP A HOLE.
 //
-// Free on a dense array with no holes and no element attributes of its own
-// (array_object::element_attrs): every index below its size is present. For
-// anything else this is the real HasProperty, and it is what makes
+// Free on an array with no element attributes of its own
+// (array_object::element_attrs): every index below its size that is not in
+// its run of holes is present. For anything else - an index past the end
+// included, which Array.prototype may answer for - this is the real
+// HasProperty, and it is what makes
 // `Array.prototype.forEach.call({length: 3, 1: 'x'}, f)` call back once rather
 // than three times.
 [[nodiscard]] inline bool has_element(context & cx, value self, double i) {
     if (self.is_array()) {
         auto * arr = static_cast<array_object *>(self.as_heap());
-        if (arr->sparse.empty() && arr->element_attrs.empty()) {
-            return i >= 0 && i < static_cast<double>(arr->length());
+        if (arr->element_attrs.empty() && i >= 0 && i < static_cast<double>(arr->length()) &&
+            !arr->in_hole_run(static_cast<std::size_t>(i))) {
+            return true;
         }
     }
     return cx.has_property(self, value::number(i));
 }
 
+// DeletePropertyOrThrow. A proxy's throw answers true, as its define does.
 [[nodiscard]] inline bool delete_element(context & cx, value self, double i) {
-    if (cx.delete_own_property(self, number_to_string(i))) { return !cx.throw_pending(); }
-    if (cx.throw_pending()) { return false; }
+    const unwind_watch watch{cx};
+    const bool deleted = cx.delete_own_property(self, number_to_string(i));
+    if (watch.threw()) { return false; }
+    if (deleted) { return true; }
     cx.throw_error("TypeError", "Cannot delete property '" + number_to_string(i) + "'");
     return false;
 }
@@ -406,14 +449,20 @@ struct unwind_watch {
 // array is for.
 //
 // NOR IS ONE WITH A HOLE, AN ACCESSOR ELEMENT OR A NON-WRITABLE `length`
-// (array_object::element_attrs, length_writable): those are exactly the cases
-// where vector surgery would skip a getter, fill a hole or write a length the
-// specification refuses, so they take the generic walk too.
+// (array_object::element_attrs and holes_begin, length_writable): those are
+// exactly the cases where vector surgery would skip a getter, fill a hole or
+// write a length the specification refuses, so they take the generic walk too.
 [[nodiscard]] inline array_object * dense_array_this(value self) {
     if (!self.is_array()) { return nullptr; }
     auto * arr = static_cast<array_object *>(self.as_heap());
     if (arr->is_view() || arr->elements != element_kind::none) { return nullptr; }
-    return arr->element_attrs.empty() && arr->length_writable ? arr : nullptr;
+    // ...and every element in `items`: a SPARSE tail (array_object::sparse,
+    // or a length set far past the end) is elements the vector does not
+    // hold, so `x.length = 4294967295; x.push()` answered 0.
+    return arr->element_attrs.empty() && !arr->has_hole_run() && arr->length_writable &&
+                   arr->js_length() == arr->items.size()
+               ? arr
+               : nullptr;
 }
 
 // A STRING RECEIVER CANNOT BE MUTATED, and the mutating methods have to say so.
@@ -464,6 +513,27 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
     cx.throw_error("RangeError", "the array-like's length is too large to walk");
     return false;
 }
+
+// THE SAME CEILING, SPENT ONE STEP AT A TIME - for a walk that CAN see the
+// throw that ends it. The note above predates unwind_watch: a throw that has
+// landed on the page's handler moves context::unwinds, so a loop that asks
+// after each read stops at its first throwing getter, as 23.1.3 has it, and
+// `reverse`/`unshift`/`concat` over `{length: 2**53 - 1}` with a getter that
+// throws near the top are answered rather than refused up front. Only a walk
+// that really takes max_generic_walk steps without one is the RangeError.
+struct generic_walk {
+    context & cx;
+    unwind_watch watch{cx};
+    double steps = 0;
+    explicit generic_walk(context & c) : cx(c) {}
+    // Before each step: false with a throw in flight - the budget spent.
+    [[nodiscard]] bool step() {
+        steps += 1.0;
+        return steps <= max_generic_walk || generic_walk_ok(cx, steps);
+    }
+    [[nodiscard]] bool threw() const { return watch.threw(); }
+    void rearm() { watch.rearm(); } // see unwind_watch::rearm
+};
 
 // ToObject(this value), 23.1.3's first step in every method: a primitive is
 // BOXED (detail::box_primitive) so that `Array.prototype.push.call(true)` sets
@@ -568,7 +638,9 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
         cx.throw_error("TypeError", "Array species constructor is not a constructor");
         return value::undefined();
     }
-    const value args[1] = {value::number(len)};
+    // `length` is a mathematical value (10.4.2.3), so never -0: `slice(0, -0)`
+    // constructs with +0.
+    const value args[1] = {value::number(len + 0.0)};
     const value out = cx.construct(ctor, args);
     return watch.threw() || !out.is_object_like() ? value::undefined() : out;
 }
@@ -648,16 +720,26 @@ inline void global_fn(context & cx, std::string name, double arity, native_fn fn
 // and a namespace - `Object(x)` coerces and `Object.keys` is a static - has to
 // be a native carrying properties, and its statics are installed exactly like
 // a table's.
+//
+// A method KEYED BY A WELL-KNOWN SYMBOL - `"@@iterator"` - is NAMED
+// "[Symbol.iterator]" (10.2.8 SetFunctionName on a symbol with a
+// description); the key stays the key.
+[[nodiscard]] inline std::string method_name_for_key(const std::string & key) {
+    if (key.starts_with("@@") && !key.starts_with("@@sym:") && !key.starts_with("@@for:")) {
+        return "[Symbol." + key.substr(2) + "]";
+    }
+    return key;
+}
 template <class Table> void method(context & cx, Table * table, std::string name, native_fn fn) {
-    auto * made = method_native(cx, std::move(name), std::move(fn));
+    auto * made = method_native(cx, method_name_for_key(name), std::move(fn));
     made->define("name", cx.string(made->name), attr_configurable);
-    table->define(made->name, value::object(made), attr_builtin);
+    table->define(name, value::object(made), attr_builtin);
 }
 template <class Table>
 void method(context & cx, Table * table, std::string name, double arity, native_fn fn) {
-    auto * made = method_native(cx, std::move(name), std::move(fn));
+    auto * made = method_native(cx, method_name_for_key(name), std::move(fn));
     install_arity(cx, made, arity);
-    table->define(made->name, value::object(made), attr_builtin);
+    table->define(name, value::object(made), attr_builtin);
 }
 
 // WHICH HALF OF OwnPropertyKeys A CALLER WANTS. 20.1.2.10

@@ -391,11 +391,10 @@ void test_json() {
 // `entries`, `keys` and `values` on an array, and `entries` on a Set.
 //
 // Each is a REAL ITERATOR: it has `next` and `@@iterator`, its own state is not
-// enumerable, and for..of and spread both walk it - the last because the object
-// also carries the array under `__items`, which is what `iterable_values`
-// recognises. They used to be bare Arrays, and a page that drove one by hand -
-// Babylon does, for the Map of shadow generators a light owns - got
-// "`next` is undefined".
+// enumerable, and for..of and spread both walk it. They used to be bare Arrays,
+// and a page that drove one by hand - Babylon does, for the Map of shadow
+// generators a light owns - got "`next` is undefined". An ARRAY's three are
+// LIVE (23.1.5.1): `length` is read on every step, over any array-like.
 void test_array_iterators() {
     // `{}` and not the pairs: an iterator has no enumerable own property, which
     // is also the guard that its `__items` and `__at` stay invisible.
@@ -414,6 +413,18 @@ void test_array_iterators() {
                   "0a1b");
     expect_result("return [...[7, 8].keys()].join(',');", "0,1");
     expect_result("return [...[7, 8].values()].join(',');", "7,8");
+    expect_result("const a = []; const it = a.values(); a.push(1); const r = it.next();"
+                  "a.push(2); return r.value + ',' + r.done + ',' + it.next().value + ',' +"
+                  "it.next().done;",
+                  "1,false,2,true");
+    expect_result("const a = []; const it = a.keys(); it.next(); a.push(1);"
+                  "return it.next().done;",
+                  "true");
+    expect_result("return [...Array.prototype.entries.call({length: 2, 0: 'a', 1: 'b'})]"
+                  ".join('|');",
+                  "0,a|1,b");
+    expect_result("try { Array.prototype.values.call(null); } catch (e) { return e.name; }",
+                  "TypeError");
     // A Set's entries pairs each member WITH ITSELF, which looks odd and is the
     // spec: it exists so a Set and a Map can be walked by the same code.
     expect_result("const s = new Set(['a']);"

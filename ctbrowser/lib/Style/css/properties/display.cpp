@@ -21,12 +21,12 @@ namespace detail {
 
 bool match_display(const token_stream & ts, const scan & found, std::string & out) {
     static constexpr std::string_view outsides = "block inline run-in";
-    static constexpr std::string_view insides = "flow flow-root table flex grid ruby";
+    static constexpr std::string_view insides = "flow flow-root table flex grid grid-lanes ruby";
     static constexpr std::string_view alone =
         "table-row-group table-header-group table-footer-group table-row table-cell "
         "table-column-group table-column table-caption ruby-base ruby-text ruby-base-container "
         "ruby-text-container contents none inline-block inline-table inline-flex inline-grid "
-        "-webkit-box -webkit-inline-box";
+        "inline-grid-lanes -webkit-box -webkit-inline-box";
     std::string outside, inside;
     bool list_item = false;
     for (const std::size_t i : found.significant) {
@@ -59,7 +59,9 @@ bool match_display(const token_stream & ts, const scan & found, std::string & ou
         return true;
     }
     if (outside.empty() && inside.empty()) { return false; }
-    if (outside.empty()) { outside = "block"; }
+    // An inside alone is a block box - but `ruby` alone is an inline one
+    // (CSS Display 3 §2.1).
+    if (outside.empty()) { outside = inside == "ruby" ? "inline" : "block"; }
     if (inside.empty()) { inside = "flow"; }
     if (outside == "block") {
         // `block flow` is `block`; `block <inside>` is the inside alone, but

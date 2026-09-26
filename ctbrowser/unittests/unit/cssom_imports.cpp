@@ -230,14 +230,17 @@ void test_the_background_shorthand() {
         #a { background: green }
         #b { background: url(x.png) no-repeat center / cover rgb(1, 2, 3) }
         #c { background-color: red; background: none }
-        #d { background: red, url(y.png) blue }
-    </style></head><body><p id=a></p><p id=b></p><p id=c></p><p id=d></p><script>
+        #d { background: red, url(y.png) blue } /* non-final color is invalid */
+        #e { background: none, url(y.png) blue }
+    </style></head><body><p id=a></p><p id=b></p><p id=c></p><p id=d></p><p id=e></p><script>
         const c = id => getComputedStyle(document.getElementById(id)).backgroundColor;
-        console.log('bg=' + c('a') + '|' + c('b') + '|' + c('c') + '|' + c('d'));
+        console.log('bg=' + c('a') + '|' + c('b') + '|' + c('c') + '|' + c('d') + '|' + c('e'));
     </script></body></html>)");
     CHECK(page.script_error().empty());
-    CHECK_EQ(logged(page, "bg="),
-             std::string{"bg=rgb(0, 128, 0)|rgb(1, 2, 3)|rgba(0, 0, 0, 0)|rgb(0, 0, 255)"});
+    CHECK_EQ(
+        logged(page, "bg="),
+        std::string{
+            "bg=rgb(0, 128, 0)|rgb(1, 2, 3)|rgba(0, 0, 0, 0)|rgba(0, 0, 0, 0)|rgb(0, 0, 255)"});
 }
 
 } // namespace

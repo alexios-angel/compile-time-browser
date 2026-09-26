@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -234,6 +235,10 @@ public:
     // are a handful of templates in a page. Empty when the element has none.
     [[nodiscard]] node_id template_content(node_id element) const;
     void set_template_content(node_id element, node_id fragment);
+    // ...and the other way: the <template> whose contents `fragment` is -
+    // the fragment's HOST, which is what an insertion into it takes as its
+    // context element. Empty for any other fragment.
+    [[nodiscard]] node_id template_of(node_id fragment) const;
 
     // THE NAMESPACE URI OF AN ELEMENT `node_ns` DOES NOT NAME - an `other`
     // element's. `node` has no room for a URI (node_ns says why), and a page
@@ -353,6 +358,28 @@ public:
     [[nodiscard]] bool scripting() const noexcept { return scripting_; }
     void set_scripting(bool on) noexcept { scripting_ = on; }
 
+    // "ALLOW DECLARATIVE SHADOW ROOTS" (HTML 3.1.1): whether the parser makes
+    // a `<template shadowrootmode>` its parent's shadow root. On for a
+    // document a navigation made and for `parseHTMLUnsafe`'s; off - the
+    // specification's default - for DOMParser's, createHTMLDocument's and the
+    // scratch document an `innerHTML` is parsed into, which is the whole
+    // difference between `innerHTML` and `setHTMLUnsafe`.
+    [[nodiscard]] bool allow_declarative_shadow_roots() const noexcept {
+        return declarative_shadow_roots_;
+    }
+    void set_allow_declarative_shadow_roots(bool on) noexcept { declarative_shadow_roots_ = on; }
+    // WHAT THE DOM CANNOT KNOW BY ITSELF: whether a custom element definition
+    // disables shadow roots for `host` (DOM 4.8 "attach a shadow root" step
+    // 3). The shell that owns the registry answers; the parser asks before it
+    // attaches a declarative shadow root, and on a refusal inserts the
+    // template as an ordinary one.
+    void set_shadow_disabled_hook(std::function<bool(node_id)> hook) {
+        shadow_disabled_ = std::move(hook);
+    }
+    [[nodiscard]] bool shadow_disabled(node_id host) const {
+        return shadow_disabled_ && shadow_disabled_(host);
+    }
+
     // THE NAME OF THE DECLARED ENCODING - `document.characterSet`. The bytes
     // are decoded as UTF-8 whatever it says (dom/encoding.hpp explains why
     // that is what a page observes anyway); the loader that has the bytes sets
@@ -370,6 +397,8 @@ private:
     // HTML tree builder, and `parse_xml` is the only thing that sets it.
     bool xml_ = false;
     bool scripting_ = true;
+    bool declarative_shadow_roots_ = false;
+    std::function<bool(node_id)> shadow_disabled_; // see set_shadow_disabled_hook
     std::string encoding_ = "UTF-8";
 
     [[nodiscard]] node * find(node_id id) const noexcept { return nodes_.get(id); }
@@ -403,7 +432,8 @@ private:
     // mutation record, and a diff of before against after cannot see it. So
     // while a reader has asked (`log_writes(true)`), every set_attribute* and
     // set_text notes what it wrote, and `take_writes` drains the notes. Off,
-    // it costs one load per write.
+    // it costs one load per write. An attribute that is actually removed is
+    // noted too - the attribute change steps run for a removal.
     //
     // AND THE TREE EDITS, for the live ranges (DOM 5.5): every child inserted
     // or removed is noted with its parent and its index at that moment, in
@@ -420,6 +450,10 @@ public:
         node_id node;      // the element or character data written; the PARENT of a child
         atom name;         // the attribute's qualified name; unused otherwise
         bool text = false; // `kind == data`
+        // attribute: whether it was there before, and whether this REMOVED it
+        // - what HTML's attribute change steps are given as oldValue and value.
+        bool existed = false;
+        bool removal = false;
         edit kind = edit::attribute;
         node_id child;           // inserted/removed: which
         std::uint32_t index = 0; // ...and where in `node`'s children it was
@@ -429,7 +463,7 @@ public:
     [[nodiscard]] std::vector<write_note> take_writes();
 
 private:
-    void note_write(node_id id, atom name, bool text);
+    void note_write(node_id id, atom name, bool text, bool existed = false, bool removal = false);
     void note_edit(write_note::edit kind, node_id parent, node_id child, std::size_t index);
     bool log_writes_ = false;
     std::vector<write_note> writes_log_;

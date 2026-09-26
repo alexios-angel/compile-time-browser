@@ -1,54 +1,51 @@
 # WPT — the next round, as briefs
 
-**Updated 2026-09-18: session 21 recovery complete.** Resumed the interrupted
-rectangle regression and column-wrap child draft, then committed both.
-Latest browser source is `7cfe95b5`; compiler history through `a0f1b0f7`
-is merged as `7f8531e8`. The final browser gate passed **216/216**
-(70.52 seconds), excluding compiler tests with `CTCOMPILE_MLIR=OFF`;
-formatting passed. Full CSS: **1,596 -> 1,599 files PASS** and
-**70,328 -> 70,375 subtests PASS**, zero passing file or subtest losses.
+**Updated 2026-09-18: session 29 recovered and complete.** Sources were
+committed through `fd54d8b1`; session 30 recovered the finished CSS run after
+SSH stalled. All source hashes match the gated tree. Compiler history through
+`c675f002` remains included. Browser gate: **216/216** (93.67 seconds),
+excluding compiler tests with `CTCOMPILE_MLIR=OFF`; formatting passed.
+Full CSS: **1,640 -> 1,647 files PASS**, **71,135 -> 71,205 subtests PASS**,
+zero passing file or subtest losses.
 
 Landed source commits:
 
-- `7cbc05fa` (merged as `6830e96c`): `column-wrap` support and reset through
-  `columns`; multicol **32 -> 34 PASS/39**, **1,413 -> 1,456 subtests PASS**.
-- `4d93744f`: composed 2D transforms and origins for client rectangles;
-  the scaled-viewport WPT now passes.
-- `7cfe95b5`: shared fragment geometry for rectangles, quads and coordinate
-  conversions. Restores seven GeometryUtils subtests lost in the first replay
-  and gains two more; preserves the untransformed DOMQuad constructor's
-  infinite-coordinate behavior with a regression test.
+- `b8adba54`: complete background shorthand expansion and typed position grammar.
+- `e76272e6`: catchable RangeError at existing VM/AOT stack limits.
+- `45c943e0` (merged as `2499e5a6`): strict String conversion, abrupt errors,
+  native-call fences and callback roots.
+- `c381c199`: substituted CSS-wide custom-property keywords retain their cascade
+  position; invalid shorthands reset all longhands; reject unsupported images.
+- `fd54d8b1`: serialize guaranteed-invalid custom properties as empty strings.
 
-Session 20's BigInt string grammar and loose-equality fixes remain landed;
-`test262.md` holds their measurements. No new JS/VM semantics change or
-whole-test262 measurement this session. Other wide WPT directories were not
-replayed. Binding geometry changes are journaled as SHARED; public interfaces
-and bytecode are unchanged.
+Fresh backgrounds: **91 -> 94 files PASS**, **5,837 -> 5,892 subtests PASS**.
+Fresh String test262: **1,174 -> 1,181 files PASS**, zero losses. JS/VM
+semantics are journaled; bytecode and public signatures are unchanged.
+Broader test262, non-CSS WPT and compiler suites were not replayed.
 
 **Next clear failures:**
 
-- Column-rule computed/default values: four multicol subtests. Initial
-  `column-rule-width` reports `medium` instead of `3px`; the shorthand drops
-  `medium`. Ten further multicol failures concern pseudo selectors.
-- `HTMLImageElement-x-and-y-ignore-transforms`: translation bookkeeping in
-  `Shell/bindings/element/views.cpp::locate` remains absent.
-- Elliptical border-radius expansion drops the vertical axis.
-- Transform geometry retains the existing 2D/px parser limit. Broader runtime
-  gaps include separate realms and UTF-16 strings.
+- Computed three-component background positions and logical axis keywords.
+- Abrupt conversion handling in parseInt and JSON.rawJSON; String.fromCharCode
+  wrapping, UTF-16 and case folding.
+- Relative image URLs and container-relative lengths. Container lengths need
+  actual layout content boxes, axis eligibility, invalidation and containment;
+  diagnosis remains in `/tmp/ctbrowser25/container-diagnosis.md`.
+- Broader gaps: realms, multicol pseudo selectors, image zoom/inline placement,
+  3D/relative transforms, image-set and complete attribute-taint support.
 
-Evidence: `/tmp/ctbrowser21/` holds final `browser21-corrected-css.json`,
-`corrected-css-comparison.json`, gate logs and `corrected-source.sha256`.
-The first replay's seven losses remain in `browser21-final-css.json` and
-`css-comparison.json`; do not use that intermediate result as the baseline.
-The columns child worktree, branch and devbox copy were removed. Integration
-status is recorded in the latest AGENT-SYNC.jsonl journal. The `d2664e9` ctjs
-commit remains local; do not assume its object is published.
+Evidence: `/tmp/ctbrowser29/` contains final CSS/String JSON and comparisons,
+regression/gate/format logs and source hashes. `/tmp/ctbrowser30/recovery.log`
+verifies remote completion before the next build; `recovered-css.json` and
+`recovered-css-comparison.json` preserve the final result. The child worktree
+and branch were removed; no child remote copy was created. Integration status
+is in AGENT-SYNC. The `d2664e9` ctjs commit remains local; do not assume its
+object is published.
 
-Session 19's eight-directory wide baseline is in `/tmp/w-b722aa41/` against
-`/tmp/w-9f8da347/`. The extra encoding sweep stopped without a result and is
-excluded. Read `wpt-round8-diagnoses.md` and
-`wt/wpt11-session/round8/diagnoses.json` for the remaining subsystem briefs;
-the abandoned synthesizer produced no result.
+Session 19's eight-directory wide baseline remains in `/tmp/w-b722aa41/`
+against `/tmp/w-9f8da347/`. The extra encoding sweep stopped without a result
+and is excluded. Read `wpt-round8-diagnoses.md` and
+`wt/wpt11-session/round8/diagnoses.json` for the remaining subsystem briefs.
 
 **Updated 2026-09-17, session 17.** Round six is MERGED: H by session 16
 (`05404d4d`), J/CE/V by session 17 (`8a993f13`, `ab60122e`, `9f8da347`) after
@@ -259,7 +256,7 @@ by any source (agent U's parser replaced it) but is still found, linked
 `remote-build.sh windows`) and licensed (NOTICE) - retiring it needs a
 Windows cross-build to verify, which this session did not run.
 `ctcompile_lit` has 10 cases red on Codex's side of the moved VM oracle
-(the 2026-09-16 JOURNAL lines in AGENT-SYNC.jsonl list each with its message);
+(the 2026-09-16 JOURNAL lines in AGENT-SYNC.md list each with its message);
 every one is under `ctcompile/`.
 
 **How to gate faster than session 14 did**: `/tmp/wpt14/fastgate.sh <sha>`

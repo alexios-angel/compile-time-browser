@@ -97,7 +97,15 @@ namespace ctbrowser::style::css::substitute_detail {
 [[nodiscard]] std::string text_between(const token_stream & s, std::size_t first,
                                        std::size_t last) {
     std::string out;
-    for (std::size_t i = first; i < last; ++i) { out += s.text_of(s.tokens[i]); }
+    for (std::size_t i = first; i < last; ++i) {
+        // A <url-token>'s text is its BODY, `url(` and `)` consumed around it
+        // and not recorded: without them `url(a.png), attr(...)` substitutes
+        // to `a.png, ...` (attr-security).
+        const bool url = s.tokens[i].type == token_type::url;
+        if (url) { out += "url("; }
+        out += s.text_of(s.tokens[i]);
+        if (url) { out += ')'; }
+    }
     return out;
 }
 
@@ -210,17 +218,14 @@ namespace ctbrowser::style::css::substitute_detail {
 // The source text of one item, or empty when a token in it was rebuilt from
 // an escape and is no longer a slice of the source.
 [[nodiscard]] std::string slice_of(const token_stream & s, const item & it) {
-    const css_token & a = s.tokens[it.first];
-    const css_token & b = s.tokens[it.last];
-    if (a.text >= s.source_length || b.text >= s.source_length) { return {}; }
-    return std::string{std::string_view{s.pool}.substr(a.text, b.text + b.length - a.text)};
+    return std::string{source_run(s, it.first, it.last + 1)};
 }
 
 // One item against one type, serialised on a match: a dimension with its unit
 // lowercased, a number in its shortest form, and a function as written - the
 // cascade folds a `calc()` afterwards exactly as it folds one the author wrote.
 [[nodiscard]] std::optional<std::string> match_item(const token_stream & s, const item & it,
-                                                    std::string_view type) {
+                                                    std::string_view type, bool from_attribute) {
     const css_token & t = s.tokens[it.first];
     const bool single = it.first == it.last;
     const std::string text = slice_of(s, it);
@@ -304,15 +309,20 @@ namespace ctbrowser::style::css::substitute_detail {
         return std::nullopt;
     }
     if (type == "image") {
+        // A URL IS AN IMAGE, except where an attribute wrote it.
+        if (t.type == token_type::url) {
+            return single && !from_attribute ? std::optional{text} : std::nullopt;
+        }
         if (t.type != token_type::function) { return std::nullopt; }
         std::string_view name = s.text_of(t);
         name.remove_suffix(1);
+        if (!from_attribute && ascii_iequals_any(name, {"url", "src"})) { return text; }
         if (ascii_iequals_any(name, {"linear-gradient", "radial-gradient", "conic-gradient",
                                      "repeating-linear-gradient", "repeating-radial-gradient",
                                      "repeating-conic-gradient", "image-set", "image", "cross-fade",
                                      "element", "paint"})) {
-            // ...with no url() anywhere inside it.
-            for (std::size_t i = it.first; i <= it.last; ++i) {
+            // ...with no url() anywhere inside it, when an attribute wrote it.
+            for (std::size_t i = it.first; from_attribute && i <= it.last; ++i) {
                 const css_token & inner = s.tokens[i];
                 if (inner.type == token_type::url || (inner.type == token_type::function &&
                                                       ascii_iequals(s.text_of(inner), "url("))) {
@@ -342,7 +352,7 @@ namespace ctbrowser::style::css::substitute_detail {
 
 // The whole attribute text against a parsed `<syntax>`, serialised on a match.
 [[nodiscard]] std::optional<std::string> match_syntax(
-    std::string_view value, const std::vector<syntax_alternative> & syntax) {
+    std::string_view value, const std::vector<syntax_alternative> & syntax, bool from_attribute) {
     const token_stream s = tokenize(value);
     if (syntax.empty()) { return std::string{trim(value, html_whitespace)}; } // `*`
     for (const syntax_alternative & alt : syntax) {
@@ -361,7 +371,7 @@ namespace ctbrowser::style::css::substitute_detail {
         std::string out;
         bool all = true;
         for (const item & part : parts) {
-            const std::optional<std::string> one = match_item(s, part, alt.name);
+            const std::optional<std::string> one = match_item(s, part, alt.name, from_attribute);
             if (!one) {
                 all = false;
                 break;

@@ -446,11 +446,17 @@ void document::set_document_element(node_id id, node_id before) {
     const auto gone = std::ranges::remove(items, id);
     items.erase(gone.begin(), gone.end());
     // The old element's slot if it had one; otherwise ahead of `before`, or at
-    // the end.
+    // the end. NOTED LIKE ANY OTHER CHILD OF A PARENT - the Document is one -
+    // so a live range or a NodeIterator on the Document moves with it.
     if (const auto slot = std::ranges::find(items, previous); slot != items.end()) {
+        const auto index = static_cast<std::size_t>(slot - items.begin());
         *slot = id;
+        note_edit(write_note::edit::removed, document_node_, previous, index);
+        note_edit(write_note::edit::inserted, document_node_, id, index);
     } else {
-        items.insert(std::ranges::find(items, before), id);
+        const auto at = items.insert(std::ranges::find(items, before), id);
+        note_edit(write_note::edit::inserted, document_node_, id,
+                  static_cast<std::size_t>(at - items.begin()));
     }
     bump_version();
 }
@@ -459,6 +465,12 @@ void document::remove_document_element() {
     if (root_ == document_node_) { return; }
     node * doc_node = find(document_node_);
     if (doc_node == nullptr) { return; }
+    // Its index BEFORE it goes, as detach notes any other child's.
+    if (const auto at = std::ranges::find(doc_node->children, root_);
+        at != doc_node->children.end()) {
+        note_edit(write_note::edit::removed, document_node_, root_,
+                  static_cast<std::size_t>(at - doc_node->children.begin()));
+    }
     const auto gone = std::ranges::remove(doc_node->children, root_);
     doc_node->children.erase(gone.begin(), gone.end());
     root_ = document_node_;
@@ -553,7 +565,8 @@ std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
     // the attribute being overwritten.
     const auto at =
         std::ranges::find_if(n->attributes, [name](const attribute & a) { return a.name == name; });
-    if (at != n->attributes.end()) {
+    const bool existed = at != n->attributes.end();
+    if (existed) {
         // ONLY THE VALUE. The attribute found may be in a namespace and may
         // carry a prefix; neither is what a `setAttribute` was asked to change.
         at->value = std::string{value};
@@ -562,7 +575,7 @@ std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
     }
     update_pi_data(id, *n);
     bump_version();
-    note_write(id, name, false);
+    note_write(id, name, false, existed);
     return {};
 }
 
@@ -578,13 +591,14 @@ std::expected<void, dom_error> document::set_attribute_ns(node_id id, atom ns, a
 
     const auto at = std::ranges::find_if(
         n->attributes, [&](const attribute & a) { return attribute_is(*atoms_, a, uri, local); });
-    if (at != n->attributes.end()) {
+    const bool existed = at != n->attributes.end();
+    if (existed) {
         at->value = std::string{value};
     } else {
         n->attributes.push_back(attribute{name, ns, std::string{value}});
     }
     bump_version();
-    note_write(id, name, false);
+    note_write(id, name, false, existed);
     return {};
 }
 
@@ -608,6 +622,7 @@ std::expected<void, dom_error> document::remove_attribute(node_id id, atom name)
     n->attributes.erase(gone);
     update_pi_data(id, *n);
     bump_version();
+    note_write(id, name, false, true, true);
     return {};
 }
 
@@ -618,8 +633,10 @@ std::expected<void, dom_error> document::remove_attribute_ns(node_id id, std::st
     const auto gone = std::ranges::find_if(
         n->attributes, [&](const attribute & a) { return attribute_is(*atoms_, a, ns, local); });
     if (gone == n->attributes.end()) { return {}; }
+    const atom name = gone->name;
     n->attributes.erase(gone);
     bump_version();
+    note_write(id, name, false, true, true);
     return {};
 }
 
@@ -663,12 +680,14 @@ std::vector<document::write_note> document::take_writes() {
     return std::exchange(writes_log_, {});
 }
 
-void document::note_write(node_id id, atom name, bool text) {
+void document::note_write(node_id id, atom name, bool text, bool existed, bool removal) {
     if (log_writes_) {
         write_note note;
         note.node = id;
         note.name = name;
         note.text = text;
+        note.existed = existed;
+        note.removal = removal;
         if (text) { note.kind = write_note::edit::data; }
         writes_log_.push_back(note);
     }
@@ -701,6 +720,14 @@ void document::set_template_content(node_id element, node_id fragment) {
     template_contents_.emplace_back(element, fragment);
 }
 
+node_id document::template_of(node_id fragment) const {
+    if (!fragment) { return {}; }
+    for (const auto & [element, held] : template_contents_) {
+        if (held == fragment) { return element; }
+    }
+    return {};
+}
+
 atom document::element_namespace(node_id element) const {
     const auto it = element_namespaces_.find(shadow_key(element));
     return it == element_namespaces_.end() ? atom{} : it->second;
@@ -721,9 +748,10 @@ void document::set_element_namespace(node_id element, atom uri) {
 std::expected<node_id, dom_error> document::attach_shadow(node_id host, shadow_tree how) {
     const auto txn = read();
     if (!txn.contains(host)) { return std::unexpected{dom_error::no_such_node}; }
+    // The LOCAL name (DOM 4.2.14 "attach a shadow root" step 2): a prefixed
+    // `<xhtml:div>` in the HTML namespace is a div (host-with-namespace.xhtml).
     if (txn.kind(host).value_or(node_kind::text) != node_kind::element ||
-        txn.element_ns(host) != node_ns::html ||
-        !valid_shadow_host_name(atoms_->text(txn.tag(host).value_or(atom{})))) {
+        txn.element_ns(host) != node_ns::html || !valid_shadow_host_name(txn.local_name(host))) {
         return std::unexpected{dom_error::invalid_shadow_host};
     }
     if (shadow_root_of(host)) { return std::unexpected{dom_error::shadow_root_exists}; }

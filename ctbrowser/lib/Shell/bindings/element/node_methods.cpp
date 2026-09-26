@@ -60,9 +60,7 @@ void dom_bindings::install_node_methods(context & cx) {
             const std::span<const node_id> kids = txn.children(self);
             return std::pair{self, kids.empty() ? node_id{} : kids.front()};
         }
-        if (where == "beforeend") {
-            return std::pair{self, node_id{}};
-        }
+        if (where == "beforeend") { return std::pair{self, node_id{}}; }
         const bool before = where == "beforebegin";
         if (!before && where != "afterend") {
             throw_dom_exception(c, "SyntaxError",
@@ -127,29 +125,33 @@ void dom_bindings::install_node_methods(context & cx) {
     // which were missing. `insertAdjacentElement` ANSWERS with the element it
     // inserted - or null, which is how a page learns the position was one the
     // element has no room for.
-    method(element, "insertAdjacentElement", 2,
-           [this, adjacent_place](context & c, std::span<value> args) {
-               const node_id self = receiver(c);
-               if (!self) { return value::null(); }
-               const std::optional<std::pair<node_id, node_id>> place =
-                   adjacent_place(c, self, arg_string(c, args, 0));
-               if (!place) { return value::null(); }
-               const node_id child = handle_of(arg(args, 1));
-               // AN ELEMENT, by the IDL: a doctype or a text node is a TypeError
-               // before any hierarchy question is asked - insert-adjacent.html
-               // hands it a DocumentType by name.
-               if (child &&
-                   doc_->read().kind(child).value_or(node_kind::element) != node_kind::element) {
-                   c.throw_error("TypeError",
-                                 "insertAdjacentElement: the argument is not an Element");
-                   return value::null();
-               }
-               if (!pre_insert_valid(c, place->first, child, arg(args, 1), value::null())) {
-                   return value::null();
-               }
-               (void)insert_node(place->first, child, place->second);
-               return arg(args, 1);
-           });
+    method(
+        element, "insertAdjacentElement", 2,
+        [this, adjacent_place, insertable](context & c, std::span<value> args) {
+            const node_id self = receiver(c);
+            if (!self) { return value::null(); }
+            const std::optional<std::pair<node_id, node_id>> place =
+                adjacent_place(c, self, arg_string(c, args, 0));
+            if (!place) { return value::null(); }
+            // AN ELEMENT, by the IDL: a doctype or a text node is a TypeError
+            // before any hierarchy question is asked - insert-adjacent.html
+            // hands it a DocumentType by name. Asked of the document that
+            // owns it, which may be another one: an element of another
+            // document is adopted (insertable), as appendChild adopts it.
+            dom_bindings * owner = owner_of(arg(args, 1));
+            if (const node_id held = owner == nullptr ? node_id{} : owner->handle_of(arg(args, 1));
+                held &&
+                owner->doc_->read().kind(held).value_or(node_kind::element) != node_kind::element) {
+                c.throw_error("TypeError", "insertAdjacentElement: the argument is not an Element");
+                return value::null();
+            }
+            const node_id child = insertable(c, arg(args, 1));
+            if (!pre_insert_valid(c, place->first, child, arg(args, 1), value::null())) {
+                return value::null();
+            }
+            (void)insert_node(place->first, child, place->second);
+            return arg(args, 1);
+        });
     method(element, "insertAdjacentText", 2,
            [this, adjacent_place](context & c, std::span<value> args) {
                const node_id self = receiver(c);

@@ -7,6 +7,20 @@
 
 namespace ctbrowser::shell {
 
+namespace {
+
+// The global a callback reports its exceptions at: its function's realm's
+// ("report the exception", HTML 8.1.4.4), else the running realm's.
+[[nodiscard]] value callback_global(context & cx, value callback) {
+    const auto * closure = callback.is_kind(script::heap_kind::function)
+                               ? static_cast<const script::closure_object *>(callback.as_heap())
+                               : nullptr;
+    return closure != nullptr && closure->realm != nullptr ? closure->realm->global_this
+                                                           : cx.global_this();
+}
+
+} // namespace
+
 void dom_bindings::set_alert_hook(std::function<void(const std::string &)> hook) {
     on_alert_ = std::move(hook);
 }
@@ -149,27 +163,35 @@ std::size_t dom_bindings::run_due_callbacks() {
             } else {
                 const script::program & held = cx_->own_program(std::move(compiled));
                 for (const std::string & name : held.hoisted_vars) {
-                    if (!cx_->has_global(name)) { cx_->define_global(name, value::undefined()); }
+                    cx_->declare_global_var(name);
                 }
                 auto * entry = cx_->allocate<script::closure_object>(&held.functions[0]);
                 entry->owner = &held;
                 (void)cx_->call_fenced(value::object(entry), {}, cx_->global_this(), threw, thrown);
             }
         } else {
-            (void)cx_->call_fenced(t.callback, {}, cx_->global_this(), threw, thrown);
+            (void)cx_->call_fenced(t.callback, t.arguments, cx_->global_this(), threw, thrown);
         }
         if (threw || cx_->failed()) {
             const context::rooted keep_thrown{*cx_, thrown};
             const std::string fault = cx_->failed()
                                           ? cx_->take_error()
                                           : "uncaught " + detail::describe_thrown(*cx_, thrown);
-            const bool handled = dispatch_error_value(fault, thrown);
+            // At the CALLBACK's global ("report the exception" in the timer
+            // task): a frame's function handed to the page's setTimeout
+            // reports in the frame (settimeout-cross-realm-callback-...).
+            const bool handled =
+                bindings_of(callback_global(*cx_, t.callback)).dispatch_error_value(fault, thrown);
             if (!handled && callback_error_.empty()) {
                 callback_error_ = "setTimeout callback: " + fault;
             }
         }
         note_callback_fault("setTimeout");
         ++ran;
+        // A TIMER IS A TASK, and every task ends in a microtask checkpoint:
+        // a promise the callback settled runs its reactions before the NEXT
+        // timer, not after the whole batch.
+        cx_->drain_microtasks();
     }
     std::erase_if(timers_, [](const timer & t) { return t.cancelled; });
     // AFTER THE TIMERS, BEFORE THE ANIMATION FRAMES. That is where a browser
@@ -296,11 +318,29 @@ void dom_bindings::install_console(context & cx) {
 }
 
 void dom_bindings::install_timers(context & cx) {
-    cx.define_native("setTimeout", [this](context &, std::span<value> args) {
-        return value::number(add_timer(arg(args, 0), arg_number(args, 1), false));
+    // The IDL conversions, in order (HTML 8.6): a handler that is not a
+    // Function is a DOMString NOW - its `toString` runs at the call, not when
+    // the timer fires (evil-spec-example.any.js) - the timeout is a `long`, so
+    // 2**32 wraps to 0 (type-long-settimeout.any.js), and the rest are the
+    // callback's arguments.
+    const auto schedule = [this](context & c, std::span<value> args, bool repeating) {
+        value handler = arg(args, 0);
+        if (!handler.is_callable()) {
+            handler = c.string(c.to_string(handler));
+            if (c.throw_pending()) { return value::undefined(); }
+        }
+        const double timeout = context::to_int32(arg(args, 1));
+        const std::uint32_t id = add_timer(handler, timeout, repeating);
+        if (args.size() > 2 && handler.is_callable()) {
+            timers_.back().arguments.assign(args.begin() + 2, args.end());
+        }
+        return value::number(id);
+    };
+    cx.define_native("setTimeout", [schedule](context & c, std::span<value> args) {
+        return schedule(c, args, false);
     });
-    cx.define_native("setInterval", [this](context &, std::span<value> args) {
-        return value::number(add_timer(arg(args, 0), arg_number(args, 1), true));
+    cx.define_native("setInterval", [schedule](context & c, std::span<value> args) {
+        return schedule(c, args, true);
     });
     const auto cancel = [this](context &, std::span<value> args) {
         const auto id = static_cast<std::uint32_t>(arg_number(args, 0));
@@ -314,13 +354,37 @@ void dom_bindings::install_timers(context & cx) {
     // HTML 8.6 `queueMicrotask`: the VM's own queue, which every promise
     // reaction is already on, so the ordering between the two is the one a
     // page observes in a browser. A non-callable is a TypeError by the IDL.
-    cx.define_native("queueMicrotask", [](context & c, std::span<value> args) {
+    //
+    // A THROW IS REPORTED, and the checkpoint goes on: the job "invokes the
+    // callback with report", so an exception is an `error` event at the
+    // callback's own window (queue-microtask-exceptions.any.js). Queued bare,
+    // it was an uncaught throw that stopped the drain.
+    cx.define_native("queueMicrotask", [this](context & c, std::span<value> args) {
         const value callback = arg(args, 0);
         if (!callback.is_callable()) {
             c.throw_error("TypeError", "queueMicrotask: the callback is not a function");
             return value::undefined();
         }
-        c.queue_microtask(callback);
+        const value window = callback_global(c, callback);
+        auto * job = c.allocate<script::native_object>(
+            "queueMicrotask job", [this, callback, window](context & j, std::span<value>) {
+                bool threw = false;
+                value thrown = value::undefined();
+                (void)j.call_fenced(callback, {}, value::undefined(), threw, thrown);
+                if (threw) {
+                    const context::rooted keep{j, thrown};
+                    const std::string fault = "uncaught " + detail::describe_thrown(j, thrown);
+                    const bool handled = bindings_of(window).dispatch_error_value(fault, thrown);
+                    if (!handled && callback_error_.empty()) {
+                        callback_error_ = "queueMicrotask callback: " + fault;
+                    }
+                }
+                return value::undefined();
+            });
+        // In a C++ capture, which the collector cannot see.
+        job->retained.push_back(callback);
+        job->retained.push_back(window);
+        c.queue_microtask(value::object(job));
         return value::undefined();
     });
     cx.define_native("requestAnimationFrame", [this](context & c, std::span<value> args) {
@@ -347,8 +411,13 @@ void dom_bindings::install_timers(context & cx) {
 
 std::uint32_t dom_bindings::add_timer(value callback, double delay_ms, bool repeating) {
     const std::uint32_t id = ++next_timer_id_;
-    timers_.push_back(timer{id, callback, now_ms_ + std::max(0.0, delay_ms),
-                            std::max(0.0, delay_ms), repeating, false});
+    timers_.push_back(timer{id,
+                            callback,
+                            {},
+                            now_ms_ + std::max(0.0, delay_ms),
+                            std::max(0.0, delay_ms),
+                            repeating,
+                            false});
     return id;
 }
 

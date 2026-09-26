@@ -293,6 +293,9 @@ value dom_bindings::compile_handler_attribute(context & cx, value self, const st
         return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
                ch == '_' || ch == '$';
     });
+    // COMPILED IN THE ELEMENT'S DOCUMENT'S REALM, so a frame's `onload="run()"`
+    // calls the frame's `run` whoever reads the handler first.
+    const auto in_realm = enter_realm(cx);
     script::program compiled = script::compiler::compile(
         std::string{"return (function (document, form) { with (document) { "} +
         (with_form ? "with (form) { " : "") + "with (this) { return function " +
@@ -343,6 +346,7 @@ void dom_bindings::refresh_forwarded_handler(context & cx, node_id element,
                                              const std::string & name) {
     auto * window = window_object();
     if (window == nullptr || !element) { return; }
+    const auto in_realm = enter_realm(cx);
     const value self = wrap(cx, element);
     if (!self.is_object()) { return; }
     auto * object = static_cast<script::object_object *>(self.as_heap());
@@ -373,6 +377,7 @@ void dom_bindings::refresh_forwarded_handler(context & cx, node_id element,
 // rather than a null in it - see assigned_slot.
 value dom_bindings::event_handler_get(context & cx, value self, const std::string & name) {
     if (!self.is_object()) { return value::null(); }
+    const auto in_realm = enter_realm(cx);
     auto * object = static_cast<script::object_object *>(self.as_heap());
     if (forwards_to_window(name) && window_object() != nullptr) {
         if (object == window_object()) {
@@ -435,6 +440,7 @@ value dom_bindings::event_handler_get(context & cx, value self, const std::strin
 void dom_bindings::event_handler_set(context & cx, value self, const std::string & name,
                                      value given) {
     if (!self.is_object()) { return; }
+    const auto in_realm = enter_realm(cx);
     auto * object = static_cast<script::object_object *>(self.as_heap());
     // `body.onload = f` IS `window.onload = f` - see forwards_to_window.
     if (forwards_to_window(name) && window_object() != nullptr && body_or_frameset_of(self)) {
@@ -464,12 +470,26 @@ void dom_bindings::event_handler_set(context & cx, value self, const std::string
 // THE ATTRIBUTE WRITES THE DOCUMENT LOGGED since the last mutation: an
 // `on*` content attribute activates its handler's listener the moment it is
 // set (HTML 8.1.8.1 - the attribute change steps), and deactivates it when
-// it goes with no IDL handler assigned in its place.
+// it goes with no IDL handler assigned in its place. And a <details> whose
+// `open` came or went queues its toggle (4.11.1).
 void dom_bindings::settle_attribute_writes(const std::vector<document::write_note> & writes) {
     if (cx_ == nullptr || doc_ == nullptr) { return; }
     for (const document::write_note & note : writes) {
         if (note.kind != document::write_note::edit::attribute || !note.node) { continue; }
         const std::string_view name = atoms_->text(note.name);
+        // ponytail: a removal does not say its namespace, so a namespaced
+        // attribute qualified `open` toggles too.
+        if (name == "open" && note.existed == note.removal) {
+            const auto txn = doc_->read();
+            if (txn.contains(note.node) && txn.element_ns(note.node) == node_ns::html &&
+                txn.local_name(note.node) == "details") {
+                const attribute * held = txn.find_attribute(note.node, note.name);
+                if (held == nullptr || !held->ns) {
+                    queue_details_toggle(note.node, note.existed, !note.removal);
+                }
+            }
+            continue;
+        }
         if (name.size() < 3 || name[0] != 'o' || name[1] != 'n') { continue; }
         bool present = false;
         {
@@ -503,6 +523,50 @@ void dom_bindings::settle_attribute_writes(const std::vector<document::write_not
             deactivate_event_handler(at, type);
         }
     }
+}
+
+// "Queue a details toggle event task" (HTML 4.11.1): a ToggleEvent at the
+// element in a later task, and ONE per burst - a toggle still queued is
+// cancelled and its old state carried into the new one, so open-then-close
+// in one script fires once, "closed" to "closed". On the PRIMARY's timers,
+// the queue the tick drains.
+void dom_bindings::queue_details_toggle(node_id details, bool was_open, bool open) {
+    dom_bindings & top = primary();
+    const auto held = std::ranges::find(details_toggles_, details, &details_toggle::details);
+    if (held != details_toggles_.end()) {
+        was_open = held->was_open;
+        for (timer & t : top.timers_) {
+            if (t.id == held->task) { t.cancelled = true; }
+        }
+        details_toggles_.erase(held);
+    }
+    const auto state = [](bool is_open) { return is_open ? "open" : "closed"; };
+    const std::uint32_t task = top.add_timer(
+        native(*cx_, "details toggle",
+               [this, details, old_state = state(was_open),
+                new_state = state(open)](context & c, std::span<value>) {
+                   std::erase_if(details_toggles_, [details](const details_toggle & d) {
+                       return d.details == details;
+                   });
+                   const value event = make_event(c, "toggle", details);
+                   auto * object = static_cast<script::object_object *>(event.as_heap());
+                   object->set("bubbles", value::boolean(false));
+                   object->set("cancelable", value::boolean(false));
+                   object->set("oldState", c.string(old_state));
+                   object->set("newState", c.string(new_state));
+                   if (const value ctor = c.has_global("ToggleEvent") ? c.global("ToggleEvent")
+                                                                      : value::undefined();
+                       ctor.is_object_like()) {
+                       if (const value proto = c.lookup_property(ctor, "prototype");
+                           proto.is_object()) {
+                           object->prototype = proto;
+                       }
+                   }
+                   (void)dispatch_event("toggle", details, event);
+                   return value::undefined();
+               }),
+        0, false);
+    details_toggles_.push_back(details_toggle{details, task, was_open});
 }
 
 // EVERY ONE OF THEM, ON EVERY OBJECT HTML PUTS THEM ON.
@@ -543,19 +607,8 @@ void dom_bindings::install_event_handler_attributes(context & cx) {
             hosts.push_back(static_cast<script::object_object *>(proto.as_heap()));
         }
     }
-    if (auto * window = window_object()) { hosts.push_back(window); }
     const auto install = [&](std::string_view attribute, std::span<script::object_object *> where) {
-        const std::string name{attribute};
-        const value getter = value::object(
-            cx.allocate<script::native_object>(name, [this, name](context & c, std::span<value>) {
-                return event_handler_get(c, c.current_this(), name);
-            }));
-        const value setter = value::object(
-            cx.allocate<script::native_object>(name, [this, name](context & c, std::span<value> a) {
-                event_handler_set(c, c.current_this(), name, a.empty() ? value::undefined() : a[0]);
-                return value::undefined();
-            }));
-        for (script::object_object * host : where) { host->define_accessor(name, getter, setter); }
+        install_handler_accessor(cx, attribute, where);
     };
     for (const std::string_view attribute : global_event_handlers) { install(attribute, hosts); }
     // The Document's own (HTML 3.1.3 and the pointer lock, fullscreen and
@@ -568,12 +621,37 @@ void dom_bindings::install_event_handler_attributes(context & cx) {
             install(attribute, std::span<script::object_object *>{&document_proto, 1});
         }
     }
-    // WindowEventHandlers is the window's alone here - see the note above on
-    // what forwarding would need.
-    if (auto * window = window_object()) {
-        for (const std::string_view attribute : window_event_handlers) {
-            install(attribute, std::span<script::object_object *>{&window, 1});
-        }
+    if (auto * window = window_object()) { install_window_handlers(cx, *window); }
+}
+
+// One `on<name>` accessor pair over this document's handler storage, on each
+// of `where`.
+void dom_bindings::install_handler_accessor(context & cx, std::string_view attribute,
+                                            std::span<script::object_object *> where) {
+    const std::string name{attribute};
+    const value getter = value::object(
+        cx.allocate<script::native_object>(name, [this, name](context & c, std::span<value>) {
+            return event_handler_get(c, c.current_this(), name);
+        }));
+    const value setter = value::object(
+        cx.allocate<script::native_object>(name, [this, name](context & c, std::span<value> a) {
+            event_handler_set(c, c.current_this(), name, a.empty() ? value::undefined() : a[0]);
+            return value::undefined();
+        }));
+    for (script::object_object * host : where) { host->define_accessor(name, getter, setter); }
+}
+
+// A WINDOW'S HANDLERS - GlobalEventHandlers and WindowEventHandlers, the latter
+// the window's alone here (see the note above on what forwarding would need) -
+// over THIS document's storage: the page's window in install, a frame's in
+// install_frame_realm, so `<body onload>` in a frame is the frame window's.
+void dom_bindings::install_window_handlers(context & cx, script::object_object & window) {
+    script::object_object * host = &window;
+    for (const std::string_view attribute : global_event_handlers) {
+        install_handler_accessor(cx, attribute, std::span<script::object_object *>{&host, 1});
+    }
+    for (const std::string_view attribute : window_event_handlers) {
+        install_handler_accessor(cx, attribute, std::span<script::object_object *>{&host, 1});
     }
 }
 
@@ -656,11 +734,26 @@ bool dom_bindings::fire_handler_property(value target, std::string_view type, va
     // that exists to report a throw. dom/events/Event-dispatch-throwing.html
     // asserts `typeof e === 'string'` for exactly this reason.
     //
-    // ONLY AT THE WINDOW and only for `error`: an `onerror` on an <img> is an
-    // ordinary event handler and takes the event, which is the distinction the
-    // specification draws with the ErrorEvent type rather than the name.
+    // ONLY AT THE WINDOW, only for `error`, and ONLY FOR AN ErrorEvent (HTML
+    // 8.1.8.1 step 4): an `onerror` on an <img> is an ordinary event handler
+    // and takes the event, and so is the window's for a plain
+    // `new Event("error")` a page dispatched - it gets that event, and it is
+    // `false`, not `true`, that cancels it (window-synthetic-event.html).
+    const auto is_error_event = [this, event] {
+        const value ctor =
+            cx_->has_global("ErrorEvent") ? cx_->global("ErrorEvent") : value::undefined();
+        const value proto =
+            ctor.is_object_like() ? cx_->lookup_property(ctor, "prototype") : value::undefined();
+        if (!proto.is_object() || !event.is_object()) { return false; }
+        for (value at = static_cast<script::object_object *>(event.as_heap())->prototype;
+             at.is_object(); at = static_cast<script::object_object *>(at.as_heap())->prototype) {
+            if (at.bits() == proto.bits()) { return true; }
+        }
+        return false;
+    };
     if (type == "error" &&
-        target.bits() == object_of_step(*cx_, path_step{node_id{}, listen_on::window}).bits()) {
+        target.bits() == object_of_step(*cx_, path_step{node_id{}, listen_on::window}).bits() &&
+        is_error_event()) {
         // AN ARRAY, because that is what the fence spreads. The five arguments
         // are built into one so that the handler still runs behind the same
         // `try` every listener does - `window.onerror` is exactly the handler a

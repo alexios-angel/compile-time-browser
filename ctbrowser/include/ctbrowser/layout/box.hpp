@@ -133,6 +133,12 @@ struct box_node {
     // ancestor's scrollable overflow rectangle (layout/overflow.hpp).
     bool scroll_container = false;
     bool clips_overflow = false;
+    // SIZE CONTAINMENT (CSS Containment 2 §3.2): the box is sized as if it
+    // had no content - on both axes for `contain: size` and `container-type:
+    // size`, on the inline axis for `inline-size` - so a query container's
+    // size never depends on what its queries style.
+    bool contain_block_size = false;
+    bool contain_inline_size = false;
     side_lengths margin{}, padding{};
     // WHERE THIS BOX IS PLACED, and by whom.
     //
@@ -320,7 +326,7 @@ public:
                          atoms.intern("padding-bottom"), atoms.intern("padding-left")},
           font_family_(atoms.intern("font-family")), font_weight_(atoms.intern("font-weight")),
           font_style_(atoms.intern("font-style")),
-          text_decoration_(atoms.intern("text-decoration")),
+          text_decoration_(atoms.intern("text-decoration-line")),
           white_space_(atoms.intern("white-space")), line_height_(atoms.intern("line-height")),
           min_width_(atoms.intern("min-width")), max_width_(atoms.intern("max-width")),
           min_height_(atoms.intern("min-height")), max_height_(atoms.intern("max-height")),
@@ -333,7 +339,8 @@ public:
           position_(atoms.intern("position")), z_index_(atoms.intern("z-index")),
           transform_(atoms.intern("transform")), text_align_(atoms.intern("text-align")),
           opacity_(atoms.intern("opacity")), overflow_x_(atoms.intern("overflow-x")),
-          overflow_y_(atoms.intern("overflow-y")),
+          overflow_y_(atoms.intern("overflow-y")), contain_(atoms.intern("contain")),
+          container_type_(atoms.intern("container-type")),
           list_style_type_(atoms.intern("list-style-type")),
           border_collapse_(atoms.intern("border-collapse")),
           border_spacing_(atoms.intern("border-spacing")),
@@ -550,6 +557,21 @@ private:
             b.clips_overflow = b.scroll_container ||
                                ascii_iequals(trimmed(prop(style, overflow_x_)), "clip") ||
                                ascii_iequals(trimmed(prop(style, overflow_y_)), "clip");
+            // Containment does not apply to an inline box or a table (§3.2):
+            // only a box of its own - block-level, or an atomic inline - and
+            // no table part is contained.
+            if (b.kind != box_kind::inline_ && b.kind != box_kind::text &&
+                b.kind != box_kind::table && !trimmed(prop(style, display_)).starts_with("table")) {
+                for (const atom name : {contain_, container_type_}) {
+                    for (const std::string_view word :
+                         split_top_level(prop(style, name), " \t\n")) {
+                        const bool both = ascii_iequals_any(word, {"size", "strict"});
+                        b.contain_block_size = b.contain_block_size || both;
+                        b.contain_inline_size =
+                            b.contain_inline_size || both || ascii_iequals(word, "inline-size");
+                    }
+                }
+            }
             // THE BODY'S OVERFLOW PROPAGATES TO THE VIEWPORT when the root's
             // is `visible` (CSS Overflow 3 §3.3), and the body's own used
             // value is `visible` then: it is not a scroll container, clips
@@ -948,6 +970,7 @@ private:
     atom border_width_, border_style_;
     side_atoms border_sides_, border_style_sides_;
     atom position_, z_index_, transform_, text_align_, opacity_, overflow_x_, overflow_y_;
+    atom contain_, container_type_;
     atom list_style_type_;
     atom border_collapse_, border_spacing_;
     side_atoms inset_sides_;

@@ -10,6 +10,7 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/style/css/boolean.hpp>
 #include <ctbrowser/style/css/calc.hpp>
+#include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/css/token.hpp>
 
 // Media Queries Level 4, over the token stream:
@@ -108,22 +109,27 @@ constexpr feature_entry feature_table[] = {
      "progressive"},
 };
 
-// The two a CONTAINER has and a window does not (CSS Containment 3 §5.2):
-// the logical sizes, which read as width and height here since nothing this
-// engine lays out is vertical.
+// A CONTAINER'S SIZE FEATURES, and only these (CSS Conditional 5 §3.2): the
+// physical and logical sizes - the logical read as width and height, since
+// nothing this engine lays out is vertical - the ratio and the orientation.
+// `(hover)` in an `@container` is a feature no container has, and unknown.
 constexpr feature_entry container_features[] = {
+    {"width", media_feature::name::width, media_feature::kind::length, {}, {}},
+    {"height", media_feature::name::height, media_feature::kind::length, {}, {}},
     {"inline-size", media_feature::name::width, media_feature::kind::length, {}, {}},
     {"block-size", media_feature::name::height, media_feature::kind::length, {}, {}},
+    {"aspect-ratio", media_feature::name::aspect_ratio, media_feature::kind::ratio, {}, {}},
+    {"orientation",
+     media_feature::name::orientation,
+     media_feature::kind::discrete,
+     "portrait landscape",
+     {}},
 };
 
 [[nodiscard]] const feature_entry * entry_of(std::string_view text, bool container) {
-    for (const feature_entry & e : feature_table) {
+    for (const feature_entry & e : container ? std::span<const feature_entry>{container_features}
+                                             : std::span<const feature_entry>{feature_table}) {
         if (ascii_iequals(text, e.name)) { return &e; }
-    }
-    if (container) {
-        for (const feature_entry & e : container_features) {
-            if (ascii_iequals(text, e.name)) { return &e; }
-        }
     }
     return nullptr;
 }
@@ -135,7 +141,8 @@ constexpr feature_entry container_features[] = {
 // is true by definition - and every other length unit goes through calc/'s
 // evaluator, which knows them all; a resolution unit is dppx.
 [[nodiscard]] float length_in_px(const token_stream & s, const css_token & t,
-                                 const media_environment & env) {
+                                 const media_environment & env,
+                                 const container_box * box = nullptr) {
     const std::string_view unit = s.unit_of(t);
     if (ascii_iequals(unit, "px") || unit.empty()) { return static_cast<float>(t.number); }
     if (ascii_iequals(unit, "dppx") || ascii_iequals(unit, "x")) {
@@ -143,7 +150,7 @@ constexpr feature_entry container_features[] = {
     }
     if (ascii_iequals(unit, "dpi")) { return static_cast<float>(t.number) / 96.0f; }
     if (ascii_iequals(unit, "dpcm")) { return static_cast<float>(t.number) / 96.0f * 2.54f; }
-    length_context ctx;
+    length_context ctx = box != nullptr ? box->lengths : length_context{};
     ctx.viewport_width = env.viewport_width;
     ctx.viewport_height = env.viewport_height;
     const math_answer answer = evaluate_math(s.text_of(t), ctx);
@@ -157,9 +164,16 @@ constexpr feature_entry container_features[] = {
 // the same bases: the root font size and the viewport. Media Queries 4 §2.4
 // makes it a value like any other; a function calc/ cannot resolve is the
 // `<general-enclosed>` the caller folds as unknown.
-[[nodiscard]] std::optional<float> math_in_px(std::string_view text,
-                                              const media_environment & env) {
-    length_context ctx;
+[[nodiscard]] std::optional<float> math_in_px(std::string_view text, const media_environment & env,
+                                              const container_box * box = nullptr) {
+    // NO random() IN A QUERY (CSS Values 5 §random, csswg-drafts#10982): a
+    // condition that could answer differently each time it is asked is
+    // unknown, which is what a value that is not one makes it.
+    if (text.find("random(") != std::string_view::npos ||
+        text.find("random-item(") != std::string_view::npos) {
+        return std::nullopt;
+    }
+    length_context ctx = box != nullptr ? box->lengths : length_context{};
     ctx.viewport_width = env.viewport_width;
     ctx.viewport_height = env.viewport_height;
     const math_answer answer = evaluate_math(text, ctx);
@@ -184,21 +198,35 @@ constexpr feature_entry container_features[] = {
 
 [[nodiscard]] bool matches_keyword(const media_feature & f, std::string_view have) {
     // A boolean-context test on a keyword feature - `(hover)` - is true when the value
-    // is anything but `none`.
-    if (f.op == media_feature::compare::boolean) { return !ascii_iequals(have, "none"); }
+    // is anything but `none` or a keyword the feature itself defines as false
+    // there (Media Queries 5 §2.4.3): the preferences' `no-preference`, and
+    // `standard` for the dynamic ranges, which are what a plain screen has.
+    if (f.op == media_feature::compare::boolean) {
+        return !ascii_iequals_any(have, {"none", "no-preference", "standard"});
+    }
     return ascii_iequals(f.keyword, have);
 }
 
+// The LOGICAL sizes of a vertical container read the other physical axis.
+[[nodiscard]] bool swapped(const feature_entry & e, const container_box * box) {
+    return box != nullptr && box->vertical &&
+           (e.name == std::string_view{"inline-size"} || e.name == std::string_view{"block-size"});
+}
+
+// `box` is the query container's, for a container condition: its sizes stand
+// where the window's would, and nothing else about the window changes.
 [[nodiscard]] bool feature_holds(const media_feature & f, const feature_entry & e,
-                                 const media_environment & env) {
+                                 const media_environment & env, const container_box * box) {
     using n = media_feature::name;
     const auto number = [&](float have) { return compare_number(f.op, have, f.value); };
+    float width = box != nullptr ? box->width.value_or(0) : env.viewport_width;
+    float height = box != nullptr ? box->height.value_or(0) : env.viewport_height;
+    if (swapped(e, box)) { std::swap(width, height); }
     switch (f.which) {
-    case n::width: return number(env.viewport_width);
-    case n::height: return number(env.viewport_height);
-    case n::aspect_ratio:
-        return env.viewport_height > 0 && number(env.viewport_width / env.viewport_height);
-    case n::orientation: return matches_keyword(f, env.portrait() ? "portrait" : "landscape");
+    case n::width: return number(width);
+    case n::height: return number(height);
+    case n::aspect_ratio: return height > 0 && number(width / height);
+    case n::orientation: return matches_keyword(f, height >= width ? "portrait" : "landscape");
     case n::prefers_color_scheme: return matches_keyword(f, env.dark ? "dark" : "light");
     case n::prefers_reduced_motion:
         return matches_keyword(f, env.reduced_motion ? "reduce" : "no-preference");
@@ -226,7 +254,9 @@ constexpr feature_entry container_features[] = {
 //   <mf-range>   = <mf-name> <op> <mf-value> | <mf-value> <op> <mf-name>
 //                | <mf-value> <lt> <mf-name> <lt> <mf-value>  (and the `>` twin)
 [[nodiscard]] std::optional<truth> feature(const token_stream & s, std::size_t from, std::size_t to,
-                                           const media_environment & env, bool container = false) {
+                                           const media_environment & env,
+                                           const container_box * box = nullptr) {
+    const bool container = box != nullptr;
     std::vector<std::size_t> at; // the significant tokens
     // A FUNCTION IS ONE VALUE: its tokens up to the matching `)` are one
     // entry here, keyed on the function token, so `calc(200vh + 5em)` has
@@ -287,7 +317,7 @@ constexpr feature_entry container_features[] = {
                 w = written::ratio;
                 return 3;
             }
-            f.value = length_in_px(s, t, env);
+            f.value = length_in_px(s, t, env, box);
             if (t.type == token_type::number) {
                 w = t.number == 0 ? written::zero : written::number;
             } else {
@@ -300,7 +330,7 @@ constexpr feature_entry container_features[] = {
         if (t.type == token_type::function) {
             const std::string_view text = std::string_view{s.pool}.substr(
                 t.text, s.tokens[ends[at[i]] - 1].text + s.tokens[ends[at[i]] - 1].length - t.text);
-            const std::optional<float> px = math_in_px(text, env);
+            const std::optional<float> px = math_in_px(text, env, box);
             if (!px) { return 0; }
             f.value = *px;
             // calc/ answers a resolution as dppx and a length as px alike;
@@ -382,7 +412,17 @@ constexpr feature_entry container_features[] = {
             }
         }
         if (!fits) { return truth::unknown; }
-        return feature_holds(f, *e, env) ? truth::yes : truth::no;
+        // An axis the container does not contain answers nothing.
+        if (box != nullptr) {
+            using n = media_feature::name;
+            const bool swap = swapped(*e, box);
+            const bool wants_width = e->which != (swap ? n::width : n::height);
+            const bool wants_height = e->which != (swap ? n::height : n::width);
+            if ((wants_width && !box->width) || (wants_height && !box->height)) {
+                return truth::unknown;
+            }
+        }
+        return feature_holds(f, *e, env, box) ? truth::yes : truth::no;
     };
 
     // <mf-boolean>: one name.
@@ -647,8 +687,438 @@ bool evaluate(std::span<const media_query> queries, const media_environment & en
     return false;
 }
 
+namespace {
+
+// ONE `scroll-state()` FEATURE over [from, to) (CSS Conditional 5 §3.4):
+// `scrollable`, `snapped`, `stuck` or `scrolled`, alone or with one of its
+// keywords. nullopt when the tokens are not one feature; unknown for a name
+// or a keyword the feature does not have. `scrollable` reads the box; the
+// other three ask `none` of it, since nothing here snaps, sticks or records
+// the last scroll's direction.
+[[nodiscard]] std::optional<truth> scroll_feature(const token_stream & s, std::size_t from,
+                                                  std::size_t to, std::uint8_t scrollable) {
+    std::vector<std::size_t> at;
+    for (std::size_t i = from; i < to; ++i) {
+        if (s.tokens[i].type != token_type::whitespace) { at.push_back(i); }
+    }
+    if (at.empty() || s.tokens[at[0]].type != token_type::ident) { return std::nullopt; }
+    const std::string_view name = s.text_of(s.tokens[at[0]]);
+    const bool boolean = at.size() == 1;
+    std::string_view value;
+    if (!boolean) {
+        if (at.size() != 3 || s.tokens[at[1]].type != token_type::colon ||
+            s.tokens[at[2]].type != token_type::ident) {
+            return std::nullopt;
+        }
+        value = s.text_of(s.tokens[at[2]]);
+    }
+    static constexpr std::pair<std::string_view, std::uint8_t> directions[] = {
+        {"top", scroll_top},
+        {"right", scroll_right},
+        {"bottom", scroll_bottom},
+        {"left", scroll_left},
+        {"block-start", scroll_top},
+        {"block-end", scroll_bottom},
+        {"inline-start", scroll_left},
+        {"inline-end", scroll_right},
+        {"x", scroll_left | scroll_right},
+        {"y", scroll_top | scroll_bottom},
+        {"block", scroll_top | scroll_bottom},
+        {"inline", scroll_left | scroll_right}};
+    const auto bits_of = [&](std::size_t first, std::size_t last) -> std::optional<std::uint8_t> {
+        for (std::size_t i = first; i < last; ++i) {
+            if (ascii_iequals(value, directions[i].first)) { return directions[i].second; }
+        }
+        return std::nullopt;
+    };
+    const auto answer = [&](std::uint8_t have, std::size_t kinds) -> truth {
+        if (boolean) { return have != 0 ? truth::yes : truth::no; }
+        if (ascii_iequals(value, "none")) { return have == 0 ? truth::yes : truth::no; }
+        const std::optional<std::uint8_t> bits = bits_of(0, kinds);
+        if (!bits) { return truth::unknown; }
+        return (have & *bits) != 0 ? truth::yes : truth::no;
+    };
+    if (ascii_iequals(name, "scrollable")) { return answer(scrollable, std::size(directions)); }
+    if (ascii_iequals(name, "scrolled")) { return answer(0, std::size(directions)); }
+    if (ascii_iequals(name, "stuck")) { return answer(0, 8); }
+    if (ascii_iequals(name, "snapped")) {
+        if (!boolean && ascii_iequals(value, "both")) { return truth::no; }
+        return !boolean && !ascii_iequals_any(value, {"none", "x", "y", "block", "inline"})
+                   ? truth::unknown
+                   : answer(0, std::size(directions));
+    }
+    return truth::unknown;
+}
+
+// A `scroll-state()` query: one feature, or `not`/`and`/`or` of them in
+// parentheses. nullopt when it is not one - which makes the call a
+// `<general-enclosed>`, unknown.
+[[nodiscard]] std::optional<truth> scroll_state_query(const token_stream & s, std::size_t from,
+                                                      std::size_t to, std::uint8_t scrollable) {
+    if (const std::optional<truth> one = scroll_feature(s, from, to, scrollable)) { return one; }
+    const auto test = [](std::string_view, std::size_t, std::size_t) { return truth::unknown; };
+    const auto enclosed = [&](std::size_t a, std::size_t b) {
+        return scroll_feature(s, a, b, scrollable).value_or(truth::unknown);
+    };
+    return boolean_expression(s, from, to, test, enclosed);
+}
+
+} // namespace
+
+std::optional<std::vector<container_query>> parse_container_conditions(std::string_view text) {
+    const token_stream s = tokenize(text);
+    const std::size_t end = s.tokens.size() - 1; // the eof token
+    const auto test = [](std::string_view, std::size_t, std::size_t) { return truth::unknown; };
+    const auto enclosed = [](std::size_t, std::size_t) { return truth::unknown; };
+    std::vector<container_query> out;
+    std::size_t from = 0;
+    int depth = 0;
+    for (std::size_t i = 0; i <= end; ++i) {
+        const token_type type = s.tokens[i].type;
+        if (type == token_type::function || type == token_type::open_paren ||
+            type == token_type::open_square || type == token_type::open_curly) {
+            ++depth;
+        } else if (type == token_type::close_paren || type == token_type::close_square ||
+                   type == token_type::close_curly) {
+            --depth;
+        }
+        if (i < end && (depth != 0 || type != token_type::comma)) { continue; }
+        // One condition, [from, i), its whitespace trimmed.
+        std::size_t a = from, b = i;
+        while (a < b && s.tokens[a].type == token_type::whitespace) { ++a; }
+        while (b > a && s.tokens[b - 1].type == token_type::whitespace) { --b; }
+        if (a == b) { return std::nullopt; }
+        container_query one;
+        if (s.tokens[a].type == token_type::ident &&
+            !ascii_iequals_any(s.text_of(s.tokens[a]), {"not", "and", "or"})) {
+            const std::string_view name = s.text_of(s.tokens[a]);
+            if (ascii_iequals_any(name, {"initial", "inherit", "unset", "revert", "revert-layer",
+                                         "default", "none"})) {
+                return std::nullopt;
+            }
+            one.name = std::string{name};
+            ++a;
+            while (a < b && s.tokens[a].type == token_type::whitespace) { ++a; }
+        }
+        if (a < b) {
+            if (!boolean_expression(s, a, b, test, enclosed)) { return std::nullopt; }
+            one.condition = std::string{slice(s, a, b)};
+        }
+        out.push_back(std::move(one));
+        from = i + 1;
+    }
+    return out;
+}
+
+namespace {
+
+// --- a style() query, serialised (CSS Conditional 5 §3.3, CSSOM) ------------
+
+// [a, b) with the whitespace at either end left out.
+void trim_run(const token_stream & s, std::size_t & a, std::size_t & b) {
+    while (a < b && s.tokens[a].type == token_type::whitespace) { ++a; }
+    while (b > a && s.tokens[b - 1].type == token_type::whitespace) { --b; }
+}
+
+// One style FEATURE: `--name: value` with the value as written but for the
+// whitespace at its ends, `--name` alone, or a range with one space either
+// side of each comparison - a custom property's name escaped as an
+// identifier. nullopt for anything else, which is written as it came.
+[[nodiscard]] std::optional<std::string> style_feature_text(const token_stream & s, std::size_t a,
+                                                            std::size_t b) {
+    trim_run(s, a, b);
+    if (a >= b) { return std::nullopt; }
+    const auto custom = [&](std::size_t i) {
+        return s.tokens[i].type == token_type::ident && s.text_of(s.tokens[i]).starts_with("--");
+    };
+    // The top-level comparisons, if it is a range.
+    std::vector<std::size_t> ops;
+    int depth = 0;
+    for (std::size_t i = a; i < b; ++i) {
+        const token_type type = s.tokens[i].type;
+        if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+        if (type == token_type::close_paren) { --depth; }
+        if (depth == 0 &&
+            (is_delim_text(s, i, '<') || is_delim_text(s, i, '>') || is_delim_text(s, i, '='))) {
+            ops.push_back(i);
+            if (!is_delim_text(s, i, '=') && is_delim_text(s, i + 1, '=')) { ++i; }
+        }
+    }
+    const auto operand = [&](std::size_t x, std::size_t y) -> std::string {
+        trim_run(s, x, y);
+        if (y == x + 1 && custom(x)) { return serialize_identifier(s.text_of(s.tokens[x])); }
+        return std::string{slice(s, x, y)};
+    };
+    if (!ops.empty()) {
+        std::string out;
+        std::size_t from = a;
+        for (const std::size_t at : ops) {
+            const bool two = !is_delim_text(s, at, '=') && is_delim_text(s, at + 1, '=');
+            out += operand(from, at) + " " + std::string{s.text_of(s.tokens[at])} +
+                   (two ? "=" : "") + " ";
+            from = at + (two ? 2 : 1);
+        }
+        return out + operand(from, b);
+    }
+    if (!custom(a)) { return std::nullopt; }
+    std::string out = serialize_identifier(s.text_of(s.tokens[a]));
+    std::size_t k = a + 1;
+    while (k < b && s.tokens[k].type == token_type::whitespace) { ++k; }
+    if (k == b) { return out; }
+    if (s.tokens[k].type != token_type::colon) { return std::nullopt; }
+    std::size_t v = k + 1;
+    std::size_t end = b;
+    trim_run(s, v, end);
+    return out + ": " + std::string{slice(s, v, end)};
+}
+
+// A style CONDITION or feature over [a, b): `not` a group, groups joined by
+// `and`/`or` (lowercased), each a nested condition, a feature in
+// parentheses, or a <general-enclosed> written exactly as it came.
+[[nodiscard]] std::string style_query_text(const token_stream & s, std::size_t a, std::size_t b) {
+    trim_run(s, a, b);
+    const bool condition =
+        a < b && (s.tokens[a].type == token_type::open_paren || is_ident_named(s, a, "not"));
+    if (!condition) {
+        const std::optional<std::string> one = style_feature_text(s, a, b);
+        return one ? *one : std::string{slice(s, a, b)};
+    }
+    std::string out;
+    for (std::size_t i = a; i < b;) {
+        if (s.tokens[i].type == token_type::whitespace) {
+            ++i;
+            continue;
+        }
+        if (s.tokens[i].type == token_type::ident) {
+            out += ascii_lower_copy(s.text_of(s.tokens[i])) + " ";
+            ++i;
+            continue;
+        }
+        const std::size_t close = std::min(end_of_block(s, i), b);
+        if (s.tokens[i].type != token_type::open_paren) {
+            out += std::string{slice(s, i, close)} + " ";
+            i = close;
+            continue;
+        }
+        std::size_t x = i + 1;
+        std::size_t y =
+            close > x && s.tokens[close - 1].type == token_type::close_paren ? close - 1 : close;
+        trim_run(s, x, y);
+        const auto test = [](std::string_view, std::size_t, std::size_t) { return truth::unknown; };
+        const auto enclosed = [](std::size_t, std::size_t) { return truth::unknown; };
+        const bool nested =
+            x < y && (s.tokens[x].type == token_type::open_paren || is_ident_named(s, x, "not")) &&
+            boolean_expression(s, x, y, test, enclosed).has_value();
+        if (nested) {
+            out += "(" + style_query_text(s, x, y) + ") ";
+        } else if (const std::optional<std::string> one = style_feature_text(s, x, y)) {
+            out += "(" + *one + ") ";
+        } else {
+            out += std::string{slice(s, i, close)} + " ";
+        }
+        i = close;
+    }
+    if (!out.empty()) { out.pop_back(); }
+    return out;
+}
+
+// The tokens [from, to) of a container query, serialised: whitespace
+// collapsed, none just inside a parenthesis, `: ` after a feature, one space
+// either side of a comparison, and a feature's name - or, with `lower_all`,
+// every word, which is a `scroll-state()` query's case - lowercased. A
+// `scroll-state()` that is one is serialised the same way, lowercased; any
+// other function is copied as written, a `style()` with its name lowercased
+// and its whitespace collapsed, a `<general-enclosed>` exactly.
+void serialize_query_run(const token_stream & s, std::size_t from, std::size_t to, bool lower_all,
+                         std::string & out) {
+    bool space = false; // whitespace seen since the last piece
+    const auto emit = [&](std::string_view piece) {
+        if (space && !out.empty() && out.back() != '(') { out += ' '; }
+        space = false;
+        out += piece;
+    };
+    for (std::size_t i = from; i < to; ++i) {
+        const css_token & t = s.tokens[i];
+        if (t.type == token_type::whitespace) {
+            space = true;
+            continue;
+        }
+        const std::string_view run = source_run(s, i, i + 1);
+        const std::string_view text = run.empty() ? s.text_of(t) : run;
+        switch (t.type) {
+        case token_type::function: {
+            const std::size_t close = std::min(end_of_block(s, i), to);
+            const std::size_t last =
+                close > i + 1 && s.tokens[close - 1].type == token_type::close_paren ? close - 1
+                                                                                     : close;
+            if (ascii_iequals(text, "scroll-state(") &&
+                scroll_state_query(s, i + 1, last, 0).has_value()) {
+                emit("scroll-state(");
+                serialize_query_run(s, i + 1, last, true, out);
+                out += ')';
+            } else if (ascii_iequals(text, "style(")) {
+                emit("style(");
+                out += style_query_text(s, i + 1, last);
+                out += ')';
+            } else {
+                emit(slice(s, i, close));
+            }
+            i = close - 1;
+            break;
+        }
+        case token_type::close_paren:
+            space = false;
+            out += ')';
+            break;
+        case token_type::colon:
+        case token_type::comma:
+            space = false;
+            out += text;
+            space = true;
+            break;
+        case token_type::delim:
+            if (text == "<" || text == ">" || text == "=") {
+                std::string op{text};
+                if (text != "=" && is_delim_text(s, i + 1, '=')) {
+                    op += '=';
+                    ++i;
+                }
+                space = true;
+                emit(op);
+                space = true;
+            } else {
+                emit(text);
+            }
+            break;
+        case token_type::ident: {
+            std::string_view name = text;
+            if (ascii_istarts_with(name, "min-") || ascii_istarts_with(name, "max-")) {
+                name.remove_prefix(4);
+            }
+            const bool lower = lower_all || entry_of(name, true) != nullptr ||
+                               ascii_iequals_any(text, {"not", "and", "or"});
+            emit(lower ? ascii_lower_copy(text) : std::string{text});
+            break;
+        }
+        default: emit(text); break;
+        }
+    }
+}
+
+} // namespace
+
+std::string serialize_container_query(std::string_view condition) {
+    const token_stream s = tokenize(condition);
+    std::string out;
+    serialize_query_run(s, 0, s.tokens.size() - 1, false, out);
+    return out;
+}
+
+std::string serialize_container_conditions(std::span<const container_query> list) {
+    std::string out;
+    for (const container_query & one : list) {
+        if (!out.empty()) { out += ", "; }
+        std::string part = one.name.empty() ? std::string{} : serialize_identifier(one.name);
+        if (!one.condition.empty()) {
+            part += (part.empty() ? "" : " ") + serialize_container_query(one.condition);
+        }
+        out += part;
+    }
+    return out;
+}
+
+container_needs container_requirements(std::string_view condition) {
+    container_needs needs;
+    if (trim(condition, html_whitespace).empty()) { return needs; }
+    const token_stream s = tokenize(condition);
+    // The first word of a group is the feature it asks about: `(width)`,
+    // `(min-width: 1px)`, `(100px < width)` - a value before the name is
+    // not a word.
+    const auto first_word = [&](std::size_t a, std::size_t b) -> std::string_view {
+        for (std::size_t i = a; i < b; ++i) {
+            if (s.tokens[i].type == token_type::ident) { return s.text_of(s.tokens[i]); }
+        }
+        return {};
+    };
+    // A size feature names one of the six container features; any other
+    // group is a feature no container has.
+    const auto size_feature = [&](std::size_t a, std::size_t b) {
+        std::string_view name = first_word(a, b);
+        if (ascii_istarts_with(name, "min-") || ascii_istarts_with(name, "max-")) {
+            name.remove_prefix(4);
+        }
+        const feature_entry * e = entry_of(name, true);
+        if (e == nullptr) {
+            needs.unknown = true;
+            return truth::unknown;
+        }
+        using n = media_feature::name;
+        needs.inline_axis = needs.inline_axis || e->which != n::height;
+        needs.block_axis = needs.block_axis || e->which != n::width;
+        return truth::unknown;
+    };
+    // A style feature names a custom property, or compares two values.
+    const auto style_feature = [&](std::size_t a, std::size_t b) {
+        bool range = false;
+        int depth = 0;
+        for (std::size_t i = a; i < b; ++i) {
+            const token_type type = s.tokens[i].type;
+            if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+            if (type == token_type::close_paren) { --depth; }
+            range = range || (depth == 0 && type == token_type::delim &&
+                              (is_delim_text(s, i, '<') || is_delim_text(s, i, '>') ||
+                               is_delim_text(s, i, '=')));
+        }
+        std::size_t first = a;
+        while (first < b && s.tokens[first].type == token_type::whitespace) { ++first; }
+        const bool custom = first < b && s.tokens[first].type == token_type::ident &&
+                            s.text_of(s.tokens[first]).starts_with("--");
+        if (!range && !custom) { needs.unknown = true; }
+        return truth::unknown;
+    };
+    // IS THE FUNCTION WHOSE `)` IS AT `b` A WHOLE GROUP - followed by `and`,
+    // `or`, the group's `)` or the end? The parser tries a group's inside as
+    // a condition before it takes it as a feature, and `calc(1em) < width`
+    // meets `calc(` on that first try: a function followed by anything else
+    // is a value, and says nothing about the features.
+    const auto whole_group = [&](std::size_t b) {
+        std::size_t k = b + 1;
+        while (k < s.tokens.size() && s.tokens[k].type == token_type::whitespace) { ++k; }
+        return k + 1 >= s.tokens.size() || s.tokens[k].type == token_type::close_paren ||
+               is_ident_named(s, k, "and") || is_ident_named(s, k, "or");
+    };
+    const auto unknown_function = [&](std::string_view, std::size_t, std::size_t b) {
+        if (whole_group(b)) { needs.unknown = true; }
+        return truth::unknown;
+    };
+    const auto test = [&](std::string_view name, std::size_t a, std::size_t b) {
+        if (!whole_group(b)) { return truth::unknown; }
+        if (ascii_iequals(name, "scroll-state")) {
+            needs.scroll_state = true;
+        } else if (ascii_iequals(name, "style")) {
+            // One feature, or a condition of them.
+            std::size_t first = a;
+            while (first < b && s.tokens[first].type == token_type::whitespace) { ++first; }
+            if (first < b && s.tokens[first].type != token_type::open_paren &&
+                !is_ident_named(s, first, "not")) {
+                (void)style_feature(a, b);
+            } else if (!boolean_expression(s, a, b, unknown_function, style_feature)) {
+                needs.unknown = true;
+            }
+        } else {
+            needs.unknown = true; // a <general-enclosed> function
+        }
+        return truth::unknown;
+    };
+    if (!boolean_expression(s, 0, s.tokens.size() - 1, test, size_feature)) {
+        needs.unknown = true;
+    }
+    return needs;
+}
+
 std::optional<truth> evaluate_container_condition(std::string_view text,
                                                   const media_environment & env,
+                                                  const container_box & box,
                                                   const style_query & query) {
     const token_stream s = tokenize(text);
     const std::size_t end = s.tokens.size() - 1;
@@ -656,11 +1126,14 @@ std::optional<truth> evaluate_container_condition(std::string_view text,
     // Containment 3 §5.3); the query is handed over as text, since only the
     // engine holds the container's computed style.
     const auto test = [&](std::string_view name, std::size_t a, std::size_t b) {
+        if (ascii_iequals(name, "scroll-state")) {
+            return scroll_state_query(s, a, b, box.scrollable).value_or(truth::unknown);
+        }
         if (!ascii_iequals(name, "style")) { return truth::unknown; }
         return query(trim(slice(s, a, b), html_whitespace));
     };
     const auto enclosed = [&](std::size_t a, std::size_t b) {
-        return feature(s, a, b, env, true).value_or(truth::unknown);
+        return feature(s, a, b, env, &box).value_or(truth::unknown);
     };
     return boolean_expression(s, 0, end, test, enclosed);
 }

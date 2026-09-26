@@ -393,7 +393,161 @@ void test_value_sanitization_and_type_change() {
        "InvalidStateError,true,1e3,true,10,15,2014-01-01T11:11,true,foo bar,true");
 }
 
+// --- round nine: barred validity, groups, selection seeding, FACE ----------------------
+
+void test_barred_validity_groups_and_selection() {
+    // form-validation-validity-*.html: a barred control keeps its flags; only
+    // a text-ish valueMissing asks for mutability. input-stepup.html: the
+    // week state's default step base. cloning-steps.html, radio.html.
+    is("(function () { var i = document.createElement('input'); i.pattern = '[a-z]+';"
+       " i.value = 'ABC'; i.disabled = true;"
+       " var o = [i.validity.patternMismatch, i.validity.valid, i.willValidate, "
+       "i.checkValidity()];"
+       " var r = document.createElement('input'); r.required = true; r.readOnly = true;"
+       " o.push(r.validity.valueMissing);"
+       " var c = document.createElement('input'); c.type = 'checkbox'; c.required = true;"
+       " c.disabled = true; o.push(c.validity.valueMissing);"
+       " var w = document.createElement('input'); w.type = 'week'; w.value = '1970-W01';"
+       " o.push(w.validity.stepMismatch); w.stepUp(); o.push(w.value);"
+       " var b = document.createElement('button'); b.type = 'reset'; o.push(b.willValidate);"
+       " var k = document.createElement('input'); k.type = 'checkbox'; k.indeterminate = true;"
+       " o.push(k.cloneNode().indeterminate);"
+       " var d = document.createElement('div'); d.innerHTML = '<input type=radio name=g checked>"
+       "<input type=radio name=g><input type=radio name=h checked>';"
+       " var rs = d.querySelectorAll('input'); rs[1].checked = true;"
+       " o.push(rs[0].checked, rs[1].checked, rs[2].checked);"
+       " return o.join(); })()",
+       "true,false,false,true,false,true,false,1970-W02,false,true,false,true,true");
+    // defaultSelection.html, type-change-state.html, value-defaultValue-
+    // textContent.html, email.html.
+    is("(function () { var d = document.createElement('div');"
+       " d.innerHTML = '<input value=foo><textarea>foo</textarea>';"
+       " var i = d.firstChild, ta = d.lastChild; var o = [i.selectionStart, ta.selectionStart];"
+       " i.value = 'foo'; o.push(i.selectionStart); i.value = 'Foo'; o.push(i.selectionEnd);"
+       " i.type = 'email'; i.type = 'text'; o.push(i.selectionStart);"
+       " ta.textContent = 'a\\r\\nb'; o.push(JSON.stringify(ta.value), ta.defaultValue.length);"
+       " ta.appendChild(document.createElement('span')).textContent = 'zz';"
+       " o.push(JSON.stringify(ta.value));"
+       " var e = document.createElement('input'); e.type = 'email'; e.multiple = true;"
+       " e.value = ' a@b.c , d@e.f '; o.push(e.value); e.multiple = false; o.push(e.value);"
+       " var e2 = document.createElement('input'); e2.type = 'email';"
+       " e2.value = 'x@exämle.com'; o.push(e2.value);"
+       " var n = document.createElement('input'); n.type = 'number'; n.value = '.5';"
+       " o.push(n.value);"
+       " return o.join('|'); })()",
+       "0|0|0|3|0|\"a\\nb\"|4|\"a\\nb\"|a@b.c,d@e.f|a@b.c,d@e.f|x@xn--exmle-hra.com|.5");
+    // HTMLLegendElement.html, and a form-associated custom element as a
+    // form control: listed, submitted, validated, reset, disabled.
+    is("(function () { var f = document.createElement('form');"
+       " f.innerHTML = '<fieldset><legend id=lg></legend></fieldset><legend id=l2></legend>';"
+       " var o = [f.querySelector('#lg').form === f, f.querySelector('#l2').form === null];"
+       " customElements.define('x-face', class extends HTMLElement {"
+       " static get formAssociated() { return true; }"
+       " constructor() { super(); this.i = this.attachInternals(); this.resets = 0; }"
+       " formResetCallback() { this.resets++; } });"
+       " var g = document.body.appendChild(document.createElement('form'));"
+       " g.innerHTML = '<x-face name=q></x-face><input name=r>'; var x = g.firstChild;"
+       " o.push(g.elements.length); x.i.setFormValue('v'); o.push(new FormData(g).get('q'));"
+       " x.i.setValidity({valueMissing: true}, 'm'); o.push(g.checkValidity());"
+       " g.reset(); o.push(x.resets);"
+       " x.setAttribute('disabled', ''); o.push(new FormData(g).has('q'));"
+       " return o.join(); })()",
+       "true,true,2,v,false,1,false");
+}
+
+void test_files_and_data_transfer() {
+    // the-input-element/files.html, form-data-set-empty-file.window.js,
+    // newline-normalization.html's DataTransfer set-up.
+    is("(function () { var i = document.createElement('input'); i.type = 'file';"
+       " var f = i.files; var o = [f instanceof FileList, f.length, i.files === f];"
+       " var dt = new DataTransfer();"
+       " dt.items.add(new File(['ab'], 'x.txt', {type: 'text/plain'}));"
+       " dt.items.add('hi', 'text/plain');"
+       " o.push(dt.items.length, dt.files.length, dt.types.join('+'), dt.getData('text'));"
+       " i.files = dt.files; o.push(i.files.length, i.files[0].name, i.files.item(0).size);"
+       " try { i.files = []; } catch (e) { o.push(e.name); }"
+       " var t = document.createElement('input'); o.push(t.files);"
+       " var form = document.createElement('form');"
+       " var e = form.appendChild(document.createElement('input')); e.type = 'file';"
+       " e.name = 'up'; var v = new FormData(form).get('up');"
+       " o.push(v instanceof File, v.name === '', v.type, v.size);"
+       " return o.join(); })()",
+       "true,0,true,2,1,text/plain+Files,hi,1,x.txt,2,TypeError,,true,true,"
+       "application/octet-stream,0");
+}
+
+void test_color_events_options_and_entries() {
+    // the-input-element/color.window.js: the colour space and alpha shape
+    // the value, a clean control re-reading its attribute.
+    is("(function () { var i = document.createElement('input'); i.type = 'color';"
+       " i.setAttribute('value', ' #FFFFFF '); var o = [i.value]; i.value = 'blue';"
+       " i.setAttribute('alpha', ''); o.push(i.value); i.value = 'white';"
+       " i.colorSpace = 'display-p3'; o.push(i.value); return o.join('|'); })()",
+       "#ffffff|color(srgb 0 0 1)|color(display-p3 1 1 1)");
+    // SubmitEvent.window.js, FormDataEvent.window.js.
+    is("(function () { var b = document.getElementById('btn');"
+       " var e = new SubmitEvent('submit', {submitter: b, bubbles: true});"
+       " var o = [e instanceof Event, e.submitter === b, e.bubbles,"
+       " new SubmitEvent('x').submitter];"
+       " try { new SubmitEvent('x', {submitter: 1}); o.push('no'); } catch (x) { o.push(x.name); }"
+       " try { SubmitEvent('x'); o.push('no'); } catch (x) { o.push(x.name); }"
+       " var fd = new FormData();"
+       " o.push(new FormDataEvent('formdata', {formData: fd}).formData === fd);"
+       " try { new FormDataEvent('x'); o.push('no'); } catch (x) { o.push(x.name); }"
+       " return o.join(); })()",
+       "true,true,true,,TypeError,TypeError,true,TypeError");
+    // option-element-constructor.html; select.value with no matching option;
+    // the HTMLOptionsCollection indexed setter; button.value is no
+    // [LegacyNullToEmptyString]; accessKeyLabel.
+    is("(function () { var a = new Option('t', 'v', true); var b = new Option('t', 'v', false, "
+       "true);"
+       " var o = [a.selected, a.defaultSelected, b.selected, b.defaultSelected];"
+       " var s = document.createElement('select');"
+       " s.innerHTML = '<option>one</option><option>two</option>'; o.push(s.value);"
+       " s.value = 'none'; o.push(s.value, s.selectedIndex);"
+       " var t = document.createElement('select'); var n = new Option('a', 'a');"
+       " t.options[2] = n; o.push(t.options.length, t.options[2] === n);"
+       " t.options[0] = null; o.push(t.options.length);"
+       " var btn = document.createElement('button'); btn.value = null;"
+       " o.push(btn.getAttribute('value'));"
+       " var k = document.createElement('b'); k.accessKey = 's 0'; o.push(k.accessKeyLabel === '');"
+       " k.accessKey = 'k'; o.push(k.accessKeyLabel);"
+       " return o.join(); })()",
+       "false,true,true,false,one,,-1,3,true,2,null,true,Alt+K");
+    // The select model sees its list change: a removal with nothing left
+    // selected resets to the first option, an option put back ahead is the
+    // first again (select-validity.html, optgroup-removal.window.js); and
+    // `value` sets the selectedness of a multiple select too.
+    is("(function () { var s = document.createElement('select'); s.required = true;"
+       " var p = s.appendChild(document.createElement('option'));"
+       " var n = s.appendChild(document.createElement('option')); n.textContent = 'x';"
+       " var o = [s.checkValidity()]; p.remove(); o.push(s.checkValidity());"
+       " s.prepend(p); o.push(s.checkValidity());"
+       " var g = document.createElement('select');"
+       " g.innerHTML = '<optgroup><option>1</optgroup><optgroup><option>2'; o.push(g.value);"
+       " g.querySelector('optgroup').remove(); o.push(g.value);"
+       " var m = document.createElement('select'); m.multiple = true;"
+       " m.innerHTML = '<option>a</option><option>b</option>'; m.value = 'b';"
+       " o.push(m.value, m.selectedOptions.length);"
+       " return o.join(); })()",
+       "false,true,false,1,2,b,1");
+    // DataTransfer.files is [SameObject] and live; a FormData entry's name
+    // and string value are scalar value strings; a submission's pairs are
+    // CR LF-normalised only on the way out.
+    is("(function () { var dt = new DataTransfer(); var f = dt.files;"
+       " dt.items.add(new File(['x'], 'n.txt'));"
+       " var o = [dt.files === f, f.length, f[0].name];"
+       " var fd = new FormData(); fd.append('a\\uDC01', 'b\\uD800');"
+       " o.push(fd.has('a\\uFFFD'), fd.get('a\\uDC01') === 'b\\uFFFD');"
+       " fd.append('c\\nd', 'e'); o.push(fd.has('c\\nd'));"
+       " return o.join(); })()",
+       "true,1,n.txt,true,true,true");
+}
+
 int main() {
+    test_color_events_options_and_entries();
+    test_barred_validity_groups_and_selection();
+    test_files_and_data_transfer();
     test_select_options_and_selectedness();
     test_form_elements_and_named_access();
     test_labels_and_control();

@@ -100,16 +100,27 @@ struct accessor_table {
                 any = !entries.empty();
                 // The positions after it moved: rebuilt, since an erase is rare
                 // (a data property redefining an accessor) and a scan is not.
-                index.clear();
-                if (entries.size() > 8) {
-                    for (std::uint32_t k = 0; k < entries.size(); ++k) {
-                        index.emplace(entries[k].key, k);
-                    }
-                }
+                reindex();
                 return true;
             }
         }
         return false;
+    }
+    // A NEW entry at vector position `slot` - which orders it among accessors
+    // sharing its `after` - for a data property turning into an accessor in
+    // place. Rare, so the index is rebuilt rather than patched.
+    void insert(std::size_t slot, accessor_entry entry) {
+        entries.insert(entries.begin() +
+                           static_cast<std::ptrdiff_t>(std::min(slot, entries.size())),
+                       std::move(entry));
+        any = true;
+        reindex();
+    }
+    void reindex() {
+        index.clear();
+        if (entries.size() > 8) {
+            for (std::uint32_t k = 0; k < entries.size(); ++k) { index.emplace(entries[k].key, k); }
+        }
     }
 };
 
@@ -190,15 +201,59 @@ struct object_object final : heap_object {
         return accessors.find(name);
     }
     // Defining an accessor removes any data property of the same name: they are
-    // the same property, described two ways.
+    // the same property, described two ways - and it TAKES THAT PROPERTY'S
+    // PLACE in OwnPropertyKeys (10.1.11.1 orders by creation, and a
+    // redefinition creates nothing): after the accessors that preceded it,
+    // before the ones that followed.
     void define_accessor(std::string_view name, value getter, value setter,
                          std::uint8_t a = attr_enumerable | attr_configurable) {
-        (void)erase(name);
-        accessors.define(name, getter, setter, static_cast<std::uint32_t>(props.size()), a);
         std::uint32_t at = 0;
         if (!indexed && array_index_key(name, at)) { indexed = true; }
+        const auto it = index.find(name);
+        if (it == index.end() || accessors.find(name) != nullptr) {
+            (void)erase(name);
+            accessors.define(name, getter, setter, static_cast<std::uint32_t>(props.size()), a);
+            return;
+        }
+        const std::uint32_t place = it->second;
+        std::size_t slot = accessors.entries.size();
+        for (std::size_t i = 0; i < accessors.entries.size(); ++i) {
+            if (accessors.entries[i].after > place) {
+                slot = i;
+                break;
+            }
+        }
+        (void)erase(name); // shifts the later accessors' positions down
+        accessors.insert(slot, accessor_entry{std::string{name}, getter, setter, place, a});
     }
     bool erase_accessor(std::string_view name) { return accessors.erase(name); }
+    // THE CONVERSE: a data property where an accessor of that name stands takes
+    // the accessor's place, as define_accessor keeps a data property's. A name
+    // with no accessor is an ordinary define.
+    void define_over_accessor(std::string_view name, value v, std::uint8_t a) {
+        accessor_entry * entry = accessors.find(name);
+        if (entry == nullptr) {
+            define(name, v, a);
+            return;
+        }
+        normalise();
+        const std::uint32_t place =
+            std::min<std::uint32_t>(entry->after, static_cast<std::uint32_t>(props.size()));
+        const auto own = static_cast<std::size_t>(entry - accessors.entries.data());
+        // Accessors positioned after this one now follow the data property.
+        for (std::size_t i = 0; i < accessors.entries.size(); ++i) {
+            accessor_entry & other = accessors.entries[i];
+            if (other.after > place || (other.after == place && i > own)) { ++other.after; }
+        }
+        (void)accessors.erase(name);
+        props.insert(props.begin() + static_cast<std::ptrdiff_t>(place), {std::string{name}, v});
+        if (!attrs.empty()) {
+            attrs.insert(attrs.begin() + static_cast<std::ptrdiff_t>(place), attr_default);
+        }
+        index.clear();
+        for (std::uint32_t i = 0; i < props.size(); ++i) { index.emplace(props[i].first, i); }
+        set_attrs_at(place, a);
+    }
 
     // The straight-line walk: definition order, data and accessors interleaved.
     template <typename Fn> void each_own_entry_in_order(Fn && visit) const {
@@ -267,10 +322,12 @@ struct object_object final : heap_object {
     // Object.assign, object spread and JSON.stringify are each specified to
     // see. getOwnPropertyNames and Reflect.ownKeys keep the unfiltered walks
     // above, because those two report every own property by definition.
+    // STRING keys only: every symbol spelling starts "@@" - `@@sym:<n>:`,
+    // a registered `@@for:<key>` and a well-known `@@iterator` - and the
+    // last two were enumerated by the narrower symbol_key_prefix test.
     template <typename Fn> void each_own_enumerable_key(Fn && visit) const {
         each_own_entry([&](const std::string & key, std::uint8_t a) {
-            if ((a & attr_enumerable) != 0 && !key.starts_with(symbol_key_prefix) &&
-                !is_private_key(key)) {
+            if ((a & attr_enumerable) != 0 && !key.starts_with("@@") && !is_private_key(key)) {
                 visit(key);
             }
         });
@@ -309,6 +366,11 @@ struct object_object final : heap_object {
         if (!attrs.empty()) { attrs.erase(attrs.begin() + at); }
         index.clear();
         for (std::uint32_t i = 0; i < props.size(); ++i) { index.emplace(props[i].first, i); }
+        // An accessor defined after the erased property sat one data property
+        // further along than it now does.
+        for (accessor_entry & entry : accessors.entries) {
+            if (entry.after > static_cast<std::uint32_t>(at)) { --entry.after; }
+        }
         return true;
     }
 };

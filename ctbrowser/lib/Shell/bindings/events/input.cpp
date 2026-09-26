@@ -57,7 +57,48 @@ bool dom_bindings::dispatch(std::string_view type, node_id target) {
             note_callback_fault("frame load");
         }
     }
-    return dispatch_event(type, target, make_event(*cx_, type, target));
+    const value event = make_event(*cx_, type, target);
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    // "THE END" (HTML 13.2.7) FIRES THESE TWO WITH ITS OWN FLAGS, not an
+    // engine event's: DOMContentLoaded bubbles and cannot be cancelled, and
+    // the window's `load` does neither (the-end.html).
+    const bool window_load = !target && type == "load";
+    if (!target && type == "DOMContentLoaded") { object->set("cancelable", value::boolean(false)); }
+    bool result = false;
+    if (window_load) {
+        // AT THE WINDOW, with the legacy target override flag: the path is the
+        // window alone - an event that does not bubble never reaches it from
+        // the Document - and `target` reads the Document.
+        object->set("bubbles", value::boolean(false));
+        object->set("cancelable", value::boolean(false));
+        object->define(std::string{legacy_target_override_property}, value::boolean(true),
+                       script::attr_none);
+        const script::context::rooted keep{*cx_, event};
+        result = dispatch_to(event, path_step{node_id{}, listen_on::window});
+    } else {
+        result = dispatch_event(type, target, event);
+    }
+    // ...and then, the first time the document is shown, `pageshow`: "if the
+    // Document's page showing is false, set it to true" and fire a
+    // PageTransitionEvent with `persisted` false at the window. It bubbles
+    // and is cancelable as every browser fires it (whatwg/html#6794). A
+    // document.open() that reaches `load` again is already showing.
+    script::object_object * window = window_object();
+    if (window_load && window != nullptr &&
+        window->find("@@sym:ctbrowser:pageShowing") == nullptr) {
+        window->define("@@sym:ctbrowser:pageShowing", value::boolean(true), script::attr_none);
+        const value shown = make_event(*cx_, "pageshow", node_id{});
+        auto * held = static_cast<script::object_object *>(shown.as_heap());
+        const value ctor = cx_->global("PageTransitionEvent");
+        if (const value proto =
+                ctor.is_callable() ? cx_->lookup_property(ctor, "prototype") : value::undefined();
+            proto.is_object()) {
+            held->prototype = proto;
+        }
+        held->set("persisted", value::boolean(false));
+        (void)dispatch_event("pageshow", node_id{}, shown);
+    }
+    return result;
 }
 
 // AT THE WINDOW, which is where an uncaught exception is reported. `node_id{}`
@@ -92,6 +133,15 @@ bool dom_bindings::dispatch_error_value(std::string_view message, value error,
     const context::rooted keep_error{*cx_, error};
     value event = make_event(*cx_, "error", node_id{});
     auto * object = static_cast<script::object_object *>(event.as_heap());
+    // AN ErrorEvent, which is what makes the window's `onerror` take the five
+    // arguments rather than the event (handler_attributes.cpp).
+    if (const value ctor =
+            cx_->has_global("ErrorEvent") ? cx_->global("ErrorEvent") : value::undefined();
+        ctor.is_object_like()) {
+        if (const value proto = cx_->lookup_property(ctor, "prototype"); proto.is_object()) {
+            object->prototype = proto;
+        }
+    }
     object->set("message", cx_->string(std::string{message}));
     // The script's URL: "report an exception" names it, and an inline
     // script's is its document's (`source === location.href` in the
@@ -357,11 +407,15 @@ bool dom_bindings::is_connected(node_id target) const {
 // where a browser fires that one at the window with the document only as the
 // event's target.
 //
-// A SHADOW ROOT'S PARENT IS ITS HOST when the event is `composed` - DOM's "get
-// the parent" for a shadow root - and nothing at all when it is not. The walk
-// used to stop at the fragment either way, so a listener on the host never
-// heard an event from inside its own tree: Event-dispatch-listener-order.
-// window.js registers on both sides of the boundary and got the inside half.
+// A SHADOW ROOT'S PARENT IS ITS HOST - DOM's "get the parent" for a shadow
+// root - unless the event is not `composed` AND this is the root of the
+// target's own tree. The walk used to stop at the fragment either way, so a
+// listener on the host never heard an event from inside its own tree:
+// Event-dispatch-listener-order.window.js registers on both sides of the
+// boundary and got the inside half. And it is only the TARGET'S root that
+// stops a non-composed event: one at a light child slotted into a shadow tree
+// travels through the slot, out of that tree to its host and on up
+// (Extensions-to-Event-Interface.html).
 //
 // AND A DETACHED TREE ENDS AT ITS OWN ROOT. The document and the window were
 // appended for every node, so `div.dispatchEvent(...)` on an element nobody had
@@ -379,6 +433,7 @@ std::vector<dom_bindings::path_step> dom_bindings::propagation_path(path_step at
     bool connected = true;
     if (at.on == listen_on::node && at.node) {
         const auto txn = doc_->read();
+        const node_id own_root = root_of_tree(txn, at.node, false);
         for (node_id walk = at.node; walk;) {
             path.push_back(path_step{walk, listen_on::node});
             // THE FLAT TREE, not the light-DOM chain: a slotted node's next step
@@ -394,7 +449,7 @@ std::vector<dom_bindings::path_step> dom_bindings::propagation_path(path_step at
             up = txn.parent(walk);
             if (!up) {
                 const shadow_tree * tree = shadow_tree_of(walk);
-                if (tree != nullptr && composed) {
+                if (tree != nullptr && (composed || walk != own_root)) {
                     up = tree->host;
                 } else {
                     // The test element/internal.hpp's is_document_root makes:
@@ -415,7 +470,8 @@ std::vector<dom_bindings::path_step> dom_bindings::propagation_path(path_step at
     // browsing context, so their path ends at the Document - the page's
     // window is not an ancestor of another document's nodes.
     // Event-dispatch-bubbles-{true,false}.html count exactly that.
-    if (!secondary_) { path.push_back(path_step{node_id{}, listen_on::window}); }
+    // A FRAME's document has one: its own window (frames.cpp).
+    if (window_.is_object()) { path.push_back(path_step{node_id{}, listen_on::window}); }
     return path;
 }
 
@@ -426,7 +482,9 @@ value dom_bindings::object_of_step(context & cx, path_step step) {
     switch (step.on) {
     case listen_on::node: return wrap(cx, step.node);
     case listen_on::document: return document_;
-    case listen_on::window: return cx.has_global("window") ? cx.global("window") : window_;
+    case listen_on::window:
+        if (window_view_.is_heap()) { return window_view_; }
+        return cx.has_global("window") ? cx.global("window") : window_;
     case listen_on::object: return step.host;
     }
     return value::undefined();
@@ -442,7 +500,9 @@ dom_bindings::path_step dom_bindings::step_of(value self) {
     const auto same = [&](value other) {
         return self.is_heap() && other.is_heap() && self.bits() == other.bits();
     };
-    if (cx_ != nullptr && cx_->has_global("window") && same(cx_->global("window"))) {
+    if (same(window_view_)) { return path_step{node_id{}, listen_on::window}; }
+    if (!window_view_.is_heap() && cx_ != nullptr && cx_->has_global("window") &&
+        same(cx_->global("window"))) {
         return path_step{node_id{}, listen_on::window};
     }
     if (same(window_)) { return path_step{node_id{}, listen_on::window}; }

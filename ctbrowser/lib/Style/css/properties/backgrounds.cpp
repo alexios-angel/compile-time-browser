@@ -81,25 +81,30 @@ struct layer_context {
 
 // One `<length-percentage>` or `auto`, canonical, folded when computing.
 [[nodiscard]] std::optional<std::string> size_part(std::string_view text, const layer_context & ctx,
-                                                   bool non_negative) {
+                                                   bool nonnegative) {
     const token_stream ts = tokenize(text);
     if (ts.tokens.size() == 2) {
         const css_token & t = ts.tokens.front();
         if (t.type == token_type::ident && ascii_iequals(text, "auto")) { return "auto"; }
         if (t.type == token_type::number && t.number == 0) { return "0px"; }
         if (t.type == token_type::percentage) {
-            if (non_negative && t.number < 0) { return std::nullopt; }
+            if (nonnegative && t.number < 0) {
+                return ctx.lengths != nullptr ? std::optional<std::string>{"0%"} : std::nullopt;
+            }
             return serialize_number(t.number) + "%";
         }
         if (t.type == token_type::dimension) {
-            if (non_negative && t.number < 0) { return std::nullopt; }
+            if (nonnegative && t.number < 0 && ctx.lengths == nullptr) { return std::nullopt; }
             const length_context none;
             const math_answer typed =
                 evaluate_math(text, ctx.lengths != nullptr ? *ctx.lengths : none);
             if (typed.outcome == math_outcome::invalid) { return std::nullopt; }
             if (typed.outcome == math_outcome::resolved) {
                 if (typed.value.type != numeric_type::length) { return std::nullopt; }
-                if (ctx.lengths != nullptr) { return serialize_calc(typed.value); }
+                if (ctx.lengths != nullptr) {
+                    const std::string computed = serialize_calc(typed.value);
+                    return nonnegative ? non_negative(computed) : computed;
+                }
             }
             return serialize_number(t.number) + ascii_lower_copy(ts.unit_of(t));
         }
@@ -117,9 +122,8 @@ struct layer_context {
             return std::nullopt;
         }
         if (ctx.lengths != nullptr) {
-            calc_result v = answer.value;
-            if (non_negative && !v.has_percent && v.px < 0) { v.px = 0; }
-            return serialize_calc(v);
+            const std::string computed = serialize_calc(answer.value);
+            return nonnegative ? non_negative(computed) : computed;
         }
     }
     return simplify_math(text);
@@ -215,17 +219,23 @@ struct layer_context {
     const scan found = scan_tokens(ts);
     std::string out;
     if (match_position(ts, found, out)) { return out; }
-    for (const std::size_t i : found.significant) {
-        if (ts.tokens[i].type == token_type::function) {
-            // A MATH FUNCTION IN A LAYER IS STILL SIMPLIFIED (CSS Values 4
-            // §10.12). check_declaration simplifies the whole value before any
-            // grammar sees it, and a layer list re-reads the AUTHOR'S text to
-            // split it, so this is the one path where that would be lost:
-            // `background-position: calc(2px + 3px)` reads back as `calc(5px)`,
-            // which is calc-background-position-003 for six values at once.
-            const std::string written = normalize_value_tokens(ts, text);
-            return may_have_math(written) ? simplify_math(written) : written;
+    // Validate the position shape with each typed math component standing for
+    // a length. An arbitrary function (such as url()) is not a position.
+    std::string shape;
+    bool math = false;
+    for (const std::string_view part : pieces(text)) {
+        if (!shape.empty()) { shape += ' '; }
+        if (part.find('(') != std::string_view::npos) {
+            if (!size_part(part, ctx, false)) { return std::nullopt; }
+            shape += "0px";
+            math = true;
+        } else {
+            shape += part;
         }
+    }
+    const token_stream shape_tokens = tokenize(shape);
+    if (math && match_position(shape_tokens, scan_tokens(shape_tokens), out)) {
+        return simplify_math(normalize_value_tokens(ts, text));
     }
     return std::nullopt;
 }

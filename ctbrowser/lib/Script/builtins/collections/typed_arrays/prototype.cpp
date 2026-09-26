@@ -13,20 +13,14 @@
 // - and the kind decides the coercion on the way in (internal.hpp).
 //
 // NOT HERE: `toString`, which 23.2.3.32 says IS Array.prototype.toString.
-// install_array runs after this installer, so the function does not exist yet
-// - and a typed array's lookup chain falls through to Array.prototype anyway
-// (vm/objects/lookup.cpp), so `ta.toString()` finds it; only the property on
-// %TypedArray%.prototype itself is missing.
+// install_array runs after this installer, so the function does not exist yet;
+// install_array puts it on %TypedArray%.prototype (array_iteration.cpp).
 
 #include "internal.hpp"
 
 namespace ctbrowser::script::builtins_detail {
 
 namespace {
-
-inline constexpr std::string_view iter_array_key = "@#IteratedArray";
-inline constexpr std::string_view iter_index_key = "@#ArrayIteratorNextIndex";
-inline constexpr std::string_view iter_kind_key = "@#ArrayIterationKind";
 
 // The kind's element count now, as a double for the index arithmetic below.
 [[nodiscard]] double len_of(array_object * arr) {
@@ -155,60 +149,6 @@ value typed_array_set_method(context & c, std::span<value> a) {
         }
     }
     return value::undefined();
-}
-
-// The %ArrayIteratorPrototype% every typed array's keys/values/entries share:
-// LIVE over the array, so a detach between two `next()` calls is the
-// TypeError 23.1.5.1 specifies rather than a snapshot's stale answer.
-object_object * install_iterator_prototype(context & cx) {
-    object_object * table = detail::new_table(cx);
-    detail::method(cx, table, "next", 0, [](context & c, std::span<value>) {
-        const value self = c.current_this();
-        if (!self.is_object()) {
-            c.throw_error("TypeError", "next called on a non-iterator");
-            return value::undefined();
-        }
-        auto * it = static_cast<object_object *>(self.as_heap());
-        value * target = it->find(iter_array_key);
-        value * index = it->find(iter_index_key);
-        value * kind = it->find(iter_kind_key);
-        if (target == nullptr || index == nullptr || kind == nullptr) {
-            c.throw_error("TypeError", "next called on a non-iterator");
-            return value::undefined();
-        }
-        if (target->is_undefined()) { return c.iter_result(value::undefined(), true); }
-        array_object * arr = validate_typed_array(c, *target, "Array Iterator next");
-        if (arr == nullptr) { return value::undefined(); }
-        const double at = index->is_number() ? index->as_number() : 0;
-        if (at >= len_of(arr)) {
-            *target = value::undefined();
-            return c.iter_result(value::undefined(), true);
-        }
-        *index = value::number(at + 1);
-        const value item = typed_element_get(c, *arr, static_cast<std::size_t>(at));
-        const double which = kind->is_number() ? kind->as_number() : 0;
-        if (which == 0) { return c.iter_result(value::number(at), false); }
-        if (which == 1) { return c.iter_result(item, false); }
-        const value pair = c.make_array();
-        auto * entry = static_cast<array_object *>(pair.as_heap());
-        entry->items.push_back(value::number(at));
-        entry->items.push_back(item);
-        return c.iter_result(pair, false);
-    });
-    detail::method(cx, table, "@@iterator", 0,
-                   [](context & c, std::span<value>) { return c.current_this(); });
-    table->define("@@toStringTag", cx.string("Array Iterator"), attr_configurable);
-    return table;
-}
-
-[[nodiscard]] value make_iterator(context & c, object_object * proto, value target, double kind) {
-    const value out = c.make_object();
-    auto * it = static_cast<object_object *>(out.as_heap());
-    it->prototype = value::object(proto);
-    it->define(iter_array_key, target, attr_none);
-    it->define(iter_index_key, value::number(0), attr_none);
-    it->define(iter_kind_key, value::number(kind), attr_none);
-    return out;
 }
 
 } // namespace
@@ -364,20 +304,14 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         return self;
     });
     // --- 23.2.3.7 / 23.2.3.19 / 23.2.3.35 entries, keys, values, @@iterator ---
-    object_object * iter_proto = install_iterator_prototype(cx);
-    // ROOTED THROUGH THE PROTOTYPE IT SERVES. The three natives below hold
-    // the table as a C++ capture, which the precise collector cannot see
-    // (docs/script.md, "A value captured by a native lambda is not a GC
-    // root"); the first collection freed it and every `ta.values().next`
-    // read freed memory. A private-keyed slot on %TypedArray%.prototype is
-    // reachable from the globals and invisible to a page.
-    proto->define("@#ArrayIteratorPrototype", value::object(iter_proto), attr_none);
+    // ValidateTypedArray, then CreateArrayIterator - the one live
+    // %ArrayIteratorPrototype% an Array's iterators share (detail::array_iterator).
     const auto iterator_method = [&](const char * name, double kind) {
-        method(cx, proto, name, 0, [iter_proto, kind, name](context & c, std::span<value>) {
+        method(cx, proto, name, 0, [kind, name](context & c, std::span<value>) {
             array_object * arr =
                 this_typed_array(c, (std::string{"TypedArray.prototype."} + name).c_str());
             if (arr == nullptr) { return value::undefined(); }
-            return make_iterator(c, iter_proto, c.current_this(), kind);
+            return detail::array_iterator(c, c.current_this(), kind);
         });
     };
     iterator_method("entries", 2);

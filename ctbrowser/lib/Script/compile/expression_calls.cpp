@@ -432,9 +432,122 @@ bool compiler_impl::compile_param_eval(const vp::node & n, std::uint16_t dst) {
     return true;
 }
 
+// A DIRECT EVAL (19.2.1.1 PerformEval, direct): the eval'd source sees every
+// binding in scope at the call. They are all cells (is_captured boxes every
+// local of a function containing one, and of the functions around it), so
+// the call hands them over by name to direct_eval_name, which compiles the
+// source with those names as its entry function's upvalues:
+//
+//   (eval, source, callee, this, descriptor, cells...)
+//
+// `eval` is the binding's current value - the call is only direct if it is
+// %eval% (step 6 of 13.3.6.1), which the native checks - `callee` the running
+// closure, whose upvalues carry the enclosing functions' bindings, and the
+// descriptor names each binding: "L name" a cell argument, "V name" a value
+// argument (a local nothing boxed), "U index name" the callee's upvalue.
+// The shape changes only in functions that contain `eval(`, which no native
+// pipeline compiles anyway.
+bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
+    // AT A PROGRAM'S TOP LEVEL only inside a direct eval's program, whose
+    // caller's bindings a nested `eval` sees too.
+    if (!is_direct_eval_call(n) || (frames_.size() < 2 && eval_outer_names_.empty()) ||
+        !with_scopes_.empty()) {
+        return false;
+    }
+    const std::size_t level = frames_.size() - 1;
+    // `eval` that is a local or an upvalue is somebody else's function.
+    if (find_local_entry(fn(), "eval") != nullptr || resolve_upvalue(level, "eval") >= 0) {
+        return false;
+    }
+    const std::span<const std::int32_t> args = kids(n);
+    if (any_spread(args)) { return false; }
+    const auto usable = eval_reachable;
+    std::string descriptor = fn().is_strict ? "strict" : "sloppy";
+    std::vector<std::string> seen;
+    std::vector<const local *> handed; // this frame's, in descriptor order
+    const auto taken = [&](std::string_view name) {
+        return std::ranges::find(seen, name) != seen.end();
+    };
+    // Sorted by name, so the descriptor does not depend on the hash map's order.
+    std::vector<std::string> own;
+    for (const auto & [name, positions] : fn().local_index) {
+        if (!positions.empty() && usable(name)) { own.emplace_back(name); }
+    }
+    std::ranges::sort(own);
+    for (const std::string & name : own) {
+        const local & l = fn().locals[fn().local_index.find(name)->second.back()];
+        descriptor += std::string{"\n"} + (l.boxed ? "L " : "V ") + name;
+        seen.push_back(name);
+        handed.push_back(&l);
+    }
+    for (std::size_t k = level; k-- > 0;) {
+        std::vector<std::string> outer;
+        for (const auto & [name, positions] : frames_[k].local_index) {
+            if (!positions.empty() && usable(name) && !taken(name)) { outer.emplace_back(name); }
+        }
+        std::ranges::sort(outer);
+        for (const std::string & name : outer) {
+            if (taken(name)) { continue; }
+            const int up = resolve_upvalue(level, name);
+            if (up < 0) { continue; }
+            descriptor += "\nU " + std::to_string(up) + " " + name;
+            seen.push_back(name);
+        }
+    }
+    // Inside a direct eval's program, the bindings ITS caller handed over.
+    std::vector<std::string> handed_down = eval_outer_names_;
+    std::ranges::sort(handed_down);
+    for (const std::string & name : handed_down) {
+        if (taken(name)) { continue; }
+        const int up = resolve_upvalue(level, name);
+        if (up < 0) { continue; }
+        descriptor += "\nU " + std::to_string(up) + " " + name;
+        seen.push_back(name);
+    }
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t base = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, base, intern_name(std::string{direct_eval_name})));
+    const std::uint16_t eval_fn = alloc_reg();
+    emit_plain_read("eval", eval_fn, false);
+    const std::uint16_t source = alloc_reg();
+    if (args.empty()) {
+        proto().emit(instruction{op::load_undef, source});
+    } else {
+        compile_expr(args[0], source);
+    }
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        // The other arguments are evaluated for their effects, as eval's are.
+        const std::uint16_t extra = alloc_reg();
+        compile_expr(args[i], extra);
+        release_to(static_cast<std::uint32_t>(extra));
+    }
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(instruction{op::load_callee, callee});
+    const std::uint16_t self = alloc_reg();
+    // `this` before a derived constructor's super() is the ReferenceError of
+    // reading it; the eval'd code gets undefined instead of the throw.
+    if (derived_flag() != nullptr) {
+        proto().emit(instruction{op::load_undef, self});
+    } else {
+        proto().emit(instruction{op::load_this, self});
+    }
+    const std::uint16_t names = alloc_reg();
+    emit_string(names, descriptor);
+    for (const local * l : handed) {
+        const std::uint16_t r = alloc_reg();
+        proto().emit(instruction{op::move, r, l->reg});
+    }
+    proto().emit(instruction{op::call, base, static_cast<std::uint16_t>(5 + handed.size())});
+    proto().emit(instruction{op::move, dst, base});
+    release_to(mark);
+    return true;
+}
+
 void compiler_impl::compile_call(const vp::node & n, std::uint16_t dst) {
     const std::span<const std::int32_t> args = kids(n);
     if (compile_param_eval(n, dst)) { return; }
+    if (compile_direct_eval(n, dst)) { return; }
     if (any_spread(args)) {
         compile_spread_call(n, dst);
         return;

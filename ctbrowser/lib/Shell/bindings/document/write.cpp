@@ -25,8 +25,11 @@
 //   parser_finished        "the end": readyState interactive, the deferred
 //                          scripts, then the DOMContentLoaded/load task
 //
-// A frame's document (frames.cpp) is the same bindings without a runner: its
-// `open/write/close` parse and its scripts stay inert, as they always have.
+// A frame's document (frames.cpp) is the same bindings without a runner but
+// with a realm of its own: a parser a page drives into it with `frame
+// .contentDocument.write(...)` runs each classic script it reaches there,
+// through execute_script_element. A document with no browsing context - a
+// DOMParser's, createHTMLDocument's - has neither, and its scripts are inert.
 
 #include "internal.hpp"
 
@@ -67,6 +70,9 @@ parse_result dom_bindings::parse_document(std::string_view html) {
     deferred_scripts_.clear();
     asap_scripts_.clear();
     parser_script_created_ = false;
+    // A NAVIGATION'S DOCUMENT, so a `<template shadowrootmode>` in the page is
+    // a shadow root (HTML 7.4.6.4 "create and initialize a Document object").
+    doc_->set_allow_declarative_shadow_roots(true);
     parser_ = std::make_unique<html::tree_builder>(*doc_, *atoms_);
     parser_->set_script_hook([this](node_id script) { prepare_parser_script(script); });
     // THE BYTES, DECODED (HTML 13.2.3.1): the loader sniffed the encoding
@@ -176,7 +182,7 @@ void dom_bindings::prepare_parser_script(node_id script) {
     // end in `error` at the element; a found one in `load` after it runs.
     if (!src.empty()) {
         const std::vector<std::byte> bytes =
-            assets_ == nullptr ? std::vector<std::byte>{} : assets_->load(src);
+            assets_ == nullptr ? std::vector<std::byte>{} : assets_->load(subresource_name(src));
         if (bytes.empty()) {
             prepared.missing = true;
             prepared.specifier = src;
@@ -207,8 +213,17 @@ void dom_bindings::prepare_parser_script(node_id script) {
         deferred_scripts_.push_back(std::move(prepared));
         return;
     }
-    if (!run_script_) { return; }
     const bool external = !src.empty();
+    if (!run_script_) {
+        // A FRAME'S DOCUMENT HAS NO RUNNER - the browser's is the page's - but
+        // it has a realm, and its parser pauses at this `</script>` like the
+        // page's does: the script runs now, in the frame's realm.
+        if (realm_ != nullptr && cx_ != nullptr && !prepared.module) {
+            execute_script_element(*cx_, script, prepared.source);
+            if (external) { announce_load(script, true); }
+        }
+        return;
+    }
     if (!run_script_(prepared)) {
         parser_->abort();
         return;
@@ -235,7 +250,14 @@ void dom_bindings::parser_finished(bool initial) {
     deferred.swap(deferred_scripts_);
     for (const std::vector<parser_script> * batch : {&deferred, &asap}) {
         for (const parser_script & script : *batch) {
-            if (!run_script_) { break; }
+            if (!run_script_) {
+                // A frame's, in its realm - see prepare_parser_script.
+                if (realm_ != nullptr && cx_ != nullptr && !script.module) {
+                    execute_script_element(*cx_, script.element, script.source);
+                    if (!script.specifier.empty()) { announce_load(script.element, true); }
+                }
+                continue;
+            }
             if (!run_script_(script)) { return; }
             if (script.module || !script.specifier.empty()) { announce_load(script.element, true); }
         }

@@ -76,6 +76,7 @@ bool erase_named(declaration_block & block, std::span<const std::string_view> na
 // One declaration into the block, from either path.
 bool put(declaration_block & block, std::string_view name, std::string_view text, bool important,
          bool parsed) {
+    name = radius_name(name);
     const value_check checked = check_declaration(name, text, false);
     if (!checked.valid) { return false; }
     const auto add = parsed ? add_parsed : set_one;

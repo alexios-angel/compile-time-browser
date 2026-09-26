@@ -323,8 +323,14 @@ void dom_bindings::install_event_interfaces(context & cx) {
         // Non-writable, non-configurable, non-enumerable, like every interface
         // object's `prototype` (WebIDL 3.6).
         ctor->define("prototype", prototype_value, script::attr_none);
-        static_cast<script::object_object *>(prototype_value.as_heap())
-            ->define("constructor", value::object(ctor), script::attr_builtin);
+        auto * proto = static_cast<script::object_object *>(prototype_value.as_heap());
+        proto->define("constructor", value::object(ctor), script::attr_builtin);
+        // `@@toStringTag` is the interface's name (WebIDL 3.7.3), which is
+        // what `assert_class_string(event, "Event")` reads through
+        // Object.prototype.toString.
+        if (proto->find("@@toStringTag") == nullptr) {
+            proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+        }
         cx.define_global(name, value::object(ctor));
         return ctor;
     };
@@ -751,6 +757,22 @@ void dom_bindings::install_event_interfaces(context & cx) {
                      e.set("newURL", c.string(dict_string(c, init, "newURL")));
                  });
 
+    // `ToggleEvent` (HTML 6.12.2): a <details> or popover's `toggle`, from
+    // one state to another - handler_attributes.cpp queues the details one.
+    interface_of("ToggleEvent", event_prototype_,
+                 [](context & c, script::object_object & e, value init) {
+                     e.set("oldState", c.string(dict_string(c, init, "oldState")));
+                     e.set("newState", c.string(dict_string(c, init, "newState")));
+                 });
+
+    // `PageTransitionEvent` (HTML 7.4.6.4): `pageshow` after the window's
+    // `load` (input.cpp's dispatch), and whether the page came from a cache,
+    // which here it never does.
+    interface_of("PageTransitionEvent", event_prototype_,
+                 [](context & c, script::object_object & e, value init) {
+                     e.set("persisted", value::boolean(dict_flag(c, init, "persisted")));
+                 });
+
     // `ErrorEvent`, which is what an uncaught exception is reported as. It is
     // here rather than beside dispatch_error because a page CONSTRUCTS one:
     // window-event-restored-after-throwing-onerror.html dispatches its own.
@@ -762,6 +784,27 @@ void dom_bindings::install_event_interfaces(context & cx) {
                      e.set("colno", value::number(dict_number(c, init, "colno")));
                      e.set("error", dict_member(c, init, "error"));
                  });
+
+    // `MessageEvent` (HTML 9.3.1): what postMessage fires at a window. `data`
+    // is any and defaults to null, `source` a window or null, and `ports` a
+    // frozen array - always empty, as this engine has no MessagePort.
+    message_event_prototype_ = interface_of(
+        "MessageEvent", event_prototype_, [](context & c, script::object_object & e, value init) {
+            const value data = dict_member(c, init, "data");
+            e.set("data", data.is_undefined() ? value::null() : data);
+            e.set("origin", c.string(dict_string(c, init, "origin")));
+            e.set("lastEventId", c.string(dict_string(c, init, "lastEventId")));
+            const value source = dict_member(c, init, "source");
+            if (!source.is_undefined() && !source.is_null() && !source.is_heap()) {
+                c.throw_error("TypeError", "Failed to construct 'MessageEvent': "
+                                           "member source is not a window.");
+                return;
+            }
+            e.set("source", source.is_undefined() ? value::null() : source);
+            const value ports = c.make_array();
+            c.prevent_extensions(ports);
+            e.set("ports", ports);
+        });
 
     // --- the legacy init* methods -----------------------------------------
     //

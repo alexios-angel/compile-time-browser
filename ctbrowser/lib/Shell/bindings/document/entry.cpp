@@ -3,6 +3,8 @@
 
 #include "internal.hpp"
 
+#include <optional>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
@@ -83,7 +85,10 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
         // variable, and the listener is then the only reference there is.
         mark(l.host);
     }
-    for (const timer & t : timers_) { mark(t.callback); }
+    for (const timer & t : timers_) {
+        mark(t.callback);
+        for (const value held : t.arguments) { mark(held); }
+    }
     // A QUEUED FETCH holds the only reference to the promise a page is
     // waiting on, and to the signal that may cancel it. Neither is reachable
     // from anywhere else between the call and the turn that settles it.
@@ -130,6 +135,7 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     // and an event whose prototype was collected stops being an Event.
     mark(event_prototype_);
     mark(custom_event_prototype_);
+    mark(message_event_prototype_);
     mark(event_target_prototype_);
     mark(abort_signal_prototype_);
     mark(media_query_list_prototype_);
@@ -150,13 +156,34 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     // otherwise sweep the object the proxy is about to point at.
     mark(document_target_);
     mark(window_);
+    mark(window_view_);
     // AND EVERY DOCUMENT THIS ONE MADE, recursively - a document made by a
     // document made by the page is still reachable only from here.
     for (const auto & made : secondary_documents_) { made->mark_roots(mark); }
 }
 
+// The parser's question for DOM 4.8 step 3 (dom/document.hpp): does a custom
+// element definition - the page's registry holds them all - disable a shadow
+// root on `host`?
+void dom_bindings::watch_shadow_disabled() {
+    if (doc_ == nullptr) { return; }
+    // THE HOOK MAY OUTLIVE THESE BINDINGS - a reload makes new ones over the
+    // same document, and a navigation destroys the document first - so it
+    // holds a weak token rather than trusting `this`, and nothing here
+    // touches the document on the way out.
+    doc_->set_shadow_disabled_hook([this, alive = std::weak_ptr<int>{lifetime_}](node_id host) {
+        if (alive.expired()) { return false; }
+        const auto txn = doc_->read();
+        const std::size_t def = custom_definition_for(txn, host);
+        const dom_bindings & registry = primary_ == nullptr ? *this : *primary_;
+        return def < registry.custom_definitions_.size() &&
+               registry.custom_definitions_[def].disable_shadow;
+    });
+}
+
 void dom_bindings::install(context & cx) {
     cx_ = &cx;
+    watch_shadow_disabled();
     register_roots(cx);
     install_console(cx);
     location_ = make_location(cx);
@@ -198,6 +225,16 @@ void dom_bindings::install(context & cx) {
     // reads as flakiness, and it was the same one behind `createHTMLDocument`
     // and `make_live_collection` earlier on this branch.
     ensure_dom_interfaces(cx);
+    // `Image` IS A LEGACY FACTORY FUNCTION for HTMLImageElement (HTML 4.8.4.1):
+    // its `prototype` is HTMLImageElement.prototype, so `new Image() instanceof
+    // Image` - and every <img> - answers true. Set here, where the interface
+    // prototypes exist.
+    if (const value image = cx.global("Image"); image.is_kind(script::heap_kind::native)) {
+        if (const value proto = interface_prototype("HTMLImageElement"); proto.is_object()) {
+            static_cast<script::native_object *>(image.as_heap())
+                ->define("prototype", proto, script::attr_none);
+        }
+    }
     // AFTER the interface table: `document.getSelection` goes on
     // Document.prototype, which does not exist until ensure_dom_interfaces
     // has built it.
@@ -338,7 +375,12 @@ void dom_bindings::mutated() {
 // ponytail: creation order, not tree order - the corpus inserts in the order
 // it creates. Sort by tree position if a page ever depends on it.
 void dom_bindings::run_inserted_scripts() {
-    if (unstarted_scripts_.empty() || cx_ == nullptr || secondary_ || moving_) { return; }
+    // A frame's document runs what its scripts insert, in the frame's realm; a
+    // document with no browsing context (createHTMLDocument's) runs nothing.
+    if (unstarted_scripts_.empty() || cx_ == nullptr || (secondary_ && realm_ == nullptr) ||
+        moving_) {
+        return;
+    }
     context & cx = *cx_;
     const atom src_name = atoms_->intern("src");
     const atom type_name = atoms_->intern("type");
@@ -414,7 +456,8 @@ void dom_bindings::run_inserted_scripts() {
                 native(cx, "external script",
                        [this, id, src](context & c, std::span<value>) {
                            const std::vector<std::byte> bytes =
-                               assets_ == nullptr ? std::vector<std::byte>{} : assets_->load(src);
+                               assets_ == nullptr ? std::vector<std::byte>{}
+                                                  : assets_->load(subresource_name(src));
                            if (!bytes.empty()) {
                                std::string text(reinterpret_cast<const char *>(bytes.data()),
                                                 bytes.size());
@@ -436,6 +479,9 @@ void dom_bindings::run_inserted_scripts() {
 // afterwards; an uncaught throw is reported, and the caller carries on.
 void dom_bindings::execute_script_element(context & cx, node_id id, const std::string & source) {
     if (doc_ == nullptr) { return; }
+    // IN THIS DOCUMENT'S REALM - a frame's script declares into the frame's
+    // globals and reads the frame's `document` (frames.cpp).
+    const auto in_realm = enter_realm(cx);
     const atom src_name = atoms_->intern("src");
     {
         // `document.currentScript` is this element while it runs - and while
@@ -501,8 +547,12 @@ void dom_bindings::execute_script_element(context & cx, node_id id, const std::s
             return;
         }
         const script::program & kept = cx.own_program(std::move(compiled));
+        // Its `var`s exist before it starts, as a parser-run script's do
+        // (browser/scripts.cpp; GlobalDeclarationInstantiation).
+        for (const std::string & name : kept.hoisted_vars) { cx.declare_global_var(name); }
         auto * entry = cx.allocate<script::closure_object>(&kept.functions[0]);
         entry->owner = &kept;
+        entry->realm = &cx.current_realm();
         bool threw = false;
         value thrown = value::undefined();
         (void)cx.call_fenced(value::object(entry), {}, cx.global_this(), threw, thrown);

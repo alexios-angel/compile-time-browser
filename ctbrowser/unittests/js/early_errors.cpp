@@ -123,6 +123,27 @@ void answers(std::string_view source, std::string_view expected) {
 } // namespace
 
 int main() {
+    // A statement body may be `let` followed by a newline - the identifier -
+    // but never `let [` (14.5's lookahead), newline or comment between.
+    refused("if (false) let\n[a] = 0;");
+    refused("L: let /* x */\n[a] = 0;");
+    accepted("if (false) let\nx = 1;");
+    // A call as an assignment target is web-compat in sloppy code: the call
+    // runs, then the ReferenceError - the right side never does.
+    answers("var log = ''; function f() { log += 'f'; return {}; } function g() { log += 'g'; }"
+            " var r = []; try { f() = g(); } catch (e) { r.push(e.name); }"
+            " try { f() += g(); } catch (e) { r.push(e.name); }"
+            " try { f()++; } catch (e) { r.push(e.name); } return r.join() + ':' + log;",
+            "ReferenceError,ReferenceError,ReferenceError:fff");
+    answers("var n = 0; function f() { ++n; return {}; } var r = [];"
+            " try { for (f() in [1]) {} } catch (e) { r.push(e.name); }"
+            " try { for (f() of [1]) {} } catch (e) { r.push(e.name); }"
+            " for (f() in {}) {} return r.join() + ':' + n;",
+            "ReferenceError,ReferenceError:2");
+    refused("'use strict'; function f() {} f() = 1;");
+    refused("function f() {} f() &&= 1;");
+    refused("var a; a?.b() = 1;");
+
     // ================================================================
     // 1. DUPLICATE LEXICAL DECLARATIONS - 14.2.1, 15.2.1, 16.1.1
     // ================================================================
@@ -245,15 +266,11 @@ int main() {
     accepted("var a; ({ a } = { a: 1 });");
     accepted("var o = { p: 0 }; [o.p] = [1];");
     accepted("var i = 0; i++; ++i; i += 1;");
-    // A CALL is refused here, and the note on check_assignment in
-    // early_errors/expressions.cpp says why it is
-    // the second-best answer: a browser may make `f() = 1` a runtime
-    // ReferenceError instead, and this engine's compiler refuses a call target
-    // outright either way - so the only thing being chosen is which KIND of
-    // failure it is.
-    refused("function f() { return {}; } f() = 1;");
-    refused("f() += 1;");
-    refused("f()++;");
+    // A CALL is refused in strict code only: sloppy code gets the web-compat
+    // runtime ReferenceError (see the top of main and web_compat_call).
+    refused("'use strict'; function f() { return {}; } f() = 1;");
+    refused("'use strict'; f() += 1;");
+    refused("'use strict'; f()++;");
 
     // ================================================================
     // 6. `break`, `continue` AND LABELS - 13.8.1, 13.9.1, 14.13.1
@@ -397,7 +414,12 @@ int main() {
     refused("class C { static prototype = 1; }");
 
     accepted("class C { constructor() { this.x = 1; } m() {} } new C();");
-    accepted("class C { static ['prototype']() { return 1; } }");
+    // NOT an early error when the key is computed - and a RUNTIME TypeError:
+    // the method is defined (DefineMethodProperty), and a class's own
+    // `prototype` is not configurable (test262 static-method-non-configurable-err).
+    answers("try { class C { static ['prototype']() { return 1; } } return 'defined'; }"
+            " catch (e) { return e.name; }",
+            "TypeError");
     accepted("class C { static m() {} get x() { return 1; } }");
     // `constructor` on the STATIC side is an ordinary name, and a computed key
     // is never the constructor.
@@ -608,6 +630,43 @@ int main() {
     module_refused("function x() {} function x() {}");
     module_refused("var x; function x() {}");
     module_accepted("function x() {} function y() {}");
+    // An import binds strictly and lexically; so does a named default export.
+    module_refused("import { eval } from './m.js';");
+    module_refused("import { x as arguments } from './m.js';");
+    module_refused("import { a } from './m.js'; let a;");
+    module_refused("class F {} export default function F() {}");
+    module_refused("var G; export default function* G() {}");
+    module_accepted("export default class C {} export { C as D };");
+    // ...but a default EXPRESSION binds nothing, so its name is no duplicate.
+    module_accepted("const y = 42; export default y; export { y as z };");
+    module_accepted("export default function F() {} export { F as G };");
+    // A string ModuleExportName must be well-formed Unicode (16.2.2.1).
+    module_refused("var x; export { x as '\\uD83D' };");
+    module_refused("import { '\\uDC00' as y } from './m.js';");
+    module_refused("export * as \"\\u{D83D}\" from './m.js';");
+    module_accepted("var x; export { x as '\\uD83D\\uDE00' };");
+
+    // 14.12.1: one `default` per switch.
+    refused("switch (1) { case 0: default: break; default: }");
+    accepted("switch (1) { case 0: default: break; case 1: }");
+    // 14.14: no line break between `throw` and its expression - and a
+    // parenthesis that opens on the throw's line is not one.
+    refused("try { throw\n1; } catch (e) {}");
+    accepted("try { throw 1; } catch (e) {}");
+    accepted("try { throw (\n1); } catch (e) {}");
+    accepted("var thrower; try { thrower\n1; } catch (e) {}");
+    // A "use strict" body makes a declaration's own name strict code.
+    refused("function arguments() { 'use strict'; }");
+    refused("function eval() { 'use strict'; }");
+    accepted("function evaluate() { 'use strict'; }");
+    // Tokens the parser took where only a name may stand.
+    refused("try {} catch (\"22\") {}");
+    accepted("try {} catch (e) {} try {} catch ({message}) {} try {} catch {}");
+    refused("var o = {}; o.\"x\";");
+    accepted("var o = {a: {}}; o.a.b; o?.a; o.default; o.$x; o._y;");
+    refused("catch");
+    refused("finally");
+    accepted("debugger;");
 
     REPORT("early_errors");
 }

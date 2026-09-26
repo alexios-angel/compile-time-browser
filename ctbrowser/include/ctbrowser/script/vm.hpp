@@ -30,6 +30,27 @@ public:
 
     void define_global(std::string name, value v);
 
+    // CreateGlobalVarBinding (9.1.1.4.17): a script's or an eval's `var` - a
+    // new binding is undefined, and a name the global object already owns,
+    // in the binding table or as a property defined on the object itself,
+    // keeps its value.
+    void declare_global_var(std::string name);
+
+    // THE THREE VALUE PROPERTIES OF THE GLOBAL OBJECT (19.1): NaN, Infinity
+    // and undefined are { writable: false, enumerable: false, configurable:
+    // false } on every global object. A store to one is refused - silently in
+    // sloppy code, a TypeError in strict - and neither can be deleted or
+    // redefined. By name, so the store path pays three length compares rather
+    // than a table lookup.
+    [[nodiscard]] static constexpr bool immutable_global(std::string_view name) noexcept {
+        return name == "undefined" || name == "NaN" || name == "Infinity";
+    }
+    // THE SAME THREE AS OWN PROPERTIES of a global object's proxy target. A
+    // proxy may report a property non-configurable only when its target has it
+    // so (10.5.5 step 22), so a trap that answered attr_none for a name the
+    // target lacked made getOwnPropertyDescriptor(globalThis, 'NaN') throw.
+    static void define_immutable_globals(object_object & global);
+
     bool erase_global(std::string_view name);
 
     void define_native(std::string name, native_fn fn);
@@ -49,6 +70,52 @@ public:
     [[nodiscard]] value global_this() const noexcept;
 
     void set_global_this(value receiver);
+
+    // --- realms ---------------------------------------------------------------
+    //
+    // THE CURRENT REALM is the realm of the innermost running JavaScript frame
+    // - a frame takes its closure's realm when it is pushed - or, below the
+    // first frame a realm_scope was opened over, that scope's. Every accessor
+    // above (define_global, global, global_or_named, global_this, the
+    // undeclared-name hook) reads and writes the current realm's, so a page
+    // with one realm behaves exactly as before.
+    [[nodiscard]] realm_record & current_realm() const noexcept;
+    [[nodiscard]] realm_record & main_realm() const noexcept;
+    // A NEW REALM whose binding table is a copy of the template - see
+    // set_realm_template - and whose global object is the caller's to set.
+    [[nodiscard]] realm_record & create_realm();
+    // What a new realm's binding table starts as: the page's globals as they
+    // stood before any page script ran - the builtins and the platform's
+    // interface objects, none of the page's own `var`s.
+    void set_realm_template(const string_flat_map<value> & globals);
+    // A bare VM's global object for `r`: a proxy over r's binding table, which
+    // is what `globalThis` is in ct262 and in unittests/js - and what
+    // $262.createRealm hands back for a second one.
+    [[nodiscard]] value make_global_object(realm_record & r);
+
+    // RAII: `r` is the current realm until the scope closes, for the code the
+    // embedder runs at this depth - defining a frame's globals, compiling its
+    // inline handlers, running its <script>s. A JS frame pushed inside the
+    // scope still runs in ITS closure's realm.
+    class realm_scope {
+    public:
+        realm_scope(context & cx, realm_record & r)
+            : cx_(&cx), saved_realm_(cx.scope_realm_), saved_depth_(cx.scope_depth_) {
+            cx.scope_realm_ = &r;
+            cx.scope_depth_ = cx.frames_.size();
+        }
+        ~realm_scope() {
+            cx_->scope_realm_ = saved_realm_;
+            cx_->scope_depth_ = saved_depth_;
+        }
+        realm_scope(const realm_scope &) = delete;
+        realm_scope & operator=(const realm_scope &) = delete;
+
+    private:
+        context * cx_;
+        realm_record * saved_realm_;
+        std::size_t saved_depth_;
+    };
 
     run_result run(const program & prog);
 
@@ -249,6 +316,11 @@ public:
     void set_promise_factory(std::function<value(context &, value, bool)> make);
 
     void set_rejection_tracker(std::function<void(value promise, bool handled)> track);
+
+    // Called at the END of every microtask checkpoint that drained cleanly -
+    // where HTML's "perform a microtask checkpoint" step 5 notifies about
+    // rejected promises. A host hook; it must not run script.
+    void set_checkpoint_hook(std::function<void()> hook);
 
     void track_promise_rejection(value promise, bool handled);
 
@@ -481,6 +553,8 @@ public:
         std::uint16_t await_reg = 0;
         std::uint16_t argc = 0;
         closure_object * closure = nullptr;
+        // The suspended frame's realm, put back with it.
+        realm_record * realm = nullptr;
         value receiver = value::undefined();
         bool constructing = false;
         std::vector<value> window;
@@ -614,7 +688,14 @@ private:
         value async_promise = value::undefined();
 
         std::uint64_t serial = 0;
+
+        // The realm this body runs in: its closure's, or for a top level the
+        // realm current when it was entered. Never null once pushed.
+        realm_record * realm = nullptr;
     };
+
+    // The realm a frame for `callee` runs in - see call_frame::realm.
+    [[nodiscard]] realm_record * realm_for(const closure_object * callee) const noexcept;
 
     [[nodiscard]] static value effective_this(const call_frame & f);
 
@@ -716,6 +797,7 @@ private:
     std::function<value(context &)> pending_promise_factory_;
     std::function<void(context &, value, value, bool)> promise_settler_;
     std::function<void(value, bool)> rejection_tracker_; // see set_rejection_tracker
+    std::function<void()> checkpoint_hook_;              // see set_checkpoint_hook
     // Set by `op::pass_new_target` and consumed by the very next frame push, so
     // a super() call hands its own new.target to the base constructor.
     value pending_new_target_ = value::undefined();
@@ -751,14 +833,17 @@ private:
     std::uint32_t reentry_depth_ = 0;
     bool reentry_reported_ = false;
 
-    // string_flat_map, NOT flat_map<std::string, value>: the plain one's hasher
-    // and equality are not transparent, so `find(string_view)` cannot exist
-    // (docs/performance.md: -47% on object_object::find).
-    string_flat_map<value> globals_;
-    // See set_undeclared_name_hook. Empty in a bare VM, which is what
-    // `unittests/js` and `ct262` run.
-    std::function<value(std::string_view)> undeclared_name_;
-    value global_this_ = value::undefined();
+    // EVERY REALM THIS CONTEXT HAS MADE, the page's first. unique_ptr because
+    // closures and frames point at them and the vector grows. A realm_record's
+    // table is a string_flat_map, NOT flat_map<std::string, value>: the plain
+    // one's hasher and equality are not transparent, so `find(string_view)`
+    // cannot exist (docs/performance.md: -47% on object_object::find).
+    std::vector<std::unique_ptr<realm_record>> realms_;
+    // The innermost realm_scope: its realm, and frames_.size() when it opened.
+    realm_record * scope_realm_ = nullptr;
+    std::size_t scope_depth_ = 0;
+    // See set_realm_template.
+    string_flat_map<value> realm_template_;
     std::vector<value> registers_;
     std::vector<call_frame> frames_;
     // WHERE THE TYPE ORACLE'S OBSERVATIONS GO, or null - and null selects the

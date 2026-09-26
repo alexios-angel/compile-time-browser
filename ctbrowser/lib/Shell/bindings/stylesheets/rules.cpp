@@ -30,6 +30,41 @@ namespace {
            name == "font-palette-values" || name == "view-transition";
 }
 
+// An `@supports` condition's `at-rule( <at-keyword-token> )` tests as CSS
+// Conditional 5 serialises them: no whitespace inside, the name escaped as an
+// identifier - `at-rule( @--\31 23)` is `at-rule(@--123)`. The rest of the
+// condition keeps the author's bytes.
+[[nodiscard]] std::string serialize_at_rule_tests(std::string_view prelude) {
+    std::string out;
+    std::size_t done = 0;
+    for (std::size_t at = 0; (at = prelude.find('(', at)) != std::string_view::npos; ++at) {
+        if (at < 7 || !ascii_iequals(prelude.substr(at - 7, 7), "at-rule") ||
+            (at > 7 && style::css::is_name(prelude[at - 8]))) {
+            continue;
+        }
+        const std::size_t close = scan_to(prelude, at + 1, ")");
+        if (close >= prelude.size()) { break; }
+        const style::css::token_stream s =
+            style::css::tokenize(prelude.substr(at + 1, close - at - 1));
+        const style::css::css_token * keyword = nullptr;
+        bool one = true;
+        for (const style::css::css_token & t : s.tokens) {
+            if (t.type == style::css::token_type::whitespace ||
+                t.type == style::css::token_type::eof) {
+                continue;
+            }
+            one = one && keyword == nullptr && t.type == style::css::token_type::at_keyword;
+            keyword = &t;
+        }
+        if (!one || keyword == nullptr) { continue; }
+        out += prelude.substr(done, at + 1 - done);
+        out += "@" + style::css::serialize_identifier(s.value_of(*keyword)) + ")";
+        done = close + 1;
+        at = close;
+    }
+    return out + std::string{prelude.substr(done)};
+}
+
 } // namespace
 
 namespace detail {
@@ -172,15 +207,11 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
     out += " {\n";
     for (const std::size_t child : rule.children) {
         if (child >= css_rule_store_.size()) { continue; }
-        // TWO SPACES ON EVERY LINE of the child rather than on its first, so a
-        // nested group indents cumulatively - which is what the recursion means
-        // and what a single leading indent would get wrong.
-        out += "  ";
-        for (const char c : rule_css_text(*css_rule_store_[child])) {
-            out += c;
-            if (c == '\n') { out += "  "; }
-        }
-        out += '\n';
+        // TWO SPACES BEFORE THE CHILD'S FIRST LINE ONLY: CSSOM appends the
+        // serialised child as it is, so a nested group's own lines keep the
+        // indentation it gave them and nothing accumulates
+        // (at-container-serialization, serialize-group-rules-with-decls).
+        out += "  " + rule_css_text(*css_rule_store_[child]) + "\n";
     }
     out += '}';
     return out;
@@ -454,11 +485,11 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         {
             // The prelude is what stands between the at-keyword and the block
             // (or the `;` that ends a statement at-rule): `@media` -> `all and
-            // (min-width: 10px)`.
+            // (min-width: 10px)`. A `{` inside a bracket is no block:
+            // `@supports ({}) {}` has the prelude `({})`.
             const std::size_t after =
                 name_end == std::string_view::npos ? trimmed.size() : name_end;
-            std::size_t body = trimmed.find_first_of("{;", after);
-            if (body == std::string_view::npos) { body = trimmed.size(); }
+            const std::size_t body = scan_to(trimmed, after, "{;");
             made.prelude = std::string{trim(trimmed.substr(after, body - after), html_whitespace)};
         }
         if (ascii_iequals(name, "media")) {
@@ -471,6 +502,7 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             made.type = namespace_rule;
         } else if (ascii_iequals(name, "supports")) {
             made.type = supports_rule;
+            made.prelude = serialize_at_rule_tests(made.prelude);
         } else if (ascii_iequals(name, "page")) {
             made.type = page_rule;
         } else if (ascii_iequals(name, "counter-style")) {
@@ -491,6 +523,19 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             open == std::string_view::npos || close == std::string_view::npos
                 ? std::string_view{}
                 : trimmed.substr(open + 1, close - open - 1);
+        // ONE RULE (CSSOM 6.4.3 "parse a rule"): a block at-rule with no
+        // block - `@media bad syntax;` - is invalid, and text after the block
+        // is garbage or a second rule (conditional-CSSGroupingRule).
+        const bool trailing = open != std::string_view::npos && close != std::string_view::npos &&
+                              !trim(trimmed.substr(close + 1), html_whitespace).empty();
+        const bool blockless =
+            open == std::string_view::npos && made.at_name != "layer" &&
+            (at_rule_holds_rules(made.at_name) || at_rule_holds_declarations(made.at_name));
+        if (trailing || blockless) {
+            css_rule_store_.pop_back();
+            error = "SyntaxError";
+            return no_index;
+        }
 
         if (made.type == media_rule) {
             // THE AUTHOR'S BYTES, which is the whole reason a media rule made
@@ -507,12 +552,36 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             std::size_t after = 0;
             const std::string href = url_value(next_component(written, after));
             std::string extra;
+            // A `layer()` that names no <layer-name> - `layer()`, `layer(A
+            // B)` - or an empty `supports()` is no condition: it starts the
+            // media query list, as a `<general-enclosed>` that never matches
+            // (CSS Cascade 5 §5.1, layer-import-parsing).
+            const auto well_formed = [](std::string_view part) {
+                if (ascii_iequals(part, "layer")) { return true; }
+                const std::size_t open = part.find('(');
+                if (open == std::string_view::npos || part.back() != ')') { return false; }
+                const std::string_view inner =
+                    trim(part.substr(open + 1, part.size() - open - 2), html_whitespace);
+                if (inner.empty()) { return false; }
+                if (!ascii_iequals(part.substr(0, open), "layer")) { return true; }
+                for (const std::string_view piece : split_top_level(inner, ".")) {
+                    if (piece.empty() || (piece.front() >= '0' && piece.front() <= '9')) {
+                        return false;
+                    }
+                    for (const char c : piece) {
+                        if (!style::css::is_name(c)) { return false; }
+                    }
+                }
+                return inner.front() != '.' && inner.back() != '.' &&
+                       inner.find("..") == std::string_view::npos;
+            };
             for (std::size_t probe = after;;) {
                 const std::string_view part = next_component(written, probe);
                 if (part.empty()) { break; }
                 const bool layer =
                     ascii_iequals(part, "layer") || ascii_iequals(part.substr(0, 6), "layer(");
                 if (!layer && !ascii_iequals(part.substr(0, 9), "supports(")) { break; }
+                if (!well_formed(part)) { break; }
                 if (!extra.empty()) { extra += ' '; }
                 extra += collapse_whitespace(part, html_whitespace);
                 after = probe;
@@ -726,7 +795,15 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                     made.prelude += end + ")";
                 }
             } else if (made.at_name == "container") {
-                made.prelude = collapse_whitespace(made.prelude, html_whitespace);
+                // The cascade's own reading of the prelude: a rule it would
+                // drop is not in the object model either (at-container-parsing).
+                const auto conditions = style::css::parse_container_conditions(made.prelude);
+                if (!conditions) {
+                    css_rule_store_.pop_back();
+                    error = "SyntaxError";
+                    return no_index;
+                }
+                made.prelude = style::css::serialize_container_conditions(*conditions);
             }
             parse_block_contents(at, body, false);
             // Reconstructible from here on, so the author's bytes are dropped

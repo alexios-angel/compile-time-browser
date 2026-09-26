@@ -91,32 +91,8 @@ void dom_bindings::install_control_collections_labels(context & cx) {
     // A label's labeled control: the element its `for` names when that is
     // labelable, else its first labelable descendant. `labels` on a control
     // is every label in its tree whose control it is.
-    const auto labeled_control = [helpers](const read_txn & txn, dom_bindings * b,
-                                           node_id label) -> node_id {
-        const atom for_attr = b->atoms_->intern("for");
-        if (txn.has_attribute(label, for_attr)) {
-            const std::string_view want = txn.attribute_value(label, for_attr);
-            if (want.empty()) { return node_id{}; }
-            node_id found;
-            const atom id_attr = b->atoms_->intern("id");
-            helpers.walk_tree(txn, helpers.tree_top(txn, b, label), [&](node_id at2) {
-                if (!found && txn.attribute_value(at2, id_attr) == want) { found = at2; }
-            });
-            return helpers.is_labelable(txn, b, found) ? found : node_id{};
-        }
-        node_id found;
-        const auto walk = [&](auto && self, node_id at2) -> void {
-            for (const node_id child : txn.children(at2)) {
-                if (found) { return; }
-                if (helpers.is_labelable(txn, b, child)) {
-                    found = child;
-                    return;
-                }
-                self(self, child);
-            }
-        };
-        walk(walk, label);
-        return found;
+    const auto labeled_control = [helpers](const read_txn & txn, dom_bindings * b, node_id label) {
+        return helpers.labeled_control(txn, b, label);
     };
     helpers.accessor(cx, "HTMLLabelElement", "control",
                      [helpers, labeled_control](context & c, std::span<value>) {
@@ -159,7 +135,11 @@ void dom_bindings::install_control_collections_labels(context & cx) {
                     const auto txn = b->doc_->read();
                     if (!helpers.is_labelable(txn, b, id)) { return value::null(); }
                 }
-                return b->make_live_collection(
+                // [SameObject]: the one live NodeList, kept on the element -
+                // an input that turned hidden and back hands out the same one.
+                const value held = helpers.slot_of(c, b, id, "__labels");
+                if (held.is_object_like()) { return held; }
+                const value made = b->make_live_collection(
                     c,
                     [b, id, labeled_control, helpers] {
                         std::vector<node_id> out;
@@ -174,6 +154,8 @@ void dom_bindings::install_control_collections_labels(context & cx) {
                         return out;
                     },
                     "NodeList");
+                helpers.set_slot(c, b, id, "__labels", made);
+                return made;
             });
     }
 
@@ -257,19 +239,35 @@ void dom_bindings::install_control_collections_labels(context & cx) {
                          return value::number(
                              static_cast<double>(units_length_of(helpers.value_of(txn, b, id))));
                      });
+    // A textarea's `defaultValue`, HTML 4.10.11: its CHILD TEXT CONTENT (the
+    // Text children's data - a <span> inside contributes nothing, where
+    // textContent would count it), and "string replace all" to set.
     helpers.accessor(
         cx, "HTMLTextAreaElement", "defaultValue",
         [helpers](context & c, std::span<value>) {
             const auto where = helpers.at(c);
             dom_bindings * b = where.first;
             const node_id id = where.second;
-            return c.string(id ? b->text_content(id) : std::string{});
+            std::string text;
+            if (id) {
+                const auto txn = b->doc_->read();
+                for (const node_id child : txn.children(id)) {
+                    const node_kind kind = txn.kind(child).value_or(node_kind::element);
+                    if (kind == node_kind::text || kind == node_kind::cdata_section) {
+                        text += txn.text(child);
+                    }
+                }
+            }
+            return c.string(text);
         },
         [helpers](context & c, std::span<value> a) {
             const auto where = helpers.at(c);
             dom_bindings * b = where.first;
             const node_id id = where.second;
-            if (id) { b->set_text(id, arg_string(c, a, 0)); }
+            if (id) {
+                b->set_text(id, arg_string(c, a, 0));
+                helpers.children_replaced(b, id);
+            }
             return value::undefined();
         });
     helpers.accessor(cx, "HTMLInputElement", "list", [helpers](context & c, std::span<value>) {

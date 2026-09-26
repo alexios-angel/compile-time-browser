@@ -36,12 +36,12 @@ constexpr spot no_spot{};
 // interface says (TreeWalker-basic.html asserts each descriptor). The active
 // flag is one too, so a filter that calls back into its own walker is an
 // InvalidStateError rather than a recursion.
-constexpr std::string_view root_slot = "__root";
+constexpr std::string_view root_slot = iterator_root_slot;
 constexpr std::string_view show_slot = "__whatToShow";
 constexpr std::string_view filter_slot = "__filter";
 constexpr std::string_view current_slot = "__currentNode";
-constexpr std::string_view reference_slot = "__referenceNode";
-constexpr std::string_view before_slot = "__pointerBeforeReferenceNode";
+constexpr std::string_view reference_slot = iterator_reference_slot;
+constexpr std::string_view before_slot = iterator_before_slot;
 constexpr std::string_view active_slot = "__active";
 
 [[nodiscard]] script::object_object * self_object(context & c) {
@@ -374,10 +374,9 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
 
     // --- NodeIterator, DOM 6.1 -----------------------------------------------
     //
-    // ponytail: the pre-removing steps - an iterator whose reference node is
-    // removed moves to the node before it - need a hook where the tree is
-    // edited (document::remove_child), which this file cannot reach; see the
-    // report. NodeIterator-removal.html is what measures them.
+    // The pre-removing steps - an iterator whose reference node is removed
+    // moves off it - run where the tree edits are settled: every iterator is
+    // registered with the live ranges, and range/live.cpp moves it.
 
     const auto install_iterator = [=](context & c, script::object_object & proto) {
         readonly(c, proto, "root", root_slot);
@@ -409,21 +408,44 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
             spot node = from_value(slot(self, reference_slot));
             if (node.none()) { return value::null(); }
             bool before = context::truthy(slot(self, before_slot));
+            // WHERE THE TRAVERSAL IS WHILE THE FILTER RUNS is kept beside the
+            // reference - which stays the last accepted node until this one
+            // is accepted - so that the pre-removing steps can move it when
+            // the filter removes the candidate or an ancestor of it. The
+            // candidate is still what is returned; the reference becomes
+            // where the position ended up.
+            const auto clear_inflight = [self] {
+                self->set(std::string{iterator_inflight_slot}, value::undefined());
+                self->set(std::string{iterator_inflight_before_slot}, value::undefined());
+            };
             while (true) {
                 if (next == before) {
                     before = !next;
                 } else {
                     node = next ? following(node, top) : preceding(node, top);
-                    if (node.none()) { return value::null(); }
+                    if (node.none()) {
+                        clear_inflight();
+                        return value::null();
+                    }
                 }
+                self->set(std::string{iterator_inflight_slot}, to_value(c2, node));
+                self->set(std::string{iterator_inflight_before_slot}, value::boolean(before));
                 const auto result = filter(c2, self, node);
+                const spot at = from_value(slot(self, iterator_inflight_slot));
+                const bool at_before = context::truthy(slot(self, iterator_inflight_before_slot));
+                clear_inflight();
                 if (!result) { return value::undefined(); }
-                if (*result == filter_accept) { break; }
+                if (*result == filter_accept) {
+                    const value found = to_value(c2, node);
+                    self->set(std::string{reference_slot}, at.none() ? found : to_value(c2, at));
+                    self->set(std::string{before_slot}, value::boolean(at_before));
+                    return found;
+                }
+                if (!at.none()) {
+                    node = at;
+                    before = at_before;
+                }
             }
-            const value found = to_value(c2, node);
-            self->set(std::string{reference_slot}, found);
-            self->set(std::string{before_slot}, value::boolean(before));
-            return found;
         };
         set_method(
             c, proto, "nextNode",
@@ -479,6 +501,11 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
         if (iterator) {
             made->define(std::string{reference_slot}, root, script::attr_none);
             made->define(std::string{before_slot}, value::boolean(true), script::attr_none);
+            made->define(std::string{iterator_inflight_slot}, value::undefined(),
+                         script::attr_none);
+            made->define(std::string{iterator_inflight_before_slot}, value::undefined(),
+                         script::attr_none);
+            register_live_range(value::object(made));
         } else {
             made->define(std::string{current_slot}, root, script::attr_none);
         }

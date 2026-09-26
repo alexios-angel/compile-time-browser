@@ -107,7 +107,7 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
     // declaration and there was no block binding at all - which B.3.3.2 needs
     // to have, because the var write is a COPY of it and is skipped whenever
     // a `let` of the same name shadows.
-    const bool script_scope = frames_.size() == 1 && !module_scope_;
+    const bool script_scope = frames_.size() == 1 && !top_level_is_scope_;
     const bool script_top_level = script_scope && fn().scope_marks.size() <= 1;
     bool block_local = false;
     if (!script_top_level && find_local_in_current_scope(n.text) == nullptr) {

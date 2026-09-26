@@ -134,7 +134,9 @@ void tree_builder::finish() {
     // graphic is a better answer than a blank box for a page that is merely
     // missing a close tag.
     close_foreign(stream_.size());
-    open_.clear();
+    // "Pop all the nodes off the stack of open elements" - one at a time, as
+    // an option's popped steps care.
+    while (!open_.empty()) { pop(); }
     finished_ = true;
     insertion_points_.clear();
 }
@@ -293,7 +295,121 @@ std::string_view tree_builder::current_tag() const {
 
 void tree_builder::pop() {
     if (open_.empty()) { return; }
+    const node_id popped = open_.back().id;
+    const bool option = open_.back().ns == node_ns::html && open_.back().tag == "option";
     open_.pop_back();
+    if (option) { option_popped(popped); }
+}
+
+// "WHEN AN OPTION ELEMENT IS POPPED OFF THE STACK OF OPEN ELEMENTS of an HTML
+// parser, maybe clone an option into selectedcontent" (HTML 4.10.10): when
+// the option is its select's selected one and the select has an enabled
+// <selectedcontent>, that element's children become a copy of the option's.
+// So `<select><button><selectedcontent></button><option>X` shows X in the
+// button with no script at all.
+//
+// ponytail: SELECTEDNESS AS THE PARSER CAN SEE IT - the selectedness setting
+// algorithm run over the `selected` attributes of the select's options so far
+// (the last one that has it, else the first not disabled). A script that set
+// `.selected` between two options is not seen; the bindings own that state.
+void tree_builder::option_popped(node_id option) {
+    std::vector<node_id> children;
+    node_id selectedcontent;
+    {
+        const auto txn = doc_->read();
+        const auto is = [&](node_id id, std::string_view name) {
+            return txn.kind(id).value_or(node_kind::text) == node_kind::element &&
+                   txn.element_ns(id) == node_ns::html && txn.local_name(id) == name;
+        };
+        // An option's "nearest ancestor select": a datalist, an hr or another
+        // option between them, or a second optgroup, and it has none.
+        const auto nearest_select = [&](node_id from) {
+            bool optgroup = false;
+            for (node_id at = txn.parent(from); at; at = txn.parent(at)) {
+                if (is(at, "datalist") || is(at, "hr") || is(at, "option")) { return node_id{}; }
+                if (is(at, "optgroup")) {
+                    if (optgroup) { return node_id{}; }
+                    optgroup = true;
+                }
+                if (is(at, "select")) { return at; }
+            }
+            return node_id{};
+        };
+        const node_id select = nearest_select(option);
+        // "Get a select's enabled selectedcontent": none for a `multiple` one.
+        if (!select || txn.has_attribute(select, atoms_->intern("multiple"))) { return; }
+        std::vector<node_id> options;
+        const auto walk = [&](auto && self, node_id at) -> void {
+            for (const node_id child : txn.children(at)) {
+                if (is(child, "option") && nearest_select(child) == select) {
+                    options.push_back(child);
+                }
+                if (!selectedcontent && is(child, "selectedcontent")) { selectedcontent = child; }
+                self(self, child);
+            }
+        };
+        walk(walk, select);
+        if (!selectedcontent) { return; }
+        const atom selected = atoms_->intern("selected");
+        const atom disabled = atoms_->intern("disabled");
+        node_id chosen;
+        for (const node_id each : options) {
+            if (txn.has_attribute(each, selected)) { chosen = each; }
+        }
+        for (const node_id each : options) {
+            if (chosen) { break; }
+            const node_id parent = txn.parent(each);
+            if (!txn.has_attribute(each, disabled) &&
+                !(is(parent, "optgroup") && txn.has_attribute(parent, disabled))) {
+                chosen = each;
+            }
+        }
+        if (chosen != option) { return; }
+        const std::span<const node_id> kids = txn.children(option);
+        children.assign(kids.begin(), kids.end());
+    }
+    // "Clone an option into a selectedcontent": replace all of its children
+    // with clones of the option's.
+    std::vector<node_id> old;
+    {
+        const auto txn = doc_->read();
+        const std::span<const node_id> kids = txn.children(selectedcontent);
+        old.assign(kids.begin(), kids.end());
+    }
+    for (const node_id child : old) { (void)doc_->remove_child(child); }
+    const auto clone = [&](auto && self, node_id from) -> node_id {
+        node_id made;
+        std::vector<attribute> attributes;
+        std::vector<node_id> kids;
+        {
+            const auto txn = doc_->read();
+            switch (txn.kind(from).value_or(node_kind::document)) {
+            case node_kind::element: {
+                made = doc_->create_element(txn.tag(from).value_or(atom{}), txn.element_ns(from),
+                                            txn.prefixed(from));
+                if (const atom uri = txn.element_namespace(from)) {
+                    doc_->set_element_namespace(made, uri);
+                }
+                const std::span<const attribute> held = txn.attributes(from);
+                attributes.assign(held.begin(), held.end());
+                const std::span<const node_id> children_of = txn.children(from);
+                kids.assign(children_of.begin(), children_of.end());
+                break;
+            }
+            case node_kind::text: return doc_->create_text(txn.text(from));
+            case node_kind::comment: return doc_->create_comment(txn.text(from));
+            default: return node_id{};
+            }
+        }
+        for (const attribute & a : attributes) { builder_->set_attribute(made, a.name, a.value); }
+        for (const node_id kid : kids) {
+            if (const node_id copy = self(self, kid)) { builder_->append(made, copy); }
+        }
+        return made;
+    };
+    for (const node_id child : children) {
+        if (const node_id copy = clone(clone, child)) { builder_->append(selectedcontent, copy); }
+    }
 }
 
 void tree_builder::pop_until(std::string_view tag) {
@@ -527,6 +643,11 @@ tree_builder::insertion_point tree_builder::appropriate_place(node_id override_t
                 return insertion_point{contents, node_id{}};
             }
             if (parent) { return insertion_point{parent, table}; }
+            // ...or made it the DOCUMENT ELEMENT, whose parent is the Document
+            // though the engine's parent pointer is empty (document_node):
+            // the location is before it, in the Document - where an element
+            // or text cannot go and is dropped (insert_element, insert_text).
+            if (doc_->root() == table) { return insertion_point{doc_->document_node(), table}; }
             return insertion_point{insertion_parent(open_[last_table - 1].id), node_id{}};
         }
     }
@@ -542,6 +663,12 @@ void tree_builder::insert_at(const insertion_point & where, node_id child) {
 }
 
 void tree_builder::move_to(node_id child, const insertion_point & where) {
+    // A Document that already has its element takes no other: the node is
+    // dropped on the floor, detached (see appropriate_place).
+    if (where.parent == doc_->document_node()) {
+        (void)doc_->remove_child(child);
+        return;
+    }
     if (where.before) {
         (void)doc_->remove_child(child);
         builder_->insert_before(where.parent, child, where.before);
@@ -620,7 +747,13 @@ node_id tree_builder::create_element(const std::string & tag,
 node_id tree_builder::insert_element(const std::string & tag,
                                      const std::vector<token_attribute> & attributes, node_ns ns) {
     const node_id element = create_element(tag, attributes, ns);
-    insert_at(appropriate_place(), element);
+    // "If it is not possible to insert element at the adjusted insertion
+    // location, abort these steps" (13.2.6.1) - the element is still pushed.
+    // The Document is the one such location: it already has an element,
+    // which is how foster parenting reached it (appropriate_place).
+    if (const insertion_point where = appropriate_place(); where.parent != doc_->document_node()) {
+        insert_at(where, element);
+    }
     open_.push_back(make_entry(
         element, std::string{ns == node_ns::svg ? adjust_svg_tag(tag) : std::string_view{tag}}, ns,
         attributes));

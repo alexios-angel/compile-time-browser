@@ -335,6 +335,9 @@ private:
     void mode_before_html(const token & t);
     void mode_before_head(const token & t);
     void mode_in_head(const token & t);
+    // A `<template shadowrootmode>` start tag made into its parent's shadow
+    // root; false when it is an ordinary template for the caller to insert.
+    [[nodiscard]] bool declarative_shadow_root(const token & t);
     void mode_in_head_noscript(const token & t);
     void mode_after_head(const token & t);
     void mode_in_body(const token & t);
@@ -371,6 +374,9 @@ private:
     // when the stack holds only the root, else the current node.
     [[nodiscard]] const entry * adjusted_current() const;
     void pop();
+    // "The option HTML element popped steps" (4.10.10): maybe clone the
+    // option into its select's <selectedcontent>.
+    void option_popped(node_id option);
     // Pop until an HTML element with this tag has been popped.
     void pop_until(std::string_view tag);
     void pop_until_any(std::initializer_list<std::string_view> tags);

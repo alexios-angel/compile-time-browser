@@ -216,7 +216,7 @@ void test_keyword_combinations() {
     ok("counter-reset", "foo", "foo 0");
     ok("counter-increment", "foo 2 bar", "foo 2 bar 1");
     ok("counter-reset", "reversed(foo) 3", "reversed(foo) 3");
-    ok("counter-set", "foo calc(1.6)", "foo 2");
+    ok("counter-set", "foo calc(1.6)", "foo calc(1.6)"); // rounded when it computes
     bad("counter-reset", "none foo");
     ok("will-change", "TRANSFORM, transform", "TRANSFORM, transform");
     ok("will-change", "auto", "auto");
@@ -407,8 +407,13 @@ void test_module_longhands() {
     ok("text-size-adjust", "200%", "200%");
     bad("text-size-adjust", "-100%");
     bad("text-size-adjust", "10px");
-    ok("-webkit-line-clamp", "6", "6");
-    bad("-webkit-line-clamp", "0");
+    // -webkit-line-clamp is a shorthand of line-clamp's longhands: its value
+    // is judged by the split, which is what setting it runs.
+    {
+        declaration_block block;
+        CHECK(set_declaration(block, "-webkit-line-clamp", "6", false));
+        CHECK(!set_declaration(block, "-webkit-line-clamp", "0", false));
+    }
     bad("column-count", "0");
     ok("column-count", "2", "2");
     ok("ruby-position", "inter-character", "inter-character");

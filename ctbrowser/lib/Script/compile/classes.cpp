@@ -52,6 +52,24 @@ void compiler_impl::emit_define_own(std::uint16_t target, std::string_view key, 
     release_to(mark);
 }
 
+void compiler_impl::emit_define_own_key(std::uint16_t target, std::uint16_t key, std::uint16_t v,
+                                        bool enumerable) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, callee, intern_name(std::string{define_own_name})));
+    const std::uint16_t object = alloc_reg();
+    proto().emit(instruction{op::move, object, target});
+    const std::uint16_t key_reg = alloc_reg();
+    proto().emit(instruction{op::move, key_reg, key});
+    const std::uint16_t held = alloc_reg();
+    proto().emit(instruction{op::move, held, v});
+    const std::uint16_t flag = alloc_reg();
+    proto().emit(instruction{enumerable ? op::load_true : op::load_false, flag});
+    proto().emit(instruction{op::call, callee, 4});
+    release_to(mark);
+}
+
 void compiler_impl::emit_private_add(std::uint16_t target, std::string_view key, std::uint16_t v) {
     const std::uint32_t mark = reg_mark();
     const std::uint16_t callee = alloc_reg();
@@ -411,7 +429,15 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             compile_expr(m.a, key);
             const std::uint32_t index = compile_function_body(m.b, "");
             proto().emit(instruction::with_bx(op::closure, slot, index));
-            proto().emit(instruction{op::set_index, target, key, slot});
+            if ((m.d & 1) != 0) {
+                // A STATIC one is DEFINED (15.4.4 DefineMethodProperty), not
+                // set: a [[Set]] on the constructor asks Function.prototype,
+                // whose @@hasInstance is read-only, so `static
+                // [Symbol.hasInstance]() {}` would be refused.
+                emit_define_own_key(target, key, slot, false);
+            } else {
+                proto().emit(instruction{op::set_index, target, key, slot});
+            }
             proto().emit(instruction{op::set_prop, slot, name_operand("__home"), target});
             release_to(mark);
             continue;
@@ -422,9 +448,12 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         } else {
             compile_expr(m.b, slot);
         }
-        if ((m.d & 1) != 0 && (m.text == "name" || m.text == "length")) {
+        if ((m.d & 1) != 0 && (m.text == "name" || m.text == "length" || m.text == "caller" ||
+                               m.text == "arguments")) {
             // A static `name`/`length` shadows the constructor's own
-            // read-only one: DEFINED, not set (see define_own_name).
+            // read-only one: DEFINED, not set (see define_own_name). So does
+            // a static `caller`/`arguments`, which a [[Set]] would hand to
+            // Function.prototype's %ThrowTypeError% accessor.
             emit_define_own(target, m.text, slot, false);
         } else if (m.text.starts_with('#')) {
             // A private method is DEFINED too: a set_prop is a PrivateSet, and

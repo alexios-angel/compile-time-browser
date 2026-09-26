@@ -124,11 +124,24 @@ node_id engine::closest(const read_txn & txn, node_id subject,
 }
 
 computed_style_ptr engine::resolve_pseudo(const read_txn & txn, node_id node, atom pseudo,
-                                          const computed_style_ptr & element) {
+                                          const computed_style_ptr & element,
+                                          const style_map * styles) {
     scope_ = node_id{};
     ancestor_filter ancestors;
     const std::optional<std::size_t> at = cursor_to(txn, node, ancestors);
     if (!at) { return {}; }
+    // THE CHAIN'S STYLES, the element's own included, which the last
+    // traversal left for whichever branch it walked last.
+    for (std::size_t d = 0; d <= *at; ++d) {
+        const node_id on = levels_[d][path_[d]].node;
+        computed_style_ptr style = d == *at ? element : computed_style_ptr{};
+        if (styles != nullptr && d != *at) {
+            if (const auto found = styles->find(key_of(on)); found != styles->end()) {
+                style = found->second;
+            }
+        }
+        note_chain(d, on, style);
+    }
     pseudo_wanted_ = pseudo;
     const element_facts & self = levels_[*at][path_[*at]].facts;
     computed_style_ptr out = resolve(txn, node, self, ancestors, *at, element);
@@ -250,9 +263,10 @@ namespace {
 // ORDERED CHEAPEST FIRST inside the compound below: the tag, the id and the classes
 // are interned atoms and compare as integers, so an attribute - which reads the
 // element's attribute list and then compares strings - is tested last.
-[[nodiscard]] bool attribute_matches(std::string_view have, const attribute_match & want) {
+[[nodiscard]] bool attribute_matches(std::string_view have, const attribute_match & want,
+                                     bool insensitive) {
     const auto same = [&](std::string_view a, std::string_view b) {
-        return want.case_insensitive ? ascii_iequals(a, b) : a == b;
+        return insensitive ? ascii_iequals(a, b) : a == b;
     };
     switch (want.op) {
     case attr_op::present: return true; // the caller has already established it exists
@@ -289,7 +303,7 @@ namespace {
                same(have.substr(have.size() - want.value.size()), want.value);
     case attr_op::substring: {
         if (want.value.empty()) { return false; }
-        if (!want.case_insensitive) { return have.find(want.value) != std::string_view::npos; }
+        if (!insensitive) { return have.find(want.value) != std::string_view::npos; }
         if (want.value.size() > have.size()) { return false; }
         for (std::size_t at = 0; at + want.value.size() <= have.size(); ++at) {
             if (ascii_iequals(have.substr(at, want.value.size()), want.value)) { return true; }
@@ -298,6 +312,21 @@ namespace {
     }
     }
     return false;
+}
+
+// HTML §4.16.2's legacy list: in an HTML document the values of these
+// attributes on an HTML element compare ASCII case-insensitively - `[lang|=es]`
+// matches `lang="ES"` - unless the selector says `s`. Sorted, for the search.
+[[nodiscard]] bool legacy_case_insensitive(std::string_view name) {
+    static constexpr std::string_view names[] = {
+        "accept",     "accept-charset", "align",     "alink",    "axis",     "bgcolor", "charset",
+        "checked",    "clear",          "codetype",  "color",    "compact",  "declare", "defer",
+        "dir",        "direction",      "disabled",  "enctype",  "face",     "frame",   "hreflang",
+        "http-equiv", "lang",           "language",  "link",     "media",    "method",  "multiple",
+        "nohref",     "noresize",       "noshade",   "nowrap",   "readonly", "rel",     "rev",
+        "rules",      "scope",          "scrolling", "selected", "shape",    "target",  "text",
+        "type",       "valign",         "valuetype", "vlink"};
+    return std::ranges::binary_search(names, name);
 }
 
 // The structural pseudo-classes. Every one is arithmetic on four numbers the
@@ -425,7 +454,12 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
         if (want.ns == ns_prefix::unset) {
             if (!txn.has_attribute(node, name)) { return false; }
             if (want.op == attr_op::present) { continue; }
-            if (!attribute_matches(txn.attribute_value(node, name), want)) { return false; }
+            const bool insensitive =
+                want.case_insensitive ||
+                (folds && !want.case_sensitive_flag && legacy_case_insensitive(atoms_->text(name)));
+            if (!attribute_matches(txn.attribute_value(node, name), want, insensitive)) {
+                return false;
+            }
             continue;
         }
         // A NAMESPACED attribute selector is a question about the LOCAL name and
@@ -440,7 +474,8 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
             if (!ns_fits) { continue; }
             const std::string_view local = attribute_local_name(*atoms_, have);
             if (!(folds ? ascii_iequals(local, local_want) : local == local_want)) { continue; }
-            if (want.op == attr_op::present || attribute_matches(have.value, want)) {
+            if (want.op == attr_op::present ||
+                attribute_matches(have.value, want, want.case_insensitive)) {
                 held = true;
                 break;
             }

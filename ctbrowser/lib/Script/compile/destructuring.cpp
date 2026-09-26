@@ -77,6 +77,16 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
         return;
     }
 
+    // `for (f() in o)` in sloppy code - the one place a call reaches here
+    // (early_errors' web_compat_call): the call, then the ReferenceError.
+    case vp::nk::call: {
+        const not_declaring expression{*this};
+        const std::uint32_t mark = reg_mark();
+        emit_call_target_error(pat, alloc_reg());
+        release_to(mark);
+        return;
+    }
+
     // AN ARRAY OR OBJECT LITERAL IS A PATTERN TOO. The parser met the left
     // side of `[a, b] = pair` in expression position and read a LITERAL,
     // which is the only thing it could have been at the time; re-reading it

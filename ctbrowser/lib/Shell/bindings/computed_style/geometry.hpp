@@ -66,8 +66,16 @@ constexpr std::array<std::string_view, 12> length_properties{
 // sides where Chrome answers `0px`.
 [[nodiscard]] inline bool is_border_width_property(std::string_view property) {
     return property == "border-top-width" || property == "border-right-width" ||
-           property == "border-bottom-width" || property == "border-left-width" ||
-           property == "outline-width";
+           property == "border-bottom-width" || property == "border-left-width";
+}
+
+// CSS Values 4's "snap as a border width": a length of at least one pixel
+// rounds down to whole pixels, and a smaller non-zero one is one pixel - by
+// magnitude, so an outline offset of -2.5px is -2px.
+[[nodiscard]] inline float snapped_line_width(float px) {
+    const float magnitude = std::fabs(px);
+    const float snapped = magnitude >= 1 ? std::floor(magnitude) : (magnitude > 0 ? 1.0f : 0.0f);
+    return px < 0 ? -snapped : snapped;
 }
 
 // `border-top-width` -> `border-top-style`, `outline-width` -> `outline-style`.
@@ -175,6 +183,18 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         }
         if (!at.has_box || at.inline_non_replaced || at.frag == nullptr) { return as_computed(); }
         const bool horizontal = property == "width";
+        // AN ANIMATED SIZE IS NOT THE FRAGMENT'S: layout ran on the cascade's
+        // value, and a running animation's is the one owed - resolved, as a
+        // pseudo-element's is above, against the containing block. (The
+        // specified size IS the used one in whichever box box-sizing names.)
+        if (const std::string_view animated = declared(property);
+            !at.chain.empty() && animated != declared_on(at.chain.front(), property)) {
+            const layout::length len = layout::parse_length(animated);
+            if (!len.is_auto() && !len.is_intrinsic()) {
+                return used_px_text(std::max(
+                    0.0f, len.resolve(horizontal ? at.basis : at.basis_height, at.font_size)));
+            }
+        }
         float used = horizontal ? at.frag->bounds.width : at.frag->bounds.height;
         // The fragment is the border box; under content-box the padding AND
         // the border come off it, which is the same arithmetic layout's
@@ -254,6 +274,32 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         case layout::box_kind::replaced: break; // the table's `inline` is right
         }
         return std::string{};
+    }
+    // ...AND A DECLARED DISPLAY, BLOCKIFIED where CSS Display 3 §2.7 says the
+    //     box is: the root, a flex or grid item, and an absolutely positioned
+    //     or floated box. The inner display survives and the outer becomes
+    //     block - `inline-table` is `table`, `ruby` is `block ruby`, and an
+    //     internal table or ruby display, `inline` and `run-in` are `block`.
+    if (property == "display") {
+        const std::string shown = collapse_keyword(text);
+        const std::string position = collapse_keyword(declared("position"));
+        const std::string floating = collapse_keyword(declared("float"));
+        const bool blockify = at.is_root || at.flex_item || at.grid_item ||
+                              position == "absolute" || position == "fixed" ||
+                              (!floating.empty() && floating != "none");
+        if (!blockify || ascii_iequals_any(shown, {"none", "contents"})) { return shown; }
+        if (shown.starts_with("inline-") && shown != "inline-block") { return shown.substr(7); }
+        if (shown == "ruby") { return "block ruby"; }
+        for (const std::string_view outer : {"inline ", "run-in "}) {
+            if (!shown.starts_with(outer)) { continue; }
+            const std::string inner = shown.substr(outer.size());
+            return inner == "ruby" ? "block ruby" : inner;
+        }
+        if (shown.starts_with("table-") || shown.starts_with("ruby-") ||
+            ascii_iequals_any(shown, {"inline", "inline-block", "run-in"})) {
+            return "block";
+        }
+        return shown;
     }
     // 2c. THE AUTOMATIC MINIMUM SIZE, reported the way Chrome reports it. The
     //     initial value of `min-width`/`min-height` is `auto`, and Chrome
@@ -383,9 +429,11 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
             // staying put - its parent's content box - and NOT the nearest
             // positioned ancestor, which is the absolute rule.
             const float relative_basis = horizontal ? at.basis : at.basis_height;
-            // Both sides given: CSS 9.4.3 ignores one of them, so this is
-            // over-constrained and the computed value is the answer.
-            if (!start_auto && !end_auto) { return computed_length(text); }
+            // A side that is given is its own used value, against that
+            // containing block - both sides given included: CSSOM's
+            // over-constrained special case is about an absolutely positioned
+            // box's size, and getComputedStyle-insets-relative absolutizes all
+            // four of a relative box's insets.
             if (!mine.is_auto()) { return px_text(mine.resolve(relative_basis, at.font_size)); }
             // `auto` against a given opposite side is its negation: the box
             // moved, and this side records the move from the other end.
@@ -420,6 +468,30 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         if (drawn.empty() || ascii_iequals(drawn, "none") || ascii_iequals(drawn, "hidden")) {
             return "0px";
         }
+        return px_text(border_width_px(text, at.font_size));
+    }
+    // AN OUTLINE'S WIDTH AND OFFSET ARE LINE WIDTHS, snapped as one, and
+    // unlike a border's the width does not become zero when the style is
+    // `none` (CSS UI 4 §5.2): an outline is drawn outside layout, so there is
+    // no used width for the style to take away.
+    if (property == "outline-width" || property == "outline-offset") {
+        const std::string_view given = trim(text, html_whitespace);
+        if (property == "outline-offset" && ascii_iequals(given, "inset")) { return "inset"; }
+        style::css::length_context lengths;
+        lengths.font_size = at.font_size;
+        const float px =
+            property == "outline-width"
+                ? border_width_px(given.empty() ? std::string_view{"medium"} : given, at.font_size)
+                : style::css::length_text_to_px(given.empty() ? std::string_view{"0px"} : given,
+                                                lengths)
+                      .value_or(0.0f);
+        return px_text(snapped_line_width(px));
+    }
+    // Column rules keep their computed width even for `none` and `hidden`.
+    // Resolve line-width keywords before the shorthand fold can omit `medium`.
+    if ((property == "column-rule-width" || property == "row-rule-width") &&
+        (text.empty() || ascii_iequals(text, "thin") || ascii_iequals(text, "medium") ||
+         ascii_iequals(text, "thick"))) {
         return px_text(border_width_px(text, at.font_size));
     }
     if (text.empty()) { return std::string{}; }

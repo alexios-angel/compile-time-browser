@@ -26,54 +26,8 @@ void dom_bindings::install_window(context & cx) {
     window->set("devicePixelRatio", value::number(1));
     install_window_scrolling(cx,
                              *window); // scrollX/scrollY, scroll/scrollTo/scrollBy (scrolling.cpp)
-    // ON THE WINDOW AND AS A BARE GLOBAL, which is one function reachable by two
-    // names rather than two functions. The window IS the global object in a
-    // browser, so `addEventListener("error", f)` with no receiver is the same
-    // call as `window.addEventListener(...)` - and the proxy's fallback only
-    // goes one way, from `window.x` down to a global, never from a bare `x` up
-    // to a window property.
-    //
-    // WPT is what found it. testharness.js installs its uncaught-exception
-    // handler as `addEventListener("error", ...)` inside
-    // `(function (global_scope) { ... }(self))`, so a missing bare name threw a
-    // TypeError at the very end of the harness's own initialisation - after the
-    // asserts were exposed and BEFORE `on_tests_ready()`, which is the worst
-    // possible place: the file half-ran and said nothing. `getComputedStyle`
-    // already works exactly this way and says so.
-    const value add_listener = value::object(cx.allocate<script::native_object>(
-        "addEventListener", [this](context & c, std::span<value> args) {
-            this->add_listener(make_listener(c, path_step{node_id{}, listen_on::window}, args));
-            return value::undefined();
-        }));
-    // THE CAPTURE FLAG IS PART OF A LISTENER'S IDENTITY, and reading it here is
-    // what makes removal the exact inverse of registration. `add_listener`
-    // enforces (type, callback, capture); this used to match on the first two,
-    // so `removeEventListener(t, f)` took away a listener registered WITH
-    // capture and `removeEventListener(t, f, true)` then found nothing to
-    // remove. `dom/events/EventListenerOptions-capture.html` is both halves.
-    //
-    // The third argument is a boolean OR a dictionary, and a page detects
-    // support for the dictionary by passing one with a `capture` getter and
-    // watching whether it runs - so the property read is observable and has to
-    // happen either way.
-    const value remove_listener = value::object(cx.allocate<script::native_object>(
-        "removeEventListener", [this](context & c, std::span<value> args) {
-            const std::string type = arg_string(c, args, 0);
-            const value callback = arg(args, 1);
-            const value options = arg(args, 2);
-            const bool capture = options.is_object()
-                                     ? context::truthy(c.lookup_property(options, "capture"))
-                                     : context::truthy(options);
-            std::erase_if(listeners_, [&](const listener & l) {
-                return l.on == listen_on::window && l.type == type && l.capture == capture &&
-                       l.callback.bits() == callback.bits();
-            });
-            return value::undefined();
-        }));
-    window->set("addEventListener", add_listener);
-    window->set("removeEventListener", remove_listener);
-    cx.define_global("addEventListener", add_listener);
-    cx.define_global("removeEventListener", remove_listener);
+    install_window_listeners(cx, *window);
+    install_post_message(cx, *window);
     // `localStorage`, IN MEMORY AND FOR THIS PAGE ONLY. 38 uses in p5.js, which
     // reads it before it draws anything.
     //
@@ -132,13 +86,17 @@ void dom_bindings::install_window(context & cx) {
     // page hands over, as if it had been thrown uncaught - an `error` event
     // at the window whose `error` is the value. The message is not read off
     // the value (its getters must not run; reporterror.any.js asserts so), and
-    // the argument is required.
+    // the argument is required. The window is `this`'s - a frame's method
+    // borrowed by the page reports in the frame (reporterror-cross-realm-
+    // method.html) - and a bare call's is the caller's own.
     cx.define_native("reportError", [this](context & c, std::span<value> a) {
         if (a.empty()) {
             c.throw_error("TypeError", "reportError: 1 argument required, but only 0 present.");
             return value::undefined();
         }
-        (void)dispatch_error_value("Uncaught exception", a[0]);
+        const value self = c.current_this();
+        (void)bindings_of(self.is_heap() ? self : c.global_this())
+            .dispatch_error_value("Uncaught exception", a[0]);
         return value::undefined();
     });
 
@@ -449,6 +407,10 @@ void dom_bindings::install_window(context & cx) {
     // traces arrays, and `new Path2D(other)` is then a copy of one vector.
     cx.define_native("Path2D", [](context & c, std::span<value> args) {
         auto * path = c.allocate<script::object_object>();
+        if (const value proto = c.lookup_property(c.global("Path2D"), "prototype");
+            proto.is_object()) {
+            path->prototype = proto;
+        }
         value commands = c.make_array();
         auto * steps = static_cast<script::array_object *>(commands.as_heap());
         // `new Path2D(other)` starts as a copy. p5 makes separate fill and
@@ -607,6 +569,20 @@ void dom_bindings::install_window(context & cx) {
         }
         return detail::make_image_data(c, width, height, given ? args[0] : value::undefined());
     });
+    // AN INTERFACE OBJECT HAS A PROTOTYPE OBJECT (WebIDL 3.7.3), and since
+    // instanceof is OrdinaryHasInstance a constructor without one is a
+    // TypeError to test against - p5's WebGL textures ask `obj instanceof
+    // ImageData` of every source. The objects each one makes inherit from it
+    // (make_image_data, the Path2D native).
+    for (const char * name : {"ImageData", "Path2D"}) {
+        const value ctor = cx.global(name);
+        if (!ctor.is_kind(script::heap_kind::native)) { continue; }
+        auto * proto = cx.allocate<script::object_object>();
+        proto->define("constructor", ctor, script::attr_builtin);
+        proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+        static_cast<script::native_object *>(ctor.as_heap())
+            ->define("prototype", value::object(proto), script::attr_none);
+    }
 
     // `Event`, `CustomEvent`, `EventTarget` and `window.dispatchEvent` USED TO
     // BE HERE, and each was a stub that answered the shape of the question and
@@ -689,9 +665,92 @@ void dom_bindings::install_window(context & cx) {
     window->set("performance", value::object(performance));
     window_ = value::object(window);
 
+    const value window_view = make_window_view(cx, window_, cx.current_realm());
+    window_view_ = window_view;
+    cx.define_global("window", window_view);
+    // Select the realm receiver separately from its writable globalThis alias.
+    cx.set_global_this(window_view);
+    // `self`, WHICH IS THE SAME OBJECT AND WAS MISSING. It is what a script
+    // that means to run in a window OR a worker names the global by, so a
+    // library never writes `window` at all - and the first thing
+    // web-platform-tests found here was that it is not defined.
+    //
+    // The failure it produced is the reason this line has a comment. Every
+    // testharness.js test is `(function (global_scope) { ... expose(test,
+    // "test") ... }(self))`, so `global_scope` was undefined, and this engine
+    // treats a property STORE on undefined as a no-op rather than a TypeError -
+    // so the harness ran to completion, reported no error, and defined not one
+    // of its globals. The page then failed with "`test` is undefined", forty
+    // lines from the cause. 100% of WPT was unrunnable for one missing alias.
+    cx.define_global("self", window_view);
+    cx.define_global("performance", value::object(performance));
+
+    // THE BROWSING-CONTEXT CHAIN, WHICH TERMINATES HERE. This document is
+    // always the top one: there are no iframes and no `window.open`, so `parent`
+    // and `top` are this window and `opener` is null. That is not a stub - it is
+    // what the specification says a top-level browsing context reports, and it
+    // is the ANSWER rather than the absence of one.
+    //
+    // SET AFTER THE PROXY EXISTS, and to the PROXY, which is the whole subtlety:
+    // scripts compare `w != w.parent` by identity, so handing them the raw
+    // target object while `self` is the proxy makes the two differ and the walk
+    // never terminates.
+    //
+    // WPT is what found it, and the failure was three layers from the cause.
+    // testharness.js walks `[self ... top, opener]` to broadcast test state, and
+    // with `parent` undefined the walk ran one step past the end and called
+    // `postMessage` on `undefined`. That threw inside a COMPLETION CALLBACK -
+    // and `Tests.prototype.notify_complete` runs its callbacks in a bare
+    // `forEach` with no try/catch, so the throw killed every later callback
+    // including the one that reports results. Every test that ran perfectly
+    // reported nothing at all and was recorded as a timeout.
+    //
+    // `postMessage` was deliberately absent until frames had realms of their
+    // own to receive one; it is real now (window/messaging.cpp), and with this
+    // chain correct testharness.js still never posts to the page itself.
+    window->set("parent", window_view);
+    window->set("top", window_view);
+    window->set("opener", value::null());
+    window->set("frameElement", value::null());
+    // `frames` IS the window (HTML 7.2.2.1), and `length` counts its child
+    // navigables - the frame_at trap above is how `frames[0]` reaches one.
+    window->set("frames", window_view);
+    window->define_accessor("length",
+                            value::object(cx.allocate<script::native_object>(
+                                "length",
+                                [this](context &, std::span<value>) {
+                                    return value::number(
+                                        static_cast<double>(all_html_elements("iframe").size()));
+                                })),
+                            value::undefined());
+    // `self.origin` (HTML 7.2.2.1 WindowOrWorkerGlobalScope): the document's
+    // origin serialised - "null" for a file: page, as location.origin says.
+    window->define_accessor("origin",
+                            value::object(cx.allocate<script::native_object>(
+                                "origin",
+                                [this](context & c, std::span<value>) {
+                                    const std::string origin =
+                                        location_parts(location_href_).origin;
+                                    return c.string(origin.empty() ? "null" : origin);
+                                })),
+                            value::undefined());
+}
+
+// THE WINDOW A REALM'S SCRIPTS SEE, which is also its global object: a proxy
+// over `target` - the object holding the window's own state - whose misses
+// read `realm`'s binding table, then this document's named elements and child
+// frames, then the prototype chain. The page's window is one (install_window)
+// and every frame that runs its own scripts has another (load_frame).
+//
+// THE TRAPS HOLD THEIR REALM. `frame.contentWindow.run` read by the page is
+// the FRAME's `run`, and `parent.x` read by a frame is the PAGE's `x` - so a
+// trap reading "the current realm's" globals would answer about whoever asked.
+// The realm's undeclared-name hook is set here too: a bare identifier in this
+// realm's code reaches this document's named elements.
+value dom_bindings::make_window_view(context & cx, value target, script::realm_record & realm) {
     // WINDOW IS THE GLOBAL OBJECT, through a proxy rather than a copy.
     //
-    // `globals_` stays the single storage and the window forwards to it, so the
+    // The realm's binding table stays the single storage and the window forwards to it, so the
     // two cannot drift - which a second table synchronised at some cadence
     // always eventually does. A miss on the window's own properties reads a
     // global, and a write to a name the window does not already own DEFINES
@@ -708,7 +767,9 @@ void dom_bindings::install_window(context & cx) {
     // `window.setup` to decide whether the sketch is in global mode, and a
     // sketch writes `function setup() {}` at its top level, which is a global.
     auto * window_handler = cx.allocate<script::object_object>();
-    const value window_target = window_;
+    const value window_target = target;
+    context::define_immutable_globals(*static_cast<script::object_object *>(target.as_heap()));
+    script::realm_record * const realm_of = &realm;
     // NAMED ACCESS ON THE WINDOW - `window.someId`, and `window.someName` for the
     // handful of elements whose `name` attribute is exposed that way. It is HTML
     // 7.3.3, it is why an inline `onclick="doThing(theForm)"` works at all, and
@@ -793,10 +854,10 @@ void dom_bindings::install_window(context & cx) {
     // ONLY THE NAMED ELEMENTS, not the whole trap: a bare identifier that
     // reaches Object.prototype - `toString` with no receiver - is a much larger
     // change and is not this one. See context::set_undeclared_name_hook.
-    cx.set_undeclared_name_hook([this, named_value](std::string_view name) {
+    realm.undeclared_name = [this, named_value](std::string_view name) {
         if (cx_ == nullptr) { return value::undefined(); }
         return named_value(*cx_, std::string{name});
-    });
+    };
     // `window[0]`, HTML 7.2.2.2: the child navigables in tree order, each
     // answered as its WindowProxy - `frames[0].document` is how Node-removeChild
     // reaches a frame's document. An index at or past `length` is not a
@@ -812,7 +873,7 @@ void dom_bindings::install_window(context & cx) {
         return c.lookup_property(wrap(c, frames[index]), "contentWindow");
     };
     set_method(cx, *window_handler, "get",
-               [named_value, frame_at](context & c, std::span<value> args) {
+               [named_value, frame_at, realm_of](context & c, std::span<value> args) {
                    if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
                    auto * target = static_cast<script::object_object *>(args[0].as_heap());
                    const std::string name = c.to_string(args[1]);
@@ -822,8 +883,12 @@ void dom_bindings::install_window(context & cx) {
                    if (const value frame = frame_at(c, name); !frame.is_undefined()) {
                        return frame;
                    }
-                   // A GLOBAL, WHICH IS MOST OF WHY THIS PROXY EXISTS.
-                   if (c.has_global(name)) { return c.global(name); }
+                   // A GLOBAL, WHICH IS MOST OF WHY THIS PROXY EXISTS - of THIS
+                   // window's realm, whichever realm is asking.
+                   if (const auto it = realm_of->globals.find(name);
+                       it != realm_of->globals.end()) {
+                       return it->second;
+                   }
                    // ...then a named element, which comes BEFORE the prototype chain and
                    // after everything a page defined for itself. Several of one name is an
                    // HTMLCollection rather than the first of them, which is what makes
@@ -840,22 +905,23 @@ void dom_bindings::install_window(context & cx) {
                    // texture, so every texture in the framework threw instead.
                    return c.lookup_property(args[0], name);
                });
-    set_method(cx, *window_handler, "set", [](context & c, std::span<value> args) {
+    set_method(cx, *window_handler, "set", [realm_of](context & c, std::span<value> args) {
         if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
+        if (context::immutable_global(name)) { return value::boolean(false); }
         // An own property of the window keeps its own storage - `innerWidth` is
         // refreshed on the object every frame, and routing it to the globals
         // would leave a read seeing the stale one.
         if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
             c.store_property(args[0], name, args[2]);
         } else {
-            c.define_global(name, args[2]);
+            realm_of->globals[name] = args[2];
         }
         return value::boolean(true);
     });
     set_method(cx, *window_handler, "has",
-               [named_element, frame_at](context & c, std::span<value> args) {
+               [named_element, frame_at, realm_of](context & c, std::span<value> args) {
                    if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
                    const std::string name = c.to_string(args[1]);
                    // `'x' in window` has to agree with `window.x`, or a page's feature
@@ -864,9 +930,9 @@ void dom_bindings::install_window(context & cx) {
                    // unresolvable, so the WHOLE chain counts (`toString` is
                    // Object.prototype's, `addEventListener` is on the interface), and a
                    // named frame is a window property too.
-                   return value::boolean(c.has_property(args[0], args[1]) || c.has_global(name) ||
-                                         !frame_at(c, name).is_undefined() ||
-                                         !named_element(name).empty());
+                   return value::boolean(
+                       c.has_property(args[0], args[1]) || realm_of->globals.contains(name) ||
+                       !frame_at(c, name).is_undefined() || !named_element(name).empty());
                });
     // AND A DESCRIPTOR FOR EACH, so `Object.getOwnPropertyDescriptor(window,
     // 'x')` and a hasOwnProperty that asks [[GetOwnProperty]] (ES 20.1.3.2)
@@ -874,16 +940,17 @@ void dom_bindings::install_window(context & cx) {
     // globals table IS its property storage here - and a named element or
     // frame is HTML 7.3.3's, enumerable and configurable and not writable.
     set_method(cx, *window_handler, "getOwnPropertyDescriptor",
-               [named_value, frame_at](context & c, std::span<value> args) {
+               [named_value, frame_at, realm_of](context & c, std::span<value> args) {
                    if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
                    const std::string name = c.to_string(args[1]);
                    context::property_descriptor own;
                    if (c.own_property(args[0], name, own)) {
                        return c.from_property_descriptor(own);
                    }
-                   if (c.has_global(name)) {
-                       return c.from_property_descriptor(context::property_descriptor::data(
-                           c.global(name), script::attr_default));
+                   if (const auto it = realm_of->globals.find(name);
+                       it != realm_of->globals.end()) {
+                       return c.from_property_descriptor(
+                           context::property_descriptor::data(it->second, script::attr_default));
                    }
                    value held = frame_at(c, name);
                    if (held.is_undefined()) { held = named_value(c, name); }
@@ -891,76 +958,62 @@ void dom_bindings::install_window(context & cx) {
                    return c.from_property_descriptor(context::property_descriptor::data(
                        held, script::attr_enumerable | script::attr_configurable));
                });
-    const value window_view = value::object(
+    return value::object(
         cx.allocate<script::proxy_object>(window_target, value::object(window_handler)));
-    cx.define_global("window", window_view);
-    // Select the realm receiver separately from its writable globalThis alias.
-    cx.set_global_this(window_view);
-    // `self`, WHICH IS THE SAME OBJECT AND WAS MISSING. It is what a script
-    // that means to run in a window OR a worker names the global by, so a
-    // library never writes `window` at all - and the first thing
-    // web-platform-tests found here was that it is not defined.
-    //
-    // The failure it produced is the reason this line has a comment. Every
-    // testharness.js test is `(function (global_scope) { ... expose(test,
-    // "test") ... }(self))`, so `global_scope` was undefined, and this engine
-    // treats a property STORE on undefined as a no-op rather than a TypeError -
-    // so the harness ran to completion, reported no error, and defined not one
-    // of its globals. The page then failed with "`test` is undefined", forty
-    // lines from the cause. 100% of WPT was unrunnable for one missing alias.
-    cx.define_global("self", window_view);
-    cx.define_global("performance", value::object(performance));
+}
 
-    // THE BROWSING-CONTEXT CHAIN, WHICH TERMINATES HERE. This document is
-    // always the top one: there are no iframes and no `window.open`, so `parent`
-    // and `top` are this window and `opener` is null. That is not a stub - it is
-    // what the specification says a top-level browsing context reports, and it
-    // is the ANSWER rather than the absence of one.
+// The window's listener methods, for THIS document's window: the page's in
+// install_window, a frame's in install_frame_realm - so a frame script's
+// `addEventListener("load", f)` listens at the frame, not at the page.
+void dom_bindings::install_window_listeners(context & cx, script::object_object & window) {
+    // ON THE WINDOW AND AS A BARE GLOBAL, which is one function reachable by two
+    // names rather than two functions. The window IS the global object in a
+    // browser, so `addEventListener("error", f)` with no receiver is the same
+    // call as `window.addEventListener(...)` - and the proxy's fallback only
+    // goes one way, from `window.x` down to a global, never from a bare `x` up
+    // to a window property.
     //
-    // SET AFTER THE PROXY EXISTS, and to the PROXY, which is the whole subtlety:
-    // scripts compare `w != w.parent` by identity, so handing them the raw
-    // target object while `self` is the proxy makes the two differ and the walk
-    // never terminates.
+    // WPT is what found it. testharness.js installs its uncaught-exception
+    // handler as `addEventListener("error", ...)` inside
+    // `(function (global_scope) { ... }(self))`, so a missing bare name threw a
+    // TypeError at the very end of the harness's own initialisation - after the
+    // asserts were exposed and BEFORE `on_tests_ready()`, which is the worst
+    // possible place: the file half-ran and said nothing. `getComputedStyle`
+    // already works exactly this way and says so.
+    const value add_listener = value::object(cx.allocate<script::native_object>(
+        "addEventListener", [this](context & c, std::span<value> args) {
+            this->add_listener(make_listener(c, path_step{node_id{}, listen_on::window}, args));
+            return value::undefined();
+        }));
+    // THE CAPTURE FLAG IS PART OF A LISTENER'S IDENTITY, and reading it here is
+    // what makes removal the exact inverse of registration. `add_listener`
+    // enforces (type, callback, capture); this used to match on the first two,
+    // so `removeEventListener(t, f)` took away a listener registered WITH
+    // capture and `removeEventListener(t, f, true)` then found nothing to
+    // remove. `dom/events/EventListenerOptions-capture.html` is both halves.
     //
-    // WPT is what found it, and the failure was three layers from the cause.
-    // testharness.js walks `[self ... top, opener]` to broadcast test state, and
-    // with `parent` undefined the walk ran one step past the end and called
-    // `postMessage` on `undefined`. That threw inside a COMPLETION CALLBACK -
-    // and `Tests.prototype.notify_complete` runs its callbacks in a bare
-    // `forEach` with no try/catch, so the throw killed every later callback
-    // including the one that reports results. Every test that ran perfectly
-    // reported nothing at all and was recorded as a timeout.
-    //
-    // `postMessage` is deliberately still absent. With this chain correct
-    // nothing on a single-document page reaches it, and defining a fake one
-    // would let tests that genuinely need a second browsing context appear to
-    // work instead of failing honestly.
-    window->set("parent", window_view);
-    window->set("top", window_view);
-    window->set("opener", value::null());
-    window->set("frameElement", value::null());
-    // `frames` IS the window (HTML 7.2.2.1), and `length` counts its child
-    // navigables - the frame_at trap above is how `frames[0]` reaches one.
-    window->set("frames", window_view);
-    window->define_accessor("length",
-                            value::object(cx.allocate<script::native_object>(
-                                "length",
-                                [this](context &, std::span<value>) {
-                                    return value::number(
-                                        static_cast<double>(all_html_elements("iframe").size()));
-                                })),
-                            value::undefined());
-    // `self.origin` (HTML 7.2.2.1 WindowOrWorkerGlobalScope): the document's
-    // origin serialised - "null" for a file: page, as location.origin says.
-    window->define_accessor("origin",
-                            value::object(cx.allocate<script::native_object>(
-                                "origin",
-                                [this](context & c, std::span<value>) {
-                                    const std::string origin =
-                                        location_parts(location_href_).origin;
-                                    return c.string(origin.empty() ? "null" : origin);
-                                })),
-                            value::undefined());
+    // The third argument is a boolean OR a dictionary, and a page detects
+    // support for the dictionary by passing one with a `capture` getter and
+    // watching whether it runs - so the property read is observable and has to
+    // happen either way.
+    const value remove_listener = value::object(cx.allocate<script::native_object>(
+        "removeEventListener", [this](context & c, std::span<value> args) {
+            const std::string type = arg_string(c, args, 0);
+            const value callback = arg(args, 1);
+            const value options = arg(args, 2);
+            const bool capture = options.is_object()
+                                     ? context::truthy(c.lookup_property(options, "capture"))
+                                     : context::truthy(options);
+            std::erase_if(listeners_, [&](const listener & l) {
+                return l.on == listen_on::window && l.type == type && l.capture == capture &&
+                       l.callback.bits() == callback.bits();
+            });
+            return value::undefined();
+        }));
+    window.set("addEventListener", add_listener);
+    window.set("removeEventListener", remove_listener);
+    cx.define_global("addEventListener", add_listener);
+    cx.define_global("removeEventListener", remove_listener);
 }
 
 } // namespace ctbrowser::shell

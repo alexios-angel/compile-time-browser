@@ -372,6 +372,7 @@ private:
     void install_embedder_natives();
 
     void run_layout();
+    void settle_container_queries(); // container queries' style -> layout loop; styles.cpp
 
     struct frame_layout {
         node_id element;         // the <iframe>, in its owner's document

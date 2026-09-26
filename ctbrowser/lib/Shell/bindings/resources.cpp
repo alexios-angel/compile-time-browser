@@ -385,6 +385,25 @@ dom_bindings::loaded_resource dom_bindings::load_resource(const std::string & ur
             out.status = 404;
             out.failure = "no such resource: " + url;
         }
+    } else if (url.starts_with("file:") && assets_ != nullptr) {
+        // A file: URL IS A PATH, and it is what a relative reference becomes
+        // once it is resolved against a page loaded from disk - an XHR for
+        // `resources/x.html` from file:///a/b.html asks for
+        // file:///a/resources/x.html. It is read the way the relative branch
+        // reads, not sent to the network (which would refuse the scheme):
+        // the host (empty, or `localhost`) dropped, the query and fragment
+        // cut, and the path percent-decoded.
+        std::string_view path = std::string_view{url}.substr(5);
+        if (path.starts_with("//")) {
+            path.remove_prefix(2);
+            path = path.substr(std::min(path.find('/'), path.size()));
+        }
+        path = path.substr(0, std::min(path.find('?'), path.find('#')));
+        out.body = assets_->load(percent_decode(path));
+        if (out.body.empty()) {
+            out.status = 404;
+            out.failure = "no such resource: " + url;
+        }
     } else if (network_allowed_) {
         const http_response response = http_get(url);
         out.status = response.status;
@@ -393,6 +412,25 @@ dom_bindings::loaded_resource dom_bindings::load_resource(const std::string & ur
         if (!response.completed()) { out.failure = response.error; }
     } else {
         out.failure = "network access is off and " + url + " was not baked in";
+    }
+    // A data: URL's type is its OWN (Fetch's data: URL processor): the text
+    // before the comma, less a trailing `;base64`, with `text/plain` in front
+    // of a bare parameter list - and text/plain;charset=US-ASCII when there
+    // is nothing there. A path's extension says nothing about one.
+    if (out.type.empty() && ascii_istarts_with(url, "data:") &&
+        url.find(',') != std::string::npos) {
+        std::string_view head =
+            trim(std::string_view{url}.substr(5, url.find(',') - 5), " \t\n\r\f");
+        if (const std::size_t semicolon = head.rfind(';');
+            semicolon != std::string_view::npos &&
+            ascii_iequals(trim(head.substr(semicolon + 1), " "), "base64")) {
+            head = trim(head.substr(0, semicolon), " \t\n\r\f");
+        }
+        std::string type{head};
+        if (type.starts_with(';')) { type = "text/plain" + type; }
+        out.type = type.empty() || type.find('/') == std::string::npos
+                       ? std::string{"text/plain;charset=US-ASCII"}
+                       : type;
     }
     if (out.type.empty()) { out.type = mime_for_path(url); }
     return out;

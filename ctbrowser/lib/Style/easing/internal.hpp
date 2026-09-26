@@ -87,9 +87,10 @@ struct oklab {
 
 template <typename T> void repeat_to_match(std::vector<T> & a, std::vector<T> & b) {
     if (a.empty() || b.empty() || a.size() == b.size()) { return; }
-    const std::size_t n = std::lcm(a.size(), b.size());
-    for (std::size_t i = a.size(); i < n; ++i) { a.push_back(a[i % a.size()]); }
-    for (std::size_t i = b.size(); i < n; ++i) { b.push_back(b[i % b.size()]); }
+    const std::size_t a_size = a.size(), b_size = b.size();
+    const std::size_t n = std::lcm(a_size, b_size);
+    for (std::size_t i = a_size; i < n; ++i) { a.push_back(a[i % a_size]); }
+    for (std::size_t i = b_size; i < n; ++i) { b.push_back(b[i % b_size]); }
 }
 
 [[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text,
@@ -111,6 +112,9 @@ struct transform_fn {
     // (the px part): `translate(12px, 70%)` keeps its percentages and reads
     // back as written, which is how the computed serialiser prints it.
     std::vector<double> pct;
+    // The name as written, lowercased: `translatey` keeps its one-axis
+    // spelling through an interpolation with another `translateY`.
+    std::string spelled = {};
 };
 
 [[nodiscard]] std::string_view primitive_of(std::string_view name);
@@ -196,5 +200,7 @@ struct rotation {
 
 [[nodiscard]] std::string add_pair(std::string_view property, std::string_view underlying,
                                    std::string_view value, const css::length_context & ctx);
+
+[[nodiscard]] std::string serialized_shape(std::string_view property, std::string text);
 
 } // namespace ctbrowser::style::easing_detail

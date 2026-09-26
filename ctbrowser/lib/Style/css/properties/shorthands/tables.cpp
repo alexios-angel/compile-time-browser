@@ -2,6 +2,27 @@
 
 namespace ctbrowser::style::css::shorthand_detail {
 
+[[nodiscard]] std::string_view radius_name(std::string_view name) {
+    if (ascii_istarts_with(name, "-webkit-border-") &&
+        ascii_iequals(name.substr(name.size() - 7), "-radius") && find_property(name) != nullptr) {
+        return name.substr(8);
+    }
+    // THE OTHER LEGACY NAME ALIASES (CSS Cascade 5 §legacy name alias): a
+    // name that IS another property's at parse time - set, read and written
+    // back under the new one, and no property of its own. Flexbox 1 §9's
+    // twelve `-webkit-` names and CSS UI 4's `-webkit-appearance`.
+    static constexpr std::string_view webkit[] = {
+        "align-content",   "align-items", "align-self", "flex",        "flex-basis",
+        "flex-direction",  "flex-flow",   "flex-grow",  "flex-shrink", "flex-wrap",
+        "justify-content", "order",       "appearance"};
+    if (ascii_istarts_with(name, "-webkit-")) {
+        for (const std::string_view target : webkit) {
+            if (ascii_iequals(name.substr(8), target)) { return target; }
+        }
+    }
+    return name;
+}
+
 // The table with its longhand lists split once. `all` is every longhand the
 // property table has except the two CSS Cascade 4 §3.1 leaves out.
 const std::vector<expansion> & expansions() {
@@ -11,7 +32,8 @@ const std::vector<expansion> & expansions() {
             expansion e{&one, {}};
             if (one.kind == shape::all) {
                 for (const property_syntax & p : known_properties()) {
-                    if (p.shorthand || p.name == "direction" || p.name == "unicode-bidi") {
+                    if (p.shorthand || p.name == "direction" || p.name == "unicode-bidi" ||
+                        radius_name(p.name) != p.name) {
                         continue;
                     }
                     e.longhands.push_back(p.name);
@@ -53,6 +75,11 @@ const std::vector<expansion> & expansions() {
 }
 
 [[nodiscard]] logical_group group_of(std::string_view name) {
+    if (name.starts_with("border-") && name.ends_with("-radius")) {
+        const bool logical = name.find("-start") != std::string_view::npos ||
+                             name.find("-end") != std::string_view::npos;
+        return {"border-radius", logical ? mapping::block : mapping::physical};
+    }
     static constexpr std::pair<std::string_view, mapping> parts[] = {
         {"-inline-start", mapping::inline_}, {"-inline-end", mapping::inline_},
         {"-block-start", mapping::block},    {"-block-end", mapping::block},

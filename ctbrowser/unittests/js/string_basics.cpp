@@ -18,12 +18,10 @@
 //    day someone migrates the representation the test fails and hands them a
 //    ready-made acceptance list.
 //
-// 2. UNICODE CASE FOLDING. `"Straße".toUpperCase()` is "STRASSE" in V8 and
-//    "STRAßE" here, and `"İ".toLowerCase()` differs likewise. That is BY
-//    DESIGN: `core/algorithms.hpp` folds ASCII only, on the stated grounds that
-//    this repository byte-compares rendered output across Linux and Windows and
-//    a locale- or table-driven fold would make a render depend on the host. The
-//    ASCII behaviour is asserted; the rest is left alone.
+// 2. UNICODE CASE CONVERSION is Unicode's default full mapping since
+//    2026-09-25, from a table generated off the pinned Unicode release
+//    (builtins/text/case_mapping.cpp) - compiled in, so a render still cannot
+//    depend on the host, which is what the ASCII-only fold was protecting.
 
 #include "js_expect.hpp"
 
@@ -394,6 +392,238 @@ int main() {
     js_expect("String.fromCharCode.length", "1");
     js_expect("String.raw.length", "1");
 
+    // ToUint16 wrapping is independent of the byte-based string indexing below.
+    js_expect("String.fromCharCode(-1, 65537, 4294967361) === '\\uffff\\u0001A'", "true");
+    js_expect("String.fromCharCode(NaN, Infinity, -Infinity) === '\\u0000\\u0000\\u0000'", "true");
+    // A direct numeric TypeError must stop before converting the next argument.
+    for (const char * bad :
+         {"1n", "Object(1n)", "Object(Symbol())", "{valueOf() { return Symbol(); }}",
+          "{[Symbol.toPrimitive]() { return {}; }}"}) {
+        js_expect("(function () { var count = 0; var later = {valueOf() { count++;"
+                  " throw 'late'; }}; try { String.fromCharCode(65, " +
+                      std::string{bad} +
+                      ", later); } catch (e) { return e instanceof TypeError && count === 0; }"
+                      " return false; })()",
+                  "true");
+    }
+    js_expect(R"((function () {
+        var error = {}, count = 0;
+        var bad = {valueOf() { throw error; }};
+        var later = {valueOf() { count++; return 66; }};
+        try { String.fromCharCode.call(null, 65, bad, later); }
+        catch (e) { return e === error && count === 0; }
+        return false;
+    })())",
+              "true");
+    js_expect(R"(String.fromCharCode({valueOf() {
+        try { throw 0; } catch (e) {}
+        return 65;
+    }}, 66))",
+              "AB");
+
+    // String statics stop at the first failed conversion, preserving its exception.
+    js_expect(throws("String.fromCodePoint(Symbol())"), "TypeError");
+    js_expect(throws("String.fromCodePoint(Object(Symbol()))"), "TypeError");
+    js_expect(throws("String.fromCodePoint(1n)"), "TypeError");
+    js_expect(R"(String.fromCodePoint({valueOf() {
+        try { throw 0; } catch (e) {}
+        return 65;
+    }}))",
+              "A");
+    js_expect(R"((function () {
+        var error = {}, log = '';
+        var first = {valueOf() { log += 'a'; throw error; }};
+        var later = {valueOf() { log += 'b'; return 66; }};
+        try { String.fromCodePoint(65, first, later); }
+        catch (e) { return e === error && log === 'a'; }
+        return false;
+    })())",
+              "true");
+    js_expect(throws("String.raw(null)"), "TypeError");
+    js_expect(throws("String.raw(undefined)"), "TypeError");
+    js_expect(throws("String.raw({raw: {length: Symbol()}})"), "TypeError");
+    js_expect(throws("String.raw({raw: [Symbol()]})"), "TypeError");
+    js_expect(throws("String.raw({raw: ['a', 'b']}, Symbol())"), "TypeError");
+    js_expect("String.raw({raw: 'ab'}, 7)", "a7b");
+    js_expect("String.raw({raw: []}, Symbol())", "");
+    js_expect("String.raw({raw: ['a']}, Symbol())", "a");
+    js_expect(R"(String.raw({get raw() {
+        try { throw 0; } catch (e) {}
+        return {length: 2, 0: 'a', 1: 'b'};
+    }}, {toString() {
+        try { throw 0; } catch (e) {}
+        return 's';
+    }}))",
+              "asb");
+    js_expect(R"((function () {
+        var error = {}, log = '';
+        var raw = {
+            length: 2,
+            0: {toString() { log += 'a'; throw error; }},
+            get 1() { log += 'b'; return 'b'; }
+        };
+        var substitution = {toString() { log += 's'; return 's'; }};
+        try { String.raw({raw: raw}, substitution); }
+        catch (e) { return e === error && log === 'a'; }
+        return false;
+    })())",
+              "true");
+    js_expect(R"((function () {
+        var error = {}, log = '';
+        var raw = {length: 2, 0: 'a', get 1() { log += 'b'; return 'b'; }};
+        var substitution = {toString() { log += 's'; throw error; }};
+        try { String.raw({raw: raw}, substitution); }
+        catch (e) { return e === error && log === 's'; }
+        return false;
+    })())",
+              "true");
+
+    // ToString rejects Symbol after ToPrimitive, including boxed Symbols and callbacks.
+    for (const char * expression :
+         {"String(Object(Symbol()))", "'abc'.indexOf(Object(Symbol()))",
+          "'abc'.indexOf({toString() { return Symbol(); }})",
+          "'abc'.indexOf({[Symbol.toPrimitive]() { return Symbol(); }})",
+          "'a'.replaceAll('a', {toString() { return Symbol(); }})",
+          "'a'.replaceAll('a', function () { return Object(Symbol()); })",
+          "'a'.normalize(Object(Symbol()))", "'a'.split(Object(Symbol()), 0)",
+          "String.raw({raw: [Object(Symbol())]})", "encodeURIComponent(Object(Symbol()))"}) {
+        js_expect(throws(expression), "TypeError");
+    }
+    js_expect("String(Symbol('key'))", "Symbol(key)");
+    js_expect(R"((function () {
+        var sym = Symbol('key'), obj = {}, key = {
+            [Symbol.toPrimitive](hint) { return hint === 'string' ? sym : 'wrong'; }
+        };
+        obj[key] = 17;
+        return obj[sym] === 17 && Reflect.get(obj, key) === 17;
+    })())",
+              "true");
+    js_expect(R"((function () {
+        var a = [1, 2];
+        a.toString = function () { return 'custom'; };
+        return String(a) + ':' + ''.concat(a);
+    })())",
+              "custom:custom");
+    js_expect(R"((function () {
+        var log = '', object = {
+            [Symbol.toPrimitive](hint) { log += hint; return 42; },
+            toString() { throw 'wrong conversion'; }
+        };
+        return ''.concat(object) + ':' + log;
+    })())",
+              "42:string");
+    // An early conversion failure must not execute later user code or replace its error.
+    for (const char * expression :
+         {"'abc'.indexOf(bad, later)", "'abc'.lastIndexOf(bad, later)",
+          "'abc'.includes(bad, later)", "'abc'.startsWith(bad, later)",
+          "'abc'.endsWith(bad, later)", "''.concat(bad, later)",
+          "''.replaceAll.call(bad, later, later)", "''.replaceAll(bad, later)"}) {
+        js_expect("(function () { var count = 0; var bad = {toString() { return Symbol(); }};"
+                  " var later = {toString() { count++; throw 'late'; },"
+                  " valueOf() { count++; throw 'late'; }}; try {" +
+                      std::string{expression} +
+                      "; } catch (e) { return e instanceof TypeError && count === 0; }"
+                      " return false; })()",
+                  "true");
+    }
+    js_expect(R"((function () {
+        var error = {}, count = 0;
+        try {
+            'aa'.replaceAll('a', function () {
+                count++;
+                return {toString() { throw error; }};
+            });
+        } catch (e) { return e === error && count === 1; }
+        return false;
+    })())",
+              "true");
+    // An exception caught inside the conversion is a successful return.
+    js_expect(R"((function () {
+        function text(s) {
+            return {get [Symbol.toPrimitive]() {
+                try { throw 0; } catch (e) {}
+                return function (hint) {
+                    try { throw 0; } catch (e) {}
+                    return s;
+                };
+            }};
+        }
+        return String.prototype.replaceAll.call(text('aba'), text('a'), function () {
+            try { throw 0; } catch (e) {}
+            return text('x');
+        }) + ':' + 'abc'.indexOf(text('b'));
+    })())",
+              "xbx:1");
+
+    js_expect(R"('abc'.replaceAll({
+        [Symbol.match]: true,
+        get flags() {
+            try { throw 0; } catch (e) {}
+            return {toString() {
+                try { throw 0; } catch (e) {}
+                return 'g';
+            }};
+        },
+        [Symbol.replace]() { return 'ok'; }
+    }, 'x'))",
+              "ok");
+    js_expect(throws("'a'.replaceAll({[Symbol.match]: true, flags: Object(Symbol())}, 'x')"),
+              "TypeError");
+    // A callback's temporary result survives its own conversion getters and calls.
+    {
+        using namespace ctbrowser::script;
+        const program prog = compiler::compile(R"(
+            return 'aa'.replaceAll('a', function () {
+                return {text: 'x', get [Symbol.toPrimitive]() {
+                    return function () { return this.text; };
+                }};
+            });
+        )");
+        context cx;
+        install_builtins(cx);
+        cx.set_gc_stress(true);
+        const run_result result = cx.run(prog);
+        CHECK(result.ok);
+        CHECK_EQ(cx.to_string(result.returned), std::string{"xx"});
+        CHECK(cx.collections() > 0);
+    }
+
+    // charCodeAt's position: ToIntegerOrInfinity, NaN out of range, and the
+    // receiver converted before the position (22.1.3.2 steps 2-3).
+    js_expect(R"([NaN, undefined, -0.9, 1.9, -1, Infinity, -Infinity, 9007199254740991]
+        .map(function (i) { return 'zA'.charCodeAt(i); }).join())",
+              "122,122,122,65,NaN,NaN,NaN,NaN");
+    js_expect("''.charCodeAt()", "NaN");
+    // AND charAt AND charCodeAt DESCRIBE THE SAME CHARACTER AT EVERY INDEX,
+    // whatever the representation: a string walked with both - the WPT
+    // results reporter's quote() - must not see two different strings.
+    js_expect(R"((function () {
+        var s = 'a\u00e9\u20ac\ud83d\ude00';
+        for (var i = 0; i < s.length; i++) {
+            if (s.charAt(i).charCodeAt(0) !== s.charCodeAt(i)) { return i; }
+        }
+        return 'agree';
+    })())",
+              "agree");
+    js_expect(R"((function () {
+        var log = '';
+        var text = {toString() { log += 's'; return 'zA'; }};
+        var index = {valueOf() { log += 'i'; return 1; }};
+        return String.prototype.charCodeAt.call(text, index) + ':' + log;
+    })())",
+              "65:si");
+    for (const char * index :
+         {"Symbol()", "1n", "Object(Symbol())", "{valueOf() { return Symbol(); }}"}) {
+        js_expect(throws("'x'.charCodeAt(" + std::string{index} + ")"), "TypeError");
+    }
+    js_expect(R"((function () {
+        var error = {};
+        try { 'z'.charCodeAt({valueOf() { throw error; }}); }
+        catch (e) { return e === error; }
+        return false;
+    })())",
+              "true");
+
     // --- the UTF-16 gap: CURRENT BEHAVIOUR, KNOWN WRONG ---------------------
     //
     // Everything in this block disagrees with V8, and every line says what V8
@@ -409,11 +639,14 @@ int main() {
     js_expect("[...\"\\ud83d\\ude00\"].length", "4");        // V8: 1 - iteration is by code POINT
     js_expect("\"\\u00e9\".slice(0, 1).length", "1");        // V8: 1, but a DIFFERENT character
 
-    // --- ASCII-only case folding: BY DESIGN, not a defect -------------------
-    // core/algorithms.hpp folds A-Z and nothing else, so a golden cannot depend
-    // on the host's locale or Unicode tables. V8's answers are in the comments.
-    js_expect("\"Stra\\u00dfe\".toUpperCase()", "STRA\u00dfE"); // V8: STRASSE
-    js_expect("\"\\u0130\".toLowerCase()", "\u0130");           // V8: i followed by U+0307
+    // --- Unicode's default case conversion ----------------------------------
+    // SpecialCasing's unconditional entries, Final_Sigma, and the supplementary
+    // planes, as V8 answers them.
+    js_expect("\"Stra\\u00dfe\".toUpperCase()", "STRASSE");
+    js_expect("\"\\u0130\".toLowerCase()", "i\u0307");
+    js_expect("\"\\u03a3\\u0391\\u03a3\".toLowerCase()", "\u03c3\u03b1\u03c2");
+    js_expect("\"\\ud801\\udc00\".toLowerCase() === \"\\ud801\\udc28\"", "true");
+    js_expect("\"\\u00e9t\\u00e9\".toLocaleUpperCase()", "\u00c9T\u00c9");
 
     // --- the well-known-symbol protocol: match/replace/search/split/matchAll
     // ask their argument first (22.1.3.13 step 2 and its siblings) --------
@@ -444,6 +677,16 @@ int main() {
     js_expect("decodeURIComponent('%E2%82')", "THREW");    // truncated
     js_expect("encodeURIComponent()", "undefined");
     js_expect("[encodeURI.length, decodeURIComponent.name].join()", "1,decodeURIComponent");
+
+    // --- Annex B.2.1 escape/unescape and B.2.2 the String extras -------------
+    js_expect("escape('a b+@\\u00e9\\u{10401}')", "a%20b+@%E9%uD801%uDC01");
+    js_expect("unescape('%u0041%41%%41%uD801%uDC01%zz%u12')", "AA%A\U00010401%zz%u12");
+    js_expect("unescape(escape('\\u{1F600}x')) === '\\u{1F600}x'", "true");
+    js_expect("'<'.anchor('\"a\"') + '_'.bold() + 'x'.link(1)",
+              "<a name=\"&quot;a&quot;\"><</a><b>_</b><a href=\"1\">x</a>");
+    js_expect("String.prototype.trimLeft === String.prototype.trimStart && "
+              "String.prototype.trimRight.name",
+              "trimEnd");
 
     REPORT("string_basics");
 }

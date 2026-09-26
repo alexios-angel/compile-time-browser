@@ -60,6 +60,13 @@ namespace ctbrowser::shell::detail {
     out->set("width", script::value::number(static_cast<double>(width)));
     out->set("height", script::value::number(static_cast<double>(height)));
     out->set("data", bytes);
+    // AN ImageData, to `instanceof` as well: its prototype is the realm's
+    // ImageData.prototype (install_window gives the constructor one).
+    if (const script::value ctor = cx.global("ImageData"); ctor.is_callable()) {
+        if (const script::value proto = cx.lookup_property(ctor, "prototype"); proto.is_object()) {
+            out->prototype = proto;
+        }
+    }
     return script::value::object(out);
 }
 

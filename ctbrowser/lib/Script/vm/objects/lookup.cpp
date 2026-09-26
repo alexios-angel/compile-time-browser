@@ -44,6 +44,60 @@ object_object * typed_array_prototype(context & cx, element_kind kind) {
                                                   : nullptr;
 }
 
+namespace {
+
+// OrdinaryGet step 3 on an array (10.1.8.1): the [[Prototype]]'s [[Get]] of
+// `name`, with the array as the receiver. The tail of lookup_property's array
+// arm, and what an index the array does not have - a hole, or one past the
+// end - reads through to.
+value array_inherited(context & cx, value target, const array_object & arr,
+                      const std::string & name) {
+    // AN EXPLICIT [[Prototype]] - a subclass instance's, or one a page set -
+    // is the whole chain from here: it reaches Array.prototype (or the kind's)
+    // through its own links. See array_object::prototype.
+    if (!arr.prototype.is_null()) [[unlikely]] {
+        if (arr.prototype.is_object()) {
+            return cx.lookup_along(static_cast<object_object *>(arr.prototype.as_heap()), target,
+                                   name);
+        }
+        if (arr.prototype.is_heap() && !arr.prototype.is_string()) {
+            return cx.lookup_property(arr.prototype, name);
+        }
+        return value::undefined(); // an explicit null
+    }
+    // A TYPED array's own methods first, then every array's, then every
+    // object's - which is the chain JavaScript actually has, and the reason
+    // `[1,2].hasOwnProperty(...)` and `bytes.subarray(...)` both work.
+    if (arr.elements != element_kind::none) {
+        // The kind's own prototype (23.2.7, reached through its global),
+        // then %TypedArray%.prototype behind it.
+        for (object_object * table = typed_array_prototype(cx, arr.elements); table != nullptr;) {
+            if (value * found = table->find(name)) { return *found; }
+            if (accessor_entry * entry = table->find_accessor(name)) {
+                return call_getter(cx, *entry, target);
+            }
+            table = table->prototype.is_object()
+                        ? static_cast<object_object *>(table->prototype.as_heap())
+                        : nullptr;
+        }
+        if (object_object * table = cx.prototype(context::proto_kind::typed_array)) {
+            if (value * found = table->find(name)) { return *found; }
+        }
+        if (object_object * table = cx.prototype(context::proto_kind::array)) {
+            if (value * found = table->find(name)) { return *found; }
+        }
+        return cx.from_object_prototype(target, name);
+    }
+    // Array.prototype's accessors as well as its data: a getter defined there
+    // for an index is what a hole in every array reads.
+    if (object_object * table = cx.prototype(context::proto_kind::array)) {
+        return cx.lookup_along(table, target, name);
+    }
+    return cx.from_object_prototype(target, name);
+}
+
+} // namespace
+
 bool context::private_element_present(value target, const std::string & key) {
     property_descriptor found;
     if (own_property(target, key, found)) { return true; }
@@ -122,6 +176,13 @@ value context::get_with_receiver(value base, const std::string & name, value rec
 value context::lookup_index(value target, value key) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
+        // A Number that is not an index is the property its ToString names:
+        // `a[1.5]` is a["1.5"], not a[1] - and on a typed array a numeric key
+        // that names no element is undefined, never the chain (10.4.5.4).
+        if (!array_index_number(key.as_number())) {
+            if (arr->elements != element_kind::none) { return value::undefined(); }
+            return lookup_property(target, to_string(key));
+        }
         const auto i = static_cast<std::ptrdiff_t>(key.as_number());
         if (arr->is_view()) {
             if (i < 0 || static_cast<std::size_t>(i) >= arr->length()) {
@@ -135,22 +196,18 @@ value context::lookup_index(value target, value key) {
         }
         if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
             // A HOLE READS THROUGH TO THE PROTOTYPES and an ACCESSOR element
-            // calls its getter - see array_object::element_attrs, which is
-            // empty for every ordinary array and costs this one test.
-            if (!arr->element_attrs.empty()) [[unlikely]] {
-                if (const std::uint8_t * e =
-                        arr->find_element_attrs(static_cast<std::uint32_t>(i))) {
-                    if ((*e & array_object::elem_hole) != 0) {
-                        const std::string name = std::to_string(i);
-                        if (object_object * table = prototype(proto_kind::array)) {
-                            if (value * found = table->find(name)) { return *found; }
-                        }
-                        return from_object_prototype(target, name);
-                    }
-                    if ((*e & array_object::elem_accessor) != 0 && arr->named) {
-                        if (accessor_entry * entry = arr->named->find_accessor(std::to_string(i))) {
-                            return call_getter(*this, *entry, target);
-                        }
+            // calls its getter - see array_object::element_attrs and
+            // holes_begin, both empty for every ordinary array and costing
+            // this one test.
+            if (!arr->element_attrs.empty() || arr->has_hole_run()) [[unlikely]] {
+                const auto at = static_cast<std::uint32_t>(i);
+                if (arr->is_hole(at)) {
+                    return array_inherited(*this, target, *arr, std::to_string(at));
+                }
+                if (const std::uint8_t * e = arr->find_element_attrs(at);
+                    e != nullptr && (*e & array_object::elem_accessor) != 0 && arr->named) {
+                    if (accessor_entry * entry = arr->named->find_accessor(std::to_string(at))) {
+                        return call_getter(*this, *entry, target);
                     }
                 }
             }
@@ -161,9 +218,13 @@ value context::lookup_index(value target, value key) {
         if (!arr->sparse.empty() && i >= 0 && static_cast<std::uint64_t>(i) <= 4294967295ull) {
             if (value * found = arr->find_sparse(static_cast<std::uint32_t>(i))) { return *found; }
         }
-        return value::undefined();
+        // AN INDEX THE ARRAY DOES NOT HAVE is OrdinaryGet's step 3 like any
+        // other absent key: `Array.prototype[1] = 1; [0][1]` is 1. A typed
+        // array's is undefined without asking (10.4.5.4).
+        if (arr->elements != element_kind::none) { return value::undefined(); }
+        return array_inherited(*this, target, *arr, std::to_string(i));
     }
-    if (target.is_string() && key.is_number()) {
+    if (target.is_string() && key.is_number() && array_index_number(key.as_number())) {
         const std::string & text = static_cast<string_object *>(target.as_heap())->text;
         const auto i = static_cast<std::size_t>(key.as_number());
         return i < text.size() ? string(std::string{text[i]}) : value::undefined();
@@ -185,6 +246,24 @@ value context::lookup_property(value target, const std::string & name) {
                 "Cannot read private member " +
                     name.substr(1, colon == std::string::npos ? std::string::npos : colon - 1) +
                     " from an object whose class did not declare it");
+            return value::undefined();
+        }
+        // PrivateGet step 5.b: a private ACCESSOR with no getter - only a
+        // `set #x` - is the TypeError too, where an ordinary accessor with
+        // no getter reads undefined. Own (a field, a static), or on the
+        // prototype chain (an instance method or accessor).
+        property_descriptor found;
+        bool present = own_property(target, name, found);
+        for (value up = get_prototype(target); !present && up.is_object_like();
+             up = get_prototype(up)) {
+            present = own_property(up, name, found);
+        }
+        if (present && found.is_accessor() && !found.getter.is_callable()) {
+            const std::size_t colon = name.find(':');
+            throw_error(
+                "TypeError",
+                "'" + name.substr(1, colon == std::string::npos ? std::string::npos : colon - 1) +
+                    "' was defined without a getter");
             return value::undefined();
         }
     }
@@ -284,10 +363,16 @@ value context::lookup_property(value target, const std::string & name) {
                 obj = static_cast<object_object *>(obj->prototype.as_heap());
                 continue;
             }
+            // A PROXY on the chain is asked with `target` as the receiver
+            // (10.1.8.1 step 3): its `get` trap, or its target's getter, sees
+            // the object the read began on.
+            if (obj->prototype.is_kind(heap_kind::proxy)) {
+                return get_with_receiver(obj->prototype, name, target);
+            }
             // A PROTOTYPE THAT IS NOT A PLAIN OBJECT - an Array
-            // (`foo.prototype = [1]`), a function, a proxy - carries on the
-            // walk in its own arm below. Its getters see it as the receiver
-            // rather than `target`, which nothing in the corpus observes.
+            // (`foo.prototype = [1]`), a function - carries on the walk in its
+            // own arm below. Its getters see it as the receiver rather than
+            // `target`, which nothing in the corpus observes.
             if (obj->prototype.is_heap() && !obj->prototype.is_string()) {
                 return lookup_property(obj->prototype, name);
             }
@@ -317,15 +402,17 @@ value context::lookup_property(value target, const std::string & name) {
         if (std::uint32_t at = 0; object_object::array_index_key(name, at)) {
             return lookup_index(target, value::number(static_cast<double>(at)));
         }
+        // ...and every OTHER canonical numeric key names no element of a
+        // typed array: undefined, without asking the prototypes (10.4.5.4).
+        if (arr->elements != element_kind::none && canonical_numeric_key(name)) {
+            return value::undefined();
+        }
         // A VIEW'S `buffer`, `byteLength` AND `byteOffset` ARE %TypedArray%.
         // prototype's getters (23.2.3.2-4), reached below: an inline answer
         // here used to make a FRESH bare object per `buffer` read, so
         // `ta.buffer === ta.buffer` was false and the answer was no ArrayBuffer.
-        if (arr->is_match) { // an exec() result carries index/input/groups
-            if (name == "index") { return arr->index; }
-            if (name == "input") { return arr->input; }
-            if (name == "groups") { return arr->groups; }
-        }
+        // (An exec() result's index/input/groups are named own properties,
+        // below, like any other - builtins/text/regexp/execution.cpp.)
         // A NAMED OWN PROPERTY - see array_object::named. Data or accessor,
         // before the prototypes, as on any object.
         if (arr->named) {
@@ -334,49 +421,16 @@ value context::lookup_property(value target, const std::string & name) {
                 return call_getter(*this, *entry, target);
             }
         }
-        // AN EXPLICIT [[Prototype]] - a subclass instance's, or one a page
-        // set - is the whole chain from here: it reaches Array.prototype (or
-        // the kind's) through its own links. See array_object::prototype.
-        if (!arr->prototype.is_null()) [[unlikely]] {
-            if (arr->prototype.is_object()) {
-                return lookup_along(static_cast<object_object *>(arr->prototype.as_heap()), target,
-                                    name);
-            }
-            if (arr->prototype.is_heap() && !arr->prototype.is_string()) {
-                return lookup_property(arr->prototype, name);
-            }
-            return value::undefined(); // an explicit null
-        }
-        // A TYPED array's own methods first, then every array's, then every
-        // object's - which is the chain JavaScript actually has, and the reason
-        // `[1,2].hasOwnProperty(...)` and `bytes.subarray(...)` both work.
-        if (arr->elements != element_kind::none) {
-            // The kind's own prototype (23.2.7, reached through its global),
-            // then %TypedArray%.prototype behind it.
-            for (object_object * table = typed_array_prototype(*this, arr->elements);
-                 table != nullptr;) {
-                if (value * found = table->find(name)) { return *found; }
-                if (accessor_entry * entry = table->find_accessor(name)) {
-                    return call_getter(*this, *entry, target);
-                }
-                table = table->prototype.is_object()
-                            ? static_cast<object_object *>(table->prototype.as_heap())
-                            : nullptr;
-            }
-            if (object_object * table = prototype(proto_kind::typed_array)) {
-                if (value * found = table->find(name)) { return *found; }
-            }
-        }
-        if (object_object * table = prototype(proto_kind::array)) {
-            if (value * found = table->find(name)) { return *found; }
-        }
-        return from_object_prototype(target, name);
+        return array_inherited(*this, target, *arr, name);
     }
     if (target.is_string()) {
         auto * str = static_cast<string_object *>(target.as_heap());
         if (name == "length") { return value::number(static_cast<double>(str->text.size())); }
+        // The prototype's accessors too, called with the PRIMITIVE as the
+        // receiver (GetV, 7.3.3) - a strict getter sees `typeof this` as
+        // "string" - and its own chain behind it (lookup_along).
         if (object_object * table = prototype(proto_kind::string)) {
-            if (value * found = table->find(name)) { return *found; }
+            return lookup_along(table, target, name);
         }
         return from_object_prototype(target, name);
     }
@@ -386,13 +440,13 @@ value context::lookup_property(value target, const std::string & name) {
     // undefined and called it.
     if (target.is_kind(heap_kind::bigint)) {
         if (object_object * table = prototype(proto_kind::bigint)) {
-            if (value * found = table->find(name)) { return *found; }
+            return lookup_along(table, target, name);
         }
         return from_object_prototype(target, name);
     }
     if (target.is_number()) {
         if (object_object * table = prototype(proto_kind::number)) {
-            if (value * found = table->find(name)) { return *found; }
+            return lookup_along(table, target, name);
         }
         // ...THEN Object.prototype, because `Number.prototype`'s own prototype
         // IS Object.prototype and a primitive boxes on property access. Without
@@ -413,7 +467,7 @@ value context::lookup_property(value target, const std::string & name) {
     // that calls it explicitly - to build a cache key, say - found nothing.
     if (target.is_boolean()) {
         if (object_object * table = prototype(proto_kind::boolean)) {
-            if (value * found = table->find(name)) { return *found; }
+            return lookup_along(table, target, name);
         }
         return from_object_prototype(target, name);
     }
@@ -479,6 +533,12 @@ value context::lookup_property(value target, const std::string & name) {
     if (target.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(target.as_heap());
         if (value * found = closure->find(name)) { return *found; }
+        // An OWN accessor - `static get w()` on a class, the constructor being
+        // the closure, or one a page defined - before anything synthesised: a
+        // `name` redefined as a getter is that getter's (bind reads it).
+        if (accessor_entry * entry = closure->find_accessor(name)) {
+            return call_getter(*this, *entry, target);
+        }
         if (name == "prototype") { return ensure_prototype(target); }
         // `f.name` and `f.length`, read off the compiled function rather than
         // stored on every closure - most functions are never asked and an extra
@@ -500,14 +560,9 @@ value context::lookup_property(value target, const std::string & name) {
             // implementation-defined answer, and every browser's); a strict
             // one reaches Function.prototype's %ThrowTypeError% accessor.
             if (!closure->proto->is_strict && !closure->proto->is_arrow &&
-                (name == "caller" || name == "arguments")) {
+                !closure->proto->is_generator && (name == "caller" || name == "arguments")) {
                 return value::null();
             }
-        }
-        // `static get w()` on a class - the constructor IS the closure, so its
-        // accessors live here rather than on any object.
-        if (accessor_entry * entry = closure->find_accessor(name)) {
-            return call_getter(*this, *entry, target);
         }
         // STATIC INHERITANCE: `class D extends B` makes D's own [[Prototype]]
         // B, so `D.staticMethod` finds B's. Babel wires this by hand with

@@ -25,19 +25,25 @@
 // handler, which is why the reconcile below runs BEFORE that event rather than
 // with the timers after it.
 //
+// AND A THIRD, SINCE 2026-09-25: THE FRAME RUNS ITS OWN SCRIPTS, in a realm
+// of its own (install_frame_realm) - its `var`s are its own, its functions
+// read its `document` whoever calls them, and its window hears its `load`
+// before the <iframe>'s own. dom/ranges drives its Range-*Contents cases
+// through a frame's `run()`, and until the frame could define one every case
+// was "`run` is undefined".
+//
 // WHAT IS DELIBERATELY NOT HERE, named rather than left to be discovered:
 //
-//   * THE REALM IS SHARED, exactly as it is for `createHTMLDocument`. So
-//     `frame.contentWindow.Element === window.Element` where a browser has two,
-//     and `new frame.contentWindow.Comment()` makes a node in the PAGE's
-//     document rather than the frame's. Every test that turns on cross-realm
-//     identity still fails; what it no longer does is hang.
+//   * THE INTRINSICS ARE SHARED. A frame's realm has its own bindings but the
+//     page's constructors, so `frame.contentWindow.Element === window.Element`
+//     where a browser has two. Every test that turns on cross-realm identity
+//     of a prototype still fails.
 //   * NO NAVIGATION AND NO HISTORY. A frame is loaded once per `src`; there is
 //     no `location` on `contentWindow` to assign to, no `about:blank` document
 //     replaced by a real one, and no `srcdoc`.
-//   * NO SCRIPTS RUN IN A FRAME. The frame's document is parsed, not executed:
-//     one realm and one event loop mean a frame's script would be the page's
-//     script wearing the frame's name, which is worse than nothing.
+//   * NO PARSER-TIME SCRIPTS. The frame's document is parsed whole and its
+//     classic scripts run afterwards in tree order, as an XHTML page's do; a
+//     `document.write` from one of them writes into a finished document.
 //   * A FRAME PAINTS AS AN EMPTY BOX. This is the DOM half of an iframe; the
 //     frame's document IS laid out, at the size its box got, by the browser
 //     (browser/nested.cpp) so that what a script measures inside it is about
@@ -332,96 +338,11 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     auto * frame_object = static_cast<script::object_object *>(element.as_heap());
     frame_object->set("contentDocument", made.document_);
 
-    // `contentWindow`: a SMALL object with its own few properties, behind a
-    // proxy whose miss reads the PAGE's globals. The realm is shared (see the
-    // header), so `frame.contentWindow.DOMException`, `.TypeError` and
-    // `.NodeList` ARE the page's, and answering them from the one table is
-    // what makes `e instanceof frameWindow.DOMException` true for an exception
-    // this frame's own DOM threw. Measured: every invalid-selector case in
-    // `ParentNode-querySelector-All` is `assert_throws_dom("SyntaxError",
-    // windowFor(root).DOMException, ...)`, and with that constructor undefined
-    // testharness took it for the function to call - 272 subtests reporting
-    // "`call` is undefined" about a method that had thrown correctly.
-    auto * frame_window = cx.allocate<script::object_object>();
-    auto * handler = cx.allocate<script::object_object>();
-    // NOT THE PAGE'S BROWSING-CONTEXT STATE, though. `location`, `history`
-    // and their kin are per-context, and this frame has none (see the header):
-    // handing back the page's would let `frame.contentWindow.location.href =
-    // x` rewrite the top document's address, which is worse than the
-    // `undefined` a page can test for.
-    const auto shared_global = [](context & c, std::string_view name) {
-        for (const std::string_view own :
-             {"location", "history", "frames", "name", "opener", "closed", "event"}) {
-            if (own == name) { return false; }
-        }
-        return c.has_global(name);
-    };
-    set_method(cx, *handler, "get", [shared_global](context & c, std::span<value> args) {
-        if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
-        auto * target = static_cast<script::object_object *>(args[0].as_heap());
-        const std::string name = c.to_string(args[1]);
-        if (target->find(name) == nullptr && target->find_accessor(name) == nullptr &&
-            shared_global(c, name)) {
-            return c.global(name);
-        }
-        return c.lookup_property(args[0], name);
-    });
-    set_method(cx, *handler, "has", [shared_global](context & c, std::span<value> args) {
-        if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
-        auto * target = static_cast<script::object_object *>(args[0].as_heap());
-        const std::string name = c.to_string(args[1]);
-        return value::boolean(target->find(name) != nullptr ||
-                              target->find_accessor(name) != nullptr || shared_global(c, name));
-    });
-    const value frame_view = value::object(
-        cx.allocate<script::proxy_object>(value::object(frame_window), value::object(handler)));
-    frame_window->set("document", made.document_);
-    frame_window->set("location", made.location_);
-    if (auto * doc = made.document_object()) { doc->set("location", made.location_); }
-    frame_window->set("customElements", made.custom_elements_registry(cx)); // custom_elements.cpp
-    made.install_window_scrolling(cx,
-                                  *frame_window); // scrollX/scrollY, scrollTo on a frame's window
-    // The frame's own `matchMedia`: a list that reads the frame's viewport.
-    frame_window->set("matchMedia",
-                      native(cx, "matchMedia", [&made](context & c, std::span<value> a) {
-                          return made.match_media(c, a.empty() ? std::string{} : c.to_string(a[0]));
-                      }));
-    frame_window->set("frameElement", element);
-    // THE NODE CONSTRUCTORS THAT NAME A DOCUMENT: `new frame.contentWindow
-    // .Text()` is a node OF THE FRAME'S document (Text-constructor.html's
-    // cross-global case), so those three are the frame's own natives over the
-    // shared prototypes - `instanceof Text` still holds, `ownerDocument` is
-    // the frame's.
-    for (const char * name : {"Text", "Comment", "DocumentFragment"}) {
-        auto * ctor = cx.allocate<script::native_object>(
-            name, [&made, name](context & c, std::span<value> args) {
-                return made.construct_node_interface(c, name, args);
-            });
-        ctor->set("prototype", cx.lookup_property(cx.global(name), "prototype"));
-        frame_window->set(name, value::object(ctor));
-    }
-    frame_window->set("self", frame_view);
-    frame_window->set("window", frame_view);
-    frame_window->set("length", value::number(0));
-    // `parent` and `top` are the PAGE's window, which is true: this frame's
-    // parent browsing context is the top-level one and there is no nesting
-    // below it.
-    //
-    // THROUGH `cx.global`, NOT `window_`. The window a page can name is a PROXY
-    // over `window_` - that is how the object and the globals stay one storage -
-    // so handing back the raw object makes `frame.contentWindow.parent ===
-    // window` false, which is exactly the identity a page tests. And NOT
-    // behind `is_object()`, which is kind-exact and false for a proxy: that
-    // guard was never taken, and `parent` was undefined.
-    const value page_window = cx.global("window");
-    frame_window->set("parent", page_window);
-    frame_window->set("top", page_window);
-    frame_object->set("contentWindow", frame_view);
-    // AND THE DOCUMENT KNOWS ITS WINDOW. install_document set `defaultView`
-    // null for a secondary, which is right for createHTMLDocument and wrong
-    // for a frame: `root.ownerDocument.defaultView` is how a test reaches the
-    // global an exception must have come from.
-    if (auto * doc = made.document_object()) { doc->set("defaultView", frame_view); }
+    // `contentWindow`: THE FRAME'S OWN WINDOW, over a realm of its own (see
+    // install_frame_realm) - and then the scripts its parse left, run in it.
+    made.install_frame_realm(cx, *this, id);
+    frame_object->set("contentWindow", made.window_view_);
+    made.run_frame_scripts(cx);
 
     // ON THE PRIMARY'S QUEUE, which is the one the tick drains, naming the
     // owner whose element it is; settle_frame hands it back.
@@ -494,6 +415,15 @@ void dom_bindings::settle_frame(context & cx, const pending_frame & waiting) {
         waiting.owner->settle_frame(cx, pending_frame{waiting.id, waiting.ok, waiting.resource});
         return;
     }
+    // THE FRAME'S OWN LOAD COMES FIRST: its document's DOMContentLoaded and
+    // its window's `load` run before the element's `load` in this document -
+    // a page's `iframe.onload` finds the frame's `onload` work already done.
+    for (const frame_entry & entry : frames_) {
+        if (entry.element == waiting.id && entry.bindings != nullptr) {
+            entry.bindings->finish_frame_load(cx);
+            break;
+        }
+    }
     const std::string_view type = waiting.ok ? "load" : "error";
     const value event = make_event_object(cx, type, false, false);
     auto * object = static_cast<script::object_object *>(event.as_heap());
@@ -502,6 +432,287 @@ void dom_bindings::settle_frame(context & cx, const pending_frame & waiting) {
     object->set(std::string{detail::trusted_property}, value::boolean(true));
     object->set(std::string{detail::initialised_property}, value::boolean(true));
     fire_at(path_step{waiting.id, listen_on::node}, type, event, false);
+}
+
+// A FRAME'S BROWSING CONTEXT: its window, and the realm its scripts run in.
+// `this` is the frame document's bindings, `owner` the document whose
+// <iframe> - `element` - it is.
+//
+// ITS OWN REALM, which is what lets a frame run its scripts at all. They were
+// not run before because the realm was shared: a frame's `var run` would have
+// been the page's `run`. Now the frame's declarations land in the frame's
+// binding table, a function the frame declared resolves its free names there
+// whoever calls it (script::realm_record), and `frame.contentWindow.run` read
+// by the page is the frame's. The table starts as the page's template - the
+// builtins and the interface objects, not the page's own vars - so
+// `frame.contentWindow.DOMException` is still the constructor an exception
+// the frame's DOM threw is an instance of. ponytail: ONE set of intrinsics, so
+// `contentWindow.Array === Array` where a browser has two; distinct prototypes
+// are the upgrade when a cross-realm identity test is the next clearest one.
+//
+// NOT THE PAGE'S BROWSING-CONTEXT STATE: `location`, `history` and their kin
+// are per-context. Handing back the page's would let `frame.contentWindow
+// .location.href = x` rewrite the top document's address, so the frame's own
+// replace them and the rest are removed from its table.
+void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_id element) {
+    script::realm_record & realm = cx.create_realm();
+    realm_ = &realm;
+    for (const std::string_view foreign : {"history", "name", "opener", "closed", "event"}) {
+        (void)realm.globals.erase(std::string{foreign});
+    }
+    auto * frame_window = cx.allocate<script::object_object>();
+    window_ = value::object(frame_window);
+    const value frame_view = make_window_view(cx, window_, realm);
+    window_view_ = frame_view;
+    // `parent` is the window of the document the <iframe> is in - the page's,
+    // or a frame's for a frame inside one - and `top` is that window's top.
+    // The PROXY, never the object behind it: scripts compare `w != w.parent`
+    // by identity (see install_window).
+    const value parent_view =
+        owner.window_view_.is_heap() ? owner.window_view_ : cx.global("window");
+    value top_view = parent_view;
+    if (script::object_object * above = owner.window_object(); above != nullptr) {
+        if (const value * held = above->find("top"); held != nullptr && held->is_heap()) {
+            top_view = *held;
+        }
+    }
+    const value element_view = owner.wrap(cx, element);
+
+    frame_window->set("document", document_);
+    frame_window->set("location", location_);
+    frame_window->set("customElements", custom_elements_registry(cx)); // custom_elements.cpp
+    install_window_scrolling(cx, *frame_window); // scrollX/scrollY, scrollTo on a frame's window
+    // The frame's own `matchMedia`: a list that reads the frame's viewport.
+    const value match = native(cx, "matchMedia", [this](context & c, std::span<value> a) {
+        return match_media(c, a.empty() ? std::string{} : c.to_string(a[0]));
+    });
+    frame_window->set("matchMedia", match);
+    frame_window->set("frameElement", element_view);
+    frame_window->set("self", frame_view);
+    frame_window->set("window", frame_view);
+    frame_window->set("frames", frame_view);
+    frame_window->set("parent", parent_view);
+    frame_window->set("top", top_view);
+    frame_window->set("opener", value::null());
+    frame_window->set("event", value::undefined());
+    // `self.origin`: this document's, serialized - "null" for a file: one,
+    // as its location.origin says.
+    frame_window->define_accessor("origin",
+                                  value::object(cx.allocate<script::native_object>(
+                                      "origin",
+                                      [this](context & c, std::span<value>) {
+                                          const std::string origin =
+                                              location_parts(location_href_).origin;
+                                          return c.string(origin.empty() ? "null" : origin);
+                                      })),
+                                  value::undefined());
+    // `length` counts THIS document's child frames, as the page's does.
+    frame_window->define_accessor(
+        "length",
+        value::object(cx.allocate<script::native_object>(
+            "length",
+            [this](context &, std::span<value>) {
+                return value::number(static_cast<double>(all_html_elements("iframe").size()));
+            })),
+        value::undefined());
+    if (auto * doc = document_object()) {
+        doc->set("location", location_);
+        // AND THE DOCUMENT KNOWS ITS WINDOW. install_document set
+        // `defaultView` null for a secondary, which is right for
+        // createHTMLDocument and wrong for a frame: `root.ownerDocument
+        // .defaultView` is how a test reaches the global an exception must
+        // have come from.
+        doc->set("defaultView", frame_view);
+    }
+
+    // THE REALM'S OWN BINDINGS, defined with it current.
+    const context::realm_scope in_frame{cx, realm};
+    cx.set_global_this(frame_view);
+    cx.define_global("window", frame_view);
+    cx.define_global("self", frame_view);
+    cx.define_global("document", document_);
+    cx.define_global("location", location_);
+    cx.define_global("matchMedia", match);
+    // THE NODE CONSTRUCTORS THAT NAME A DOCUMENT: `new frame.contentWindow
+    // .Text()` - and a bare `new Text()` in the frame's own script - is a node
+    // OF THE FRAME'S document (Text-constructor.html's cross-global case), so
+    // those three are the frame's own natives over the shared prototypes:
+    // `instanceof Text` still holds, `ownerDocument` is the frame's.
+    for (const char * name : {"Text", "Comment", "DocumentFragment"}) {
+        auto * ctor = cx.allocate<script::native_object>(
+            name, [this, name](context & c, std::span<value> args) {
+                return construct_node_interface(c, name, args);
+            });
+        ctor->set("prototype", cx.lookup_property(cx.global(name), "prototype"));
+        frame_window->set(name, value::object(ctor));
+        cx.define_global(name, value::object(ctor));
+    }
+    // Listening at THIS window: a frame script's `addEventListener("load", f)`
+    // hears the frame's load, not the page's.
+    install_window_listeners(cx, *frame_window);
+    install_post_message(cx, *frame_window);
+    install_window_handlers(cx, *frame_window);
+    // scrollX/scrollY and scroll()/scrollTo()/scrollBy() over THIS document's
+    // viewport: a frame script reading `scrollY` threw a ReferenceError, and a
+    // test waiting on the frame's reply to a message timed out on it
+    // (cssom-view/scrollIntoView-iframes.html).
+    install_window_scrolling(cx, *frame_window);
+    const value frame_dispatch =
+        native(cx, "dispatchEvent", [this](context & c, std::span<value> a) {
+            const value event = arg(a, 0);
+            // OrdinaryHasInstance against Event: one set of interfaces for every
+            // realm, so the frame's `Event` is the page's.
+            if (!event.is_object() || !c.instance_of(event, c.global("Event"))) {
+                c.throw_error("TypeError", "Failed to execute 'dispatchEvent' on 'Window': "
+                                           "parameter 1 is not of type 'Event'.");
+                return value::boolean(false);
+            }
+            return value::boolean(!dispatch_to(event, path_step{node_id{}, listen_on::window}));
+        });
+    frame_window->set("dispatchEvent", frame_dispatch);
+    cx.define_global("dispatchEvent", frame_dispatch);
+    // `Function` AND `eval` OF THIS REALM. CreateDynamicFunction and
+    // PerformEval take the CALLEE's realm (20.2.1.1.1, 19.2.1.1), so
+    // `new frames[0].Function(src)` is a function of frame 0 - its free names
+    // are the frame's globals and its throws are reported at the frame's
+    // window - and `contentWindow.eval(src)` runs in the frame. Each wraps the
+    // one intrinsic inside a realm_scope; `prototype` stays %Function.prototype%
+    // (the shared-intrinsics ceiling noted above).
+    for (const char * name : {"Function", "eval"}) {
+        const value intrinsic = cx.global(name);
+        if (!intrinsic.is_callable()) { continue; }
+        script::realm_record * const frame_realm = &realm;
+        auto * wrapper = cx.allocate<script::native_object>(
+            name, [intrinsic, frame_realm](context & c, std::span<value> args) {
+                const context::realm_scope in_frame{c, *frame_realm};
+                return c.call(intrinsic, args);
+            });
+        wrapper->retained.push_back(intrinsic);
+        if (std::string_view{name} == "Function") {
+            wrapper->define("prototype", cx.lookup_property(intrinsic, "prototype"),
+                            script::attr_none);
+        } else {
+            wrapper->is_constructor = false;
+        }
+        wrapper->define("length", value::number(1), script::attr_configurable);
+        wrapper->define("name", cx.string(name), script::attr_configurable);
+        cx.define_global(name, value::object(wrapper));
+    }
+}
+
+dom_bindings & dom_bindings::bindings_of(value window) {
+    const auto find = [window](const auto & self, dom_bindings & at) -> dom_bindings * {
+        if (at.window_view_.is_heap() && at.window_view_.as_heap() == window.as_heap()) {
+            return &at;
+        }
+        for (const frame_entry & frame : at.frames_) {
+            if (frame.bindings == nullptr) { continue; }
+            if (dom_bindings * found = self(self, *frame.bindings)) { return found; }
+        }
+        return nullptr;
+    };
+    dom_bindings & top = primary();
+    dom_bindings * found = window.is_heap() ? find(find, top) : nullptr;
+    return found != nullptr ? *found : top;
+}
+
+dom_bindings * dom_bindings::bindings_owning(value wrapper) {
+    const auto find = [wrapper](const auto & self, dom_bindings & at) -> dom_bindings * {
+        if (at.handle_of(wrapper)) { return &at; }
+        for (const frame_entry & frame : at.frames_) {
+            if (frame.bindings == nullptr) { continue; }
+            if (dom_bindings * found = self(self, *frame.bindings)) { return found; }
+        }
+        return nullptr;
+    };
+    return wrapper.is_object() ? find(find, primary()) : nullptr;
+}
+
+std::optional<context::realm_scope> dom_bindings::enter_realm(context & cx) {
+    if (realm_ == nullptr) { return std::nullopt; }
+    return std::optional<context::realm_scope>{std::in_place, cx, *realm_};
+}
+
+// A SUBRESOURCE OF THIS DOCUMENT, as the asset registry names it. The page's
+// relative names already mean what the registry resolves them against - the
+// page's own directory - so they pass through; a frame's are relative to the
+// FRAME's address, which is often another directory (`resources/frame.html`
+// loading `helper.js`), so they are resolved against it and a file: URL is
+// handed over as its path. A data: or blob: URL, and a document with no
+// address, keep what the page wrote.
+std::string dom_bindings::subresource_name(std::string_view src) const {
+    if (realm_ == nullptr || location_href_.empty() || is_data_url(src) ||
+        src.starts_with("blob:")) {
+        return std::string{src};
+    }
+    const std::string url = resolve(location_href_, src);
+    if (url.starts_with("file://")) { return percent_decode(url.substr(7)); }
+    return url;
+}
+
+// THE SCRIPTS A FRAME'S PARSE LEFT, in tree order, in the frame's realm.
+// HTML's parser runs each as it reaches it; a frame's document is parsed
+// whole first (load_frame), so its classic scripts run afterwards in document
+// order - which is also how an XHTML page's run (browser/scripts.cpp). A data
+// block (`type="text/plain"`) and a module are not classic scripts; the
+// module loader is the browser's.
+void dom_bindings::run_frame_scripts(context & cx) {
+    if (realm_ == nullptr || doc_ == nullptr) { return; }
+    struct found {
+        node_id id;
+        std::string src;
+        std::string text;
+    };
+    std::vector<found> scripts;
+    {
+        const auto txn = doc_->read();
+        const atom script_tag = atoms_->intern_lower("script");
+        const atom src_name = atoms_->intern("src");
+        const atom type_name = atoms_->intern("type");
+        const auto walk = [&](auto && self, node_id at) -> void {
+            if (txn.tag(at).value_or(atom{}) == script_tag && txn.element_ns(at) == node_ns::html) {
+                const std::string type =
+                    ascii_lower_copy(trim(txn.attribute_value(at, type_name), html_whitespace));
+                if (type.empty() || type == "text/javascript" || type == "application/javascript") {
+                    found script{at, std::string{txn.attribute_value(at, src_name)}, {}};
+                    for (const node_id child : txn.children(at)) {
+                        if (is_text_kind(txn.kind(child).value_or(node_kind::comment))) {
+                            script.text += txn.text(child);
+                        }
+                    }
+                    scripts.push_back(std::move(script));
+                }
+            }
+            for (const node_id child : txn.children(at)) { self(self, child); }
+        };
+        walk(walk, txn.root());
+    }
+    for (found & script : scripts) {
+        if (!script.src.empty()) {
+            const std::vector<std::byte> bytes = assets_ == nullptr
+                                                     ? std::vector<std::byte>{}
+                                                     : assets_->load(subresource_name(script.src));
+            if (bytes.empty()) { continue; }
+            script.text.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+        } else if (script.text.empty()) {
+            continue;
+        }
+        execute_script_element(cx, script.id, script.text);
+    }
+}
+
+// The end of a frame document's load: DOMContentLoaded and then the window's
+// `load`, in its realm, ONCE - settle_frame asks, before the <iframe>'s own
+// `load` in the document around it.
+void dom_bindings::finish_frame_load(context & cx) {
+    if (realm_ == nullptr || frame_load_finished_) { return; }
+    frame_load_finished_ = true;
+    const auto in_realm = enter_realm(cx);
+    reconcile_frames();
+    set_ready_state("interactive");
+    (void)dispatch("DOMContentLoaded", node_id{});
+    set_ready_state("complete");
+    (void)dispatch("load", node_id{});
 }
 
 } // namespace ctbrowser::shell

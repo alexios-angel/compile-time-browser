@@ -117,6 +117,10 @@ The following sections retain the complete original text and measurements.
 - [Measured at `b346dc0b` — 2026-09-13, the WHOLE corpus for the first time](test262/02-measured-at-15f47064--2026-09-12-evening.md#measured-at-b346dc0b--2026-09-13-the-whole-corpus-for-the-first-time)
 <a id="measured-at-9c70aaa0--2026-09-16-the-four-round-one-branches-merged"></a>
 - [Measured at `9c70aaa0` — 2026-09-16, the four round-one branches merged](test262/02-measured-at-15f47064--2026-09-12-evening.md#measured-at-9c70aaa0--2026-09-16-the-four-round-one-branches-merged)
+<a id="strict-string-conversion-and-native-call-fences--2026-09-18"></a>
+- [Strict String conversion and native-call fences — 2026-09-18](test262/02-measured-at-15f47064--2026-09-12-evening.md#strict-string-conversion-and-native-call-fences--2026-09-18)
+<a id="string-static-coercion-errors--2026-09-18"></a>
+- [String static coercion errors — 2026-09-18](test262/02-measured-at-15f47064--2026-09-12-evening.md#string-static-coercion-errors--2026-09-18)
 <a id="bigint-string-grammar-and-loose-equality--2026-09-18"></a>
 - [BigInt string grammar and loose equality — 2026-09-18](test262/02-measured-at-15f47064--2026-09-12-evening.md#bigint-string-grammar-and-loose-equality--2026-09-18)
 <a id="bigint-measured-at-96781de5--2026-09-18"></a>

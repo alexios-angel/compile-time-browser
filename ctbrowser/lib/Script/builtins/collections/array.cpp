@@ -11,6 +11,85 @@
 
 namespace ctbrowser::script::builtins_detail {
 
+namespace {
+
+// FlattenIntoArray, 23.1.3.13.1 - `flat` and `flatMap` - IN ITS ORDER, which
+// a proxy source shows trap by trap: for each index ascending, HasProperty,
+// Get, the mapper (flatMap's, on the top level only), then IsArray of the
+// element while depth remains, and either a descent into it - its own
+// LengthOfArrayLike, its own indices - or CreateDataPropertyOrThrow onto the
+// target at the next index.
+//
+// An explicit stack of levels rather than the specification's recursion:
+// `flat(Infinity)` on a deep structure must not be bounded by the C++ stack,
+// and one that contains itself is the RangeError a recursion would reach.
+// The sources are held in a rooted array - a getter can collect.
+// False with a throw in flight.
+[[nodiscard]] bool flatten_into_array(context & c, value target, value source, double len,
+                                      double depth, value mapper, value this_arg) {
+    struct level {
+        double len;
+        double index;
+        double depth;
+    };
+    detail::generic_walk walk{c};
+    const value sources_value = c.make_array();
+    const context::rooted keep_sources(c, sources_value);
+    auto & sources = static_cast<array_object *>(sources_value.as_heap())->items;
+    sources.push_back(source);
+    std::vector<level> levels{level{len, 0, depth}};
+    double target_index = 0;
+    while (!levels.empty()) {
+        if (levels.back().index >= levels.back().len) {
+            levels.pop_back();
+            sources.pop_back();
+            continue;
+        }
+        if (!walk.step()) { return false; }
+        const double k = levels.back().index;
+        levels.back().index += 1.0;
+        const double left = levels.back().depth;
+        const value from = sources.back();
+        const bool exists = detail::has_element(c, from, k);
+        if (walk.threw()) { return false; }
+        if (!exists) { continue; }
+        value element = detail::element_at(c, from, k);
+        if (walk.threw()) { return false; }
+        if (levels.size() == 1 && mapper.is_callable()) {
+            const context::rooted keep_element(c, element);
+            const value args[3] = {element, value::number(k), from};
+            element = c.call(mapper, args, this_arg);
+            // Parked if it threw (context::call); the unwind count would also
+            // move for a mapper that throws and catches inside itself.
+            if (c.throw_pending()) { return false; }
+            walk.rearm();
+        }
+        const context::rooted keep_element(c, element);
+        bool flatten = false;
+        if (left > 0 && !detail::is_array_value(c, element, flatten)) { return false; }
+        if (flatten) {
+            if (levels.size() >= 10000) {
+                c.throw_error("RangeError", "Maximum call stack size exceeded");
+                return false;
+            }
+            const double inner = detail::array_like_length(c, element);
+            if (walk.threw()) { return false; }
+            sources.push_back(element);
+            levels.push_back(level{inner, 0, left - 1});
+            continue;
+        }
+        if (target_index >= max_safe_integer) {
+            c.throw_error("TypeError", "flat: the result would be longer than 2^53 - 1");
+            return false;
+        }
+        if (!detail::create_element(c, target, target_index, element)) { return false; }
+        target_index += 1.0;
+    }
+    return true;
+}
+
+} // namespace
+
 // Array.prototype
 void install_array(context & cx) {
     using detail::method;
@@ -28,7 +107,10 @@ void install_array(context & cx) {
             // the SIGABRTs test262 found (built-ins/Array/length/
             // S15.4.2.2_A2.1_T1) - while `new Array(1.5)` is a RangeError the
             // silent std::max swallowed.
-            if (!made->set_js_length(a[0].as_number())) {
+            // Every index a hole (23.1.1.1 step 5: ArrayCreate, then only
+            // `length`), which forEach skips and a read takes from
+            // Array.prototype.
+            if (!made->set_js_length_with_holes(a[0].as_number())) {
                 c.throw_error("RangeError", "Invalid array length");
             }
         } else {
@@ -107,7 +189,9 @@ void install_array(context & cx) {
         value helper = c.global("__ctbrowser_from_async");
         if (!helper.is_callable()) {
             program compiled = compiler::compile(
-                "return (async function (items, mapfn, thisArg) {"
+                // The two symbols come IN from the native, the intrinsic ones:
+                // a page may have replaced the global `Symbol` by the first call.
+                "return (async function (items, mapfn, thisArg, asyncKey, syncKey) {"
                 // Strict, so `out.length = i` on a read-only length is the TypeError
                 // Set(O, 'length', len, true) throws (step 3.j.ix / 5.g.iv).
                 "  'use strict';"
@@ -122,7 +206,7 @@ void install_array(context & cx) {
                 // a TypeError rather than an endless push into nowhere.
                 "  const C = this;"
                 "  const custom = typeof C === 'function' && C !== Array;"
-                "  const out = custom ? new C() : [];"
+                "  let out;"
                 "  let i = 0;"
                 "  const put = function (v) {"
                 "    if (custom) {"
@@ -135,17 +219,24 @@ void install_array(context & cx) {
                 "  };"
                 // GetMethod (7.3.11): a present @@asyncIterator / @@iterator that is
                 // not callable is a TypeError, not an array-like.
-                "  const usingAsync = items[Symbol.asyncIterator];"
+                "  const usingAsync = items[asyncKey];"
                 "  if (usingAsync != null && typeof usingAsync !== 'function') {"
                 "    throw new TypeError('Array.fromAsync: @@asyncIterator is not callable');"
                 "  }"
-                "  const usingSync = usingAsync != null ? undefined : items[Symbol.iterator];"
+                "  const usingSync = usingAsync != null ? undefined : items[syncKey];"
                 "  if (usingSync != null && typeof usingSync !== 'function') {"
                 "    throw new TypeError('Array.fromAsync: @@iterator is not callable');"
                 "  }"
                 "  const iterable = usingAsync != null || usingSync != null;"
+                // Construct(C) with NO arguments for an iterable (step 3.e); and
+                // the method already read is the one iterated - `for await` over
+                // `items` itself would read both symbols a second time.
                 "  if (iterable) {"
-                "    for await (const v of items) { put(mapping ? await mapfn.call(thisArg, v, i) "
+                "    out = custom ? new C() : [];"
+                "    const source = usingAsync != null"
+                "      ? {[asyncKey]() { return usingAsync.call(items); }}"
+                "      : {[syncKey]() { return usingSync.call(items); }};"
+                "    for await (const v of source) { put(mapping ? await mapfn.call(thisArg, v, i) "
                 ": v); }"
                 "    if (custom) { out.length = i; }"
                 "    return out;"
@@ -156,6 +247,8 @@ void install_array(context & cx) {
                 "53 - 1);"
                 "  if (!custom && len > 4294967295) { throw new RangeError('Invalid array "
                 "length'); }"
+                // ...and Construct(C, [len]) for an array-like (step 5.c).
+                "  out = custom ? new C(len) : [];"
                 "  while (i < len) {"
                 "    const v = await items[i];"
                 "    put(mapping ? await mapfn.call(thisArg, v, i) : v);"
@@ -170,7 +263,14 @@ void install_array(context & cx) {
             helper = c.run_nested(c.own_program(std::move(compiled)));
             c.define_global("__ctbrowser_from_async", helper);
         }
-        return c.call(helper, a, c.current_this()); // `this` may be a constructor
+        // Each ROOTED before the next allocates: a collection between the two
+        // would free the first.
+        const value async_key = c.key_value("@@asyncIterator");
+        const context::rooted keep_async{c, async_key};
+        const value sync_key = c.key_value("@@iterator");
+        const context::rooted keep_sync{c, sync_key};
+        const value args[5] = {arg_at(a, 0), arg_at(a, 1), arg_at(a, 2), async_key, sync_key};
+        return c.call(helper, args, c.current_this()); // `this` may be a constructor
     });
     static_method(
         "from", 1, [through_constructor, create_element](context & c, std::span<value> a) {
@@ -289,6 +389,11 @@ void install_array(context & cx) {
     cx.define_global("Array", value::object(array_ctor));
 
     object_object * array_proto = new_table(cx);
+    // 23.1.3: Array.prototype is an Array, so it has a `length` - 0, and
+    // { writable, not enumerable, not configurable } as every Array's is. Only
+    // the property: the table is not an array_object, so an element written to
+    // it does not move `length`.
+    array_proto->define("length", value::number(0), attr_writable);
     // The prototype methods p5.js uses that were not here. `at` and `fill` are
     // the ones it leans on hardest - 43 and 31 uses - because a typed-array
     // shim reaches for both.
@@ -326,54 +431,23 @@ void install_array(context & cx) {
     // `flat({})` and `flat(-Infinity)` are all depth 0. The old spelling tested
     // the argument COUNT for the default - so an explicit undefined flattened
     // nothing - and then coerced with the STATIC to_number, which answers NaN
-    // for an object and compares false against every bound.
+    // for an object and compares false against every bound. The length is
+    // read BEFORE the depth is coerced (steps 2 and 4), and the result is
+    // ArraySpeciesCreate(O, 0) (step 5).
     method(cx, array_proto, "flat", 0, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "flat")) { return out; }
-        const double depth = has_index(a, 0) ? integer_arg(c, a, 0) : 1.0;
+        const detail::unwind_watch watch{c};
         const double len = detail::array_like_length(c, self);
-        if (!detail::generic_walk_ok(c, len)) { return out; }
+        if (watch.threw()) { return out; }
+        double depth = has_index(a, 0) ? integer_arg(c, a, 0) : 1.0;
+        if (watch.threw()) { return out; }
+        if (depth < 0) { depth = 0; }
+        out = detail::array_species_create(c, self, 0);
+        if (out.is_undefined()) { return out; }
         const context::rooted keep(c, out);
-        auto * result = static_cast<array_object *>(out.as_heap());
-        // An explicit worklist rather than recursion: `flat(Infinity)` on a
-        // deep structure must not be bounded by the C++ stack.
-        //
-        // THE WORKLIST LIVES IN A ROOTED ARRAY, which is what reading through
-        // [[Get]] costs. A getter allocates, an allocation can collect, and a
-        // value sitting only in a std::vector<value> is in none of the
-        // collector's roots - the hazard `map` and `sort` document at length.
-        // `scratch` holds the pending VALUES and is rooted; the depths beside
-        // them are plain doubles with nothing to trace.
-        const value scratch = c.make_array();
-        const context::rooted keep_scratch(c, scratch);
-        auto & pending = static_cast<array_object *>(scratch.as_heap())->items;
-        std::vector<double> depths;
-        for (double k = len; k-- > 0;) {
-            if (!detail::has_element(c, self, k)) { continue; }
-            pending.push_back(detail::element_at(c, self, k));
-            depths.push_back(depth);
-        }
-        while (!pending.empty()) {
-            const value item = pending.back();
-            const double left = depths.back();
-            pending.pop_back();
-            depths.pop_back();
-            // ONLY A REAL Array IS FLATTENED - IsArray (7.2.2) and nothing
-            // else, so an array-LIKE element is one element however many
-            // indices it claims to have.
-            if (!item.is_array() || left <= 0) {
-                result->items.push_back(item);
-                continue;
-            }
-            const double inner = detail::array_like_length(c, item);
-            if (!detail::generic_walk_ok(c, inner)) { return out; }
-            for (double k = inner; k-- > 0;) {
-                if (!detail::has_element(c, item, k)) { continue; }
-                pending.push_back(detail::element_at(c, item, k));
-                depths.push_back(left - 1);
-            }
-        }
+        (void)flatten_into_array(c, out, self, len, depth, value::undefined(), value::undefined());
         return out;
     });
     // 23.1.3.14, whose depth is ALWAYS 1. Generic, it takes its `thisArg` - the
@@ -392,35 +466,10 @@ void install_array(context & cx) {
         if (watch.threw()) { return out; }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return out; }
-        const value this_arg = arg_at(a, 1);
-        if (!detail::generic_walk_ok(c, len)) { return out; }
         out = detail::array_species_create(c, self, 0); // step 5
         if (out.is_undefined()) { return out; }
         const context::rooted keep(c, out); // as `map` - see the note there
-        double n = 0;
-        for (double k = 0; k < len; k += 1.0) {
-            if (!detail::has_element(c, self, k)) { continue; }
-            const value args[3] = {detail::element_at(c, self, k), value::number(k), self};
-            value mapped = c.call(callback, args, this_arg);
-            if (!mapped.is_array()) {
-                if (!detail::create_element(c, out, n, mapped)) { return out; }
-                n += 1.0;
-                continue;
-            }
-            // THE MAPPED ARRAY IS A C++ LOCAL and, once the callback's frame
-            // has gone, the only reference to it there is - and reading it can
-            // run a getter, which can collect.
-            const context::rooted keep_mapped(c, mapped);
-            const double inner = detail::array_like_length(c, mapped);
-            if (!detail::generic_walk_ok(c, inner)) { return out; }
-            for (double j = 0; j < inner; j += 1.0) {
-                if (!detail::has_element(c, mapped, j)) { continue; }
-                if (!detail::create_element(c, out, n, detail::element_at(c, mapped, j))) {
-                    return out;
-                }
-                n += 1.0;
-            }
-        }
+        (void)flatten_into_array(c, out, self, len, 1.0, callback, arg_at(a, 1));
         return out;
     });
     method(cx, array_proto, "findLast", 1, [](context & c, std::span<value> a) {
@@ -450,7 +499,11 @@ void install_array(context & cx) {
     method(cx, array_proto, "push", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "push")) { return value::number(0); }
-        if (array_object * dense = detail::dense_array_this(self)) {
+        // ...unless the chain holds an index: each Set of a new index is then
+        // the prototype's to answer (a setter on Array.prototype[0]), which
+        // the generic walk asks and vector surgery would skip.
+        if (array_object * dense = detail::dense_array_this(self);
+            dense != nullptr && !array_chain_holds_indices(c, *dense)) {
             // FROZEN MEANS FROZEN, and it is a THROW here rather than a silent
             // drop: the Sets in 23.1.3.23 carry Throw=true, so this is a
             // TypeError in sloppy mode too - unlike a bare `a[0] = 1`, which
@@ -558,7 +611,8 @@ void install_array(context & cx) {
     method(cx, array_proto, "unshift", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "unshift")) { return value::number(0); }
-        if (array_object * dense = detail::dense_array_this(self)) {
+        if (array_object * dense = detail::dense_array_this(self);
+            dense != nullptr && !array_chain_holds_indices(c, *dense)) {
             if (!dense->extensible && (!a.empty() || !dense->elements_writable)) {
                 c.throw_error("TypeError", "Cannot add a property to a non-extensible array");
                 return value::number(static_cast<double>(dense->items.size()));
@@ -574,14 +628,17 @@ void install_array(context & cx) {
                 c.throw_error("TypeError", "Invalid array length");
                 return value::number(len);
             }
-            if (!detail::generic_walk_ok(c, len)) { return value::number(len); }
+            detail::generic_walk walk{c};
             for (double k = len; k > 0; k -= 1.0) {
+                if (!walk.step()) { return value::number(0); }
                 const double from = k - 1;
                 const double to = k + count - 1;
-                if (detail::has_element(c, self, from)) {
-                    if (!detail::put_element(c, self, to, detail::element_at(c, self, from))) {
-                        return value::number(0);
-                    }
+                const bool present = detail::has_element(c, self, from);
+                if (walk.threw()) { return value::number(0); }
+                if (present) {
+                    const value moved = detail::element_at(c, self, from);
+                    if (walk.threw()) { return value::number(0); }
+                    if (!detail::put_element(c, self, to, moved)) { return value::number(0); }
                 } else {
                     if (!detail::delete_element(c, self, to)) { return value::number(0); }
                 }
@@ -700,8 +757,11 @@ void install_array(context & cx) {
         // BOUNDED BY THE WORK, not by `length`. Step 15's shift runs from
         // actualStart to len-actualDeleteCount, so splicing one element out of
         // `{length: 4294967296}` at the very end is two operations and not four
-        // billion - which is what S15.4.4.12_A3_T1 asks for.
-        if (!detail::generic_walk_ok(c, skipped) || !detail::generic_walk_ok(c, len - start)) {
+        // billion - which is what S15.4.4.12_A3_T1 asks for - and one that
+        // inserts as many as it deletes shifts nothing at all, whatever the
+        // length (splice/clamps-length-to-integer-limit).
+        if (!detail::generic_walk_ok(c, skipped) ||
+            (inserted != skipped && !detail::generic_walk_ok(c, len - start - skipped))) {
             return removed;
         }
         if (out != nullptr) { out->items.clear(); } // ArrayCreate sized it; the copy fills it
@@ -764,7 +824,7 @@ void install_array(context & cx) {
         for (; k < len; k += 1.0) {
             if (detail::has_element(c, self, k) &&
                 detail::element_at(c, self, k).strict_equals(target)) {
-                return value::number(k);
+                return value::number(k + 0.0); // an index is never -0
             }
         }
         return value::number(-1);
@@ -784,7 +844,7 @@ void install_array(context & cx) {
         for (; k >= 0; k -= 1.0) {
             if (detail::has_element(c, self, k) &&
                 detail::element_at(c, self, k).strict_equals(target)) {
-                return value::number(k);
+                return value::number(k + 0.0); // an index is never -0
             }
         }
         return value::number(-1);
@@ -906,10 +966,11 @@ void install_array(context & cx) {
                 c.throw_error("TypeError", "Array.prototype.concat: length exceeds 2^53-1");
                 return false;
             }
-            if (!detail::generic_walk_ok(c, len)) { return false; }
+            detail::generic_walk walk{c};
             for (double k = 0; k < len; k += 1.0, n += 1.0) {
+                if (!walk.step()) { return false; }
                 const bool present = detail::has_element(c, item, k);
-                if (c.throw_pending()) { return false; }
+                if (walk.threw()) { return false; }
                 if (!present) {
                     if (result == nullptr) { continue; } // a species object: no property
                     // A HOLE STAYS A HOLE: the slot exists in `items` as a
@@ -923,7 +984,7 @@ void install_array(context & cx) {
                     continue;
                 }
                 const value element = detail::element_at(c, item, k);
-                if (c.throw_pending()) { return false; }
+                if (walk.threw()) { return false; }
                 const context::rooted keep_element(c, element);
                 if (!detail::create_element(c, out, n, element)) { return false; }
             }
@@ -947,22 +1008,29 @@ void install_array(context & cx) {
             std::ranges::reverse(dense->items);
             return self;
         }
-        if (!detail::mutable_receiver(c, self, "reverse")) { return self; }
+        detail::generic_walk walk{c};
         const double len = detail::array_like_length(c, self);
-        if (!detail::generic_walk_ok(c, len)) { return self; }
+        if (walk.threw()) { return self; }
+        // A String of one character or none has nothing to swap.
+        if (len > 1 && !detail::mutable_receiver(c, self, "reverse")) { return self; }
         const double middle = std::floor(len / 2);
         for (double lower = 0; lower < middle; lower += 1.0) {
+            if (!walk.step()) { return self; }
             const double upper = len - lower - 1;
             const bool lower_there = detail::has_element(c, self, lower);
+            if (walk.threw()) { return self; }
             const value lower_value =
                 lower_there ? detail::element_at(c, self, lower) : value::undefined();
+            if (walk.threw()) { return self; }
             // ROOTED ACROSS THE SECOND READ. A getter on the far end allocates,
             // an allocation can collect, and what the near end just answered is
             // by then held only by this C++ local.
             const context::rooted keep(c, lower_value);
             const bool upper_there = detail::has_element(c, self, upper);
+            if (walk.threw()) { return self; }
             const value upper_value =
                 upper_there ? detail::element_at(c, self, upper) : value::undefined();
+            if (walk.threw()) { return self; }
             if (lower_there && upper_there) {
                 if (!detail::put_element(c, self, lower, upper_value)) { return self; }
                 if (!detail::put_element(c, self, upper, lower_value)) { return self; }

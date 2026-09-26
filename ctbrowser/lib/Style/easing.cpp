@@ -127,18 +127,12 @@ using namespace easing_detail;
     // Identical endpoints are that value at every progress - `none` to
     // `none` stays `none` rather than becoming its expanded shape.
     if (trim(from, html_whitespace) == trim(to, html_whitespace)) {
-        return std::string{trim(from, html_whitespace)};
+        return serialized_shape(property, std::string{trim(from, html_whitespace)});
     }
     bool interpolable = true;
     std::string out = interpolate_pair(property, computed_shape(property, from, ctx),
                                        computed_shape(property, to, ctx), p, ctx, interpolable);
-    // A corner radius whose two halves came out equal is written once, as
-    // the computed serialiser writes a declared one.
-    if (property.starts_with("border-") && property.ends_with("-radius")) {
-        const std::vector<std::string_view> halves = split_top_level(out, html_whitespace);
-        if (halves.size() == 2 && halves[0] == halves[1]) { return std::string{halves[0]}; }
-    }
-    return out;
+    return serialized_shape(property, std::move(out));
 }
 
 [[nodiscard]] bool interpolable_text(std::string_view property, std::string_view from,
@@ -250,7 +244,7 @@ using namespace easing_detail;
         }
         return out;
     }
-    return add_pair(property, base, added, ctx);
+    return serialized_shape(property, add_pair(property, base, added, ctx));
 }
 
 } // namespace ctbrowser::style

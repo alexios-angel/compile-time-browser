@@ -337,7 +337,13 @@ compiler_impl::local * compiler_impl::find_local_entry(frame & f, std::string_vi
 }
 
 int compiler_impl::resolve_upvalue(std::size_t level, std::string_view name) {
-    if (level == 0) { return -1; }
+    if (level == 0) {
+        // A DIRECT EVAL'S PROGRAM: its top level is closed over the caller's
+        // bindings, which it holds as upvalues from the start (compile_program).
+        if (eval_outer_names_.empty()) { return -1; }
+        const auto it = frames_[0].upvalue_index.find(name);
+        return it == frames_[0].upvalue_index.end() ? -1 : static_cast<int>(it->second);
+    }
     frame & f = frames_[level];
     // Was a linear scan of upvalue_names, and it ran once per level per
     // identifier mention - 8.65% of a Babylon compile between this and its

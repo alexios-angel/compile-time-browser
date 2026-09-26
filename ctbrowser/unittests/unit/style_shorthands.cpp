@@ -110,13 +110,10 @@ void test_corner_and_axis_shorthands_expand() {
                      "a rem radius folds like any other length");
     }
     {
-        // The elliptical `a / b` form keeps the horizontal half and makes every
-        // corner circular. Bootstrap writes none; half an answer beats dropping
-        // the declaration, and it is a recorded known difference.
         fixture f;
         f.load("<div id=a></div>", "#a { border-radius: 10px / 20px }");
-        expect_value(f, f.find("div"), "border-top-left-radius", "10px",
-                     "the horizontal group is kept");
+        expect_value(f, f.find("div"), "border-top-left-radius", "10px 20px",
+                     "both axes of an elliptical corner survive expansion");
     }
     {
         // `gap` is ROW then COLUMN - the block axis first, which is the opposite
@@ -429,8 +426,7 @@ void test_native_and_cssom_expansion_contracts() {
               css::declaration_value(cssom_border, "border-image-source") == "none",
           "CSSOM retains its additional border-image reset");
     const auto radius = css::expand_cascaded_shorthand("border-radius", "1px 2px / 3px");
-    check(radius.size() == 4 && radius[0].second == "1px" && radius[3].second == "2px",
-          "the cascade still keeps only circular radii");
+    check(radius.empty(), "radius pairs require the owned CSSOM expansion path");
     check(css::expand_cascaded_shorthand("overflow", "inherit hidden").empty(),
           "invalid computed overflow remains refused");
 }

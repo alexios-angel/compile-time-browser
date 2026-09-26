@@ -23,7 +23,9 @@ inline constexpr std::array<std::string_view, 39> length_units{
 
 // The tail of the same list. Split only because the array above is at its
 // declared size; `is_length_unit` consults both, so the seam is invisible.
-inline constexpr std::array<std::string_view, 4> more_length_units{"pc", "px", "dvi", "dvb"};
+// The container query units are CSS Conditional 5 §4's.
+inline constexpr std::array<std::string_view, 10> more_length_units{
+    "pc", "px", "dvi", "dvb", "cqw", "cqh", "cqi", "cqb", "cqmin", "cqmax"};
 
 inline constexpr std::array<std::string_view, 4> angle_units{"deg", "grad", "rad", "turn"};
 
@@ -75,7 +77,16 @@ inline constexpr std::array<std::string_view, 6> performed_substitutions{
 // when the engine does. It costs a false NEGATIVE - a page asking about a
 // function the engine handles but this list has not caught up with - which makes
 // a test skip rather than lie.
-inline constexpr std::array<std::string_view, 41> value_functions{"cross-origin",
+//
+// `repeat()`, `minmax()` and `fit-content()` are grid.cpp's track grammar and,
+// for the last, the sizing properties' (declaration.cpp): both are parsed
+// whole, so a value calling them is one the engine keeps. The ten filter
+// functions are filter.cpp's and the basic shapes shapes.cpp's: parsed,
+// computed and interpolated whole.
+inline constexpr std::array<std::string_view, 66> value_functions{"cross-origin",
+                                                                  "repeat",
+                                                                  "minmax",
+                                                                  "fit-content",
                                                                   "integrity",
                                                                   "referrer-policy",
                                                                   "rgb",
@@ -87,8 +98,11 @@ inline constexpr std::array<std::string_view, 41> value_functions{"cross-origin"
                                                                   "url",
                                                                   "src",
                                                                   "linear-gradient",
+                                                                  "repeating-linear-gradient",
                                                                   "radial-gradient",
+                                                                  "repeating-radial-gradient",
                                                                   "conic-gradient",
+                                                                  "repeating-conic-gradient",
                                                                   "translate",
                                                                   "translatex",
                                                                   "translatey",
@@ -115,7 +129,26 @@ inline constexpr std::array<std::string_view, 41> value_functions{"cross-origin"
                                                                   "alpha",
                                                                   "contrast-color",
                                                                   "color-layers",
-                                                                  "device-cmyk"};
+                                                                  "device-cmyk",
+                                                                  "skewx",
+                                                                  "skewy",
+                                                                  "blur",
+                                                                  "brightness",
+                                                                  "contrast",
+                                                                  "drop-shadow",
+                                                                  "grayscale",
+                                                                  "hue-rotate",
+                                                                  "invert",
+                                                                  "opacity",
+                                                                  "saturate",
+                                                                  "sepia",
+                                                                  "circle",
+                                                                  "ellipse",
+                                                                  "inset",
+                                                                  "polygon",
+                                                                  "path",
+                                                                  "xywh",
+                                                                  "ray"};
 
 [[nodiscard]] bool is_length_unit(std::string_view unit);
 

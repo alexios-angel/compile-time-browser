@@ -273,6 +273,15 @@ public:
     // The (local, exported) pairs a top-level statement binds. Collected rather
     // than published in place, because the binding pass runs at entry and the
     // statement compiles later.
+    // The function or class node of a NAMED `export default` at `outer`, or -1.
+    [[nodiscard]] std::int32_t default_export_name(std::int32_t outer) const {
+        const vp::node & n = at(outer);
+        if (n.kind != vp::nk::export_decl || n.c != 1 || n.a < 0 || at(n.a).text.empty()) {
+            return -1;
+        }
+        const vp::nk kind = at(n.a).kind;
+        return kind == vp::nk::func_expr || kind == vp::nk::class_decl ? n.a : -1;
+    }
     void export_bindings(std::int32_t outer,
                          std::vector<std::pair<std::string, std::string>> & out);
 
@@ -897,6 +906,7 @@ public:
     // parameter or pattern element it initialises. Anything else is
     // compile_expr.
     void compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name);
+    void emit_call_target_error(std::int32_t call, std::uint16_t dst);
     // `yield* expr` - see the definition.
     void compile_yield_delegate(const vp::node & n, std::uint16_t dst);
     // The start of a catch clause in a generator - see the definition.
@@ -905,6 +915,9 @@ public:
     // A data property DEFINED on `target` through define_own_name.
     void emit_define_own(std::uint16_t target, std::string_view key, std::uint16_t v,
                          bool enumerable);
+    // The same with the key in a register - a computed one.
+    void emit_define_own_key(std::uint16_t target, std::uint16_t key, std::uint16_t v,
+                             bool enumerable);
     void emit_computed_accessor(std::uint16_t target, std::int32_t key, std::int32_t fn_node,
                                 bool setter);
     // An array pattern over the iterator protocol - see iterator_open_name.
@@ -988,6 +1001,25 @@ public:
     std::vector<std::string> param_scope_names_;
     // `eval(src)` inside parameter expressions, routed through param_eval_name.
     [[nodiscard]] bool compile_param_eval(const vp::node & n, std::uint16_t dst);
+    // A DIRECT EVAL, `eval(src)` in a function: routed through
+    // direct_eval_name with the cells of every binding in scope (see
+    // compile_direct_eval). A call whose callee is the plain name `eval`.
+    [[nodiscard]] bool is_direct_eval_call(const vp::node & n) const;
+    [[nodiscard]] bool compile_direct_eval(const vp::node & n, std::uint16_t dst);
+    // The enclosing function ticks of every direct eval, sorted - see tour.
+    std::vector<std::int32_t> eval_ticks_;
+    // COMPILING A DIRECT EVAL'S SOURCE: the caller's bindings, in the order
+    // the entry function's upvalues hold them, and whether the caller was
+    // strict. Empty for every other program.
+    std::vector<std::string> eval_outer_names_;
+    bool eval_outer_strict_ = false;
+    // THE TOP LEVEL IS A SCOPE, not the global one: a module's, and a STRICT
+    // eval's, whose `var`s and functions are its own (19.2.1.1 step 17: a new
+    // variable environment) - set by compile_program.
+    bool top_level_is_scope_ = false;
+    // A name source text can spell, so a direct eval can reach it - not a
+    // pattern parameter's empty one, nor a synthetic "@super:" slot.
+    [[nodiscard]] static bool eval_reachable(std::string_view name);
     std::size_t handler_depth_ = 0;
 };
 

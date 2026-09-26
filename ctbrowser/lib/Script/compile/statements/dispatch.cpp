@@ -55,6 +55,11 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             const std::uint16_t r = alloc_reg();
             compile_expr(n.a, r);
             proto().emit(instruction{op::cell_set, static_cast<std::uint16_t>(slot), r});
+            // A named default also initialises the binding its name makes
+            // (predeclare_locals).
+            if (const std::int32_t named = default_export_name(idx); named >= 0) {
+                emit_write(at(named).text, r);
+            }
             release_to(mark);
             break;
         }
@@ -109,7 +114,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         // The local path below boxes it and makes a fresh cell per
         // iteration, exactly as it already did inside a function. `var` is
         // function-scoped, so at any depth it is still the script's.
-        if (frames_.size() == 1 && !module_scope_ &&
+        if (frames_.size() == 1 && !top_level_is_scope_ &&
             (n.text == "var" || fn().scope_marks.size() <= 1)) {
             // NOT `declaring_` around the loop: an initialiser is an
             // expression, and `'use strict'; var a = b = 1;` must still refuse
@@ -142,6 +147,16 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                            decl.text == "Infinity") {
                     // `var undefined = 5;` PutValue on a non-writable global:
                     // dropped (see emit_plain_write).
+                } else if (const int up = resolve_upvalue(0, decl.text);
+                           up >= 0 && n.text == "var") {
+                    // A DIRECT EVAL'S `var` of a name its caller already binds
+                    // is that binding (19.2.1.3: the variable environment is
+                    // the caller's): the initialiser writes the caller's cell,
+                    // and `var x;` alone leaves it as it is.
+                    if (decl.a >= 0) {
+                        proto().emit(
+                            instruction{op::set_upvalue, static_cast<std::uint16_t>(up), r});
+                    }
                 } else {
                     const std::uint16_t name = name_operand(std::string{decl.text});
                     proto().emit(instruction::with_bx(op::set_global, r, name));

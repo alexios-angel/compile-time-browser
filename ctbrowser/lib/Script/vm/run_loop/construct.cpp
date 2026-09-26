@@ -78,7 +78,7 @@ void context::execute_construct(instruction in, call_frame * vm_frame,
                 registers_[new_base + i] = value::undefined();
             }
             if (frames_.size() > 512) {
-                raise("call stack exhausted");
+                throw_error("RangeError", "Maximum call stack size exceeded");
                 break;
             }
             // `new` ASKS FOR A COMPILED BODY TOO, and passes `constructing`,
@@ -104,6 +104,7 @@ void context::execute_construct(instruction in, call_frame * vm_frame,
             }
             pending_new_target_ = saved_new_target;
             call_frame fresh{&target, 0, new_base, in.a, in.b, fnobj, self, handlers_.size()};
+            fresh.realm = realm_for(fnobj);
             fresh.constructing = true;
             fresh.new_target = callee;
             frames_.push_back(fresh);

@@ -257,6 +257,20 @@ int main() {
     js_expect("JSON.parse('[1,2,3]', function (k, v) { return k === '1' ? undefined : v; })"
               ".length",
               "3");
+    // The reviver's third argument carries a primitive's exact source text
+    // (JSON.parse source text access), and none once the value was replaced.
+    js_expect("(function(){ var log = []; JSON.parse('[1.0, \"a\", {\"b\": true}]',"
+              " function (k, v, c) { log.push(k + ':' + c.source); return v; });"
+              " return log.join('|'); })()",
+              "0:1.0|1:\"a\"|b:true|2:undefined|:undefined");
+    js_expect("(function(){ var log = []; JSON.parse('[1, 2]', function (k, v, c) {"
+              " if (k === '0') { this[1] = 3; } log.push(k + ':' + c.source); return this[k]; });"
+              " return log.join('|'); })()",
+              "0:1|1:undefined|:undefined");
+    // A refused [[Delete]] is ignored, not a TypeError (step 2.b.iii.2.a).
+    js_expect("JSON.parse('[1,2]', function (k, v) { if (k === '0') { Object.defineProperty("
+              "this, '1', {configurable: false}); } return k === '1' ? undefined : v; })[1]",
+              "2");
 
     // --- JSON.rawJSON / JSON.isRawJSON (ES2025) ------------------------------
     js_expect("JSON.stringify({n: JSON.rawJSON('12345678901234567890')})",

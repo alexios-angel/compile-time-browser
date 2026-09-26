@@ -42,6 +42,7 @@ const std::string error_slot = std::string{script::private_key_prefix} + "xhr:er
 const std::string override_slot = std::string{script::private_key_prefix} + "xhr:override";
 const std::string headers_slot = std::string{script::private_key_prefix} + "xhr:headers";
 const std::string generation_slot = std::string{script::private_key_prefix} + "xhr:generation";
+const std::string document_slot = std::string{script::private_key_prefix} + "xhr:document";
 
 constexpr int unsent = 0;
 constexpr int opened = 1;
@@ -206,6 +207,7 @@ void dom_bindings::install_xhr(context & cx) {
         s->set(text_slot, c.string(""));
         s->set(bytes_slot, c.make_array());
         s->set(headers_slot, c.make_object());
+        (void)s->erase(document_slot);
         set_state(c, self, opened);
         return value::undefined();
     });
@@ -301,6 +303,39 @@ void dom_bindings::install_xhr(context & cx) {
     const auto getter = [&cx, proto](const char * name, script::native_fn get) {
         define_getter(cx, *proto, name, std::move(get));
     };
+    // THE DOCUMENT RESPONSE (XHR 3.6.9): the body parsed by its FINAL MIME
+    // type - the override when there is one, else the response's, else
+    // text/xml - as XML for an XML type, as HTML only when `responseType`
+    // is "document" (an empty one never parses HTML), and null for anything
+    // else. Parsed once and kept: `responseXML` is the same Document every
+    // time. Through the page's DOMParser, the one parser for a string.
+    const auto document_response = [](context & c, script::object_object & s,
+                                      bool html_allowed) -> value {
+        if (const value * held = s.find(document_slot); held != nullptr) { return *held; }
+        std::string type = string_slot(c, s, override_slot);
+        if (type.empty()) { type = string_slot(c, s, type_slot); }
+        std::string essence = ascii_lower_copy(
+            trim(std::string_view{type}.substr(0, std::min(type.find(';'), type.size())),
+                 html_whitespace));
+        if (essence.empty()) { essence = "text/xml"; }
+        const bool xml =
+            essence == "text/xml" || essence == "application/xml" || essence.ends_with("+xml");
+        const bool html = essence == "text/html";
+        value made = value::null();
+        if (xml || (html && html_allowed)) {
+            const value parser_ctor = c.global("DOMParser");
+            if (!parser_ctor.is_callable()) { return value::null(); }
+            const value parser = c.construct(parser_ctor, {});
+            const value parse = c.lookup_property(parser, "parseFromString");
+            if (!parse.is_callable()) { return value::null(); }
+            const value args[2] = {c.string(string_slot(c, s, text_slot)),
+                                   c.string(xml ? "application/xml" : "text/html")};
+            made = c.call(parse, args, parser);
+            if (c.throw_pending()) { return value::null(); }
+        }
+        s.define(document_slot, made, script::attr_none);
+        return made;
+    };
     getter("readyState", [](context & c, std::span<value>) {
         auto * s = object_of(c.current_this());
         return value::number(s == nullptr ? 0 : number_slot(*s, state_slot));
@@ -357,7 +392,7 @@ void dom_bindings::install_xhr(context & cx) {
         if (state != loading && state != done) { return c.string(""); }
         return c.string(string_slot(c, *s, text_slot));
     });
-    getter("response", [this](context & c, std::span<value>) {
+    getter("response", [this, document_response](context & c, std::span<value>) {
         auto * s = object_of(c.current_this());
         if (s == nullptr) { return value::undefined(); }
         const std::string kind = string_slot(c, *s, "responseType");
@@ -394,21 +429,9 @@ void dom_bindings::install_xhr(context & cx) {
         if (kind == "blob") {
             return make_blob(c, make_u8_array(c, raw), string_slot(c, *s, type_slot));
         }
-        // "document": parsed as HTML or XML by its type through the page's
-        // DOMParser, the one parser for a string.
-        const value parser_ctor = c.global("DOMParser");
-        if (!parser_ctor.is_callable()) { return value::null(); }
-        const value parser = c.construct(parser_ctor, {});
-        const value parse = c.lookup_property(parser, "parseFromString");
-        if (!parse.is_callable()) { return value::null(); }
-        std::string type = string_slot(c, *s, override_slot);
-        if (type.empty()) { type = string_slot(c, *s, type_slot); }
-        const bool xml = type.find("xml") != std::string::npos;
-        const value args[2] = {c.string(string_slot(c, *s, text_slot)),
-                               c.string(xml ? "application/xml" : "text/html")};
-        return c.call(parse, args, parser);
+        return document_response(c, *s, true);
     });
-    getter("responseXML", [this](context & c, std::span<value>) {
+    getter("responseXML", [this, document_response](context & c, std::span<value>) {
         auto * s = object_of(c.current_this());
         if (s == nullptr) { return value::null(); }
         const std::string kind = string_slot(c, *s, "responseType");
@@ -418,8 +441,9 @@ void dom_bindings::install_xhr(context & cx) {
             return value::undefined();
         }
         if (number_slot(*s, state_slot) != done) { return value::null(); }
-        const value response = c.lookup_property(c.current_this(), "response");
-        return kind.empty() ? value::null() : response;
+        const bool errored =
+            s->find(error_slot) != nullptr && context::truthy(*s->find(error_slot));
+        return errored ? value::null() : document_response(c, *s, !kind.empty());
     });
     define_getter(
         cx, *proto, "timeout",

@@ -196,6 +196,18 @@ private:
 
     static std::string quoted(std::string_view name) { return "`" + std::string{name} + "`"; }
 
+    // DOES THIS LEXEME START AN IdentifierName (12.7)? The parser takes
+    // whatever token follows a `.` or fills a catch parameter, so a string
+    // (its text keeps the quotes) or a number arrives there as a name. A
+    // private `#x`, an escape and any non-ASCII lead byte are let through:
+    // only the spelling is judged, and only where it cannot be a name.
+    [[nodiscard]] static bool identifier_start(std::string_view text) {
+        if (text.empty()) { return false; }
+        const auto c = static_cast<unsigned char>(text.front());
+        return ((c | 0x20) >= 'a' && (c | 0x20) <= 'z') || c == '$' || c == '_' || c == '\\' ||
+               c == '#' || c >= 0x80;
+    }
+
     // WAS THIS NAME SPELLED WITH AN ESCAPE? The lexer decodes `\u0062reak`
     // into a buffer of its own (vp::decoded_names), so a lexeme that does not
     // point into the source is one it decoded. 12.7.1: such a name may not
@@ -277,6 +289,7 @@ private:
 
     // --- defined in expressions.cpp -------------------------------------------------------
     [[nodiscard]] bool simple_target(std::int32_t idx) const;
+    [[nodiscard]] bool web_compat_call(std::int32_t idx) const;
     [[nodiscard]] static bool destructuring(nk kind);
     void check_assignment(std::int32_t idx);
     void check_update(std::int32_t idx);

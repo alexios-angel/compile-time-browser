@@ -52,6 +52,19 @@ template <typename T, typename Number, typename Basis>
         auto parsed = basis(parts[i++]);
         if (!parsed) { return std::nullopt; }
         out[2] = std::move(*parsed);
+        // `||`: the basis may come FIRST, the grow and shrink after it
+        // (Flexbox 1 §7.1) - `flex: 7% 8` is a basis of 7% and a grow of 8.
+        if (i == 1 && i < parts.size()) {
+            auto grow = number(parts[i]);
+            if (!grow) { return std::nullopt; }
+            out[0] = std::move(*grow);
+            if (++i < parts.size()) {
+                auto shrink = number(parts[i]);
+                if (!shrink) { return std::nullopt; }
+                out[1] = std::move(*shrink);
+                ++i;
+            }
+        }
     }
     return i == parts.size() ? std::optional{std::move(out)} : std::nullopt;
 }

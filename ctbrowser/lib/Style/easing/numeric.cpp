@@ -109,8 +109,8 @@ namespace ctbrowser::style::easing_detail {
 // is the bound at every progress past zero, which is what the corpus reads.
 // The bound is the fold's (lib/Style/css/calc/fold.cpp). Then an <integer>
 // rounds half up (§3.2), and the property's own range applies: the table's
-// floor at zero (one for positive integers) - only when no percentage is left to resolve, since
-// `calc(-50px + 40%)` cannot be judged before its basis exists - and
+// floor at zero (one for positive integers) for a number, length or pure
+// percentage. A mix like `calc(-50px + 40%)` still needs its basis. Then
 // font-weight's [1, 1000] (CSS Fonts 4 §2.2, random-in-animations).
 // ponytail: the one property with a range that is not "non-negative"; give
 // the table a range when a second one animates.
@@ -126,8 +126,12 @@ namespace ctbrowser::style::easing_detail {
     if (out.is_number && known != nullptr && known->kind == css::value_kind::integer) {
         out.px = std::floor(out.px + 0.5);
     }
-    if (known != nullptr && known->nonnegative && !out.has_percent) {
-        out.px = std::max(out.px, known->kind == css::value_kind::integer ? 1.0 : 0.0);
+    if (known != nullptr && known->nonnegative) {
+        if (!out.has_percent) {
+            out.px = std::max(out.px, known->kind == css::value_kind::integer ? 1.0 : 0.0);
+        } else if (out.px == 0) {
+            out.percent = std::max(out.percent, 0.0);
+        }
     }
     if (property == "font-weight") { out.px = std::clamp(out.px, 1.0, 1000.0); }
     return css::serialize_calc(out);
@@ -244,8 +248,32 @@ namespace ctbrowser::style::easing_detail {
     return property.starts_with("background-") || property.starts_with("mask-");
 }
 
+[[nodiscard]] bool image_sides(std::string_view property) {
+    return property == "border-image-outset" || property == "border-image-width" ||
+           property == "border-image-slice" || property == "mask-border-outset" ||
+           property == "mask-border-width" || property == "mask-border-slice";
+}
+
 [[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text,
                                          const css::length_context & ctx) {
+    if (image_sides(property)) {
+        const css::value_check checked = css::check_declaration(property, text, false);
+        if (!checked.valid) { return std::string{text}; }
+        auto parts = split_top_level(checked.serialized, html_whitespace);
+        const bool fill = !parts.empty() && parts.back() == "fill";
+        if (fill) { parts.pop_back(); }
+        if (parts.empty() || parts.size() > 4) { return std::string{text}; }
+        // CSS Backgrounds 3 §6: omitted sides follow the margin pattern.
+        if (parts.size() == 1) { parts.push_back(parts[0]); }
+        if (parts.size() == 2) { parts.push_back(parts[0]); }
+        if (parts.size() == 3) { parts.push_back(parts[1]); }
+        return std::string{parts[0]} + ' ' + std::string{parts[1]} + ' ' + std::string{parts[2]} +
+               ' ' + std::string{parts[3]} + (fill ? " fill" : "");
+    }
+    if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
+        std::string computed = css::computed_basic_shape(property, text, ctx);
+        return computed.empty() ? std::string{text} : computed;
+    }
     if (repeatable(property)) {
         // Keywords as percentages, a size's second `auto` written, so
         // `left 20px top 20px` and `20px 20px` are one shape.
@@ -313,6 +341,18 @@ namespace ctbrowser::style::easing_detail {
         if (ascii_iequals(text, "thick")) { return "5px"; }
     }
     return std::string{text};
+}
+
+[[nodiscard]] std::string serialized_shape(std::string_view property, std::string text) {
+    if (image_sides(property) || property == "hyphenate-limit-chars") {
+        const css::value_check checked = css::check_declaration(property, text, false);
+        if (checked.valid) { return checked.serialized; }
+    }
+    if (property.starts_with("border-") && property.ends_with("-radius")) {
+        const auto halves = split_top_level(text, html_whitespace);
+        if (halves.size() == 2 && halves[0] == halves[1]) { return std::string{halves[0]}; }
+    }
+    return text;
 }
 
 // The shadow a shorter list is padded with: transparent, every length zero,

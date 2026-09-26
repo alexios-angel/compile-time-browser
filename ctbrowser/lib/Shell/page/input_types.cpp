@@ -3,9 +3,11 @@
 // number or a month index a plain integer.
 
 #include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/shell/net/url.hpp>
 #include <ctbrowser/shell/page/input_types.hpp>
 #include <ctbrowser/style/css/properties.hpp>
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <optional>
@@ -38,8 +40,10 @@ using ctbrowser::trim;
     const auto digit = [&](std::size_t i) {
         return i < text.size() && text[i] >= '0' && text[i] <= '9';
     };
+    // "One or both of" digits and a fraction, in both forms: `.5` and `-.8`
+    // are valid floating-point numbers, not only parseable ones.
     if (!digit(at)) {
-        if (!lenient || !(at < text.size() && text[at] == '.' && digit(at + 1))) { return false; }
+        if (!(at < text.size() && text[at] == '.' && digit(at + 1))) { return false; }
         canonical += '0';
     }
     while (digit(at)) { canonical += text[at++]; }
@@ -238,8 +242,12 @@ constexpr double ms_per_day = 86400000.0;
 [[nodiscard]] static std::string two(long long n) {
     return (n < 10 ? "0" : "") + std::to_string(n);
 }
+// "" when `ms` is no date a valid date string can name: beyond ECMAScript's
+// time value range (8.64e15 ms either side of the epoch) or before year 1.
 [[nodiscard]] static std::string date_text(double ms) {
+    if (std::fabs(ms) > 8.64e15) { return {}; }
     const civil when = civil_from_days(static_cast<long long>(std::floor(ms / ms_per_day)));
+    if (when.year < 1) { return {}; }
     std::string year = std::to_string(when.year);
     while (year.size() < 4) { year.insert(0, "0"); }
     return year + "-" + two(when.month) + "-" + two(when.day);
@@ -306,7 +314,8 @@ constexpr double ms_per_day = 86400000.0;
     }
     if (type == "datetime-local") {
         const double day = std::floor(number / ms_per_day) * ms_per_day;
-        return date_text(number) + "T" + time_text(std::floor(number - day));
+        const std::string date = date_text(number);
+        return date.empty() ? date : date + "T" + time_text(std::floor(number - day));
     }
     return {};
 }
@@ -405,8 +414,24 @@ std::string_view value_mode_of(std::string_view type) {
     return "value";
 }
 
+std::string normalize_newlines(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] != '\r') {
+            out += text[i];
+            continue;
+        }
+        out += '\n';
+        if (i + 1 < text.size() && text[i + 1] == '\n') { ++i; }
+    }
+    return out;
+}
+
 std::string sanitize_value(std::string_view type, std::string value, std::string_view min,
-                           std::string_view max, std::string_view step) {
+                           std::string_view max, std::string_view step,
+                           std::string_view value_attribute, bool multiple, bool display_p3,
+                           bool alpha) {
     // "Strip newlines from the value" - the text, search, tel and password
     // states; url and email also "strip leading and trailing ASCII whitespace",
     // and a multiple email is each address so stripped, comma-joined.
@@ -423,9 +448,36 @@ std::string sanitize_value(std::string_view type, std::string value, std::string
     }
     if (type == "email") {
         strip_newlines(value);
-        // Without the `multiple` attribute's word here, one address; the
-        // caller that knows `multiple` splits the same way per address.
-        return std::string{trim(value, html_whitespace)};
+        // ONE ADDRESS, whitespace-trimmed; with `multiple` the value is split
+        // on commas and each piece trimmed, then joined with bare commas. An
+        // address whose domain is not ASCII has the domain converted to
+        // ASCII (the URL host parser's domain to ASCII: `exämle.com` is
+        // `xn--exmle-hra.com`), which is what makes it a valid e-mail
+        // address; a domain the host parser refuses stays as it was.
+        const auto one = [](std::string_view address) {
+            std::string out{trim(address, html_whitespace)};
+            const std::size_t at = out.rfind('@');
+            if (at == std::string::npos) { return out; }
+            const std::string_view domain = std::string_view{out}.substr(at + 1);
+            if (std::ranges::none_of(domain, [](char c) { return (c & 0x80) != 0; })) {
+                return out;
+            }
+            const auto parsed = parse_url("https://" + std::string{domain} + "/");
+            if (!parsed || !parsed->host || parsed->host->empty()) { return out; }
+            return out.substr(0, at + 1) + *parsed->host;
+        };
+        if (!multiple) { return one(value); }
+        std::string joined;
+        std::size_t start = 0;
+        while (true) {
+            const std::size_t comma = value.find(',', start);
+            if (start != 0) { joined += ','; }
+            joined += one(std::string_view{value}.substr(
+                start, comma == std::string::npos ? std::string::npos : comma - start));
+            if (comma == std::string::npos) { break; }
+            start = comma + 1;
+        }
+        return joined;
     }
     if (type == "number") {
         double parsed = 0;
@@ -445,16 +497,44 @@ std::string sanitize_value(std::string_view type, std::string value, std::string
         }
         if (number < low) { number = low; }
         if (high >= low && number > high) { number = high; }
-        (void)step;
+        // SUFFERING FROM A STEP MISMATCH (4.10.5.1.13): round to the nearest
+        // step-aligned number inside the bounds, the larger of two. The step
+        // base is the min attribute, else the value attribute, else zero
+        // (4.10.5.4); `step` parses by the lenient rules, "any" is no step.
+        double interval = 1;
+        if (ascii_lower_copy(step) == "any") {
+            interval = 0;
+        } else if (double given = 0; parse_float(step, given, true) && given > 0) {
+            interval = given;
+        }
+        double base = 0;
+        if (double held = 0; !min.empty() && parse_float(min, held, false)) {
+            base = held;
+        } else if (!value_attribute.empty() && parse_float(value_attribute, held, false)) {
+            base = held;
+        }
+        if (interval > 0) {
+            const double steps = (number - base) / interval;
+            if (std::fabs(steps - std::round(steps)) >= 1e-9 * std::max(1.0, std::fabs(steps))) {
+                const double down = base + std::floor(steps) * interval;
+                const double up = base + std::ceil(steps) * interval;
+                const bool up_fits = up >= low && (high < low || up <= high);
+                const bool down_fits = down >= low && (high < low || down <= high);
+                if (up_fits && (!down_fits || up - number <= number - down)) {
+                    number = up;
+                } else if (down_fits) {
+                    number = down;
+                }
+            }
+        }
         return type_number_to_text(type, number);
     }
     if (type == "color") {
         // HTML's "update a color well control color": the value parsed as a
         // CSS <color> (opaque black when it is not one) and serialised for
-        // the control's colour space. The `colorspace` and `alpha` attributes
-        // are not threaded through here yet, so this is the limited-sRGB,
-        // opaque form: `#rrggbb`.
-        return style::css::sanitize_color(value, false, false);
+        // the control's colour space - `#rrggbb` when it is limited sRGB
+        // without alpha, `color(srgb ...)` or `color(display-p3 ...)` else.
+        return style::css::sanitize_color(value, display_p3, alpha);
     }
     if (type == "date" || type == "month" || type == "week" || type == "time" ||
         type == "datetime-local") {
@@ -520,8 +600,9 @@ std::string autocomplete_idl_value(std::string_view attribute, bool has_attribut
     std::string out = field;
     if (kind == category::credential) {
         // `webauthn` names a credential type after a field of the other two
-        // categories, which then sets the remaining shape.
-        if (index == 0) { return {}; }
+        // categories, which then sets the remaining shape - or stands alone
+        // (step 15.2: the first token is "done", and the value is itself).
+        if (index == 0) { return out; }
         --index;
         const auto inner = category_of(tokens[index]);
         if (inner.first != category::normal && inner.first != category::contact) { return {}; }

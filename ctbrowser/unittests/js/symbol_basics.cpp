@@ -78,6 +78,8 @@ int main() {
     js_expect("Symbol.for(\"a\") === Symbol.for(\"b\")", "false");
     js_expect("typeof Symbol.keyFor", "function");
     js_expect("Symbol.keyFor(Symbol.for(\"k\"))", "k");
+    // A missing key is ToString(undefined).
+    js_expect("Symbol.for() === Symbol.for('undefined')", "true");
     js_expect("Symbol.keyFor(Symbol(\"k\"))", "undefined"); // never registered
     js_expect("typeof Symbol.prototype", "object");
 

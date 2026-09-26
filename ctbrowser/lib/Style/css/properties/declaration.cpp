@@ -53,11 +53,30 @@ namespace {
     // it parses. A SYNTAX error and a selector this engine cannot match are
     // different answers, and only the first is "not supported".
     if (ascii_istarts_with(body, "selector(") && body.back() == ')') {
-        atom_table atoms;
-        bool invalid = false;
-        const stylesheet parsed =
-            parse_selector_text(body.substr(9, body.size() - 10), atoms, invalid);
-        return !invalid && !parsed.selectors.empty();
+        return supports_selector(body.substr(9, body.size() - 10));
+    }
+    // `at-rule(<at-keyword-token>)`, `font-format(<ident>)` and
+    // `font-tech(<ident>)` (CSS Conditional 5 §6, CSS Fonts 4 §11.1): one
+    // token naming an at-rule, font format or font technology this engine
+    // reads. `@charset` is not an at-rule, and a string or a list is no
+    // answer at all.
+    for (const auto & [function, words] :
+         {std::pair<std::string_view, std::string_view>{
+              "at-rule(", "media supports import namespace font-face keyframes layer container "
+                          "scope counter-style page font-feature-values stylistic "
+                          "historical-forms styleset character-variant swash ornaments annotation "
+                          "property starting-style font-palette-values function"},
+          {"font-format(", "collection opentype truetype woff woff2"},
+          {"font-tech(", "features-opentype variations color-COLRv0 color-COLRv1"}}) {
+        if (!ascii_istarts_with(body, function) || body.back() != ')') { continue; }
+        const token_stream ts =
+            tokenize(body.substr(function.size(), body.size() - function.size() - 1));
+        const scan found = scan_tokens(ts);
+        if (found.significant.size() != 1) { return false; }
+        const css_token & t = ts.tokens[found.significant.front()];
+        const bool at_rule = function == "at-rule(";
+        if (t.type != (at_rule ? token_type::at_keyword : token_type::ident)) { return false; }
+        return has_keyword(words, at_rule ? ts.value_of(t) : ts.text_of(t));
     }
     const std::size_t colon = body.find(':');
     if (colon == std::string_view::npos) { return false; }
@@ -85,8 +104,12 @@ bool condition(std::string_view text, int depth) {
         const bool right = condition(body.substr(at + op.size()), depth + 1);
         return op == "and" ? (left && right) : (left || right);
     }
-    // `selector()` is a <supports-condition> of its own, parentheses or not.
-    if (ascii_istarts_with(body, "selector(")) { return leaf(body, depth); }
+    // `selector()` and its kin are <supports-condition>s of their own,
+    // parentheses or not.
+    if (ascii_istarts_with(body, "selector(") || ascii_istarts_with(body, "at-rule(") ||
+        ascii_istarts_with(body, "font-format(") || ascii_istarts_with(body, "font-tech(")) {
+        return leaf(body, depth);
+    }
     if (body.front() != '(' || body.back() != ')') { return false; }
     return leaf(body.substr(1, body.size() - 2), depth);
 }
@@ -128,8 +151,11 @@ bool condition(std::string_view text, int depth) {
 
 } // namespace
 
+// `revert-rule` is Cascade 5's newest, and the cascade rolls it back like the
+// other two (engine/cascade.cpp), so every property takes it.
 bool is_wide_keyword(std::string_view word) noexcept {
-    return ascii_iequals_any(word, {"inherit", "initial", "unset", "revert", "revert-layer"});
+    return ascii_iequals_any(
+        word, {"inherit", "initial", "unset", "revert", "revert-layer", "revert-rule"});
 }
 
 value_check check_declaration(std::string_view property, std::string_view value,
@@ -285,6 +311,17 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // property answers yes to it and the two orders are the same answer.
     if (!takes_percentage_of(p->kind) && math_uses_percentage(text)) { return {}; }
 
+    // THE GAP RULE LISTS (gaps.cpp): `10px, repeat(auto, thin)`, and the
+    // BASIC SHAPES of clip-path and shape-outside (shapes.cpp).
+    {
+        std::string serialized;
+        if (match_gap_list(property, text, serialized) ||
+            match_basic_shape(property, simplified, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
     // A `#` LIST IS THE PROPERTY'S OWN GRAMMAR, ONCE PER ITEM. Every longhand
     // of CSS Animations 1 and CSS Transitions 1 is a comma-separated list - one
     // value per animation, one per transitioned property - and this table has a
@@ -310,13 +347,29 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    if (ascii_iequals(property, "border-image") ||
+        ascii_iequals_any(property, {"border-image-source", "border-image-slice",
+                                     "border-image-width", "border-image-outset"})) {
+        std::string serialized;
+        if (!match_border_image(p->name, simplified, serialized)) { return {}; }
+        return yes(std::move(serialized));
+    }
+    // A MASK BORDER IS A BORDER IMAGE whose image is a mask (CSS Masking 1
+    // §8): the same four grammars, under other names and other initials.
+    if (ascii_iequals_any(property, {"mask-border-source", "mask-border-slice", "mask-border-width",
+                                     "mask-border-outset"})) {
+        std::string serialized;
+        const std::string as_border = "border-image-" + std::string{p->name.substr(12)};
+        if (!match_border_image(as_border, simplified, serialized)) { return {}; }
+        return yes(std::move(serialized));
+    }
+
     // AN `<image>` LIST IS FREEFORM WITH ITS GRADIENTS CANONICALISED
     // (image.cpp): `linear-gradient(in srgb, red, blue)` drops the default
     // method and `radial-gradient(at bottom right, ...)` writes `at right
     // bottom`; a list with no gradient in it keeps the author's bytes.
     if (p->kind == k::freeform &&
-        ascii_iequals_any(property, {"background-image", "mask-image", "border-image-source",
-                                     "list-style-image"})) {
+        ascii_iequals_any(property, {"background-image", "mask-image", "list-style-image"})) {
         std::string serialized;
         if (match_image_list(ts, found, serialized)) {
             if (serialized.empty()) { return {}; }
@@ -334,6 +387,12 @@ value_check check_declaration(std::string_view property, std::string_view value,
                                          "justify-items", "align-self", "justify-self"})) {
             return {};
         }
+    }
+
+    if (ascii_iequals(property, "background")) {
+        std::string serialized;
+        if (!match_background(simplified, serialized)) { return {}; }
+        return yes(std::move(serialized));
     }
 
     // THE BACKGROUND AND MASK LAYER LISTS (backgrounds.cpp).
@@ -389,6 +448,181 @@ value_check check_declaration(std::string_view property, std::string_view value,
             if (serialized.empty()) { return {}; }
             return yes(std::move(serialized));
         }
+    }
+
+    if (p->name.ends_with("-radius") &&
+        (p->name.starts_with("border-") || p->name.starts_with("-webkit-border-"))) {
+        std::string serialized;
+        if (!match_border_radius(simplified, p->shorthand, serialized)) { return {}; }
+        return yes(std::move(serialized));
+    }
+
+    // `auto | <length-percentage>{1,2}`, CSS Text Decoration 4 §2.7: how far
+    // a line starts and ends inside its text, the end defaulting to the start
+    // and written once when the two agree.
+    if (ascii_iequals(property, "text-decoration-inset")) {
+        std::vector<std::string_view> parts;
+        for (const std::string_view part : split_top_level(simplified, html_whitespace)) {
+            if (!trim(part, html_whitespace).empty()) { parts.push_back(part); }
+        }
+        if (parts.size() == 1 && ascii_iequals(trim(parts[0], html_whitespace), "auto")) {
+            return yes("auto");
+        }
+        if (parts.empty() || parts.size() > 2) { return {}; }
+        const property_syntax length{"", k::length_percentage, "", "", false, false};
+        std::string ends[2];
+        for (std::size_t i = 0; i < parts.size(); ++i) {
+            if (!typed_component(parts[i], length, ends[i])) { return {}; }
+        }
+        if (parts.size() == 1 || ends[0] == ends[1]) { return yes(std::move(ends[0])); }
+        return yes(ends[0] + " " + ends[1]);
+    }
+
+    // `<length-percentage> && hanging? && each-line?`, CSS Text 3 §8.1, the
+    // keywords after the length in that order whatever the author's.
+    if (ascii_iequals(property, "text-indent")) {
+        static const property_syntax length{"", k::length_percentage, "", "", false, false};
+        std::string indent;
+        bool hanging = false, each_line = false;
+        for (const std::string_view raw : split_top_level(simplified, html_whitespace)) {
+            const std::string_view part = trim(raw, html_whitespace);
+            if (part.empty()) { continue; }
+            if (ascii_iequals(part, "hanging") && !hanging) {
+                hanging = true;
+            } else if (ascii_iequals(part, "each-line") && !each_line) {
+                each_line = true;
+            } else if (!indent.empty() || !typed_component(part, length, indent)) {
+                return {};
+            }
+        }
+        if (indent.empty()) { return {}; }
+        return yes(indent + (hanging ? " hanging" : "") + (each_line ? " each-line" : ""));
+    }
+
+    // `<opacity-value>` (CSS Shapes 1 §5.1), whose percentage is written as
+    // the number it is: `50%` is `0.5`.
+    if (ascii_iequals(property, "shape-image-threshold") && found.significant.size() == 1 &&
+        ts.tokens[found.significant.front()].type == token_type::percentage) {
+        return yes(serialize_number(ts.tokens[found.significant.front()].number / 100));
+    }
+
+    // `[ clip | ellipsis | <string> | fade | <fade()> ]{1,2}`, CSS Overflow 4
+    // §6.1: one end, or the start and the end.
+    if (ascii_iequals(property, "text-overflow")) {
+        std::size_t count = 0;
+        int depth = 0;
+        for (const std::size_t i : found.significant) {
+            const css_token & t = ts.tokens[i];
+            const std::string_view word = ts.text_of(t);
+            if (depth == 0) {
+                const bool end = (t.type == token_type::ident &&
+                                  ascii_iequals_any(word, {"clip", "ellipsis", "fade"})) ||
+                                 t.type == token_type::string ||
+                                 (t.type == token_type::function && ascii_iequals(word, "fade("));
+                if (!end) { return {}; }
+                ++count;
+            }
+            if (t.type == token_type::function || t.type == token_type::open_paren) { ++depth; }
+            if (t.type == token_type::close_paren) { --depth; }
+        }
+        if (count == 0 || count > 2) { return {}; }
+        return yes(simplified);
+    }
+
+    // `[ first | last ] || <'alignment-baseline'> || <'baseline-shift'>`, CSS
+    // Inline 3 §4.4, written in that order with the defaults - `baseline`
+    // and a zero shift - left out, and `baseline` when that is all of it.
+    if (ascii_iequals(property, "vertical-align")) {
+        static constexpr std::string_view alignments =
+            "baseline text-bottom alphabetic ideographic middle central mathematical text-top "
+            "hanging";
+        static const property_syntax shift_syntax{
+            "", k::length_percentage, "sub super top center bottom", "", false, false};
+        std::string source, alignment, shift;
+        for (const std::string_view raw : split_top_level(simplified, html_whitespace)) {
+            const std::string_view part = trim(raw, html_whitespace);
+            if (part.empty()) { continue; }
+            if (source.empty() && ascii_iequals_any(part, {"first", "last"})) {
+                source = ascii_lower_copy(part);
+            } else if (alignment.empty() && has_keyword(alignments, part)) {
+                alignment = ascii_lower_copy(part);
+            } else if (!shift.empty() || !typed_component(part, shift_syntax, shift)) {
+                return {};
+            }
+        }
+        std::string out = source;
+        const auto add = [&out](std::string_view part) {
+            out += (out.empty() ? "" : " ") + std::string{part};
+        };
+        if (!alignment.empty() && alignment != "baseline") { add(alignment); }
+        if (!shift.empty() && shift != "0px") { add(shift); }
+        return yes(out.empty() ? std::string{"baseline"} : out);
+    }
+
+    // `<visual-box> || <length [0,∞]>`, CSS Overflow 4 §3.2: the box first,
+    // `padding-box` (the default) and a zero length after a box left out,
+    // and `0px` when that leaves nothing.
+    if (ascii_iequals(property, "overflow-clip-margin")) {
+        static const property_syntax length{"", k::length, "", "", false, true};
+        std::string box, margin;
+        for (const std::string_view raw : split_top_level(simplified, html_whitespace)) {
+            const std::string_view part = trim(raw, html_whitespace);
+            if (part.empty()) { continue; }
+            if (box.empty() &&
+                ascii_iequals_any(part, {"content-box", "padding-box", "border-box"})) {
+                box = ascii_lower_copy(part);
+            } else if (!margin.empty() || !typed_component(part, length, margin)) {
+                return {};
+            }
+        }
+        if (box.empty() && margin.empty()) { return {}; }
+        if (box == "padding-box") { box.clear(); }
+        if (!box.empty() && margin == "0px") { margin.clear(); }
+        if (box.empty() && margin.empty()) { return yes("0px"); }
+        return yes(box + (box.empty() || margin.empty() ? "" : " ") + margin);
+    }
+
+    // `[ auto | <integer> ]{1,3}`, CSS Text 4 §6.3: the word, and the least
+    // before and after a hyphen. An omitted `before` is `auto` and an omitted
+    // `after` is the `before`, so those are what the shortest form leaves out.
+    if (ascii_iequals(property, "hyphenate-limit-chars")) {
+        static const property_syntax integer{"", k::integer, "auto", "", false, false};
+        std::vector<std::string> parts;
+        for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+            if (trim(raw, html_whitespace).empty()) { continue; }
+            std::string one;
+            if (parts.size() == 3 || !typed_component(raw, integer, one)) { return {}; }
+            parts.push_back(std::move(one));
+        }
+        if (parts.empty()) { return {}; }
+        if (parts.size() == 3 && parts[2] == parts[1]) { parts.pop_back(); }
+        if (parts.size() == 2 && parts[1] == "auto") { parts.pop_back(); }
+        std::string out = parts[0];
+        for (std::size_t i = 1; i < parts.size(); ++i) { out += " " + parts[i]; }
+        return yes(std::move(out));
+    }
+
+    // `[ auto | <color> ]{1,2}`, CSS UI 4 §6.2.1: the caret's colour, and
+    // the second its colour while it animates.
+    if (ascii_iequals(property, "caret-color")) {
+        std::string out;
+        std::size_t count = 0;
+        for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+            const std::string_view part = trim(raw, html_whitespace);
+            if (part.empty()) { continue; }
+            if (++count > 2) { return {}; }
+            std::string one;
+            if (ascii_iequals(part, "auto")) {
+                one = "auto";
+            } else {
+                const value_check colour = check_declaration("text-decoration-color", part, false);
+                if (!colour.valid || is_wide_keyword(colour.serialized)) { return {}; }
+                one = colour.serialized;
+            }
+            out += (out.empty() ? "" : " ") + one;
+        }
+        if (count == 0) { return {}; }
+        return yes(std::move(out));
     }
 
     if (ascii_iequals(property, "columns")) {
@@ -473,6 +707,22 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    // `fit-content(<length-percentage [0,∞]>)`, CSS Sizing 3 §3.2: a sizing
+    // property that takes the `fit-content` keyword takes the function too,
+    // and its argument is that property's own <length-percentage> - never a
+    // keyword and never a calc-size().
+    if (p->kind == k::length_percentage && has_keyword(p->keywords, "fit-content") &&
+        ascii_istarts_with(text, "fit-content(") && text.back() == ')') {
+        // One typed component, so neither a keyword nor a nested function.
+        const std::string_view given = trim(text.substr(12, text.size() - 13), html_whitespace);
+        if (ascii_istarts_with(given, "calc-size(")) { return {}; }
+        property_syntax argument = *p;
+        argument.keywords = {};
+        std::string inner;
+        if (!typed_component(given, argument, inner)) { return {}; }
+        return yes("fit-content(" + inner + ")");
+    }
+
     // A calc-size() HAS A GRAMMAR OF ITS OWN, and only a sizing property takes
     // one (CSS Values 5 §calc-size): the basis is judged against the
     // property's keywords and the calculation is simplified with `size` in it.
@@ -509,15 +759,33 @@ bool supports_declaration(std::string_view property, std::string_view value) {
     // `allow_important` is true because `@supports (color: red !important)` is a
     // <declaration> and the priority does not change the answer.
     const value_check checked = check_declaration(property, value, true);
+    // A SHORTHAND IS SUPPORTED WHEN IT SPLITS. check_declaration takes a
+    // shorthand's text whole - the split is the declaration block's - so
+    // `margin: foo` passed here while `el.style.margin = 'foo'` stored
+    // nothing. The block's own split answers, on a scratch block.
+    if (checked.valid && !checked.substituted && !longhands_of(property).empty()) {
+        declaration_block scratch;
+        if (!set_declaration(scratch, property, checked.serialized, false)) { return false; }
+    }
     // ...AND A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT. `el.style`
     // still stores such a value - CSSOM says a page may - but a declaration
     // calling `attr()` or `random-item()` here really would be dropped by the
     // time anything rendered, and saying otherwise makes a test run and fail
-    // where it should have skipped.
-    return checked.valid && !checked.uses_unknown_function;
+    // where it should have skipped. A value with a `var()` in it is the
+    // exception, whatever else it calls: it is valid at parse time by
+    // definition (CSS Variables 1 §3), which is all the question asks.
+    return checked.valid && (checked.substituted || !checked.uses_unknown_function);
 }
 
 bool supports_condition(std::string_view text) {
+    // EOF CLOSES AN OPEN BLOCK (CSS Syntax 3 §5.4.9): `selector(a:hover` is
+    // `selector(a:hover)`.
+    const token_stream probe = tokenize(text);
+    if (const scan found = scan_tokens(probe); found.unclosed > 0) {
+        std::string closed{text};
+        closed.append(static_cast<std::size_t>(found.unclosed), ')');
+        return condition(closed, 0);
+    }
     return condition(text, 0);
 }
 

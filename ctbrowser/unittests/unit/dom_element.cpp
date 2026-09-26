@@ -60,6 +60,7 @@ void test_attribute_names_and_writes() {
     CHECK_EQ(writes.size(), 1u);
     if (!writes.empty()) {
         CHECK(writes.front().node == element && writes.front().name == pressed);
+        CHECK(writes.front().existed && !writes.front().removal);
     }
 
     for (const std::string_view name :
@@ -177,7 +178,10 @@ void test_attribute_toggle() {
     CHECK_EQ(doc.version(), before + 1);
     const auto writes = doc.take_writes();
     CHECK_EQ(writes.size(), 1u);
-    if (!writes.empty()) { CHECK(writes.front().name == disabled); }
+    if (!writes.empty()) {
+        CHECK(writes.front().name == disabled);
+        CHECK(!writes.front().existed && !writes.front().removal);
+    }
 
     CHECK(doc.set_attribute(element, disabled, "kept").has_value());
     (void)doc.take_writes();
@@ -192,8 +196,14 @@ void test_attribute_toggle() {
     CHECK(!result.present && result.update.value());
     CHECK(!doc.read().has_attribute(element, disabled));
     CHECK_EQ(doc.version(), before + 1);
-    // Removals are observed from the tree; write notes only record value writes.
-    CHECK(doc.take_writes().empty());
+    // A removal is noted too, as one: HTML's attribute change steps run for it
+    // (a <details> losing `open` queues its toggle).
+    const auto removed = doc.take_writes();
+    CHECK_EQ(removed.size(), 1u);
+    if (!removed.empty()) {
+        CHECK(removed.front().name == disabled);
+        CHECK(removed.front().removal && removed.front().existed);
+    }
     before = doc.version();
     result = toggle_element_attribute(doc, element, "disabled", false).value();
     CHECK(!result.present && !result.update.value());

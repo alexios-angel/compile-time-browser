@@ -19,6 +19,32 @@ namespace {
            kind == nk::do_stmt;
 }
 
+// The first character of the next token at or after `from`: white space, line
+// terminators and comments skipped. '\0' at the end of the source or inside
+// an unterminated comment.
+[[nodiscard]] char next_token_char(std::string_view source, std::size_t from) {
+    for (std::size_t i = from; i < source.size();) {
+        const char c = source[i];
+        if (c == ' ' || c == '\t' || c == '\v' || c == '\f' || c == '\n' || c == '\r') {
+            ++i;
+            continue;
+        }
+        if (c == '/' && i + 1 < source.size() && source[i + 1] == '/') {
+            i = source.find('\n', i);
+            if (i == std::string_view::npos) { return '\0'; }
+            continue;
+        }
+        if (c == '/' && i + 1 < source.size() && source[i + 1] == '*') {
+            const std::size_t end = source.find("*/", i + 2);
+            if (end == std::string_view::npos) { return '\0'; }
+            i = end + 2;
+            continue;
+        }
+        return c;
+    }
+    return '\0';
+}
+
 } // namespace
 
 // --- statements ------------------------------------------------------------
@@ -59,8 +85,48 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         return;
     }
 
-    case nk::expr_stmt: walk_expression(n.a); return;
-    case nk::throw_stmt: walk_expression(n.a); return;
+    case nk::expr_stmt:
+        // A STATEMENT THAT IS ONE RESERVED WORD - a `catch` or a `finally`
+        // with no `try` before it - is the parser's leniency in expression
+        // position reaching the top of a statement, where no valid program
+        // puts a keyword the statement parser did not take.
+        if (n.a >= 0 && at(n.a).kind == nk::ident && reserved_word(at(n.a).text)) {
+            report(quoted(at(n.a).text) + " cannot start a statement here", n.a);
+            return;
+        }
+        walk_expression(n.a);
+        return;
+    case nk::throw_stmt:
+        // 14.14: `throw [no LineTerminator here] Expression`. ASI cannot end
+        // a throw early, so `throw` then a line break is the SyntaxError -
+        // which the parser read as `throw` of the next line's expression.
+        // Judged only when the operand is a single token, whose lexeme IS
+        // where the expression starts (a binary node's is its operator).
+        if (const vp::node & operand = at(n.a);
+            operand.kind == nk::num || operand.kind == nk::str || operand.kind == nk::ident ||
+            operand.kind == nk::true_lit || operand.kind == nk::false_lit ||
+            operand.kind == nk::null_lit || operand.kind == nk::this_lit) {
+            if (const std::size_t where = offset_of(n.a); where != early_error::nowhere) {
+                // Back over the white space to the token before - which must be
+                // the `throw` itself, or nothing is concluded (`throw (\n x)`).
+                std::size_t i = where;
+                bool line_break = false;
+                while (i > 0 && (source_[i - 1] == ' ' || source_[i - 1] == '\t' ||
+                                 source_[i - 1] == '\n' || source_[i - 1] == '\r')) {
+                    line_break = line_break || source_[i - 1] == '\n' || source_[i - 1] == '\r';
+                    --i;
+                }
+                const auto word_char = [](char c) {
+                    return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_' || c == '$';
+                };
+                if (line_break && i >= 5 && source_.substr(i - 5, 5) == "throw" &&
+                    (i == 5 || !word_char(source_[i - 6]))) {
+                    report("a line break may not follow `throw`", n.a);
+                }
+            }
+        }
+        walk_expression(n.a);
+        return;
 
     case nk::return_stmt:
         // NOT CHECKED, AND THIS IS THE ONE DELIBERATE DEVIATION IN THIS
@@ -219,7 +285,17 @@ void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function) 
         // ctjs's parser has no ASI here and reads the declaration, so the
         // source is what has to be asked. `const` and `class` are reserved
         // words and get no such reading.
-        if (n.text == "let" && newline_follows(idx, n.text.size())) { return; }
+        //
+        // EXCEPT BEFORE `[`: an ExpressionStatement may not begin with the
+        // two tokens `let [` (14.5, its lookahead restriction), so
+        // `if (false) let \n [a] = 0;` is neither a declaration nor an
+        // expression here - it is the SyntaxError, newline or not.
+        if (n.text == "let" && newline_follows(idx, n.text.size())) {
+            if (next_token_char(source_, offset_of(idx) + n.text.size()) == '[') {
+                report("a statement cannot begin with `let [`", idx);
+            }
+            return;
+        }
         report("a `" + std::string{n.text} +
                    "` declaration cannot be the body of a statement; it needs a block",
                idx);
@@ -377,6 +453,9 @@ void checker::check_for_in_of(std::int32_t idx, std::vector<binding> & vars) {
         case nk::array_pattern:
         case nk::object_pattern: break;
         default:
+            // ...or a call in sloppy code, ~web-compat~ as an assignment's
+            // is: each iteration evaluates it and throws the ReferenceError.
+            if (web_compat_call(target.b)) { break; }
             report("the head of this `for` loop is not something a value can be assigned to",
                    target.b);
             break;
@@ -441,7 +520,15 @@ void checker::check_switch(std::int32_t idx, std::vector<binding> & vars) {
     const vp::node & n = at(idx);
     walk_expression(n.a);
     std::vector<std::int32_t> body;
+    bool has_default = false;
     for (const std::int32_t clause : kids(n)) {
+        // 14.12.1: CaseBlock's grammar admits ONE DefaultClause, between the
+        // two runs of CaseClauses. `default` is `d == 1` (ctjs starts `d` at
+        // -1), or a clause with no test - as compile_switch reads it.
+        if (at(clause).d == 1 || at(clause).a < 0) {
+            if (has_default) { report("a `switch` may have only one `default` clause", clause); }
+            has_default = true;
+        }
         walk_expression(at(clause).a);
         for (const std::int32_t s : kids(at(clause))) {
             // A `using` is not a CaseClause's statement (14.3.2's grammar
@@ -469,6 +556,11 @@ void checker::check_try(std::int32_t idx, std::vector<binding> & vars) {
         const vp::node & clause = at(n.b);
         std::vector<binding> parameter;
         if (!clause.text.empty()) {
+            // 14.15: a CatchParameter is a BindingIdentifier or a pattern;
+            // the parser takes any token there, `catch ("22")` included.
+            if (clause.text.starts_with('#') || !identifier_start(clause.text)) {
+                report("a catch parameter must be a name or a pattern", n.b);
+            }
             parameter.push_back(binding{clause.text, binding_kind::let_, n.b});
             check_strict_binding(clause.text, n.b);
         } else if (clause.b >= 0) { // `catch ({message})`: a pattern's names

@@ -11,6 +11,251 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Background shorthand and typed position grammar — 2026-09-18
+
+Full `css/` replay at `fd54d8b1`: **1,647/2,926 runnable files PASS,
+71,205 subtests PASS**. Against `bd840fed`: **+7 files and
++70 passing subtests, zero passing files or subtests lost**. Same WPT
+`3f6b09ae`, devbox, four workers, 4 GB cap and deterministic GL driver;
+213.9 seconds.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-backgrounds` | 91 / 94 | 5,837 / 5,892 |
+| `css/css-variables` | 27 / 31 | 436 / 451 |
+
+Background layers now expand into their longhands in CSSOM and the cascade.
+Omitted values reset, colors occur only in the final layer, and size slashes
+must immediately follow positions. Serialization omits initial components
+and retains clip/origin combinations. Calculated sizes retain their range
+through substitution and inheritance. Position math must fit the position
+grammar; an image or color function cannot stand in for a length.
+Substituted CSS-wide custom-property keywords now use their own cascade
+position, including `revert-layer`, before other properties consume them.
+An invalid shorthand resets every longhand. Expansion refuses unsupported
+image functions; this restores the attr-security case without claiming
+`image-set()` or complete attribute-taint support. Guaranteed-invalid custom
+properties serialize as empty strings instead of exposing an internal sentinel.
+
+Fresh backgrounds measured **91 -> 94 files PASS** and
+**5,837 -> 5,892 subtests PASS**, with no losses. The computed, invalid and
+shorthand-serialization files now pass. Background-valid retains inconsistent
+transparent-color spelling assertions; no special-case spelling was added.
+The browser gate passed **216/216** (93.67 seconds), excluding
+compiler tests; formatting passed. Full statuses and evidence: `wpt.md` and
+`/tmp/ctbrowser29/`. No WPT or test262 expectation files changed.
+
+Next: computed three-component positions, logical axis keywords, relative
+image URLs and container-size layout integration. Runtime measurements are
+recorded separately in `test262.md`.
+
+## Computed images and String coercion errors — 2026-09-18
+
+Full CSS at `bd840fed`: **1,640/2,926 runnable files PASS,
+71,135 subtests PASS**; **+3 files and +31 subtests** since
+`ad6f9147`, with zero passing file or subtest losses. The browser gate passed
+**216/216** (70.14 seconds), excluding compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-backgrounds` | 90 / 91 | 5,833 / 5,837 |
+| `css/css-color` | 46 / 46 | 12,050 / 12,070 |
+| `css/css-lists` | 9 / 9 | 362 / 365 |
+| `css/css-masking` | 23 / 24 | 1,322 / 1,325 |
+| `css/css-values` | 176 / 177 | 7,677 / 7,678 |
+
+Radial radii clamp negative calculated lengths and percentages after the
+shared math fold. Substituted negative literals remain invalid, including
+beside unresolved calculations. Light/dark images use the element's color
+scheme, retain nested color context and compute selected `none` values to
+transparent images. Color functions remain stops when parsing a gradient
+header; quoted URLs use the shared serializer.
+
+Fresh backgrounds measured **90 -> 91 files PASS** and
+**5,833 -> 5,837 subtests PASS**, with no losses. The background-image
+computed-value file now passes. The merged runtime also fixes String static
+coercion errors; its separate measured gain is in `test262.md`.
+Full statuses and evidence: `wpt.md` and `/tmp/ctbrowser28/`.
+No expectations changed.
+
+Next: background shorthand expansion (`background: none` leaves longhands
+empty), relative image URLs and the container-size layout handoff.
+
+## Computed layer sizes, cross-fade grammar and URL escapes — 2026-09-18
+
+Full CSS at `ad6f9147`: **1,637/2,926 runnable files PASS,
+71,104 subtests PASS**; **+4 files and +38 subtests** since `c7332149`,
+with zero passing file or subtest losses. The browser gate passed
+**216/216** (67.07 seconds), excluding compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-backgrounds` | 87 / 90 | 5,815 / 5,833 |
+| `css/css-lists` | 9 / 9 | 344 / 362 |
+| `css/css-masking` | 22 / 23 | 1,320 / 1,322 |
+| `css/css-values` | 176 / 176 | 7,677 / 7,677 |
+
+Background and mask sizes resolve each layer before inheritance and clamp
+negative calculated lengths and pure percentages. Substituted negative
+literals remain invalid beside unresolved math. Random ordinals, finite
+bounds and unresolved length/percentage mixes are preserved.
+
+Cross-fade accepts percentages inside nested images and rejects malformed
+items. Unquoted URL tokens remain images, including color-like URL bodies
+and escaped characters. The URL scanner consumes complete hexadecimal
+escapes with their optional terminating whitespace.
+
+Fresh backgrounds measured **87 -> 90 files PASS** and
+**5,815 -> 5,833 subtests PASS**, with no losses. Background-image valid and
+invalid parsing files and background-size computed values now pass. Added
+regressions failed before their fixes. Full status and evidence: `wpt.md`
+and `/tmp/ctbrowser27/`. No expectations changed; test262 was not replayed.
+
+The unchanged css-values passing counts hide a status change: three
+`ch-empty-pseudo-recalc-on-font-load` subtests changed from TIMEOUT to FAIL.
+
+Next: radial-gradient calculated radii still reach the image parser as
+negative literals. Relative image URLs, gradient precision and the
+container-size layout handoff remain separate failures.
+
+## Border-image sides, layer repetition and size ranges — 2026-09-18
+
+Full CSS at `c7332149`: **1,633/2,926 runnable files PASS,
+71,066 subtests PASS**; **+8 files and +254 subtests** since `a7d76d12`,
+with zero passing file or subtest losses. The browser gate passed
+**216/216** (66.72 seconds), excluding compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-backgrounds` | 80 / 87 | 5,589 / 5,815 |
+| `css/css-masking` | 21 / 22 | 1,292 / 1,320 |
+
+Border-image side lists expand before composition and compress afterward,
+including `fill`. Repeatable layer lists cycle over their original lengths
+when expanded to a common length. Background and mask animation sizes clamp
+negative lengths and pure percentages through their property range metadata.
+Unresolved length/percentage mixes retain both terms.
+
+Fresh focused backgrounds measured **80 -> 87 files PASS** and
+**5,589 -> 5,815 subtests PASS**, with no losses. The border-image composition
+and background-position interpolation files now pass. Each regression failed
+before its fix. Full status and evidence: `wpt.md` and `/tmp/ctbrowser26/`.
+No expectations changed; test262 was not replayed.
+
+Next: static `background-size` calculations can still become negative after
+early math folding. The gradient precision and relative URL failures remain;
+container units still need the layout/style handoff described below.
+
+## Animation ranges, addition and repeating gradients — 2026-09-18
+
+Full CSS at `a7d76d12`: **1,625/2,926 runnable files PASS, 70,812 subtests PASS**;
+**+4 files and +185 subtests** since `22ff781c`, with zero passing
+file or subtest losses. The browser gate passed **216/216** (66.47 seconds),
+excluding compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-backgrounds` | 77 / 80 | 5,480 / 5,589 |
+| `css/css-flexbox` | 29 / 30 | 955 / 959 |
+| `css/css-grid` | 25 / 25 | 1,805 / 1,869 |
+| `css/css-masking` | 21 / 21 | 1,290 / 1,292 |
+| `css/css-size-adjust` | 2 / 2 | 197 / 201 |
+| `css/motion` | 13 / 13 | 1,641 / 1,643 |
+
+Nonnegative pure percentages now clamp after animation arithmetic. Equal
+numeric components now add in lists, preserving equal keywords. Repeating
+linear, radial and conic gradients now report their existing support through
+`CSS.supports()`. Backgrounds gains the slice/width interpolation files and
+background-size composition; its focused run gains **109 passing subtests**.
+
+Next: the border-image outset, slice and width composition files each retain
+30 failing subtests, including unexpanded lists and uncompressed zero values.
+Container-relative slice/outset calculations still use viewport dimensions:
+layout size containment and the browser's container-size callback handoff are
+missing. The diagnosis is preserved without a source workaround.
+Full status and evidence: `wpt.md` and `/tmp/ctbrowser25/`.
+No expectations changed; test262 was not replayed.
+
+## Border-image grammar and computed ranges — 2026-09-18
+
+Full CSS at `22ff781c`: **1,621/2,926 files PASS, 70,627 subtests PASS**;
+**+14 files and +209 subtests** since `47d281a0`, with zero passing file or
+subtest losses. The browser gate passed **216/216** (69.42 seconds), excluding
+compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-align` | 51 / 53 | 1,309 / 1,313 |
+| `css/css-backgrounds` | 66 / 77 | 5,319 / 5,480 |
+| `css/css-box` | 32 / 32 | 877 / 878 |
+| `css/css-flexbox` | 29 / 29 | 952 / 955 |
+| `css/css-fonts` | 53 / 54 | 3,090 / 3,130 |
+
+Border-image now validates its numeric components and single image source,
+expands all longhands, serializes slash groups and resets omitted values.
+Computed border widths clamp after expansion. Image components resolve their
+lengths and clamp independently before inheritance, including values supplied
+through variables. Repeated computed values use the existing CSSOM serializer.
+The shared final clamp also corrects gaps, padding, flex components and font sizes.
+
+Next: `border-image-slice-interpolation` still has 24 failing subtests and
+`border-image-width-interpolation` four, including unclamped negative
+percentages. Image slice/outset computed-value files each retain two failures
+using container-relative units. Additive image composition remains separate.
+Full status and evidence: `wpt.md` and `/tmp/ctbrowser24/`.
+No expectations changed; test262 was not replayed.
+
+## Border-radius grammar and computed values — 2026-09-18
+
+Full CSS at `47d281a0`: **1,607/2,926 files PASS, 70,418 subtests PASS**;
+**+5 files and +37 subtests** since `92fda299`, with zero passing file or
+subtest losses. The browser gate passed **216/216** (68.82 seconds), excluding
+compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-backgrounds` | 61 / 66 | 5,282 / 5,319 |
+
+Radius shorthand parsing now validates both axes, expands four corner pairs
+and compresses repeated values. WebKit aliases share the same declarations.
+The cascade retains vertical radii and computes each component before
+inheritance; radius animation results respect the nonnegative range.
+The computed, invalid, valid, WebKit-valid and interpolation files all pass.
+All other CSS modules match the preceding measurement.
+
+Next: border-image grammar and shorthand expansion. Its invalid-value file
+has eleven failing subtests; the shorthand file has twenty-one. Negative
+computed widths remain too: `border-width-computed` has one failing subtest,
+`border-image-width-computed` one and `border-image-outset-computed` three.
+Full status and evidence: `wpt.md` and `/tmp/ctbrowser23/`.
+No expectations changed; test262 was not replayed.
+
+## Column-rule widths and layout coordinates — 2026-09-18
+
+Full CSS at `92fda299`: **1,602/2,926 files PASS, 70,381 subtests PASS**;
+**+3 files and +6 subtests** since `7cfe95b5`, with zero passing file or
+subtest losses. The browser gate passed **216/216** (66.98 seconds), excluding
+compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-multicol` | 34 / 36 | 1,456 / 1,460 |
+| `css/css-gaps` | 14 / 14 | 362 / 363 |
+| `css/cssom-view` | 78 / 79 | 1,141 / 1,142 |
+
+Column-rule width keywords now compute to pixels before shorthand folding,
+including the initial value and rules with `none` or `hidden` styles. Image
+coordinates and offset metrics subtract accumulated layout translations;
+their regression also covers percentage translations, scrolling and missing
+boxes. All other CSS modules match the preceding measurement.
+
+Next: border-radius has six failing computed-value subtests, eleven invalid
+value subtests and three valid serialization subtests. The first failures
+lose the vertical radii in `5em / 1px 2% 3px 4%`, accept `auto`, and fail to
+compress repeated vertical radii. Multicol's ten remaining subtest failures
+are in its three pseudo-selector files. Full status and evidence: `wpt.md`
+and `/tmp/ctbrowser22/`. No expectations changed; test262 was not replayed.
+
 ## Column-wrap and transformed geometry — 2026-09-18
 
 Full CSS at `7cfe95b5`: **1,599/2,926 files PASS, 70,375 subtests PASS**;

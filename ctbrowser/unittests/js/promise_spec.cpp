@@ -33,6 +33,15 @@ int main() {
                       "Promise.resolve().then(() => log.push(1)).then(() => log.push(2))"
                       ".then(() => log.push(3)).then(() => { result = log.join(''); });",
                       "123x");
+    // An async function RESUMED after an await that returns a PENDING
+    // promise adopts it: it settles with that promise's value, after it. It
+    // fulfilled with undefined at once (select-event.html).
+    expect_after_turn("var result = ''; var log = []; var go;"
+                      "var p = new Promise(r => { go = r; });"
+                      "(async () => { await null; return p; })().then(v => {"
+                      " log.push('f:' + v); result = log.join(','); });"
+                      "Promise.resolve().then(() => 0).then(() => { log.push('go'); go('P'); });",
+                      "go,f:P");
     // 27.7.5.3 Await: PromiseResolve(%Promise%, v) - a thenable that is not
     // a promise is adopted through its `then`, on its own tick, so a thenable
     // that rejects throws at the await, and one that resolves hands its

@@ -403,7 +403,9 @@ void dom_bindings::install_range(context & cx) {
             while (!at.none() && !inclusive_ancestor(at, end)) { at = parent_of(at); }
             return at.none() ? value::null() : to_value(c, at);
         });
-    method("cloneRange", [proto_value, store_points](context & c, std::span<value>) {
+    // A NEW LIVE RANGE, registered like createRange's: the clone follows the
+    // tree's edits from then on, and it is a Range the selection accepts.
+    method("cloneRange", [this, proto_value, store_points](context & c, std::span<value>) {
         script::object_object * self = self_object(c);
         if (self == nullptr) { return value::undefined(); }
         auto * made = c.allocate<script::object_object>();
@@ -411,6 +413,7 @@ void dom_bindings::install_range(context & cx) {
         store_points(*made, slot(self, start_node_slot),
                      context::to_number(slot(self, start_offset_slot)), slot(self, end_node_slot),
                      context::to_number(slot(self, end_offset_slot)));
+        register_live_range(value::object(made));
         return value::object(made);
     });
     method("detach", [](context &, std::span<value>) { return value::undefined(); });
@@ -808,26 +811,34 @@ void dom_bindings::install_range(context & cx) {
         if (is_text(e.node)) { out += substring(c, e.node, 0, e.offset); }
         return c.string(out);
     });
-    // DOM Parsing 3.3, `createContextualFragment(markup)`: the markup parsed
-    // as the children of an element like the range's start node's element -
-    // the node itself, its parent for text and comments, `body` for a
-    // document or fragment - handed back as a DocumentFragment.
+    // HTML 8.5 `createContextualFragment(markup)`: the markup parsed as the
+    // children of an element like the range's start node's element - the node
+    // itself, the parent ELEMENT of a Text or Comment, and a new `body` when
+    // there is none or it is the <html> - handed back as a DocumentFragment
+    // whose scripts are NOT marked already started, so each runs once the
+    // fragment is inserted into the document (and not before).
     // ponytail: the parse is innerHTML's, in body context; a `<tr>` in a
     // table context loses its row the way innerHTML on a <div> would.
     method("createContextualFragment", [start_of, type_of, parent_of, call_on](context & c,
                                                                                std::span<value> a) {
         script::object_object * self = self_object(c);
         if (self == nullptr) { return value::undefined(); }
-        const std::string markup = arg_string(c, a, 0);
-        spot node = start_of(c, self).node;
-        while (!node.none() && !node.is_attr() && type_of(node) != type_element &&
-               type_of(node) != type_document && type_of(node) != type_fragment) {
-            node = parent_of(node);
+        if (a.empty()) {
+            c.throw_error("TypeError", "Failed to execute 'createContextualFragment' on 'Range': "
+                                       "1 argument required.");
+            return value::undefined();
         }
-        if (node.none() || node.is_attr()) { return value::null(); }
-        const spot document_node{node.owner, node.owner->doc_->document_node()};
+        const std::string markup = arg_string(c, a, 0);
+        const spot start = start_of(c, self).node;
+        if (start.none() || start.is_attr()) { return value::null(); }
+        spot node = start;
+        const unsigned start_type = type_of(start);
+        if (start_type == type_text || start_type == type_cdata || start_type == type_comment) {
+            node = parent_of(start);
+        }
+        const spot document_node{start.owner, start.owner->doc_->document_node()};
         std::string tag = "body";
-        if (type_of(node) == type_element) {
+        if (!node.none() && !node.is_attr() && type_of(node) == type_element) {
             const auto txn = node.owner->doc_->read();
             tag = std::string{txn.local_name(node.id)};
             if (txn.element_ns(node.id) != node_ns::html || tag == "html") { tag = "body"; }
@@ -848,7 +859,9 @@ void dom_bindings::install_range(context & cx) {
         // HTML `<html>`, `<head>` and `<body>` a page wraps its markup
         // in are unwrapped - their children stand in their place
         // (createContextualFragment-xhtml.xhtml, what every browser does).
-        if (node.owner->doc_->xml()) {
+        // THE HTML ONES: a selector matches `html` in any namespace, and an
+        // <html> in another vocabulary is an ordinary element that stays.
+        if (start.owner->doc_->xml()) {
             const value query = c.lookup_property(fragment, "querySelectorAll");
             const value selector = c.string("html, head, body");
             const value wrappers =
@@ -860,7 +873,10 @@ void dom_bindings::install_range(context & cx) {
             for (double i = count; i-- > 0;) {
                 const value wrapper =
                     c.lookup_property(wrappers, std::to_string(static_cast<std::size_t>(i)));
-                if (!wrapper.is_object_like()) { continue; }
+                if (!wrapper.is_object_like() ||
+                    c.to_string(c.lookup_property(wrapper, "namespaceURI")) != xhtml_namespace) {
+                    continue;
+                }
                 const value parent = c.lookup_property(wrapper, "parentNode");
                 const value insert = c.lookup_property(parent, "insertBefore");
                 if (!insert.is_callable()) { continue; }
@@ -874,6 +890,26 @@ void dom_bindings::install_range(context & cx) {
                 const value remove = c.lookup_property(wrapper, "remove");
                 if (remove.is_callable()) { (void)c.call(remove, {}, wrapper); }
             }
+        }
+        // "Unmark all scripts in fragment node as already started": each is
+        // an unstarted script now, run by the insertion that connects it.
+        if (const node_id held = start.owner->handle_of(fragment)) {
+            std::vector<node_id> scripts;
+            {
+                const auto txn = start.owner->doc_->read();
+                const auto walk = [&](auto && walk_self, node_id at) -> void {
+                    for (const node_id child : txn.children(at)) {
+                        const node_ns ns = txn.element_ns(child);
+                        if (txn.tag(child) && (ns == node_ns::html || ns == node_ns::svg) &&
+                            txn.local_name(child) == "script") {
+                            scripts.push_back(child);
+                        }
+                        walk_self(walk_self, child);
+                    }
+                };
+                walk(walk, held);
+            }
+            for (const node_id script : scripts) { start.owner->note_unstarted_script(script); }
         }
         return fragment;
     });

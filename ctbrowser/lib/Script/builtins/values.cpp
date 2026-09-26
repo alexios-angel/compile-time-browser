@@ -522,8 +522,11 @@ void install_number(context & cx) {
         return true;
     };
     method(cx, number_proto, "toFixed", 1, [refuse_digits](context & c, std::span<value> a) {
+        const detail::unwind_watch watch{c};
         const double self = detail::this_number_value(c, "Number.prototype.toFixed");
+        if (watch.threw()) { return c.string(""); }
         const double asked = integer_arg(c, a, 0);
+        if (watch.threw()) { return c.string(""); } // a valueOf or a Symbol threw
         if (refuse_digits(c, "toFixed", asked, 0, 100)) { return c.string(""); }
         const auto digits = static_cast<int>(asked);
         // NOT snprintf("%.*f"): it is locale-dependent, it prints a thousand
@@ -590,7 +593,9 @@ void install_number(context & cx) {
         return value::number(detail::this_number_value(c, "Number.prototype.valueOf"));
     });
     method(cx, number_proto, "toExponential", 1, [refuse_digits](context & c, std::span<value> a) {
+        const detail::unwind_watch watch{c};
         const double v = detail::this_number_value(c, "Number.prototype.toExponential");
+        if (watch.threw()) { return c.string(""); }
         // NO ARGUMENT IS NOT SIX. The specification asks for as many digits as
         // uniquely specify the value, so `(5).toExponential()` is "5e+0" and
         // not "5.000000e+0"; -1 is how number_to_exponential is told that.
@@ -599,12 +604,15 @@ void install_number(context & cx) {
         // and the answer cannot depend on it, so a `valueOf` on it still runs -
         // which is exactly what toExponential/nan.js counts.
         const double asked = integer_arg(c, a, 0);
+        if (watch.threw()) { return c.string(""); }
         if (!std::isfinite(v)) { return c.string(number_to_string(v)); }
         if (refuse_digits(c, "toExponential", asked, 0, 100)) { return c.string(""); }
         return c.string(number_to_exponential(v, static_cast<int>(asked)));
     });
     method(cx, number_proto, "toPrecision", 1, [refuse_digits](context & c, std::span<value> a) {
+        const detail::unwind_watch watch{c};
         const double v = detail::this_number_value(c, "Number.prototype.toPrecision");
+        if (watch.threw()) { return c.string(""); }
         // No argument at all is toString, not zero significant digits - of the
         // NUMBER, not of the receiver. `c.to_string(c.current_this())` here was
         // the second half of the toString cycle: see this_number_value.
@@ -613,6 +621,7 @@ void install_number(context & cx) {
         // bound is ONE rather than zero: there is no such thing as a number
         // written to no significant digits.
         const double asked = integer_arg(c, a, 0);
+        if (watch.threw()) { return c.string(""); }
         if (!std::isfinite(v)) { return c.string(number_to_string(v)); }
         if (refuse_digits(c, "toPrecision", asked, 1, 100)) { return c.string(""); }
         // NOT "%.*g", which drops trailing zeros where toPrecision keeps them -

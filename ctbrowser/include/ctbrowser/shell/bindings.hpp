@@ -66,6 +66,10 @@ public:
     bool dispatch_event(std::string_view type, node_id target, value event);
 
     bool click(node_id target);
+    // After ANY write to the document, the browser's own included (a
+    // <summary>'s activation): the observers' records and the attribute change
+    // steps (entry.cpp).
+    void mutated();
     [[nodiscard]] bool is_connected(node_id target) const;
 
     std::size_t run_due_callbacks();
@@ -74,6 +78,7 @@ public:
     bool navigate_form_target(node_id form,
                               const std::vector<std::pair<std::string, std::string>> & entries);
     std::function<void(node_id form, node_id submitter)> submit_form_;
+    std::function<void(node_id form, node_id submitter)> submit_from_;
     void record_first_paint();
 
     void announce_load(node_id id, bool ok);
@@ -213,10 +218,21 @@ private:
     [[nodiscard]] value match_media(context & cx, std::string_view text);
     void install_promise_rejections(context & cx);
     void track_promise_rejection(value promise, bool handled);
+    // At a checkpoint's end (install_promise_rejections).
+    void queue_rejection_notification();
     std::vector<value> rejections_to_notify_;    // roots until the task ran
     std::vector<value> outstanding_rejections_;  // notified, still unhandled
     std::vector<value> rejections_handled_late_; // roots until the task ran
     bool rejection_task_queued_ = false;
+    // A <details> whose `open` came or went: its toggle task, and the state
+    // before the first change that task stands for (handler_attributes.cpp).
+    struct details_toggle {
+        node_id details;
+        std::uint32_t task = 0;
+        bool was_open = false;
+    };
+    std::vector<details_toggle> details_toggles_;
+    void queue_details_toggle(node_id details, bool was_open, bool open);
     [[nodiscard]] bool is_media_query_list(value v) const;
     [[nodiscard]] dom_bindings & owner_of_media_query_list(value list);
     [[nodiscard]] bool media_query_matches(std::string_view media);
@@ -570,8 +586,6 @@ private:
 
     void set_text(node_id id, std::string text);
 
-    void mutated();
-
     // --- globals ----------------------------------------------------------
 
     void install_console(context & cx);
@@ -587,6 +601,45 @@ private:
     [[nodiscard]] script::object_object * window_object();
 
     void install_window(context & cx);
+    // The proxy a realm's scripts name this document's window by, over
+    // `target`, its misses read from `realm` - window.cpp.
+    [[nodiscard]] value make_window_view(context & cx, value target, script::realm_record & realm);
+    // `addEventListener` / `removeEventListener` on `window` and as bare
+    // globals of the current realm, for this document's window.
+    void install_window_listeners(context & cx, script::object_object & window);
+    // `postMessage` on `window`, delivering to THIS document's window -
+    // window/messaging.cpp.
+    void install_post_message(context & cx, script::object_object & window);
+    // A frame document's own browsing context (frames.cpp): its window, its
+    // realm, the scripts its parse left, and the two events a load ends in.
+    void install_frame_realm(context & cx, dom_bindings & owner, node_id element);
+    // Answers the parser's "does a definition disable shadow here" - entry.cpp.
+    void watch_shadow_disabled();
+    std::shared_ptr<int> lifetime_ = std::make_shared<int>(0); // expires with these bindings
+    // The `on<event>` accessors of a window over this document's handlers -
+    // events/handler_attributes.cpp.
+    void install_window_handlers(context & cx, script::object_object & window);
+    void install_handler_accessor(context & cx, std::string_view attribute,
+                                  std::span<script::object_object *> where);
+    void run_frame_scripts(context & cx);
+    void finish_frame_load(context & cx);
+    bool frame_load_finished_ = false;
+    // THIS DOCUMENT'S REALM, current until the result goes out of scope -
+    // nothing for a document without one of its own. Taken wherever the
+    // bindings run script, or read a window handler, on the document's behalf.
+    [[nodiscard]] std::optional<context::realm_scope> enter_realm(context & cx);
+    // The bindings whose window is `window` - the page's or a frame's, at any
+    // depth, and the page's for anything else. "Report the exception" and
+    // `reportError` fire at one particular global - frames.cpp.
+    [[nodiscard]] dom_bindings & bindings_of(value window);
+    // The bindings that made the node wrapper `wrapper` - the page's or a
+    // frame's, at any depth - or null for anything else. A member installed on
+    // a SHARED interface prototype captures the bindings that installed it
+    // (the page's), and must route a frame's node to the frame's bindings
+    // through this - frames.cpp.
+    [[nodiscard]] dom_bindings * bindings_owning(value wrapper);
+    // A subresource URL as the asset registry names it - frames.cpp.
+    [[nodiscard]] std::string subresource_name(std::string_view src) const;
 
     // --- images and fetch --------------------------------------------------
 
@@ -737,6 +790,14 @@ private:
     value document_;
     value document_target_;
     value window_;
+    // The PROXY this document's scripts call `window` - what `currentTarget`
+    // is at the window step. The page's is its global object; a frame's is
+    // its own realm's.
+    value window_view_;
+    // THE REALM THIS DOCUMENT'S SCRIPTS RUN IN: null for the page's, which is
+    // the context's main realm, and for a document without a browsing
+    // context; a frame that runs its own scripts has one of its own.
+    script::realm_record * realm_ = nullptr;
     std::vector<std::unique_ptr<document>> owned_documents_;
     std::vector<std::unique_ptr<dom_bindings>> secondary_documents_;
     bool secondary_ = false;
@@ -751,6 +812,7 @@ private:
 
     value event_prototype_;
     value custom_event_prototype_;
+    value message_event_prototype_; // what postMessage fires
     value mouse_event_prototype_;
     value pointer_event_prototype_;
     value event_target_prototype_;
@@ -825,9 +887,8 @@ private:
     void install_shadow_dom(context & cx);
     [[nodiscard]] std::vector<node_id> assigned_nodes_of(node_id slot) const;
     [[nodiscard]] node_id assigned_slot_of(node_id slottable) const;
-    void attach_declarative_shadow_roots(document & doc, node_id within);
-    // `innerHTML` plus those roots, and the copy that carries them across.
-    void set_html_unsafe(node_id target, std::string_view markup);
+    // `innerHTML` plus the declarative shadow roots, and the copy that carries them across.
+    void set_html_unsafe(node_id target, std::string_view markup, bool run_scripts = false);
     void copy_shadow_trees(const document & src, const read_txn & from, node_id source,
                            node_id made);
     [[nodiscard]] node_id root_of_tree(const read_txn & txn, node_id from, bool composed) const;

@@ -58,6 +58,19 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
         cx.throw_error("TypeError", "attachShadow: the receiver is not an Element");
         return value::undefined();
     }
+    // DOM 4.8 step 3: a custom element whose definition (looked up by name
+    // and `is`, upgraded or not) lists "shadow" in disabledFeatures cannot
+    // host one - checked before the existing-root rules below.
+    {
+        const auto txn = doc_->read();
+        if (const std::size_t def = custom_definition_for(txn, host);
+            def < primary().custom_definitions_.size() &&
+            primary().custom_definitions_[def].disable_shadow) {
+            throw_dom_exception(cx, "NotSupportedError",
+                                "attachShadow: this custom element disables shadow roots");
+            return value::undefined();
+        }
+    }
     // A ROOT THE PARSER ATTACHED IS CLAIMED, NOT REFUSED. DOM 4.8 step 4: a
     // shadow root that is still declarative and whose mode MATCHES is emptied
     // and handed back, so a page can reach into a `<template shadowrootmode>`
@@ -99,7 +112,22 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
     }
     // Metadata precedes wrapping: prototype_for_node distinguishes the root
     // from an ordinary DocumentFragment by asking the document.
-    return wrap(cx, *root);
+    const value made = wrap(cx, *root);
+    // "AVAILABLE TO ELEMENT INTERNALS" (DOM 4.8 step 8) only when the host's
+    // custom element state is precustomized or custom: a root attached to an
+    // element before it became custom is not one ElementInternals.shadowRoot
+    // hands out. Recorded as its absence, on the root's wrapper, so a root
+    // the parser attached (declarative, which HTML makes available) needs
+    // no mark.
+    const auto state = custom_elements_.find(host.key());
+    if ((state == custom_elements_.end() ||
+         state->second.state == custom_element_state::status::failed) &&
+        made.is_object()) {
+        static_cast<script::object_object *>(made.as_heap())
+            ->define(std::string{shadow_hidden_from_internals_key}, value::boolean(true),
+                     script::attr_none);
+    }
+    return made;
 }
 
 // THE MEMBERS A ShadowRoot HAS THAT A PLAIN DocumentFragment DOES NOT.

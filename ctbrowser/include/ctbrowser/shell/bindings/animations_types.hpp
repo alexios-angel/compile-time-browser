@@ -33,6 +33,7 @@ struct keyframe_effect_record {
     value self;
     node_id target;
     std::string composite = "replace";
+    std::string iteration_composite = "replace"; // Web Animations 2: replace | accumulate
     effect_timing timing;
     std::vector<animation_keyframe> keyframes;
 };

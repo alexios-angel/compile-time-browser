@@ -264,7 +264,43 @@ public:
         // "Blockification": the in-flow children of a flex or grid container
         // are block-level whatever their display says.
         const bool blockify = lists_token("flex inline-flex grid inline-grid", display);
-        for (const node_id child : txn_.children(node)) {
+        // A TABULAR CONTAINER'S WHITE SPACE has no box (CSS 2.1 17.2.1): a
+        // white-space-only text child whose neighbours - where it has any -
+        // are table-internal boxes or captions is `display: none`, whatever
+        // `white-space` says.
+        const bool tabular = lists_token(
+            "table inline-table table-row-group table-header-group table-footer-group table-row",
+            display);
+        const auto boxless_space = [&](std::span<const node_id> siblings, std::size_t i) {
+            const std::string_view data = txn_.text(siblings[i]);
+            if (data.find_first_not_of(html_whitespace) != std::string_view::npos) { return false; }
+            const auto tabular_box = [&](std::size_t at) {
+                const node_kind held = txn_.kind(siblings[at]).value_or(node_kind::comment);
+                if (held != node_kind::element) { return held != node_kind::text; }
+                return display_of(siblings[at]).starts_with("table-");
+            };
+            for (std::size_t at = i; at-- > 0;) {
+                if (txn_.kind(siblings[at]).value_or(node_kind::comment) == node_kind::comment) {
+                    continue;
+                }
+                if (!tabular_box(at)) { return false; }
+                break;
+            }
+            for (std::size_t at = i + 1; at < siblings.size(); ++at) {
+                if (txn_.kind(siblings[at]).value_or(node_kind::comment) == node_kind::comment) {
+                    continue;
+                }
+                return tabular_box(at);
+            }
+            return true;
+        };
+        const std::span<const node_id> children = txn_.children(node);
+        for (std::size_t i = 0; i < children.size(); ++i) {
+            const node_id child = children[i];
+            if (tabular && txn_.kind(child).value_or(node_kind::comment) == node_kind::text &&
+                boxless_space(children, i)) {
+                continue;
+            }
             if (closed_details && !(is_html(child) && tag_of(child) == "summary")) { continue; }
             if (!widget_children.empty() &&
                 !(is_html(child) && lists_token(widget_children, tag_of(child)))) {
@@ -475,6 +511,13 @@ private:
 
 } // namespace
 
+namespace detail {
+bool element_unrendered(const read_txn & txn, atom_table & atoms, const style::style_map * styles,
+                        node_id id) {
+    return inner_text_collector{txn, atoms, styles}.unrendered(id);
+}
+} // namespace detail
+
 void dom_bindings::install_rendered_text(context & cx) {
     // --- innerText AND outerText, THE SETTER HALF -----------------------------
     //
@@ -680,6 +723,136 @@ void dom_bindings::install_rendered_text(context & cx) {
                     }
                     return value::undefined();
                 })));
+
+        // --- draggable (6.11.8) and spellcheck (6.8.4) ---------------------
+        //
+        // Two more booleans over enumerated attributes whose keywords are
+        // `true` and `false` (ASCII case-insensitive; spellcheck's "" is
+        // true too), written back as those words. They differ only in the
+        // AUTO state: draggable is true for an <img> and for an <a> with an
+        // href, false otherwise; spellcheck is inherit-by-default - the
+        // parent element's answer, true at the top.
+        const auto keyword_state = [this](const read_txn & txn, node_id at,
+                                          std::string_view name) -> int {
+            if (txn.element_ns(at) != node_ns::html) { return -1; }
+            const atom attr = atoms_->intern(name);
+            if (!txn.has_attribute(at, attr)) { return -1; }
+            const std::string word = ascii_lower_copy(txn.attribute_value(at, attr));
+            if (word == "true" || (word.empty() && name == "spellcheck")) { return 1; }
+            if (word == "false") { return 0; }
+            return -1;
+        };
+        const auto boolean_writer = [this, &cx](const char * name) {
+            return value::object(cx.allocate<script::native_object>(
+                name, [this, name](context & c, std::span<value> a) {
+                    if (const node_id id = receiver(c)) {
+                        (void)doc_->set_attribute(id, atoms_->intern(name),
+                                                  !a.empty() && context::truthy(a[0]) ? "true"
+                                                                                      : "false");
+                        mutated();
+                    }
+                    return value::undefined();
+                }));
+        };
+        // --- contentEditable and isContentEditable (6.8.1) -----------------
+        //
+        // The enumerated attribute's state as a keyword - "true" (for "" too),
+        // "plaintext-only", "false", or "inherit" for absent and invalid -
+        // and the setter the other way: "inherit" removes the attribute,
+        // the three keywords are written lowercased, anything else is a
+        // SyntaxError. isContentEditable walks up to the nearest element
+        // whose attribute decides (designMode is not modelled).
+        const auto editable_state = [this](const read_txn & txn, node_id at) -> std::string_view {
+            const atom attr = atoms_->intern("contenteditable");
+            if (txn.element_ns(at) != node_ns::html || !txn.has_attribute(at, attr)) {
+                return "inherit";
+            }
+            const std::string word = ascii_lower_copy(txn.attribute_value(at, attr));
+            if (word.empty() || word == "true") { return "true"; }
+            if (word == "plaintext-only") { return "plaintext-only"; }
+            if (word == "false") { return "false"; }
+            return "inherit";
+        };
+        proto->define_accessor(
+            "contentEditable",
+            value::object(cx.allocate<script::native_object>(
+                "contentEditable",
+                [this, editable_state](context & c, std::span<value>) {
+                    const node_id id = receiver(c);
+                    if (!id) { return c.string("inherit"); }
+                    const auto txn = doc_->read();
+                    return c.string(std::string{editable_state(txn, id)});
+                })),
+            value::object(cx.allocate<script::native_object>(
+                "contentEditable", [this](context & c, std::span<value> a) {
+                    const node_id id = receiver(c);
+                    if (!id) { return value::undefined(); }
+                    const std::string word = ascii_lower_copy(arg_string(c, a, 0));
+                    const atom attr = atoms_->intern("contenteditable");
+                    if (word == "inherit") {
+                        (void)doc_->remove_attribute(id, attr);
+                    } else if (word == "true" || word == "false" || word == "plaintext-only") {
+                        (void)doc_->set_attribute(id, attr, word);
+                    } else {
+                        throw_dom_exception(c, "SyntaxError",
+                                            "contentEditable: not true, false, plaintext-only "
+                                            "or inherit");
+                        return value::undefined();
+                    }
+                    mutated();
+                    return value::undefined();
+                })));
+        proto->define_accessor("isContentEditable",
+                               value::object(cx.allocate<script::native_object>(
+                                   "isContentEditable",
+                                   [this, editable_state](context & c, std::span<value>) {
+                                       const auto txn = doc_->read();
+                                       for (node_id at = receiver(c);
+                                            at && txn.kind(at).value_or(node_kind::text) ==
+                                                      node_kind::element;
+                                            at = txn.parent(at)) {
+                                           const std::string_view state = editable_state(txn, at);
+                                           if (state != "inherit") {
+                                               return value::boolean(state != "false");
+                                           }
+                                       }
+                                       return value::boolean(false);
+                                   })),
+                               value::undefined());
+        proto->define_accessor(
+            "draggable",
+            value::object(cx.allocate<script::native_object>(
+                "draggable",
+                [this, keyword_state](context & c, std::span<value>) {
+                    const node_id id = receiver(c);
+                    if (!id) { return value::boolean(false); }
+                    const auto txn = doc_->read();
+                    if (const int state = keyword_state(txn, id, "draggable"); state >= 0) {
+                        return value::boolean(state == 1);
+                    }
+                    const std::string_view local = txn.local_name(id);
+                    return value::boolean(
+                        txn.element_ns(id) == node_ns::html &&
+                        (local == "img" ||
+                         (local == "a" && txn.has_attribute(id, atoms_->intern("href")))));
+                })),
+            boolean_writer("draggable"));
+        proto->define_accessor(
+            "spellcheck",
+            value::object(cx.allocate<script::native_object>(
+                "spellcheck",
+                [this, keyword_state](context & c, std::span<value>) {
+                    const auto txn = doc_->read();
+                    for (node_id at = receiver(c);
+                         at && txn.kind(at).value_or(node_kind::text) == node_kind::element;
+                         at = txn.parent(at)) {
+                        if (const int state = keyword_state(txn, at, "spellcheck"); state >= 0) {
+                            return value::boolean(state == 1);
+                        }
+                    }
+                    return value::boolean(true);
+                })),
+            boolean_writer("spellcheck"));
     }
 }
 

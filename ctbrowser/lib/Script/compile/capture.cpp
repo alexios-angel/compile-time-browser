@@ -26,6 +26,19 @@ void compiler_impl::build_capture_index() {
         std::ranges::sort(ticks);
         ticks.erase(std::unique(ticks.begin(), ticks.end()), ticks.end());
     }
+    std::ranges::sort(eval_ticks_);
+}
+
+bool compiler_impl::eval_reachable(std::string_view name) {
+    if (name.empty() || name == "this") { return false; }
+    const auto c = static_cast<unsigned char>(name[0]);
+    return c == '_' || c == '$' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 0x80;
+}
+
+bool compiler_impl::is_direct_eval_call(const vp::node & n) const {
+    if (n.kind != vp::nk::call || n.a < 0) { return false; }
+    const vp::node & callee = at(n.a);
+    return callee.kind == vp::nk::ident && callee.text == "eval";
 }
 
 void compiler_impl::tour(std::int32_t idx, std::int32_t enclosing, std::int32_t & tick,
@@ -42,6 +55,11 @@ void compiler_impl::tour(std::int32_t idx, std::int32_t enclosing, std::int32_t 
     // v; } ... }` read undefined. A real function node is never an ident,
     // so this costs it nothing.
     if (n.kind == vp::nk::ident) { mentions_[std::string{n.text}].push_back(inner); }
+    // A DIRECT EVAL MENTIONS EVERY NAME IN SCOPE: its source can read and
+    // write any binding of this function and of the ones around it, so all of
+    // their locals must be cells it can be handed (is_captured). Recorded
+    // against the function the call is in.
+    if (is_direct_eval_call(n)) { eval_ticks_.push_back(inner); }
     // A template's substitutions are text on the node, not children, so
     // nothing below this reaches them.
     if (n.kind == vp::nk::tmpl) {
@@ -84,6 +102,8 @@ bool compiler_impl::mentions_arguments(std::int32_t idx) const {
     const vp::node & n = at(idx);
     if (n.kind == vp::nk::func_decl || n.kind == vp::nk::func_expr) { return false; }
     if (n.kind == vp::nk::ident && n.text == "arguments") { return true; }
+    // A direct eval's source may name `arguments`, so the function has one.
+    if (is_direct_eval_call(n)) { return true; }
     if (n.kind == vp::nk::tmpl) {
         bool found = false;
         each_name_in_template(n.text,
@@ -129,6 +149,14 @@ bool compiler_impl::mentions_super(std::int32_t idx, bool root) const {
 bool compiler_impl::is_captured(std::string_view name) const {
     const interval where = frames_.back().captures;
     if (where.empty()) { return false; }
+    // A direct eval in this function, or in one inside it, can reach every
+    // named local here - `lo` INCLUSIVE, since an eval in the function itself
+    // does. Not a pattern parameter's register: boxing it made the pattern
+    // destructure the cell ("object is not iterable").
+    if (const auto e = std::ranges::lower_bound(eval_ticks_, where.lo);
+        e != eval_ticks_.end() && *e < where.hi && eval_reachable(name)) {
+        return true;
+    }
     const auto found = mentions_.find(name);
     if (found == mentions_.end()) { return false; }
     // The first tick strictly greater than `lo`; captured if it is also
@@ -219,6 +247,13 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
         // where it expects a statement. It binds one name of its own.
         if (at(outer).kind == vp::nk::export_decl && at(outer).c == 1) {
             hoist(std::string{default_binding});
+            // ...AND A NAMED ONE BINDS ITS NAME TOO (16.2.3.7: the
+            // declaration's BoundNames) - `export default function F() {}`
+            // and `export default class C {}` are declarations of F and C,
+            // which `export { F as G }` may name.
+            if (const std::int32_t named = default_export_name(outer); named >= 0) {
+                hoist(std::string{at(named).text});
+            }
             continue;
         }
         const std::int32_t stmt =

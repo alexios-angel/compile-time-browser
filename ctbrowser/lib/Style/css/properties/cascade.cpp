@@ -25,15 +25,6 @@ namespace {
     return ascii_iequals_any(part, {"none", "hidden", "dotted", "dashed", "solid", "double",
                                     "groove", "ridge", "inset", "outset"});
 }
-// A `background` component that names a longhand OTHER than the colour or
-// the image: repeat, attachment, position, size, clip/origin boxes.
-[[nodiscard]] bool is_background_keyword(std::string_view part) {
-    return ascii_iequals_any(
-        part, {"none",       "repeat",      "repeat-x",    "repeat-y", "no-repeat", "space",
-               "round",      "scroll",      "fixed",       "local",    "center",    "top",
-               "bottom",     "left",        "right",       "cover",    "contain",   "auto",
-               "border-box", "padding-box", "content-box", "text"});
-}
 [[nodiscard]] bool is_border_width(std::string_view part) {
     if (ascii_iequals(part, "thin") || ascii_iequals(part, "medium") ||
         ascii_iequals(part, "thick")) {
@@ -153,24 +144,6 @@ std::vector<std::pair<std::string_view, std::string_view>> expand_cascaded_short
                 {names[2], (*components)[2]}};
     }
 
-    // `border-radius`, whose four values go round the box CLOCKWISE FROM THE
-    // TOP LEFT - not the top/right/bottom/left of the edge shorthands, because
-    // these name corners rather than sides. A two-value form is the two
-    // diagonals, which has no analogue at all in `margin`.
-    //
-    // The elliptical `a / b` form gives horizontal radii before the slash and
-    // vertical after. Only the first group is kept, which makes every corner
-    // circular; Bootstrap writes no elliptical radius, and half of one is a
-    // better answer than dropping the declaration. Recorded as a known
-    // difference in docs/plans/bootstrap.md.
-    if (property == "border-radius") {
-        std::string_view circular = value;
-        if (const std::size_t slash = circular.find('/'); slash != std::string_view::npos) {
-            circular = circular.substr(0, slash);
-        }
-        return positional(property, value_parts(circular, 4));
-    }
-
     // `gap`, which is ROW then COLUMN - the opposite order to everything else
     // here, and the opposite order to how it reads. It is the one shorthand
     // whose two values are not left-to-right: `gap: 1rem 2rem` is a 1rem gap
@@ -220,34 +193,6 @@ std::vector<std::pair<std::string_view, std::string_view>> expand_cascaded_short
             }
         }
         return {{"list-style-type", type}, {"list-style-position", position}};
-    }
-    // `background` is `<bg-layer>#? , <final-bg-layer>`, and the two parts
-    // with a consumer are the COLOUR and the IMAGE. Every other component is
-    // a keyword of some other longhand, a position or size (a number, a
-    // percentage or the `/` between them), or the layer comma - so the
-    // colour is whatever is left, and only the final layer may carry one.
-    // An omitted colour is `transparent`: `background: url(x)` resets a
-    // colour set elsewhere, as every shorthand resets what it does not name.
-    if (property == "background") {
-        const std::vector<std::string_view> parts = value_parts(value, 32);
-        if (parts.empty()) { return {}; }
-        std::string_view colour = "transparent";
-        std::string_view image = "none";
-        for (std::string_view part : parts) {
-            // `red,` - a layer boundary glued to the part before it.
-            const bool comma = !part.empty() && part.back() == ',';
-            if (comma) { part.remove_suffix(1); }
-            if (ascii_istarts_with(part, "url(") ||
-                part.find("gradient(") != std::string_view::npos) {
-                image = part;
-            } else if (!part.empty() && part != "/" && !is_border_width(part) &&
-                       !is_background_keyword(part)) {
-                colour = part;
-            }
-            // The colour belongs to the LAST layer only.
-            if (comma) { colour = "transparent"; }
-        }
-        return {{"background-color", colour}, {"background-image", image}};
     }
     if (property == "inset" || property == "margin" || property == "padding") {
         return positional(property, value_parts(value, 4));

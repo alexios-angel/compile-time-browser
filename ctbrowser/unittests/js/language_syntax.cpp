@@ -83,7 +83,11 @@ int main() {
     answers("var o = {}; for (o.p of [1, 2]) {} return o.p;", "2");
     answers("var o = {}; for ([o.a, o.b] of [[1, 2]]) {} return o.a + o.b;", "3");
     answers("var o = {}, k; for (k in {q: 1}) { o.k = k; } return o.k;", "q");
-    refused("for (f() of xs) {}");
+    // A call head is ~web-compat~ in sloppy code (13.15.1, AssignmentTargetType
+    // of a CallExpression): each iteration throws the ReferenceError, an empty
+    // loop throws nothing - and strict code refuses it outright.
+    answers("function f() {} for (f() of []) {} return 1;", "1");
+    refused("'use strict'; for (f() of xs) {}");
     refused("for (let [x, x] of []) {}");
     refused("for (let x of []) { var x; }");
     refused("for (x of a, b) {}");

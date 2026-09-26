@@ -1,4 +1,5 @@
 #pragma once
+#include <span>
 #include <string_view>
 
 #include <ctbrowser/script/bytecode.hpp>
@@ -65,6 +66,12 @@ public:
     // statement (its completion value, 16.1.6 step 12 for the common case),
     // so `eval("1 + 1")` is 2. Otherwise the same classic script.
     [[nodiscard]] static program compile_for_eval(std::string_view source);
+    // A DIRECT eval's source (19.2.1.1 PerformEval with direct = true): as
+    // compile_for_eval, with the caller's bindings `outer` visible as the
+    // entry function's upvalues, in that order, and the caller's strictness.
+    [[nodiscard]] static program compile_for_direct_eval(std::string_view source,
+                                                         std::span<const std::string> outer,
+                                                         bool strict);
 };
 
 // WHETHER THIS BUILD FILLS `function_proto::locals` AND `code_offsets`.

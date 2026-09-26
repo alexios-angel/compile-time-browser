@@ -32,7 +32,8 @@ run_result context::run_reentrant(const program & prog) {
         return result;
     }
     const function_proto & entry = prog.functions[0];
-    const value receiver = prog.kind == script_kind::classic ? global_this_ : value::undefined();
+    const value receiver =
+        prog.kind == script_kind::classic ? current_realm().global_this : value::undefined();
     const std::size_t new_base = registers_.size();
     registers_.resize(new_base + entry.frame_size + 8u, value::undefined());
     const std::size_t depth = frames_.size();
@@ -53,7 +54,9 @@ run_result context::run_reentrant(const program & prog) {
         if (registers_.size() >= new_base) { registers_.resize(new_base); }
         return result;
     }
-    frames_.push_back(call_frame{&entry, 0, new_base, 0, 0, nullptr, receiver, handlers_.size()});
+    call_frame entered{&entry, 0, new_base, 0, 0, nullptr, receiver, handlers_.size()};
+    entered.realm = &current_realm();
+    frames_.push_back(entered);
     (void)run_loop(depth);
     program_ = outer_program;
     if (registers_.size() >= new_base) { registers_.resize(new_base); }
@@ -75,9 +78,7 @@ run_result context::run(const program & prog) {
     failed_ = false;
     error_.clear();
     // See program::hoisted_vars: the script's `var`s exist before it starts.
-    for (const std::string & name : prog.hoisted_vars) {
-        if (!has_global(name)) { define_global(name, value::undefined()); }
-    }
+    for (const std::string & name : prog.hoisted_vars) { declare_global_var(name); }
     result.returned = execute(prog, prog.functions[0]);
     // THE END OF THE TURN. A script's promise handlers run after its last
     // statement, not between two of them - so the checkpoint is here, once the
@@ -132,7 +133,8 @@ value context::execute(const program & prog, const function_proto & entry) {
     // Script this belongs to the realm, including in a strict classic script.
     // Modules have no top-level receiver. Never reload the writable globalThis
     // binding here: an earlier script may have replaced or cleared it.
-    const value receiver = prog.kind == script_kind::classic ? global_this_ : value::undefined();
+    const value receiver =
+        prog.kind == script_kind::classic ? current_realm().global_this : value::undefined();
     // A COMPILED TOP LEVEL, IF THIS PROGRAM HAS ONE, and for ctcompile that is
     // the ordinary case rather than an exotic one: a page's `<script>` IS a top
     // level, so a backend that compiles anything compiles this. Asked after the
@@ -143,7 +145,9 @@ value context::execute(const program & prog, const function_proto & entry) {
                        /*constructing*/ false, produced)) {
         return produced;
     }
-    frames_.push_back(call_frame{&entry, 0, 0, 0, 0, nullptr, receiver, 0});
+    call_frame entered{&entry, 0, 0, 0, 0, nullptr, receiver, 0};
+    entered.realm = &current_realm();
+    frames_.push_back(entered);
     // Per-frame string interning: a literal in a loop should allocate once,
     // not once per iteration.
     string_cache_.clear();

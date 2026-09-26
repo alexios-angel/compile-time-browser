@@ -21,6 +21,306 @@ using ctbrowser_test::logged;
 
 namespace {
 
+void test_computed_background_positions() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<div id="target" style="font-size: 20px"></div><script>
+        const target = document.getElementById('target');
+        for (const value of ['center right 7%', 'top 1em center',
+                             'center, left, bottom', 'top 17px right -18px']) {
+            target.style.backgroundPosition = value;
+            console.log(value + '=' + getComputedStyle(target).backgroundPosition);
+        }
+        target.style.background = 'right 1em center, left bottom 16%';
+        console.log('shorthand=' + getComputedStyle(target).backgroundPosition);
+        for (const property of ['object-position', 'mask-position']) {
+            target.style.setProperty(property, 'right -18px top 17px');
+            console.log(property + '=' + getComputedStyle(target).getPropertyValue(property));
+        }
+    </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "center right 7%="), std::string{"center right 7%=93% 50%"});
+    CHECK_EQ(logged(page, "top 1em center="), std::string{"top 1em center=50% 20px"});
+    CHECK_EQ(logged(page, "center, left, bottom="),
+             std::string{"center, left, bottom=50% 50%, 0% 50%, 50% 100%"});
+    CHECK_EQ(logged(page, "top 17px right -18px="),
+             std::string{"top 17px right -18px=calc(100% + 18px) 17px"});
+    CHECK_EQ(logged(page, "shorthand="), std::string{"shorthand=calc(100% - 20px) 50%, 0% 84%"});
+    CHECK_EQ(logged(page, "object-position="),
+             std::string{"object-position=calc(100% + 18px) 17px"});
+    CHECK_EQ(logged(page, "mask-position="), std::string{"mask-position=calc(100% + 18px) 17px"});
+}
+
+void test_background_cascade() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<style>
+        #target { font-size: 40px; --bg: none center / calc(1em - 60px) 1em no-repeat text;
+                  background: var(--bg); }
+        #child { font-size: 10px; background: inherit; }
+        </style><div id="target"><div id="child"></div></div><script>
+        for (const id of ['target', 'child']) {
+            const s = getComputedStyle(document.getElementById(id));
+            console.log(id + '=' + s.backgroundSize + '|' + s.backgroundRepeat + '|' +
+                        s.backgroundOrigin + '|' + s.backgroundClip);
+        }
+        const target = document.getElementById('target');
+        target.style.background = 'text border-area';
+        console.log('clip=' + getComputedStyle(target).backgroundClip);
+        target.style.background = 'none';
+        console.log('reset=' + getComputedStyle(target).backgroundRepeat + '|' +
+                    getComputedStyle(target).backgroundClip);
+    </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "target="), std::string{"target=0px 40px|no-repeat|border-box|text"});
+    CHECK_EQ(logged(page, "child="), std::string{"child=0px 40px|no-repeat|border-box|text"});
+    CHECK_EQ(logged(page, "clip="), std::string{"clip=border-area text"});
+    CHECK_EQ(logged(page, "reset="), std::string{"reset=repeat|border-box"});
+}
+
+void test_background_substitution_failures() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<style>
+        #invalid { background: red none center / 20px no-repeat;
+                   background: image-set(attr(data-url)); }
+        #missing { background: red none center / 20px no-repeat; background: var(--missing); }
+        #parent { --empty: ; --inherited: blue; }
+        #keywords { --alias: var(--x) green; --empty: ;
+                    --initial: var(--empty) initial; --inherited: var(--empty) inherit;
+                    background: var(--alias); }
+        @layer a { #keywords { --x: ; } }
+        @layer b { #keywords { --x: var(--empty) revert-layer; } }
+        </style><div id="invalid" data-url="https://example.invalid/image.png"></div>
+        <div id="missing"></div><div id="parent"><div id="keywords"></div></div><script>
+        for (const id of ['invalid', 'missing']) {
+            const s = getComputedStyle(document.getElementById(id));
+            console.log(id + '=' + s.backgroundImage + '|' + s.backgroundColor + '|' +
+                        s.backgroundSize + '|' + s.backgroundRepeat);
+        }
+        const target = document.getElementById('keywords');
+        console.log('keyword=' + getComputedStyle(target).backgroundColor);
+        target.style.color = 'var(--initial, red)';
+        console.log('initial=' + getComputedStyle(target).color);
+        target.style.color = 'var(--inherited)';
+        console.log('inherit=' + getComputedStyle(target).color);
+        for (const value of ['initial', 'var(--empty) initial', 'attr(missing, initial)']) {
+            target.style.setProperty('--invalid', value);
+            console.log('serialized-' + value + '=' + getComputedStyle(target).getPropertyValue('--invalid'));
+        }
+        target.style.setProperty('--loop', 'var(--loop, initial)');
+        console.log('cycle=' + getComputedStyle(target).getPropertyValue('--loop'));
+    </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    for (const std::string id : {"invalid", "missing"}) {
+        CHECK_EQ(logged(page, id + "="), id + "=none|rgba(0, 0, 0, 0)|auto|repeat");
+    }
+    CHECK_EQ(logged(page, "keyword="), std::string{"keyword=rgb(0, 128, 0)"});
+    CHECK_EQ(logged(page, "initial="), std::string{"initial=rgb(255, 0, 0)"});
+    CHECK_EQ(logged(page, "inherit="), std::string{"inherit=rgb(0, 0, 255)"});
+    for (const std::string value : {"initial", "var(--empty) initial", "attr(missing, initial)"}) {
+        CHECK_EQ(logged(page, "serialized-" + value + "="), "serialized-" + value + "=");
+    }
+    CHECK_EQ(logged(page, "cycle="), std::string{"cycle="});
+}
+
+void test_image_color_scheme() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<div id="target"></div><script>
+        const target = document.getElementById('target');
+        for (const scheme of ['light', 'dark']) {
+            target.style.colorScheme = scheme;
+            target.style.backgroundImage = 'light-dark(image(red), image(blue))';
+            console.log(scheme + '=' + getComputedStyle(target).backgroundImage);
+            target.style.backgroundImage = 'linear-gradient(light-dark(red, blue), white)';
+            console.log(scheme + '-gradient=' + getComputedStyle(target).backgroundImage);
+            target.style.backgroundImage = 'cross-fade(light-dark(red, blue), image(white))';
+            console.log(scheme + '-fade=' + getComputedStyle(target).backgroundImage);
+            target.style.backgroundImage = 'light-dark(image(red), none)';
+            console.log(scheme + '-none=' + getComputedStyle(target).backgroundImage);
+        }
+        </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    for (const std::string scheme : {"light", "dark"}) {
+        const std::string color = scheme == "dark" ? "rgb(0, 0, 255)" : "rgb(255, 0, 0)";
+        CHECK_EQ(logged(page, scheme + "="), scheme + "=image(" + color + ")");
+        CHECK_EQ(logged(page, scheme + "-gradient="),
+                 scheme + "-gradient=linear-gradient(" + color + ", rgb(255, 255, 255))");
+        CHECK_EQ(logged(page, scheme + "-fade="),
+                 scheme + "-fade=cross-fade(" + color + ", image(rgb(255, 255, 255)))");
+        CHECK_EQ(logged(page, scheme + "-none="),
+                 scheme + "-none=" +
+                     (scheme == "dark" ? "image(rgba(0, 0, 0, 0))" : "image(rgb(255, 0, 0))"));
+    }
+}
+
+void test_computed_radial_size_ranges() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<div id="target" style="font-size: 40px"></div><script>
+        const target = document.getElementById('target');
+        for (const property of ['background-image', 'mask-image', 'border-image-source',
+                                'list-style-image']) {
+            const gradient = 'radial-gradient(calc(10px - 0.5em) calc(0.5em + 10px)' +
+                             ' at calc(10px - 1em) 30px, red, blue)';
+            target.style.setProperty(property, gradient);
+            console.log(property + '=' + getComputedStyle(target).getPropertyValue(property));
+            target.style.setProperty('--image', gradient);
+            target.style.setProperty(property, 'var(--image)');
+            console.log(property + '-var=' + getComputedStyle(target).getPropertyValue(property));
+            target.style.setProperty('--image', 'radial-gradient(-10px 30px, red, blue)');
+            console.log(property + '-invalid=' + getComputedStyle(target).getPropertyValue(property));
+            target.style.setProperty('--image', 'radial-gradient(-10px calc(10px + 20%), red, blue)');
+            console.log(property + '-invalid-mixed=' + getComputedStyle(target).getPropertyValue(property));
+            target.style.setProperty(property, 'radial-gradient(calc(10% - 20%) 30px, red, blue)');
+            console.log(property + '-percent=' + getComputedStyle(target).getPropertyValue(property));
+        }
+        </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    for (const std::string property :
+         {"background-image", "mask-image", "border-image-source", "list-style-image"}) {
+        const std::string gradient =
+            "radial-gradient(0px 30px at -30px 30px, rgb(255, 0, 0), rgb(0, 0, 255))";
+        CHECK_EQ(logged(page, property + "="), property + "=" + gradient);
+        CHECK_EQ(logged(page, property + "-var="), property + "-var=" + gradient);
+        CHECK_EQ(logged(page, property + "-invalid="), property + "-invalid=none");
+        CHECK_EQ(logged(page, property + "-invalid-mixed="), property + "-invalid-mixed=none");
+        CHECK_EQ(logged(page, property + "-percent="),
+                 property + "-percent=radial-gradient(0% 30px, rgb(255, 0, 0), rgb(0, 0, 255))");
+    }
+}
+
+void test_computed_layer_size_ranges() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<style>
+        #parent { font-size: 40px;
+                  background-size: calc(10px + 0.5em) calc(10px - 0.5em), 1em auto;
+                  mask-size: calc(10px - 0.5em) calc(10px + 0.5em); }
+        #child { font-size: 10px; background-size: inherit; mask-size: inherit; }
+        </style><div id="parent"><div id="child"></div></div><script>
+        const p = document.getElementById('parent');
+        for (const id of ['parent', 'child']) {
+            const cs = getComputedStyle(document.getElementById(id));
+            console.log(id + '=' + cs.backgroundSize + '|' + cs.maskSize);
+        }
+        for (const property of ['background-size', 'mask-size']) {
+            p.style.setProperty(property, 'calc(10px - 0.5em) calc(10px + 0.5em)');
+            console.log(property + '-inline=' + getComputedStyle(p).getPropertyValue(property));
+            p.style.setProperty('--size', 'calc(10px + 0.5em) calc(10px - 0.5em)');
+            p.style.setProperty(property, 'var(--size)');
+            console.log(property + '-variable=' + getComputedStyle(p).getPropertyValue(property));
+            p.style.setProperty('--size', '-10px calc(10px + 0.5em)');
+            console.log(property + '-invalid=' + getComputedStyle(p).getPropertyValue(property));
+            p.style.setProperty('--size', '-10px calc(10px + 20%)');
+            console.log(property + '-invalid-mixed=' + getComputedStyle(p).getPropertyValue(property));
+            p.style.setProperty(property, 'calc(10% - 20%) calc(10px - 20%)');
+            console.log(property + '-percent=' + getComputedStyle(p).getPropertyValue(property));
+        }
+        p.style.backgroundSize = 'random(1px, 1000px) random(1px, 1000px)';
+        const sizes = getComputedStyle(p).backgroundSize.split(' ');
+        console.log('random=' + (sizes[0] !== sizes[1]));
+        p.style.backgroundSize = 'calc(infinity * 1px) auto';
+        console.log('infinity=' + getComputedStyle(p).backgroundSize);
+        </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "parent="), std::string{"parent=30px 0px, 40px auto|0px 30px"});
+    CHECK_EQ(logged(page, "child="), std::string{"child=30px 0px, 40px auto|0px 30px"});
+    for (const std::string property : {"background-size", "mask-size"}) {
+        CHECK_EQ(logged(page, property + "-inline="), property + "-inline=0px 30px");
+        CHECK_EQ(logged(page, property + "-variable="), property + "-variable=30px 0px");
+        CHECK_EQ(logged(page, property + "-invalid="), property + "-invalid=auto");
+        CHECK_EQ(logged(page, property + "-invalid-mixed="), property + "-invalid-mixed=auto");
+        CHECK_EQ(logged(page, property + "-percent="), property + "-percent=0% calc(-20% + 10px)");
+    }
+    CHECK_EQ(logged(page, "random="), std::string{"random=true"});
+    CHECK_EQ(logged(page, "infinity="), std::string{"infinity=33554432px auto"});
+}
+
+void test_nonnegative_computed_widths() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<style>
+        #parent { font-size: 40px; border-style: solid;
+                  border-width: calc(10px - 0.5em) 1em;
+                  border-image-width: calc(10px - 0.5em) 1em 2 auto;
+                  border-image-outset: 0 calc(0.5em + 10px) 3 calc(10px - 0.5em); }
+        #child { font-size: 10px; border-image-width: inherit; border-image-outset: inherit; }
+        </style><div id="parent"><div id="child"></div></div>
+        <script>
+        const p = document.getElementById('parent');
+        console.log('sheet=' + getComputedStyle(p).borderWidth);
+        p.style.borderBottomWidth = 'calc(10px - 0.5em)';
+        console.log('inline=' + getComputedStyle(p).borderBottomWidth);
+        p.style.setProperty('--w', 'calc(10px - 0.5em)');
+        p.style.borderLeftWidth = 'var(--w)';
+        console.log('variable=' + getComputedStyle(p).borderLeftWidth);
+        p.style.borderWidth = 'var(--w)';
+        console.log('variable-shorthand=' + getComputedStyle(p).borderWidth);
+        for (const id of ['parent', 'child']) {
+            const cs = getComputedStyle(document.getElementById(id));
+            console.log(id + '=' + cs.borderImageWidth + '|' + cs.borderImageOutset);
+        }
+        p.style.borderImage = 'none 20 / calc(10px - 0.5em) / 1em round';
+        const cs = getComputedStyle(p);
+        console.log('shorthand=' + cs.borderImageWidth + '|' + cs.borderImageOutset + '|' +
+                    cs.borderImageRepeat);
+        p.style.borderImageWidth = '1em 40px';
+        console.log('compressed=' + getComputedStyle(p).borderImageWidth);
+        p.style.setProperty('--image-width', 'calc(10px - 0.5em) 1em');
+        p.style.borderImageWidth = 'var(--image-width)';
+        console.log('image-variable=' + getComputedStyle(p).borderImageWidth);
+        p.style.setProperty('--image', '20 / calc(10px - 0.5em) / 1em round');
+        p.style.borderImage = 'var(--image)';
+        console.log('image-variable-shorthand=' + getComputedStyle(p).borderImageWidth + '|' +
+                    getComputedStyle(p).borderImageOutset);
+        p.style.setProperty('--image-width', '-10px 1em');
+        p.style.borderImageWidth = 'var(--image-width)';
+        console.log('image-invalid-variable=' + getComputedStyle(p).borderImageWidth);
+        </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "sheet="), std::string{"sheet=0px 40px"});
+    CHECK_EQ(logged(page, "inline="), std::string{"inline=0px"});
+    CHECK_EQ(logged(page, "variable="), std::string{"variable=0px"});
+    CHECK_EQ(logged(page, "variable-shorthand="), std::string{"variable-shorthand=0px"});
+    CHECK_EQ(logged(page, "parent="), std::string{"parent=0px 40px 2 auto|0 30px 3 0px"});
+    CHECK_EQ(logged(page, "child="), std::string{"child=0px 40px 2 auto|0 30px 3 0px"});
+    CHECK_EQ(logged(page, "shorthand="), std::string{"shorthand=0px|40px|round"});
+    CHECK_EQ(logged(page, "compressed="), std::string{"compressed=40px"});
+    CHECK_EQ(logged(page, "image-variable="), std::string{"image-variable=0px 40px"});
+    CHECK_EQ(logged(page, "image-variable-shorthand="),
+             std::string{"image-variable-shorthand=0px|40px"});
+    CHECK_EQ(logged(page, "image-invalid-variable="), std::string{"image-invalid-variable=1"});
+}
+
+void test_elliptical_radius_cascade() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<style>
+        #parent { font-size: 20px; border-radius: 1em 2em / 3px 4%; }
+        #child { font-size: 40px; border-radius: inherit; border-top-left-radius: 7px 8px; }
+        #variable { --r: 1em 2em / calc(1px + 2px) 4%; font-size: 20px;
+                    border-radius: var(--r); }
+        #negative { font-size: 20px; border-top-left-radius: calc(1px - 2px) 2em; }
+        </style><div id="parent"><div id="child"></div></div><div id="variable"></div>
+        <div id="negative"></div>
+        <script>
+        for (const id of ['parent', 'child', 'variable']) {
+            const cs = getComputedStyle(document.getElementById(id));
+            console.log(id + '=' + cs.borderRadius + '|' + cs.borderTopLeftRadius + '|' +
+                        cs.borderBottomLeftRadius);
+        }
+        const p = document.getElementById('parent');
+        p.style.borderRadius = '5px / 6px';
+        console.log('inline=' + getComputedStyle(p).borderRadius);
+        p.style.borderBottomLeftRadius = '9px';
+        console.log('override=' + getComputedStyle(p).borderRadius);
+        console.log('negative=' + getComputedStyle(document.getElementById('negative')).borderTopLeftRadius);
+        </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "parent="), std::string{"parent=20px 40px / 3px 4%|20px 3px|40px 4%"});
+    CHECK_EQ(logged(page, "child="),
+             std::string{"child=7px 40px 20px / 8px 4% 3px|7px 8px|40px 4%"});
+    CHECK_EQ(logged(page, "variable="),
+             std::string{"variable=20px 40px / 3px 4%|20px 3px|40px 4%"});
+    CHECK_EQ(logged(page, "inline="), std::string{"inline=5px / 6px"});
+    CHECK_EQ(logged(page, "override="), std::string{"override=5px 5px 5px 9px / 6px 6px 6px 9px"});
+    CHECK_EQ(logged(page, "negative="), std::string{"negative=0px 40px"});
+}
+
 // CSS-namespace-object-class-string, CSSStyleDeclaration-iterator, escape,
 // cssom-fontfacerule-constructors: the class strings, the iterator and the
 // namespace object's own tag and arities.
@@ -211,6 +511,44 @@ void test_resolved_colours() {
                          "rgb(255, 0, 0) 16px 0px 0px|rgb(0, 0, 255) 0px 0px 0px 1px"});
 }
 
+// css-multicol/inheritance and column-rule-computed: line-width keywords
+// compute to lengths even when the rule is hidden, and survive shorthand folding.
+void test_column_rule_widths() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><div id=t style="color: lime"></div><script>
+        const cs = getComputedStyle(t);
+        console.log('initial=' + cs.columnRuleWidth);
+        console.log('widths=' + ['none', 'hidden', 'solid'].map(style => {
+            t.style.columnRuleStyle = style;
+            return ['thin', 'medium', 'thick'].map(width => {
+                t.style.columnRuleWidth = width;
+                return cs.columnRuleWidth;
+            }).join();
+        }).join('|'));
+        console.log('rules=' + ['dotted', 'medium hidden currentcolor',
+                                'medium solid currentcolor', '10px'].map(rule => {
+            t.style.columnRule = rule;
+            return cs.columnRule;
+        }).join('|'));
+        console.log('specified=' + t.style.columnRuleWidth + '|' + t.style.columnRule);
+        console.log('borders=' + ['none', 'hidden', 'solid'].map(style => {
+            t.style.border = 'medium ' + style;
+            t.style.outline = 'medium ' + style;
+            return cs.borderTopWidth + ',' + cs.outlineWidth;
+        }).join('|'));
+    </script></body></html>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "initial="), std::string{"initial=3px"});
+    CHECK_EQ(logged(page, "widths="), std::string{"widths=1px,3px,5px|1px,3px,5px|1px,3px,5px"});
+    CHECK_EQ(logged(page, "rules="),
+             std::string{"rules=3px dotted rgb(0, 255, 0)|3px hidden rgb(0, 255, 0)|"
+                         "3px solid rgb(0, 255, 0)|10px rgb(0, 255, 0)"});
+    CHECK_EQ(logged(page, "specified="), std::string{"specified=10px|10px"});
+    // A border's width is zero beside `none` and `hidden`; an outline's is
+    // not (CSS UI 4 §5.2, outline-width-computed).
+    CHECK_EQ(logged(page, "borders="), std::string{"borders=0px,3px|0px,3px|3px,3px"});
+}
+
 // getComputedStyle-detached-subtree, getComputedStyle-pseudo-with-argument: an
 // element outside the flat tree - a light child of a shadow host that no
 // `<slot>` takes - has no computed style, while a slotted one keeps its own;
@@ -344,7 +682,16 @@ void test_descriptors_refuse_tree_counting() {
 } // namespace
 
 int main() {
+    test_computed_background_positions();
+    test_background_cascade();
+    test_background_substitution_failures();
+    test_image_color_scheme();
+    test_computed_radial_size_ranges();
+    test_computed_layer_size_ranges();
+    test_nonnegative_computed_widths();
+    test_elliptical_radius_cascade();
     test_resolved_colours();
+    test_column_rule_widths();
     test_flat_tree_and_pseudo_arguments();
     test_live_sheet_list();
     test_sticky_insets();

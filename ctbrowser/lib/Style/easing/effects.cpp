@@ -25,6 +25,7 @@ namespace ctbrowser::style::easing_detail {
         const std::string_view raw = ts.text_of(ts.tokens[at]);
         transform_fn fn;
         fn.name = ascii_lower_copy(raw.substr(0, raw.size() - 1));
+        fn.spelled = fn.name;
         ++at;
         std::vector<bool> is_length;
         for (;;) {
@@ -249,6 +250,24 @@ namespace ctbrowser::style::easing_detail {
                 fn.pct[k] = lerp((*a)[i].pct[k], (*b)[i].pct[k]);
             }
             if (i != 0) { out += ' '; }
+            // Two one-axis functions of one name stay that function (CSS
+            // Transforms 1 §12: a pair of the same function interpolates its
+            // arguments), `translateY(70%)` to `translateY(90%)` passing
+            // through `translateY(80%)` rather than its two-argument spelling.
+            const std::string & spelled = (*a)[i].spelled;
+            const bool one_axis = spelled == "translatex" || spelled == "translatey" ||
+                                  spelled == "scalex" || spelled == "scaley";
+            if (one_axis && spelled == (*b)[i].spelled) {
+                const std::size_t axis = spelled.ends_with('y') ? 1 : 0;
+                transform_fn single{fn.name, {fn.args[axis]}, {fn.pct[axis]}, {}};
+                std::string text = function_text(single);
+                const std::size_t open = text.find('(');
+                const std::string name = spelled.starts_with("translate")
+                                             ? (axis == 0 ? "translateX" : "translateY")
+                                             : (axis == 0 ? "scaleX" : "scaleY");
+                out += name + text.substr(open);
+                continue;
+            }
             out += function_text(fn);
         }
         return out;

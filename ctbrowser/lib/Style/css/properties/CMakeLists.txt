@@ -8,12 +8,14 @@ target_sources(ctbrowser-style PRIVATE
   expansion.hpp
   filter.cpp
   font_family.cpp
+  gaps.cpp
   grammar.cpp
   grid.cpp
   image.cpp
   internal.hpp
   keywords.cpp
   shadows.cpp
+  shapes.cpp
   shorthands.cpp
   table.cpp
   table_modules.cpp

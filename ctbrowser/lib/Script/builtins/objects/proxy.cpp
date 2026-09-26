@@ -158,6 +158,25 @@ void install_proxy(context & cx) {
                 c.clear_store_rejected();
                 return value::boolean(!refused);
             }
+            // 10.4.5.5: a TYPED ARRAY answers a numeric key's [[Set]] itself.
+            // As the receiver it coerces the value and writes a valid index;
+            // under another receiver an index it does not have is a quiet
+            // success - no coercion, no property on the receiver - and one it
+            // has is the writable data property OrdinarySet goes on with.
+            if (walk.is_array() &&
+                static_cast<array_object *>(walk.as_heap())->elements != element_kind::none &&
+                canonical_numeric_key(key)) {
+                auto * arr = static_cast<array_object *>(walk.as_heap());
+                std::uint32_t at = 0;
+                const bool valid = object_object::array_index_key(key, at) && at < arr->length();
+                if (walk.same_value(receiver)) {
+                    if (!typed_element_set(c, *arr, valid ? at : static_cast<std::size_t>(-1), v)) {
+                        return value::undefined();
+                    }
+                    return value::boolean(true);
+                }
+                if (!valid) { return value::boolean(true); }
+            }
             found = c.own_property(walk, key, own);
             if (c.throw_pending()) { return value::undefined(); }
             if (found) { break; }
@@ -301,35 +320,10 @@ void install_proxy(context & cx) {
         if (!key_of(c, arg_at(a, 1), key)) { return value::undefined(); }
         return value::boolean(c.delete_own_property(a[0], key));
     });
-    // 28.1.9, and 10.5.3 for a proxy: the `isExtensible` trap's boolean,
-    // which must agree with the target's.
+    // 28.1.9: [[IsExtensible]], which context::is_extensible answers for a
+    // proxy through its `isExtensible` trap and the 10.5.3 invariant.
     method(cx, reflect, "isExtensible", 1, [target_of](context & c, std::span<value> a) {
         if (!target_of(c, a, "isExtensible")) { return value::undefined(); }
-        if (a[0].is_kind(heap_kind::proxy)) {
-            auto * p = static_cast<proxy_object *>(a[0].as_heap());
-            if (!p->handler.is_object_like()) {
-                c.throw_error("TypeError",
-                              "Cannot perform 'isExtensible' on a proxy that has been revoked");
-                return value::undefined();
-            }
-            const value trap = c.lookup_property(p->handler, "isExtensible");
-            if (c.throw_pending()) { return value::undefined(); }
-            if (trap.is_callable()) {
-                const value args[1] = {p->target};
-                const bool answered = context::truthy(c.call(trap, args, p->handler));
-                if (c.throw_pending()) { return value::undefined(); }
-                if (answered != c.is_extensible(p->target)) {
-                    c.throw_error("TypeError", "'isExtensible' on proxy: trap result does not "
-                                               "reflect extensibility of proxy target");
-                    return value::undefined();
-                }
-                return value::boolean(answered);
-            }
-            if (!trap.is_nullish()) {
-                c.throw_error("TypeError", "proxy trap 'isExtensible' is not a function");
-                return value::undefined();
-            }
-        }
         return value::boolean(c.is_extensible(a[0]));
     });
     // 28.1.10: a proxy's trap answers the boolean (10.5.4); an ordinary

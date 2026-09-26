@@ -214,15 +214,23 @@ std::optional<double> unit_to_px(double value, std::string_view unit, const leng
             return value * *axis / 100.0;
         }
     }
-    // THE CONTAINER QUERY UNITS, CSS Containment 3 §container-lengths: "if no
-    // eligible query container is available, then use the small viewport size
-    // for that axis". There are no query containers here, so that is what they
-    // always are - `sign(0cqi / 1px)` is 0, not a value waiting for layout.
+    // THE CONTAINER QUERY UNITS, CSS Conditional 5 §4: a hundredth of the
+    // query container's content box on the axis - "if no eligible query
+    // container is available, then use the small viewport size for that
+    // axis", so `sign(0cqi / 1px)` is 0, not a value waiting for layout.
     if (unit.size() >= 3 && (unit[0] == 'c' || unit[0] == 'C') &&
         (unit[1] == 'q' || unit[1] == 'Q')) {
-        if (const auto axis = viewport_axis(ascii_lower_copy(unit.substr(2)))) {
-            return value * *axis / 100.0;
-        }
+        const double w = ctx.container_width >= 0 ? ctx.container_width : ctx.viewport_width;
+        const double h = ctx.container_height >= 0 ? ctx.container_height : ctx.viewport_height;
+        const std::string suffix = ascii_lower_copy(unit.substr(2));
+        std::optional<double> axis;
+        if (suffix == "w") { axis = w; }
+        if (suffix == "h") { axis = h; }
+        if (suffix == "i") { axis = ctx.vertical ? h : w; }
+        if (suffix == "b") { axis = ctx.vertical ? w : h; }
+        if (suffix == "min") { axis = std::min(w, h); }
+        if (suffix == "max") { axis = std::max(w, h); }
+        if (axis) { return value * *axis / 100.0; }
     }
     // The absolute units, all defined against the CSS inch of 96px.
     if (ascii_iequals(unit, "in")) { return value * 96.0; }

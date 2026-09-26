@@ -59,50 +59,55 @@ void install_errors(context & cx) {
     // without one, and the setter writes an own data property
     // (SetterThatIgnoresPrototypeProperties). Errors the ENGINE raises still
     // carry an own `stack` from context::make_error, which shadows this.
-    error_proto->define_accessor(
-        "stack",
-        detail::accessor_fn(
-            cx, "get stack",
-            [](context & c, std::span<value>) {
-                const value self = c.current_this();
-                if (!self.is_object_like()) {
-                    c.throw_error("TypeError", "Error.prototype.stack getter called on non-object");
-                    return value::undefined();
-                }
-                if (!self.is_object()) { return value::undefined(); }
-                value * trace =
-                    static_cast<object_object *>(self.as_heap())->find(error_stack_slot);
-                return trace == nullptr ? value::undefined() : *trace;
-            }),
-        detail::accessor_fn(
-            cx, "set stack",
-            [](context & c, std::span<value> a) {
-                const value self = c.current_this();
-                if (!self.is_object_like()) {
-                    c.throw_error("TypeError", "Error.prototype.stack setter called on non-object");
-                    return value::undefined();
-                }
-                if (!arg_at(a, 0).is_string()) {
-                    c.throw_error("TypeError", "Error.prototype.stack must be set to a string");
-                    return value::undefined();
-                }
-                if (c.has_own_property(self, "stack")) {
-                    c.clear_store_rejected();
-                    c.store_property(self, "stack", a[0]);
-                    c.strict_store_check("stack");
-                    return value::undefined();
-                }
-                context::property_descriptor wanted;
-                wanted.has_value = wanted.has_writable = wanted.has_enumerable =
-                    wanted.has_configurable = true;
-                wanted.held = a[0];
-                wanted.writable = wanted.enumerable = wanted.configurable = true;
-                if (!c.define_own_property(self, "stack", wanted)) {
-                    c.throw_error("TypeError", "Cannot define property stack");
-                }
+    // Each a built-in function with its own `length` (0 and 1).
+    auto * get_stack = detail::method_native(cx, "get stack", [](context & c, std::span<value>) {
+        const value self = c.current_this();
+        if (!self.is_object_like()) {
+            c.throw_error("TypeError", "Error.prototype.stack getter called on non-object");
+            return value::undefined();
+        }
+        if (!self.is_object()) { return value::undefined(); }
+        value * trace = static_cast<object_object *>(self.as_heap())->find(error_stack_slot);
+        return trace == nullptr ? value::undefined() : *trace;
+    });
+    detail::install_arity(cx, get_stack, 0);
+    auto * set_stack =
+        detail::method_native(cx, "set stack", [error_proto](context & c, std::span<value> a) {
+            const value self = c.current_this();
+            if (!self.is_object_like()) {
+                c.throw_error("TypeError", "Error.prototype.stack setter called on non-object");
                 return value::undefined();
-            }),
-        attr_configurable);
+            }
+            // SetterThatIgnoresPrototypeProperties step 2: the HOME
+            // object itself refuses - its own `stack` is this accessor,
+            // and writing through it would call this setter again.
+            if (self.as_heap() == error_proto) {
+                c.throw_error("TypeError", "Cannot set Error.prototype.stack");
+                return value::undefined();
+            }
+            if (!arg_at(a, 0).is_string()) {
+                c.throw_error("TypeError", "Error.prototype.stack must be set to a string");
+                return value::undefined();
+            }
+            if (c.has_own_property(self, "stack")) {
+                c.clear_store_rejected();
+                c.store_property(self, "stack", a[0]);
+                c.strict_store_check("stack");
+                return value::undefined();
+            }
+            context::property_descriptor wanted;
+            wanted.has_value = wanted.has_writable = wanted.has_enumerable =
+                wanted.has_configurable = true;
+            wanted.held = a[0];
+            wanted.writable = wanted.enumerable = wanted.configurable = true;
+            if (!c.define_own_property(self, "stack", wanted)) {
+                c.throw_error("TypeError", "Cannot define property stack");
+            }
+            return value::undefined();
+        });
+    detail::install_arity(cx, set_stack, 1);
+    error_proto->define_accessor("stack", value::object(get_stack), value::object(set_stack),
+                                 attr_configurable);
 
     // One constructor shape, seven names. `parent` is Error's prototype for the
     // subclasses, so the chain a page walks is the one it expects.
@@ -134,11 +139,13 @@ void install_errors(context & cx) {
             // ToString'd (a Symbol refuses), and an ABSENT argument installs no
             // own property at all - which is why
             // `new TypeError().hasOwnProperty('message')` is false.
+            // ToString is ToPrimitive first: an object whose @@toPrimitive
+            // answers a Symbol is the TypeError too (string_arg).
             std::string text;
             if (!a.empty() && !a[0].is_undefined()) {
-                if (!stringable_arg(c, a[0])) { return value::undefined(); }
-                text = c.to_string(a[0]);
-                if (c.throw_pending()) { return value::undefined(); }
+                const detail::unwind_watch watch{c};
+                text = string_arg(c, a[0]);
+                if (watch.threw()) { return value::undefined(); }
                 made->define("message", c.string(text), attr_builtin);
             }
             // Step 4, InstallErrorCause: `cause` comes off the options object

@@ -234,6 +234,171 @@ template <typename Fn> [[nodiscard]] bool each_key(context & c, const set_record
     return entries_of(c, c.current_this(), k, method);
 }
 
+// A WALK IN PROGRESS over an entry list - forEach, and the set algebra that
+// calls a set-like's `has` between members - and the index it visits next.
+//
+// The specification's [[MapData]] and [[SetData]] never shrink: a delete
+// leaves an ~empty~ slot the walk steps over, so an entry deleted before its
+// turn is not visited and one deleted and re-added is visited again at the
+// end. This list COMPACTS, which moved every later entry one place left
+// under the walk and made it skip the next one. So a delete or a clear moves
+// each live walk's cursor with the entries it moved; the registry only ever
+// holds walks whose C++ frames are running.
+struct live_walk {
+    const array_object * entries;
+    std::size_t next;
+};
+[[nodiscard]] std::vector<live_walk *> & live_walks() {
+    static thread_local std::vector<live_walk *> walks;
+    return walks;
+}
+struct walk_scope {
+    live_walk walk;
+    explicit walk_scope(const array_object * entries) : walk{entries, 0} {
+        live_walks().push_back(&walk);
+    }
+    ~walk_scope() { std::erase(live_walks(), &walk); }
+    walk_scope(const walk_scope &) = delete;
+    walk_scope & operator=(const walk_scope &) = delete;
+};
+// The entry at `at` is gone and everything after it moved down one.
+void entry_removed(const array_object & entries, std::size_t at) {
+    for (live_walk * w : live_walks()) {
+        if (w->entries == &entries && at < w->next) { --w->next; }
+    }
+}
+// Every entry is gone: a walk resumes with whatever is added next.
+void entries_cleared(const array_object & entries) {
+    for (live_walk * w : live_walks()) {
+        if (w->entries == &entries) { w->next = 0; }
+    }
+}
+
+// --- %MapIteratorPrototype% / %SetIteratorPrototype%, LIVE --------------------
+//
+// CreateMapIterator / CreateSetIterator (24.1.5.1, 24.2.5.1) are closures over
+// the collection and an index into [[MapData]]: an entry added during the
+// walk is visited, one deleted before its turn is not, and a finished
+// iterator stays finished. An iterator OUTLIVES the call that made it, so it
+// cannot be a live_walk; it registers on its collection instead, and delete
+// and clear move its index as they move the entries.
+//
+// ponytail: at most max_live_iterators registrations per collection, oldest
+// dropped - an iterator abandoned half-way (`m.keys().next().value`) is
+// otherwise held for the collection's life. One dropped past the cap walks on
+// unadjusted; a weak list is the upgrade if a page ever holds 32 at once.
+inline constexpr std::string_view live_iterators_key = "@#LiveIterators";
+inline constexpr std::string_view iter_index_key = "@#CollectionNextIndex";
+inline constexpr std::string_view iter_kind_key = "@#CollectionIterationKind";
+inline constexpr std::size_t max_live_iterators = 32;
+constexpr std::string_view iterated_slot(bool map) {
+    return map ? "@#IteratedMap" : "@#IteratedSet";
+}
+
+[[nodiscard]] array_object * live_iterators(value collection) {
+    if (!collection.is_object()) { return nullptr; }
+    value * list = static_cast<object_object *>(collection.as_heap())->find(live_iterators_key);
+    return list != nullptr && list->is_array() ? static_cast<array_object *>(list->as_heap())
+                                               : nullptr;
+}
+// Each registered iterator's index, moved as `move` says.
+template <typename Fn> void move_iterators(value collection, Fn && move) {
+    array_object * list = live_iterators(collection);
+    if (list == nullptr) { return; }
+    for (const value & it : list->items) {
+        value * index = static_cast<object_object *>(it.as_heap())->find(iter_index_key);
+        if (index != nullptr && index->is_number()) {
+            *index = value::number(move(index->as_number()));
+        }
+    }
+}
+void iterators_removed(value collection, std::size_t at) {
+    move_iterators(collection, [at](double index) {
+        return static_cast<double>(at) < index ? index - 1 : index;
+    });
+}
+void iterators_cleared(value collection) {
+    move_iterators(collection, [](double) { return 0.0; });
+}
+
+value collection_iterator_next(context & c, bool map) {
+    const value self = c.current_this();
+    auto * it = self.is_object() ? static_cast<object_object *>(self.as_heap()) : nullptr;
+    const value * slot = it == nullptr ? nullptr : it->find(iterated_slot(map));
+    const value * index = it == nullptr ? nullptr : it->find(iter_index_key);
+    const value * kind = it == nullptr ? nullptr : it->find(iter_kind_key);
+    if (slot == nullptr || index == nullptr || kind == nullptr) {
+        c.throw_error("TypeError", std::string{map ? "Map" : "Set"} +
+                                       " Iterator next called on an incompatible receiver");
+        return value::undefined();
+    }
+    const value collection = *slot;
+    const double at = index->is_number() ? index->as_number() : 0;
+    const double which = kind->is_number() ? kind->as_number() : 0;
+    if (collection.is_undefined()) { return c.iter_result(value::undefined(), true); }
+    const value * held = collection.is_object()
+                             ? static_cast<object_object *>(collection.as_heap())->find("__entries")
+                             : nullptr;
+    auto * entries = held != nullptr && held->is_array()
+                         ? static_cast<array_object *>(held->as_heap())
+                         : nullptr;
+    if (entries == nullptr || at >= static_cast<double>(entries->items.size())) {
+        // Finished for good: unregistered, and the collection let go.
+        if (array_object * list = live_iterators(collection)) {
+            std::erase_if(list->items, [&](value v) { return v.bits() == self.bits(); });
+        }
+        if (value * mine = it->find(iterated_slot(map))) { *mine = value::undefined(); }
+        return c.iter_result(value::undefined(), true);
+    }
+    const value item = entries->items[static_cast<std::size_t>(at)];
+    if (value * next = it->find(iter_index_key)) { *next = value::number(at + 1); }
+    value key = item;
+    value held_value = item;
+    if (map) {
+        const auto & pair = static_cast<array_object *>(item.as_heap())->items;
+        key = pair[0];
+        held_value = pair[1];
+    }
+    if (which == 0) { return c.iter_result(key, false); }
+    if (which == 1) { return c.iter_result(held_value, false); }
+    // A FRESH [key, value] each time (CreateArrayFromList) - never the pair
+    // the map keeps, which a page could otherwise write through.
+    const context::rooted keep_key{c, key};
+    const context::rooted keep_value{c, held_value};
+    const value pair = c.make_array();
+    const context::rooted keep_pair{c, pair};
+    auto * both = static_cast<array_object *>(pair.as_heap());
+    both->items.push_back(key);
+    both->items.push_back(held_value);
+    return c.iter_result(pair, false);
+}
+
+// `which`: 0 keys, 1 values, 2 entries.
+[[nodiscard]] value collection_iterator(context & c, value collection, bool map, int which) {
+    const context::rooted keep{c, collection};
+    const value proto = detail::iterator_kind_prototype(
+        c, map ? "Map Iterator" : "Set Iterator",
+        [map](context & cc, std::span<value>) { return collection_iterator_next(cc, map); });
+    const context::rooted keep_proto{c, proto};
+    const value out = c.make_object();
+    const context::rooted keep_out{c, out};
+    auto * it = static_cast<object_object *>(out.as_heap());
+    it->prototype = proto;
+    it->define(iterated_slot(map), collection, attr_none);
+    it->define(iter_index_key, value::number(0), attr_none);
+    it->define(iter_kind_key, value::number(which), attr_none);
+    array_object * list = live_iterators(collection);
+    if (list == nullptr) {
+        const value made = c.make_array();
+        static_cast<object_object *>(collection.as_heap())
+            ->define(live_iterators_key, made, attr_none);
+        list = static_cast<array_object *>(made.as_heap());
+    }
+    list->items.push_back(out);
+    if (list->items.size() > max_live_iterators) { list->items.erase(list->items.begin()); }
+    return out;
+}
+
 } // namespace
 
 void install_collections(context & cx) {
@@ -401,6 +566,8 @@ void install_collections(context & cx) {
                 auto * pair = static_cast<array_object *>(entries->items[i].as_heap());
                 if (!pair->items.empty() && pair->items[0].same_value_zero(arg_at(a, 0))) {
                     entries->items.erase(entries->items.begin() + static_cast<std::ptrdiff_t>(i));
+                    entry_removed(*entries, i);
+                    iterators_removed(c.current_this(), i);
                     return value::boolean(true);
                 }
             }
@@ -450,6 +617,8 @@ void install_collections(context & cx) {
             array_object * entries = self_entries(c, k, "Map.prototype.clear");
             if (entries == nullptr) { return value::undefined(); }
             entries->items.clear();
+            entries_cleared(*entries);
+            iterators_cleared(c.current_this());
             return value::undefined();
         });
         m("forEach", 1, [k](context & c, std::span<value> a) -> value {
@@ -460,9 +629,11 @@ void install_collections(context & cx) {
             const detail::unwind_watch watch{c};
             // BY INDEX over the live list, not a snapshot: 24.1.3.5 visits an
             // entry added during the walk and skips one deleted before its
-            // turn, which a callback that mutates the map can see.
-            for (std::size_t i = 0; i < entries->items.size(); ++i) {
-                const value entry = entries->items[i];
+            // turn, which a callback that mutates the map can see - the
+            // cursor is a live_walk, which delete and clear keep in step.
+            walk_scope live{entries};
+            while (live.walk.next < entries->items.size()) {
+                const value entry = entries->items[live.walk.next++];
                 const auto & pair = static_cast<array_object *>(entry.as_heap())->items;
                 const value args[3] = {pair[1], pair[0], self};
                 // 24.1.3.5 step 5: the callback's `this` is thisArg. Phaser's
@@ -471,24 +642,19 @@ void install_collections(context & cx) {
                 if (watch.threw()) { return value::undefined(); }
                 entries = self_entries(c, k, "Map.prototype.forEach");
                 if (entries == nullptr) { return value::undefined(); }
+                live.walk.entries = entries;
             }
             return value::undefined();
         });
+        // LIVE ITERATORS (collection_iterator). They were arrays once, with a
+        // comment saying `map.keys().next()` does not work - and Babylon
+        // drives exactly that, by hand, for the Map of shadow generators a
+        // light owns - and then snapshots, which a map changed mid-walk
+        // could see through.
         const auto column = [k](context & c, int which, const char * name) -> value {
-            array_object * entries = self_entries(c, k, name);
-            if (entries == nullptr) { return value::undefined(); }
-            value out = c.make_array();
-            auto * result = static_cast<array_object *>(out.as_heap());
-            for (const value & entry : entries->items) {
-                const auto & pair = static_cast<array_object *>(entry.as_heap())->items;
-                result->items.push_back(which == 2 ? entry : pair[static_cast<std::size_t>(which)]);
-            }
-            return list_iterator(c, out, "Map Iterator");
+            if (self_entries(c, k, name) == nullptr) { return value::undefined(); }
+            return collection_iterator(c, c.current_this(), true, which);
         };
-        // REAL ITERATORS. They were arrays, with a comment saying
-        // `map.keys().next()` does not work - and Babylon drives exactly that,
-        // by hand, for the Map of shadow generators a light owns. See
-        // list_iterator. (A snapshot, not a live view - said out loud.)
         m("keys", 0,
           [column](context & c, std::span<value>) { return column(c, 0, "Map.prototype.keys"); });
         m("values", 0,
@@ -523,6 +689,14 @@ void install_collections(context & cx) {
                 return value::undefined();
             }
             const detail::unwind_watch watch{c};
+            // GetIterator (GroupBy step 4), as Object.groupBy asks it: an
+            // object whose @@iterator is not callable is a TypeError, not the
+            // array-like iterable_values would walk instead.
+            if (a[0].is_object_like() && !a[0].is_array() &&
+                !c.lookup_property(a[0], "@@iterator").is_callable()) {
+                if (!watch.threw()) { c.throw_error("TypeError", "Map.groupBy: not iterable"); }
+                return value::undefined();
+            }
             const value items = c.iterable_values(arg_at(a, 0));
             if (watch.threw()) { return value::undefined(); }
             if (!items.is_array()) {
@@ -541,7 +715,9 @@ void install_collections(context & cx) {
             for (const value & item : snapshot) {
                 const value args[2] = {item, value::number(index++)};
                 const value key = normalise_key(c.call(a[1], args));
-                if (watch.threw()) { return value::undefined(); }
+                // Parked if it threw; the unwind count also moves for a
+                // callback that throws and catches inside itself.
+                if (c.throw_pending()) { return value::undefined(); }
                 value * entry = find_pair(*groups, key);
                 if (entry == nullptr) {
                     put_pair(c, *groups, key, c.make_array());
@@ -585,6 +761,8 @@ void install_collections(context & cx) {
             const std::ptrdiff_t at = find_member(*entries, arg_at(a, 0));
             if (at < 0) { return value::boolean(false); }
             entries->items.erase(entries->items.begin() + at);
+            entry_removed(*entries, static_cast<std::size_t>(at));
+            iterators_removed(c.current_this(), static_cast<std::size_t>(at));
             return value::boolean(true);
         });
         if (weak(k)) { continue; }
@@ -592,6 +770,8 @@ void install_collections(context & cx) {
             array_object * entries = self_entries(c, k, "Set.prototype.clear");
             if (entries == nullptr) { return value::undefined(); }
             entries->items.clear();
+            entries_cleared(*entries);
+            iterators_cleared(c.current_this());
             return value::undefined();
         });
         m("forEach", 1, [k](context & c, std::span<value> a) -> value {
@@ -600,26 +780,25 @@ void install_collections(context & cx) {
             if (!detail::callable_arg(c, arg_at(a, 0), "callback")) { return value::undefined(); }
             const value self = c.current_this();
             const detail::unwind_watch watch{c};
-            for (std::size_t i = 0; i < entries->items.size(); ++i) {
-                const value item = entries->items[i];
+            // Live, as Map's forEach is - see live_walk.
+            walk_scope live{entries};
+            while (live.walk.next < entries->items.size()) {
+                const value item = entries->items[live.walk.next++];
                 const value args[3] = {item, item, self};
                 (void)c.call(a[0], args, arg_at(a, 1)); // thisArg, 24.2.3.6 step 5
                 if (watch.threw()) { return value::undefined(); }
                 entries = self_entries(c, k, "Set.prototype.forEach");
                 if (entries == nullptr) { return value::undefined(); }
+                live.walk.entries = entries;
             }
             return value::undefined();
         });
-        const auto members = [k](context & c, const char * name) -> value {
-            array_object * entries = self_entries(c, k, name);
-            if (entries == nullptr) { return value::undefined(); }
-            value out = c.make_array();
-            static_cast<array_object *>(out.as_heap())->items = entries->items;
-            return out;
-        };
-        m("values", 0, [members](context & c, std::span<value>) -> value {
-            const value all = members(c, "Set.prototype.values");
-            return all.is_undefined() ? all : list_iterator(c, all, "Set Iterator");
+        // Live, as a Map's are (collection_iterator).
+        m("values", 0, [k](context & c, std::span<value>) -> value {
+            if (self_entries(c, k, "Set.prototype.values") == nullptr) {
+                return value::undefined();
+            }
+            return collection_iterator(c, c.current_this(), false, 1);
         });
         // 24.2.3.10/11: `keys` and @@iterator are both the `values` function.
         if (value * values = proto->find("values")) {
@@ -630,21 +809,11 @@ void install_collections(context & cx) {
         }
         // A Set's `entries` pairs each member WITH ITSELF, which looks odd and
         // is the spec: it exists so a Set and a Map can be walked by one code.
-        m("entries", 0, [members](context & c, std::span<value>) -> value {
-            const value all = members(c, "Set.prototype.entries");
-            if (all.is_undefined()) { return all; }
-            const context::rooted keep{c, all};
-            value out = c.make_array();
-            const context::rooted keep_out{c, out};
-            auto * pairs = static_cast<array_object *>(out.as_heap());
-            for (const value & member : static_cast<array_object *>(all.as_heap())->items) {
-                const value pair = c.make_array();
-                auto * both = static_cast<array_object *>(pair.as_heap());
-                both->items.push_back(member);
-                both->items.push_back(member);
-                pairs->items.push_back(pair);
+        m("entries", 0, [k](context & c, std::span<value>) -> value {
+            if (self_entries(c, k, "Set.prototype.entries") == nullptr) {
+                return value::undefined();
             }
-            return list_iterator(c, out, "Set Iterator");
+            return collection_iterator(c, c.current_this(), false, 2);
         });
         {
             auto * getter =
@@ -770,10 +939,13 @@ void install_collections(context & cx) {
                     if (static_cast<double>(self.items.size()) > other.size) {
                         return value::boolean(false);
                     }
-                    const std::vector<value> mine = self.items;
-                    const context::rooted_values keep{c, mine};
+                    // BY INDEX over the live list (the proposal's step 6 walks
+                    // O.[[SetData]] as it is at each step): `has` may mutate
+                    // the receiver, and an element it removes is not asked about.
                     const detail::unwind_watch watch{c};
-                    for (const value & e : mine) {
+                    walk_scope live{&self};
+                    while (live.walk.next < self.items.size()) {
+                        const value e = self.items[live.walk.next++];
                         const bool in = record_has(c, other, e);
                         if (watch.threw()) { return value::undefined(); }
                         if (!in) { return value::boolean(false); }
@@ -797,11 +969,12 @@ void install_collections(context & cx) {
                 });
         algebra("isDisjointFrom",
                 [](context & c, array_object & self, const set_record & other) -> value {
-                    const std::vector<value> mine = self.items;
-                    const context::rooted_values keep{c, mine};
                     const detail::unwind_watch watch{c};
-                    if (static_cast<double>(mine.size()) <= other.size) {
-                        for (const value & e : mine) {
+                    if (static_cast<double>(self.items.size()) <= other.size) {
+                        // Live, as isSubsetOf's walk is.
+                        walk_scope live{&self};
+                        while (live.walk.next < self.items.size()) {
+                            const value e = self.items[live.walk.next++];
                             const bool in = record_has(c, other, e);
                             if (watch.threw()) { return value::undefined(); }
                             if (in) { return value::boolean(false); }

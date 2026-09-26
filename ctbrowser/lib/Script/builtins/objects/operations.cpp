@@ -103,18 +103,29 @@ namespace {
         return out;
     }
     if (of.is_object()) {
-        // A String wrapper's indices and `length` come first (10.4.3.3), as
-        // they do for the primitive below.
-        if (value * slot = primitive_slot(of); slot != nullptr && slot->is_string()) {
-            if (which != key_filter::symbols) {
-                const std::size_t n = static_cast<string_object *>(slot->as_heap())->text.size();
-                for (std::size_t i = 0; i < n; ++i) { out.push_back(std::to_string(i)); }
-                out.emplace_back("length");
-            }
+        // A String wrapper's indices come first (10.4.3.3), as they do for the
+        // primitive below, then its own integer keys past them, and then
+        // `length` - the first string key it was made with - before the rest.
+        const value * slot = primitive_slot(of);
+        const bool string_wrapper =
+            slot != nullptr && slot->is_string() && which != key_filter::symbols;
+        if (string_wrapper) {
+            const std::size_t n = static_cast<string_object *>(slot->as_heap())->text.size();
+            for (std::size_t i = 0; i < n; ++i) { out.push_back(std::to_string(i)); }
         }
+        const std::size_t own_from = out.size();
         static_cast<object_object *>(of.as_heap())->each_own_key([&](const std::string & k) {
             if (wanted_key(which, k)) { out.push_back(k); }
         });
+        if (string_wrapper) {
+            const auto first_string =
+                std::find_if(out.begin() + static_cast<std::ptrdiff_t>(own_from), out.end(),
+                             [](const std::string & k) {
+                                 std::uint32_t at = 0;
+                                 return !object_object::array_index_key(k, at);
+                             });
+            out.insert(first_string, "length");
+        }
         // 10.1.11.1 OrdinaryOwnPropertyKeys: integer keys ascending (the walk's
         // own order), then strings, then SYMBOLS, each in creation order.
         if (which == key_filter::all) {
@@ -123,11 +134,18 @@ namespace {
         }
         return out;
     }
-    // Nothing but an object_object can hold a symbol key: the other three
-    // tables are only ever written by the engine itself.
-    if (which == key_filter::symbols) { return out; }
     if (of.is_array()) {
         auto * arr = static_cast<array_object *>(of.as_heap());
+        // An array's SYMBOL keys live in its named table, and come last
+        // (10.1.11.1; 10.4.5.7 for a typed array): indices, strings, symbols.
+        if (which == key_filter::symbols) {
+            if (arr->named) {
+                arr->named->each_own_key([&](const std::string & k) {
+                    if (wanted_key(which, k)) { out.push_back(k); }
+                });
+            }
+            return out;
+        }
         for (std::size_t i = 0; i < arr->length(); ++i) {
             if (!arr->is_hole(static_cast<std::uint32_t>(i))) { out.push_back(std::to_string(i)); }
         }
@@ -139,6 +157,7 @@ namespace {
         if (arr->elements == element_kind::none) { out.emplace_back("length"); }
         // Then the named own properties - see array_object::named.
         if (arr->named) {
+            const std::size_t named_from = out.size();
             arr->named->each_own_key([&](const std::string & k) {
                 // An accessor ELEMENT's pair also lives here, under its
                 // index; it was reported above.
@@ -147,9 +166,15 @@ namespace {
                     out.push_back(k);
                 }
             });
+            std::stable_partition(out.begin() + static_cast<std::ptrdiff_t>(named_from), out.end(),
+                                  [](const std::string & k) { return !k.starts_with("@@"); });
         }
         return out;
     }
+    // Nothing else but an object_object or a closure (a class's `static
+    // [sym]()`) holds a symbol key: the other tables are only ever written by
+    // the engine itself.
+    if (which == key_filter::symbols && !of.is_kind(heap_kind::function)) { return out; }
     if (of.is_string()) {
         const std::size_t n = static_cast<string_object *>(of.as_heap())->text.size();
         for (std::size_t i = 0; i < n; ++i) { out.push_back(std::to_string(i)); }
@@ -182,23 +207,52 @@ namespace {
         // the loop below then found the entry this loop had just caused and
         // reported `prototype` TWICE. The names taken here are remembered and
         // skipped there rather than the test being taken twice.
+        //
+        // A REDEFINED ONE KEEPS ITS PLACE: `Object.defineProperty(f, "length",
+        // ...)` after `f.a = 1` moves the slot into the table after `a`, but
+        // a redefinition is not a new property and OwnPropertyKeys still
+        // reads ["length", ..., "a"]. Only a DELETED one (the *_erased flags)
+        // that came back sits where it came back.
+        //
+        // And 10.1.11.1's order over the table: integer keys ASCENDING (a
+        // class's `static 2()` before its `static 1()` reads [1, 2]), then
+        // strings, then symbols. `__home` is the compiler's [[HomeObject]]
+        // slot (compile/classes.cpp), not a property of the page's.
         std::vector<std::string_view> taken;
-        for (const char * synthesised : {"length", "name", "prototype"}) {
-            if (closure->find(synthesised) == nullptr &&
-                closure->find_accessor(synthesised) == nullptr &&
-                cx.has_own_property(of, synthesised)) {
+        std::vector<std::string> indices;
+        std::vector<std::string> symbols;
+        for (const std::string_view synthesised : {"length", "name", "prototype"}) {
+            if (which == key_filter::symbols) { break; }
+            const bool erased = (synthesised == "length" && closure->length_erased) ||
+                                (synthesised == "name" && closure->name_erased);
+            if (!erased && cx.has_own_property(of, std::string{synthesised})) {
                 out.emplace_back(synthesised);
                 taken.emplace_back(synthesised);
             }
         }
+        const auto add = [&](const std::string & key) {
+            if (key == "__home" || !wanted_key(which, key)) { return; }
+            if (std::ranges::find(taken, key) != taken.end()) { return; }
+            std::uint32_t at = 0;
+            if (key.starts_with("@@")) {
+                symbols.push_back(key);
+            } else if (object_object::array_index_key(key, at)) {
+                indices.push_back(key);
+            } else {
+                out.push_back(key);
+            }
+        };
         for (const auto & [key, held] : closure->props) {
             (void)held;
-            if (std::ranges::find(taken, key) != taken.end()) { continue; }
-            out.push_back(key);
+            add(key);
         }
-        for (const accessor_entry & entry : closure->accessors.entries) {
-            out.push_back(entry.key);
-        }
+        for (const accessor_entry & entry : closure->accessors.entries) { add(entry.key); }
+        // Canonical index strings have no leading zeros: shorter is smaller.
+        std::ranges::sort(indices, [](const std::string & a, const std::string & b) {
+            return a.size() != b.size() ? a.size() < b.size() : a < b;
+        });
+        out.insert(out.begin(), indices.begin(), indices.end());
+        out.insert(out.end(), symbols.begin(), symbols.end());
         return out;
     }
     return out;
@@ -328,13 +382,13 @@ namespace {
     if (of.is_kind(heap_kind::proxy)) {
         // 10.5.2 [[SetPrototypeOf]] of a proxy: the `setPrototypeOf` trap's
         // boolean, and a true over a non-extensible target must be the truth.
-        // THE CONTRACT IS THE CALLER'S THROW: Object.setPrototypeOf and the
-        // __proto__ setter turn false into their TypeError, so the two
-        // refusals 10.5.2 spells as TypeErrors (a revoked proxy, a trap
-        // lying about a non-extensible target) answer false rather than
-        // throwing here and again there - a throw this native raises has
-        // landed by the time the caller raises its own, which is then
-        // uncaught. Reflect.setPrototypeOf checks the revoked case itself.
+        // THE CONTRACT IS ONE THROW: Object.setPrototypeOf and the
+        // __proto__ setter turn false into their TypeError, so a revoked
+        // proxy answers false rather than throwing here and again there - a
+        // throw this native raises has landed by the time the caller raises
+        // its own, which is then uncaught (Reflect.setPrototypeOf checks the
+        // revoked case itself). A trap lying about a non-extensible target
+        // throws HERE, where Reflect needs it too, and answers true.
         auto * p = static_cast<proxy_object *>(of.as_heap());
         if (!p->handler.is_object_like()) { return false; }
         const value trap = cx.lookup_property(p->handler, "setPrototypeOf");
@@ -351,7 +405,16 @@ namespace {
         if (cx.is_extensible(p->target)) { return true; }
         const value real = prototype_of(cx, p->target);
         if (cx.throw_pending()) { return false; }
-        return real.strict_equals(proto);
+        // Steps 12-13: a `true` over a non-extensible target whose prototype
+        // is NOT the one asked for is the TypeError itself - Reflect's too,
+        // which has no false of its own to turn into one - and a throw
+        // answers true, so the callers above do not throw a second time.
+        if (!real.strict_equals(proto)) {
+            cx.throw_error("TypeError", "'setPrototypeOf' on proxy: trap returned truish for "
+                                        "setting a new prototype on the non-extensible proxy "
+                                        "target");
+        }
+        return true;
     }
     if (prototype_of(cx, of) == proto) { return true; } // step 4: the same one is always fine
     if (of.is_object() && of.as_heap() == cx.prototype(context::proto_kind::object)) {

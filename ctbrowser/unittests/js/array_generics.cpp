@@ -230,6 +230,8 @@ int main() {
     js_expect("[1, undefined, 2].sort(function (a, b) { return a - b; }).join(',')", "1,2,");
     js_expect("[1, undefined, 2].sort(function (a, b) { return a - b; }).length", "3");
     js_expect("[3, 1, 2].sort(function (a, b) { return a - b; }).join(',')", "1,2,3");
+    // A NaN answer is +0: equal, so the order stays (23.1.3.30.2).
+    js_expect("['b', 'a', 'c'].sort(function (a, b) { return a - b; }).join(',')", "b,a,c");
 
     // ================================================================
     // 8. String.raw AND THE String STATICS
@@ -696,6 +698,25 @@ int main() {
               "Array.prototype.splice.call(o, 0, 3); return r.length + ':' + r.join() + ':' + "
               "o.length; })()",
               "3:0,1,2:1");
+    // 10.4.2.4 ArraySetLength coerces twice, then checks `length` as it is.
+    js_expect("(function(){ var a = [1, 2], n = 0; var len = {valueOf() { if (++n !== 1) "
+              "Object.defineProperty(a, 'length', {writable: false}); return a.length; }};"
+              " try { Object.defineProperty(a, 'length', {value: len, writable: true});"
+              " return 'no'; } catch (e) { return e.name + n; } })()",
+              "TypeError2");
+    js_expect("(function(){ try { Object.defineProperty([], 'length', {value: -1, "
+              "configurable: true}); return 'no'; } catch (e) { return e.name; } })()",
+              "RangeError");
+    js_expect("(function(){ var a = [1, 2, 3], h = []; a.length = {[Symbol.toPrimitive](k) {"
+              " h.push(k); return 1; }}; return a.length + ':' + h.join(); })()",
+              "1:number,number");
+    // 23.1.3.36: toString is join when there is one, the object's tag if not.
+    js_expect("Array.prototype.toString.call({join() { return 'j'; }}) + '|' + "
+              "Array.prototype.toString.call(true) + '|' + [1, [2, 3], null].toString()",
+              "j|[object Boolean]|1,2,3,");
+    js_expect("(function(){ delete Object.prototype.toString; "
+              "return Array.prototype.toString.call({join: 1}); })()",
+              "[object Object]");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

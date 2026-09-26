@@ -207,8 +207,11 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
 
         VM_CASE(get_global)
         VM_CASE(get_global_typeof) do {
-            const auto it = globals_.find(vm_proto->names[in.bx()]);
-            if (it != globals_.end()) {
+            // The RUNNING frame's realm - one load, no search: a frame is
+            // never pushed without one (call_frame::realm).
+            const string_flat_map<value> & globals = vm_frame->realm->globals;
+            const auto it = globals.find(vm_proto->names[in.bx()]);
+            if (it != globals.end()) {
                 reg(in.a) = it->second;
                 break;
             }
@@ -218,7 +221,15 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(set_global) do {
-            globals_[vm_proto->names[in.bx()]] = reg(in.a);
+            const std::string & name = vm_proto->names[in.bx()];
+            if (immutable_global(name)) [[unlikely]] {
+                if (vm_proto->is_strict) {
+                    throw_error("TypeError",
+                                "Cannot assign to read only property '" + name + "' of object");
+                }
+                break;
+            }
+            vm_frame->realm->globals[name] = reg(in.a);
             break;
         }
         while (0);
@@ -658,7 +669,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
             // were given. (A primitive receiver stays unboxed here - ponytail:
             // ToObject lives in builtins/internal.hpp, box it when a test needs it.)
             if (!vm_proto->is_strict && !vm_proto->is_arrow && reg(in.a).is_nullish()) {
-                reg(in.a) = global_this_;
+                reg(in.a) = vm_frame->realm->global_this;
             }
             break;
         }

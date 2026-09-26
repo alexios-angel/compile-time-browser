@@ -25,7 +25,9 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
+#include <ctbrowser/shell/page/input_types.hpp>
 
+#include "element/internal.hpp"
 #include "events/internal.hpp"
 
 #include <cstddef>
@@ -41,7 +43,7 @@ namespace {
 
 // Private-name keys (the `@#` the VM gives `#x`): no page can spell one, and
 // neither getOwnPropertyNames nor getOwnPropertySymbols reports them.
-constexpr std::string_view internals_key = "@#ctbrowser:internals";
+using detail::internals_key;
 constexpr std::string_view target_key = "@#ctbrowser:internals-target";
 constexpr std::string_view validity_key = "@#ctbrowser:internals-validity";
 constexpr std::string_view message_key = "@#ctbrowser:internals-message";
@@ -50,7 +52,7 @@ constexpr std::string_view form_state_key = "@#ctbrowser:internals-form-state";
 constexpr std::string_view states_key = "@#ctbrowser:internals-states";
 constexpr std::string_view behaviors_key = "@#ctbrowser:internals-behaviors";
 constexpr std::string_view aria_prefix = "@#ctbrowser:internals-aria:";
-constexpr std::string_view flag_prefix = "@#ctbrowser:internals-flag:";
+constexpr std::string_view flag_prefix = detail::internals_flag_prefix;
 
 // ValidityState's ten flags, HTML 4.10.20.3, in interface order.
 constexpr std::string_view validity_flags[] = {
@@ -272,7 +274,15 @@ void dom_bindings::install_element_internals(context & cx,
         const target at = target_of(c, "shadowRoot");
         if (!at.id) { return value::undefined(); }
         const node_id root = at.owner->shadow_root_of(at.id);
-        return root ? at.owner->wrap(c, root) : value::null();
+        if (!root) { return value::null(); }
+        const value wrapped = at.owner->wrap(c, root);
+        // Not "available to element internals" (element/shadow.cpp).
+        if (wrapped.is_object() &&
+            static_cast<script::object_object *>(wrapped.as_heap())
+                    ->find(detail::shadow_hidden_from_internals_key) != nullptr) {
+            return value::null();
+        }
+        return wrapped;
     });
 
     define_getter(cx, *proto, "form", [form_associated_target](context & c, std::span<value>) {
@@ -388,7 +398,8 @@ void dom_bindings::install_element_internals(context & cx,
                 at.internals->set(flag_key(validity_flags[i]), value::boolean(held[i]));
             }
             at.internals->set(std::string{message_key},
-                              any ? c.string(c.to_string(message)) : c.string(""));
+                              any ? c.string(input_types::normalize_newlines(c.to_string(message)))
+                                  : c.string(""));
             return value::undefined();
         });
 

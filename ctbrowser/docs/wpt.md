@@ -14,6 +14,342 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Background shorthand and strict String conversion — 2026-09-18
+
+Full `css/` replay at `fd54d8b1`: **1,647/2,926 runnable files PASS,
+71,205 subtests PASS**. Against `bd840fed`: **+7 files and
++70 passing subtests, zero passing files or subtests lost**. Same WPT
+`3f6b09ae`, devbox, four workers, 4 GB cap and deterministic GL driver;
+213.9 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `fd54d8b1` | 1,647 | 1,063 | 25 | 0 | 191 | 1,488 | 71,205 / 31,888 |
+
+`b8adba54` expands background layers through the existing longhand grammars,
+resets omitted components and serializes them in canonical order. The cascade
+uses the same owned expansion. Clip/origin combinations, slash adjacency,
+final-layer colors and calculated sizes survive variable substitution and
+inheritance. Position validation now checks the shape of typed math rather
+than accepting arbitrary functions; image components use the scalar image grammar.
+`c381c199` resolves custom-property keywords produced by substitution
+through their own cascade before dependent variables read them. Invalid
+shorthands reset every governed longhand. Unsupported image functions remain
+unsupported during background expansion; `image-set()` still needs its own
+implementation and attribute-taint tracking. The first full replay exposed
+two passing-subtest losses, and the next replay exposed an internal sentinel
+leaking through computed custom properties. `fd54d8b1` returns the
+required empty string. All three losses were corrected before this measurement.
+
+`45c943e0` changes JS/VM semantics: strict String conversion calls
+ToPrimitive before rejecting Symbols, including boxed Symbols and Symbols
+returned by callbacks. String methods stop after failed conversions and
+preserve internally caught exceptions. The VM's pending-exception query also
+recognizes an exception at a native-call fence, preventing later coercions
+from replacing it through `Function.call`. Symbol property keys and explicit
+`String(Symbol())` remain supported. `e76272e6` also makes existing VM and AOT call-stack limits raise catchable
+`RangeError`s. No limit, bytecode or public signature changed.
+
+Fresh backgrounds measured **91 -> 94 files PASS** and
+**5,837 -> 5,892 subtests PASS**, with no losses. Fresh String test262 measured
+**1,174 -> 1,181 files PASS**, zero losses.
+The CSS unit fixture now correctly rejects a non-final layer color and keeps
+a valid layered control. Final focused CTests passed **11/11** (0.26 seconds), and
+the browser gate passed **216/216** (93.67 seconds), excluding
+compiler tests with `CTCOMPILE_MLIR=OFF`. Formatting passed; all 18
+source/test hashes matched the devbox and merged tree. Regressions failed
+before their fixes; the runtime controls include forced GC during conversion.
+
+Evidence: `/tmp/ctbrowser29/` contains `browser29-css.json`,
+`css-comparison.json`, `measure-css-final.log`, focused backgrounds/String JSON,
+`root-comparison.json`, `string-comparison.json`, `root-red.log`,
+`root-check.log`, `string-red.log`, `final-gate.log`, `substitution-green.log`,
+`final-gate-sentinel-complete.log`, `format-sentinel.log` and `source.sha256`.
+No WPT or test262 expectation files changed. Other WPT directories, the rest of test262 and
+compiler suites were not replayed.
+
+The final run completed remotely before the SSH interruption. Recovery in
+`/tmp/ctbrowser30/recovery.log` verified all source hashes and the output's
+completion time before the next devbox build; `recovered-css.json` and
+`recovered-css-comparison.json` preserve that result and comparison.
+
+Next: computed background positions, container-relative lengths and relative
+image URLs. The background-valid file still demands both `transparent` and
+`rgba(0, 0, 0, 0)` for omitted color; these inconsistent assertions remain
+visible. Runtime follow-ups include abrupt conversion handling in parseInt
+and JSON.rawJSON, String.fromCharCode wrapping and UTF-16/case folding.
+
+## Computed images and String coercion errors — 2026-09-18
+
+Full `css/` replay at `bd840fed`: **1,640/2,926 runnable files PASS,
+71,135 subtests PASS**. Against `ad6f9147`: **+3 files and
++31 passing subtests, zero passing files or subtests lost**. Same WPT
+`3f6b09ae`, devbox, four workers, 4 GB cap and deterministic GL driver;
+201.4 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `bd840fed` | 1,640 | 1,070 | 25 | 0 | 191 | 1,488 | 71,135 / 31,958 |
+
+`4182a623` clamps radial-gradient radii after math folding and validates
+substituted image syntax before calculation results lose their origin.
+`9b13ac4c` selects light/dark images using the element's color scheme,
+represents a selected `none` as a transparent image, and passes the scheme
+to nested colors. Color functions remain gradient stops; quoted URLs use
+the existing URL serializer.
+
+`54fb7228` changes JS/VM semantics: `String.fromCodePoint` preserves numeric
+conversion errors before range checks, and `String.raw` stops after failed
+getters/conversions and rejects direct Symbols at its numeric/string
+conversion sites. Internally caught exceptions still allow coercion to
+succeed. The raw getter result remains rooted during subsequent calls.
+No bytecode or public interfaces changed.
+
+Fresh backgrounds measured **90 -> 91 files PASS** and
+**5,833 -> 5,837 subtests PASS**, with no losses. Fresh String test262
+measured **1,169 -> 1,174 files PASS**, zero losses; details in `test262.md`.
+Added regressions failed before their fixes. Final focused CTests passed
+**4/4** (0.13 seconds), the browser gate **216/216** (70.14 seconds), with
+compiler tests excluded and `CTCOMPILE_MLIR=OFF`; formatting passed.
+All six source/test hashes matched the devbox and merged tree.
+
+Evidence: `/tmp/ctbrowser28/` contains `browser28-css.json`,
+`css-comparison.json`, `measure-css.log`, focused backgrounds and String
+before/after JSON, `focused-comparison.json`, `string-comparison.json`,
+`red.log`, `string-red.log`, `image-red.log`, `final-gate-retry.log`,
+`format-final-retry.log` and `source.sha256`. No expectations changed.
+Other WPT directories, the rest of test262 and compiler suites were not replayed.
+
+Next: background shorthand expansion leaves longhands empty for
+`background: none`. Relative image URLs, container layout, strict ToString
+for object conversions and UTF-16 strings remain open.
+
+## Computed layer sizes, cross-fade grammar and URL escapes — 2026-09-18
+
+Full `css/` replay at `ad6f9147`: **1,637/2,926 runnable files PASS,
+71,104 subtests PASS**. Against `c7332149`: **+4 files and +38
+passing subtests, zero passing files or subtests lost**. Same WPT `3f6b09ae`,
+devbox, four workers, 4 GB cap and deterministic GL driver; 200.7 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `ad6f9147` | 1,637 | 1,073 | 25 | 0 | 191 | 1,488 | 71,104 / 31,989 |
+
+`814baa2c` computes and clamps background/mask size components before
+inheritance while retaining the shared math evaluator's random ordinals and
+finite bounds. `1ab0f6fb` validates substituted sizes even when mixed
+length/percentage math remains unresolved; literal negative components stay
+invalid. `b0956d17` validates cross-fade items without rejecting percentages
+inside nested images, and handles URL tokens as images. `a6d44a88` consumes
+complete URL escapes, including a hexadecimal escape's terminating space.
+
+Fresh focused backgrounds measured **87 -> 90 files PASS** and
+**5,815 -> 5,833 subtests PASS**, with no losses. The added regressions
+failed before their fixes. Final focused CTests and the browser gate passed;
+the browser gate was **216/216** (67.07 seconds), excluding compiler
+tests with `CTCOMPILE_MLIR=OFF`. Formatting passed, and source/test hashes
+matched the devbox and committed tree.
+
+Evidence: `/tmp/ctbrowser27/` contains `browser27-css.json`,
+`css-comparison.json`, `measure-css.log`, focused before/after JSON and
+comparisons, `red.log`, `context-red.log`, `mixed-variable-red.log`,
+`image-red.log`, `url-red.log`, `gate-complete.log`, `format-complete.log`
+and `source.sha256`. No expectations, public interfaces or JS/VM behavior
+changed. Other WPT directories, test262 and compiler suites were not replayed.
+
+The `css-values/ch-empty-pseudo-recalc-on-font-load` file also changed
+three subtests from TIMEOUT to FAIL; its passing count did not change.
+
+Next: computed radial-gradient sizes still lose their nonnegative range after
+math folding. Relative image URL resolution, gradient number precision and
+container-relative lengths remain open.
+
+## Border-image sides, layer repetition and size ranges — 2026-09-18
+
+Full `css/` replay at `c7332149`: **1,633/2,926 runnable files PASS,
+71,066 subtests PASS**. Against `a7d76d12`: **+8 files and +254
+passing subtests, zero passing files or subtests lost**. Same WPT `3f6b09ae`,
+devbox, four workers, 4 GB cap and deterministic GL driver; 204.3 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `c7332149` | 1,633 | 1,077 | 25 | 0 | 191 | 1,488 | 71,066 / 32,024 |
+
+`1119a3c4` expands border-image side lists before animation arithmetic and
+uses CSSOM serialization to compress the results. `0b70c015` repeats layers
+using each list's original length; the growing vector size had made every
+appended item repeat the first layer. `c7332149` marks background and mask
+sizes nonnegative so the existing animation clamp handles lengths and pure
+percentages, while preserving unresolved mixed calculations.
+
+Fresh focused backgrounds runs measured **80 -> 87 files PASS** and
+**5,589 -> 5,815 subtests PASS**, with no losses. Each regression failed
+before its fix. The final browser gate passed **216/216** (66.72 seconds),
+excluding compiler tests with `CTCOMPILE_MLIR=OFF`; formatting passed.
+All four final source/test hashes matched the devbox and committed tree.
+
+Evidence: `/tmp/ctbrowser26/` contains `browser26-final-css.json`,
+`final-css-comparison.json`, `measure-final-css.log`, focused JSON/comparisons,
+`red.log`, `repetition-red.log`, `size-red.log`, `final-gate.log`,
+`format-final.log` and `source.sha256`. The first source commit's full replay
+is retained in `browser26-css.json` and `css-comparison.json`.
+No expectations, public interfaces or JS/VM behavior changed. Other WPT
+directories, test262 and compiler suites were not replayed.
+
+Next: static computed background sizes can still retain negative components
+after early math folding; animation ranges are fixed here. Gradient angle
+precision uses the shared number serializer and needs a consistent policy.
+Relative image URLs and container-relative lengths remain open.
+
+## Animation ranges, addition and repeating gradients — 2026-09-18
+
+Full `css/` replay at `a7d76d12`: **1,625/2,926 runnable files PASS, 70,812 subtests PASS**.
+Against `22ff781c`: **+4 files and +185 passing subtests, zero
+passing files or subtests lost**. Same WPT `3f6b09ae`, devbox, four workers,
+4 GB cap and deterministic GL driver; 203.3 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `a7d76d12` | 1,625 | 1,085 | 25 | 0 | 191 | 1,488 | 70,812 / 32,278 |
+
+`0e70832e` clamps pure percentage animation results for nonnegative properties,
+while retaining mixed length/percentage calculations until their basis exists.
+`8bca06f4` adds equal numeric list components during additive composition;
+identical keywords still retain their value. `544e8d31` recognizes the existing
+repeating-gradient parsers in `CSS.supports()` (merged as `a7d76d12`).
+
+Fresh focused backgrounds runs measured **77 -> 80 files PASS** and
+**5,480 -> 5,589 subtests PASS**, with no losses. Each regression failed before
+its fix. Final focused CTests passed **2/2** (0.02 seconds), and the browser
+gate passed **216/216** (66.47 seconds), excluding compiler tests with
+`CTCOMPILE_MLIR=OFF`; formatting passed. All four source/test hashes matched
+the devbox and committed tree.
+
+Evidence: `/tmp/ctbrowser25/` contains `browser25-css.json`,
+`css-comparison.json`, `measure-css.log`, the focused before/intermediate/after
+JSON and comparisons, `red.log`, `addition-red.log`, `gradient-red.log`,
+`gate-final.log`, `format-final.log` and `source.sha256`. No expectations,
+public interfaces or JS/VM behavior changed. Other WPT directories, test262
+and compiler suites were not replayed.
+
+Next: border-image composition still needs list expansion and compression.
+Container-relative lengths need actual layout content boxes and size containment:
+the browser never installs the style engine's container-size callback.
+The investigated flow is in `/tmp/ctbrowser25/container-diagnosis.md`;
+no container workaround was added.
+
+## Border-image grammar and computed ranges — 2026-09-18
+
+Full `css/` replay at `22ff781c`: **1,621/2,926 runnable files PASS,
+70,627 subtests PASS**. Against `47d281a0`: **+14 files and +209 passing
+subtests, zero passing files or subtests lost**. Same WPT `3f6b09ae`,
+devbox, four workers, 4 GB cap and deterministic GL driver; 203.0 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `22ff781c` | 1,621 | 1,089 | 25 | 0 | 191 | 1,488 | 70,627 / 32,463 |
+
+`ca830c3b` validates the border-image components, expands its five longhands,
+serializes the slash groups and preserves omitted-value resets. Its numeric
+range metadata also applies to animation results. `22ff781c` clamps border
+widths after shorthand expansion and computes each image component before
+inheritance. Substituted calculations retain their range semantics; literal
+negative values remain invalid. The same final clamp also fixes gaps,
+padding, flex components and font sizes; the module deltas are in
+`css-conformance.md`.
+
+Fresh focused CSS backgrounds runs measured **66 -> 77 files PASS** and
+**5,319 -> 5,480 subtests PASS**, with no losses. The added browser regression
+failed before the fix, and review exposed a further variable-substitution
+case that also failed before its correction. Final focused CTests passed
+**2/2** (0.06 seconds), the browser gate **216/216** (69.42 seconds), with
+compiler tests excluded and `CTCOMPILE_MLIR=OFF`; formatting passed.
+All seven source/test hashes matched the devbox and committed tree. One
+intermediate sync failed its hash check before testing and was discarded.
+
+Evidence: `/tmp/ctbrowser24/` contains `browser24-css.json`,
+`css-comparison.json`, `measure-css.log`, focused before/after JSON,
+`backgrounds-comparison.json`, `red.log`, `image-variable-red.log`,
+`green-verified.log`, `gate-final.log`, `format-final.log` and `source.sha256`.
+No expectations or JS/VM behavior changed. Other WPT directories, test262
+and compiler suites were not replayed.
+
+Next: negative percentage animation results still escape the range clamp;
+border-image slice and width interpolation retain failing subtests. Additive
+image composition and container-relative units also remain open.
+
+## Border-radius grammar and computed values — 2026-09-18
+
+Full `css/` replay at `47d281a0`: **1,607/2,926 runnable files PASS,
+70,418 subtests PASS**. Against `92fda299`: **+5 files and +37 passing
+subtests, zero passing files or subtests lost**. Same WPT `3f6b09ae`,
+devbox, four workers, 4 GB cap and deterministic GL driver.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `47d281a0` | 1,607 | 1,103 | 25 | 0 | 191 | 1,488 | 70,418 / 32,672 |
+
+`7de3cd0c` validates radius components, expands both axes into corner
+longhands, compresses repeated values and shares storage with the WebKit
+aliases. Radius range metadata also clamps negative animation results.
+`47d281a0` removes the cascade's lossy horizontal-only expansion and computes
+each corner component before inheritance, including relative lengths and
+negative calculations. The borrowed expansion helper now leaves radius to
+the existing owned CSSOM path; its signature is unchanged.
+
+Only `css/css-backgrounds` moved: **61 -> 66 files PASS**, **5,282 -> 5,319
+subtests PASS**. The gained files are `border-radius-interpolation`,
+`border-radius-computed`, `border-radius-invalid`, `border-radius-valid`
+and `webkit-border-radius-valid`. A fresh focused before/after run matched
+the full replay. The added cascade regression failed before the fix;
+the three focused CTests passed afterward. The browser gate passed
+**216/216** (68.82 seconds), excluding compiler tests with
+`CTCOMPILE_MLIR=OFF`; formatting passed. All ten source/test hashes matched
+the devbox and committed tree.
+
+Evidence: `/tmp/ctbrowser23/` contains `browser23-css.json`,
+`css-comparison.json`, `measure-css.log`, `browser23-backgrounds-{before,after}.json`,
+`backgrounds-comparison.json`, `red-retry.log`, `green.log`, `gate.log`,
+`format-combined.log` and `source.sha256`. No expectations changed.
+Other WPT directories and test262 were not replayed; JS/VM behavior is unchanged.
+
+Next: border-image accepts invalid values and lacks shorthand expansion;
+negative computed widths also remain. `border-width-computed` still reports
+`-10px` for `border-bottom-width: calc(-0.5em + 10px)` where it expects `0px`.
+
+## Column-rule widths and layout coordinates — 2026-09-18
+
+Full `css/` replay at `92fda299`: **1,602/2,926 runnable files PASS,
+70,381 subtests PASS**. Against `7cfe95b5`: **+3 files and +6 passing
+subtests, zero passing files or subtests lost**. Same WPT `3f6b09ae`,
+devbox, four workers, 4 GB cap and deterministic GL driver; 201.2 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `92fda299` | 1,602 | 1,108 | 25 | 0 | 191 | 1,488 | 70,381 / 32,709 |
+
+`1084fb74` records accumulated translations in the shared coordinate lookup,
+so image `x`/`y` and `offsetLeft`/`offsetTop` discard transforms on the element
+and its ancestors. `HTMLImageElement-x-and-y-ignore-transforms` now passes.
+`7848b325` resolves column-rule width keywords before shorthand serialization,
+gaining multicol `inheritance` and `column-rule-computed`, plus one css-gaps
+subtest. Rules retain their computed width for `none` and `hidden` styles.
+
+Both added regression tests failed on the unchanged engine and passed with
+the fixes. The browser CTest gate passed **216/216** (66.98 seconds), excluding
+compiler tests with `CTCOMPILE_MLIR=OFF`; formatting passed. All four changed
+source/test hashes matched the devbox and the committed tree.
+
+Evidence: `/tmp/ctbrowser22/` contains `browser22-css.json`,
+`css-comparison.json`, `measure-css.log`, `red-retry.log`, `green.log`,
+`gate.log`, `format-green.log` and `source.sha256`, plus the focused image
+and multicol results. No expectations changed. Other WPT directories and
+test262 were not replayed; JS/VM behavior is unchanged.
+
+Next: border-radius accepts invalid values and loses the vertical radii in
+computed elliptical shorthands. Multicol's remaining failures concern
+pseudo-element selectors; image zoom/inline placement also remains open.
+
 ## Column-wrap and transformed geometry — 2026-09-18
 
 Full `css/` replay at `7cfe95b5`: **1,599/2,926 runnable files PASS,

@@ -40,14 +40,10 @@ split split_bar(const expansion & e, std::span<const std::string_view> parts,
                 std::vector<std::string> & out) {
     const std::size_t n = e.longhands.size();
     if (parts.empty() || parts.size() > n) { return split::invalid; }
-    // `border-image`'s slice, width and outset are each a list of up to four,
-    // so only its one-part form - `none`, or an image - is divided here.
-    if (e.syntax->name == "border-image" && parts.size() > 1) { return split::whole; }
     out.assign(n, std::string{});
     std::vector<bool> given(n, false);
     bool none_seen = false;
     for (const std::string_view part : parts) {
-        // `border-image`'s `slice / width / outset` is not a list of parts.
         if (part == "/") { return split::whole; }
         std::size_t chosen = n;
         for (const bool typed_pass : {true, false}) {
@@ -164,6 +160,102 @@ split split_font(std::span<const std::string_view> parts, std::vector<std::strin
     const value_check families = check_declaration("font-family", family, false);
     if (!families.valid) { return split::invalid; }
     out = {style, variant, weight, stretch, size.serialized, height, families.serialized};
+    out.resize(expansion_of("font")->longhands.size(), "normal"); // the variants it resets
+    return split::ok;
+}
+
+// `font-variant`: `normal` and `none` alone, or keywords and functions each
+// handed to the one longhand that takes it and each longhand's words checked
+// together by its own grammar - which refuses `sub super` and `jis78 jis83`
+// and puts the words in canonical order (CSS Fonts 4 §6.11). `none` is
+// `font-variant-ligatures: none` with the rest `normal`.
+split split_font_variant(const expansion & e, std::span<const std::string_view> parts,
+                         std::vector<std::string> & out) {
+    if (parts.empty()) { return split::invalid; }
+    out.assign(e.longhands.size(), "normal");
+    if (parts.size() == 1 && ascii_iequals_any(parts[0], {"normal", "none"})) {
+        out[0] = ascii_lower_copy(parts[0]);
+        return split::ok;
+    }
+    std::vector<std::string> words(e.longhands.size());
+    for (const std::string_view part : parts) {
+        if (ascii_iequals_any(part, {"normal", "none"}) || is_wide_keyword(part)) {
+            return split::invalid;
+        }
+        std::size_t slot = 0;
+        for (; slot < e.longhands.size(); ++slot) {
+            bool valid = false;
+            (void)canonical(e.longhands[slot], part, valid);
+            if (valid) { break; }
+        }
+        if (slot == e.longhands.size()) { return split::invalid; }
+        words[slot] += (words[slot].empty() ? "" : " ") + std::string{part};
+    }
+    for (std::size_t slot = 0; slot < words.size(); ++slot) {
+        if (words[slot].empty()) { continue; }
+        bool valid = false;
+        out[slot] = canonical(e.longhands[slot], words[slot], valid);
+        if (!valid) { return split::invalid; }
+    }
+    return split::ok;
+}
+
+// `line-clamp`: `none` - every longhand initial - or a maximum
+// (`<integer [1,∞]> || auto`, written together) and a block ellipsis in
+// either order, one at least, then `-webkit-legacy` for the legacy
+// continuation (CSS Overflow 4 §5.1). The maximum defaults to `auto`, the
+// ellipsis to `ellipsis`, and the continuation is `collapse`.
+// `-webkit-line-clamp` is `none` or an integer alone, which continues the
+// legacy way with the default ellipsis.
+split split_line_clamp(const expansion & e, std::span<const std::string_view> parts,
+                       std::vector<std::string> & out) {
+    if (parts.size() == 1 && ascii_iequals(parts[0], "none")) {
+        out = {"auto", "no-ellipsis", "normal"};
+        return split::ok;
+    }
+    const auto integer = [](std::string_view part, std::string & text) {
+        if (ascii_iequals_any(part, {"none", "auto"}) || is_wide_keyword(part)) { return false; }
+        bool valid = false;
+        text = canonical("max-lines", part, valid);
+        return valid;
+    };
+    std::string number;
+    if (e.syntax->name == "-webkit-line-clamp") {
+        if (parts.size() != 1 || !integer(parts[0], number)) { return split::invalid; }
+        out = {number, "ellipsis", "-webkit-legacy"};
+        return split::ok;
+    }
+    std::span<const std::string_view> rest = parts;
+    const bool legacy = !rest.empty() && ascii_iequals(rest.back(), "-webkit-legacy");
+    if (legacy) { rest = rest.first(rest.size() - 1); }
+    bool automatic = false;
+    std::string ellipsis;
+    int run = 0; // 0 before the maximum's words, 1 among them, 2 past them
+    for (const std::string_view part : rest) {
+        const bool is_auto = ascii_iequals(part, "auto");
+        std::string text;
+        if (is_auto || integer(part, text)) {
+            if (run == 2 || (is_auto ? automatic : !number.empty())) { return split::invalid; }
+            run = 1;
+            if (is_auto) {
+                automatic = true;
+            } else {
+                number = text;
+            }
+            continue;
+        }
+        if (run == 1) { run = 2; }
+        bool valid = false;
+        if (!ellipsis.empty() || is_wide_keyword(part)) { return split::invalid; }
+        ellipsis = canonical("block-ellipsis", part, valid);
+        if (!valid) { return split::invalid; }
+    }
+    if (number.empty() && !automatic && ellipsis.empty()) { return split::invalid; }
+    out = {number.empty() ? std::string{"auto"}
+           : automatic    ? number + " auto"
+                          : number,
+           ellipsis.empty() ? std::string{"ellipsis"} : ellipsis,
+           legacy ? "-webkit-legacy" : "collapse"};
     return split::ok;
 }
 
@@ -328,22 +420,331 @@ split split_animation(std::string_view value, std::vector<std::string> & out) {
     return split::ok;
 }
 
+// Each radius axis has the same nonnegative <length-percentage> grammar as padding.
+bool radius_components(std::string_view value, std::size_t maximum,
+                       std::vector<std::string> & out) {
+    const auto parts = split_top_level(value, html_whitespace);
+    if (parts.empty() || parts.size() > maximum) { return false; }
+    out.clear();
+    for (const std::string_view part : parts) {
+        const value_check checked = check_declaration("padding-top", part, false);
+        if (!checked.valid || is_wide_keyword(checked.serialized)) { return false; }
+        out.push_back(checked.serialized);
+    }
+    return true;
+}
+
+bool split_radius(std::string_view value, std::vector<std::string> & out) {
+    const token_stream ts = tokenize(value);
+    std::size_t slash = std::string_view::npos;
+    int depth = 0;
+    for (const css_token & token : ts.tokens) {
+        if (token.type == token_type::function || token.type == token_type::open_paren) {
+            ++depth;
+        } else if (token.type == token_type::close_paren) {
+            --depth;
+        } else if (depth == 0 && token.type == token_type::delim && ts.text_of(token) == "/") {
+            if (slash != std::string_view::npos) { return false; }
+            slash = token.text;
+        }
+    }
+    std::vector<std::string> horizontal, vertical;
+    if (!radius_components(value.substr(0, slash), 4, horizontal)) { return false; }
+    horizontal = expand_positional<std::string>(horizontal, 4);
+    if (slash == std::string_view::npos) {
+        out = std::move(horizontal);
+        return true;
+    }
+    if (!radius_components(value.substr(slash + 1), 4, vertical)) { return false; }
+    vertical = expand_positional<std::string>(vertical, 4);
+    out = std::move(horizontal);
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        if (out[i] != vertical[i]) { out[i] += " " + vertical[i]; }
+    }
+    return true;
+}
+
+// Delimiters outside functions must remain separate even without authored whitespace.
+[[nodiscard]] std::string space_slashes(std::string_view value) {
+    const token_stream ts = tokenize(value);
+    std::string spaced;
+    std::size_t start = 0;
+    int depth = 0;
+    for (const css_token & token : ts.tokens) {
+        if (token.type == token_type::function || token.type == token_type::open_paren) {
+            ++depth;
+        } else if (token.type == token_type::close_paren) {
+            --depth;
+        } else if (depth == 0 && token.type == token_type::delim && ts.text_of(token) == "/") {
+            spaced += value.substr(start, token.text - start);
+            spaced += " / ";
+            start = token.text + token.length;
+        }
+    }
+    spaced += value.substr(start);
+    return spaced;
+}
+
+// Each || component is contiguous; a slash can follow only the slice or width.
+bool split_border_image(std::string_view value, std::vector<std::string> & out) {
+    const std::string spaced = space_slashes(value);
+    const auto parts = split_top_level(spaced, html_whitespace);
+    const auto names = longhands_of("border-image");
+    out.clear();
+    for (const std::string_view name : names) { out.emplace_back(initial_of(name)); }
+    std::array<bool, 5> given{};
+    std::size_t i = 0;
+    const auto take = [&](std::size_t slot, std::size_t maximum) {
+        if (given[slot]) { return false; }
+        for (std::size_t count = std::min(maximum, parts.size() - i); count > 0; --count) {
+            const std::string_view text{parts[i].data(),
+                                        static_cast<std::size_t>(parts[i + count - 1].data() +
+                                                                 parts[i + count - 1].size() -
+                                                                 parts[i].data())};
+            const value_check checked = check_declaration(names[slot], text, false);
+            if (!checked.valid || is_wide_keyword(checked.serialized)) { continue; }
+            out[slot] = checked.serialized;
+            given[slot] = true;
+            i += count;
+            return true;
+        }
+        return false;
+    };
+    while (i < parts.size()) {
+        if (take(0, 1) || take(4, 2)) { continue; }
+        if (!take(1, 5)) { return false; }
+        if (i == parts.size() || parts[i] != "/") { continue; }
+        ++i;
+        if (i == parts.size()) { return false; }
+        if (parts[i] != "/" && !take(2, 4)) { return false; }
+        if (i < parts.size() && parts[i] == "/") {
+            ++i;
+            if (!take(3, 4)) { return false; }
+        }
+    }
+    return !parts.empty();
+}
+
+// CSS Backgrounds: each layer shares the existing longhand grammars.
+bool split_background(std::string_view value, std::vector<std::string> & out) {
+    const auto names = longhands_of("background");
+    const auto layers = split_top_level(value, ",");
+    if (layers.empty()) { return false; }
+    // split_top_level discards empty fields; the token stream keeps layer boundaries.
+    const token_stream ts = tokenize(value);
+    int depth = 0;
+    std::size_t commas = 0;
+    for (const css_token & token : ts.tokens) {
+        if (token.type == token_type::function || token.type == token_type::open_paren) { ++depth; }
+        if (token.type == token_type::close_paren) { --depth; }
+        if (depth == 0 && token.type == token_type::comma) { ++commas; }
+    }
+    if (commas + 1 != layers.size()) { return false; }
+    out.assign(names.size(), {});
+    for (std::size_t layer = 0; layer < layers.size(); ++layer) {
+        std::vector<std::string> values;
+        for (const auto name : names) { values.emplace_back(initial_of(name)); }
+        std::array<bool, 8> given{};
+        const std::string spaced = space_slashes(layers[layer]);
+        const auto parts = split_top_level(spaced, html_whitespace);
+        if (parts.empty()) { return false; }
+        std::size_t at = 0;
+        const auto take = [&](std::size_t component, std::size_t maximum) {
+            if (given[component]) { return false; }
+            for (std::size_t count = std::min(maximum, parts.size() - at); count > 0; --count) {
+                const std::string_view text{parts[at].data(),
+                                            static_cast<std::size_t>(parts[at + count - 1].data() +
+                                                                     parts[at + count - 1].size() -
+                                                                     parts[at].data())};
+                // A layer has one <image>, so use the existing scalar image grammar.
+                const value_check checked = check_declaration(
+                    component == 1 ? "border-image-source" : names[component], text, false);
+                // Do not turn an unsupported image function into a computed image.
+                if (!checked.valid || (component == 1 && checked.uses_unknown_function) ||
+                    is_wide_keyword(checked.serialized)) {
+                    continue;
+                }
+                values[component] = checked.serialized;
+                given[component] = true;
+                at += count;
+                return true;
+            }
+            return false;
+        };
+        while (at < parts.size()) {
+            const auto box = [](std::string_view part) {
+                return ascii_iequals_any(
+                    part, {"border-box", "padding-box", "content-box", "border-area", "text"});
+            };
+            if (box(parts[at])) {
+                if (given[6]) { return false; }
+                given[6] = given[7] = true;
+                std::vector<std::string> boxes;
+                bool area = false, text = false;
+                while (at < parts.size() && box(parts[at])) {
+                    const std::string word = ascii_lower_copy(parts[at++]);
+                    if (word == "border-area") {
+                        if (area) { return false; }
+                        area = true;
+                    } else if (word == "text") {
+                        if (text) { return false; }
+                        text = true;
+                    } else {
+                        boxes.push_back(word);
+                    }
+                }
+                if (boxes.size() > (area || text ? 1u : 2u)) { return false; }
+                values[6] = boxes.empty() ? "border-box" : boxes.front();
+                values[7] = area   ? (text ? "border-area text" : "border-area")
+                            : text ? "text"
+                                   : boxes.back();
+                continue;
+            }
+            if (take(1, 1) || take(4, 2) || take(5, 1) || take(0, 1)) { continue; }
+            if (!take(2, 4)) { return false; }
+            if (at < parts.size() && parts[at] == "/") {
+                ++at;
+                if (!take(3, 2)) { return false; }
+            }
+        }
+        if (given[0] && layer + 1 != layers.size()) { return false; }
+        out[0] = values[0];
+        for (std::size_t i = 1; i < names.size(); ++i) {
+            out[i] += (layer == 0 ? "" : ", ") + values[i];
+        }
+    }
+    return true;
+}
+
+// A value's halves either side of its one top-level `/`, EMPTY ONES KEPT:
+// `/ 10px` is a first half missing, not a value without a slash, which is
+// what split_top_level - skipping empty fields - made of it. The value alone
+// when there is no slash; nothing when there are two.
+[[nodiscard]] std::vector<std::string_view> slash_halves(std::string_view value) {
+    const token_stream ts = tokenize(value);
+    std::size_t slash = std::string_view::npos;
+    int depth = 0;
+    for (const css_token & token : ts.tokens) {
+        if (token.type == token_type::function || token.type == token_type::open_paren) {
+            ++depth;
+        } else if (token.type == token_type::close_paren) {
+            --depth;
+        } else if (depth == 0 && token.type == token_type::delim && ts.text_of(token) == "/") {
+            if (slash != std::string_view::npos) { return {}; }
+            slash = token.text;
+        }
+    }
+    if (slash == std::string_view::npos) { return {value}; }
+    return {value.substr(0, slash), value.substr(slash + 1)};
+}
+
 // `container`: the name, then `/` and the type, each checked as its own
 // longhand (CSS Conditional 5 §4.3).
 split split_slash_pair(const expansion & e, std::string_view value,
                        std::vector<std::string> & out) {
-    const std::vector<std::string_view> halves = split_top_level(value, "/");
-    if (halves.empty() || halves.size() > 2) { return split::invalid; }
+    const std::vector<std::string_view> halves = slash_halves(value);
+    if (halves.empty()) { return split::invalid; }
     out.clear();
     for (std::size_t i = 0; i < 2; ++i) {
         if (i >= halves.size()) {
             out.emplace_back(initial_of(e.longhands[i]));
             continue;
         }
+        const std::string_view half = trim(halves[i], html_whitespace);
+        if (half.empty()) { return split::invalid; }
         bool valid = false;
-        std::string text = canonical(e.longhands[i], trim(halves[i], html_whitespace), valid);
+        std::string text = canonical(e.longhands[i], half, valid);
         if (!valid) { return split::invalid; }
         out.push_back(std::move(text));
+    }
+    return split::ok;
+}
+
+// `same`: the whole value on every longhand, each through its own grammar.
+split split_same(const expansion & e, std::string_view value, std::vector<std::string> & out) {
+    out.clear();
+    for (const std::string_view longhand : e.longhands) {
+        bool valid = false;
+        out.push_back(canonical(longhand, value, valid));
+        if (!valid) { return split::invalid; }
+    }
+    return split::ok;
+}
+
+// `column-rule-inset`: one or two caps, then `/` and one or two junctions;
+// without the slash the junctions are the caps (CSS Gap Decorations 1).
+split split_rule_inset(const expansion & e, std::string_view value,
+                       std::vector<std::string> & out) {
+    const std::vector<std::string_view> halves = slash_halves(value);
+    if (halves.empty()) { return split::invalid; }
+    out.clear();
+    for (std::size_t half = 0; half < 2; ++half) {
+        const std::string_view text =
+            trim(halves[std::min(half, halves.size() - 1)], html_whitespace);
+        std::vector<std::string> ends;
+        for (const std::string_view part : split_top_level(text, html_whitespace)) {
+            if (trim(part, html_whitespace).empty()) { continue; }
+            bool valid = false;
+            ends.push_back(canonical(e.longhands[half * 2], part, valid));
+            if (!valid) { return split::invalid; }
+        }
+        if (ends.empty() || ends.size() > 2) { return split::invalid; }
+        out.push_back(ends.front());
+        out.push_back(ends.back());
+    }
+    return split::ok;
+}
+
+// `rule-*`: the value split by the column property of the same name, and
+// the same values given to the rows.
+split split_axes(const expansion & e, std::string_view value, std::vector<std::string> & out) {
+    const std::string column = "column-" + std::string{e.syntax->name};
+    if (const expansion * sub = expansion_of(column)) {
+        std::vector<std::string> half;
+        const split result = split_value(*sub, value, half);
+        if (result != split::ok) { return result; }
+        out = half;
+        out.insert(out.end(), half.begin(), half.end());
+        return split::ok;
+    }
+    return split_same(e, value, out);
+}
+
+// `text-decoration`: `<line> || <thickness> || <style> || <color>`, where the
+// line is `underline overline ...` - several words, written together. The
+// run of line keywords is taken whole, so `overline blue underline` is two
+// lines and invalid (CSS Text Decoration 4 §2.6).
+split split_text_decoration(const expansion & e, std::span<const std::string_view> parts,
+                            std::vector<std::string> & out) {
+    static constexpr std::string_view line_words =
+        "none underline overline line-through blink spelling-error grammar-error";
+    static constexpr std::string_view styles = "solid double dotted dashed wavy";
+    out.assign(e.longhands.size(), std::string{});
+    for (std::size_t i = 0; i < parts.size();) {
+        std::size_t slot = e.longhands.size();
+        std::string_view text = parts[i];
+        std::size_t next = i + 1;
+        if (has_keyword(line_words, parts[i])) {
+            slot = 0;
+            while (next < parts.size() && has_keyword(line_words, parts[next])) { ++next; }
+            text = std::string_view{parts[i].data(), static_cast<std::size_t>(
+                                                         parts[next - 1].data() +
+                                                         parts[next - 1].size() - parts[i].data())};
+        } else if (has_keyword(styles, parts[i])) {
+            slot = 2;
+        } else {
+            bool valid = false;
+            (void)canonical(e.longhands[1], parts[i], valid);
+            slot = valid ? 1 : 3;
+        }
+        if (!out[slot].empty()) { return split::invalid; }
+        bool valid = false;
+        out[slot] = canonical(e.longhands[slot], text, valid);
+        if (!valid || out[slot].empty()) { return split::invalid; }
+        i = next;
+    }
+    for (std::size_t slot = 0; slot < out.size(); ++slot) {
+        if (out[slot].empty()) { out[slot] = std::string{initial_of(e.longhands[slot])}; }
     }
     return split::ok;
 }
@@ -360,6 +761,9 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     switch (e.syntax->kind) {
     case shape::sides:
     case shape::pair: return split_positional(e, parts, out);
+    case shape::radius: return split_radius(value, out) ? split::ok : split::invalid;
+    case shape::background: return split_background(value, out) ? split::ok : split::invalid;
+    case shape::border_image: return split_border_image(value, out) ? split::ok : split::invalid;
     case shape::place: {
         std::string align, justify;
         if (!split_place(e.syntax->name, value, align, justify)) { return split::invalid; }
@@ -370,6 +774,11 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
         return split_grid_lines(e.syntax->name, value, out) ? split::ok : split::invalid;
     case shape::slash_pair: return split_slash_pair(e, value, out);
     case shape::bar: return split_bar(e, parts, out);
+    case shape::gap_rule: return split_gap_rule(value, out) ? split::ok : split::invalid;
+    case shape::same: return split_same(e, value, out);
+    case shape::rule_inset: return split_rule_inset(e, value, out);
+    case shape::axes: return split_axes(e, value, out);
+    case shape::text_decoration: return split_text_decoration(e, parts, out);
     case shape::columns: return split_columns(value, out) ? split::ok : split::invalid;
     case shape::flex: return split_flex(parts, out);
     case shape::border: return split_border(parts, out);
@@ -377,6 +786,8 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::white_space: return split_white_space(parts, out);
     case shape::animation: return split_animation(value, out);
     case shape::font: return split_font(parts, out);
+    case shape::font_variant: return split_font_variant(e, parts, out);
+    case shape::line_clamp: return split_line_clamp(e, parts, out);
     case shape::all:
     case shape::whole: break;
     }

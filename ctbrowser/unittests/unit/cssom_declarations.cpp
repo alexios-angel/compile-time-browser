@@ -10,6 +10,7 @@
 
 #include <string>
 #include <string_view>
+#include <tuple>
 
 using ctbrowser::style::css::declaration_block;
 using ctbrowser::style::css::declaration_priority;
@@ -134,7 +135,8 @@ void test_reads_and_all() {
     CHECK_EQ(serialize_declaration_block(block), std::string{"all: revert;"});
     block.clear();
     parse_declaration_block(block, "font: 12px serif");
-    CHECK_EQ(block.size(), std::size_t{7});
+    // Seven it names and the six other font-variant-* longhands it resets.
+    CHECK_EQ(block.size(), std::size_t{13});
     CHECK_EQ(declaration_value(block, "font"), std::string{"12px serif"});
     CHECK_EQ(declaration_value(block, "font-weight"), std::string{"normal"});
     // font-shorthand-serialization: the slash is a component of its own.
@@ -143,11 +145,13 @@ void test_reads_and_all() {
              std::string{"font: italic 700 12px / 1.5 Times New Roman, serif;"});
     CHECK_EQ(round_trip("font: menu"), std::string{"font: menu;"});
     // shorthand-serialization: an important whole shorthand keeps a later
-    // longhand out, and `outline-color: invert` is a colour.
+    // longhand out, and `outline-color: auto` is a colour (CSS UI 4 §5.3,
+    // which also retired CSS 2.1's `invert`).
     CHECK_EQ(round_trip("background-color: blue; background: red !important; background-color: "
                         "green;"),
              std::string{"background: red !important;"});
-    CHECK_EQ(round_trip("outline-color: invert"), std::string{"outline-color: invert;"});
+    CHECK_EQ(round_trip("outline-color: auto"), std::string{"outline-color: auto;"});
+    CHECK_EQ(round_trip("outline-color: invert"), std::string{});
     CHECK_EQ(round_trip("font: Arial"), std::string{});
 
     // A value this table cannot split stays whole, and a whole shorthand
@@ -192,6 +196,203 @@ void test_reads_and_all() {
     block.clear();
     parse_declaration_block(block, "--\\61 b: value; --\\30 : x");
     CHECK_EQ(serialize_declaration_block(block), std::string{"--ab: value; --0: x;"});
+}
+
+// css/css-backgrounds/parsing/{border-radius,webkit-border-radius}-*.
+void test_border_radius() {
+    using ctbrowser::style::css::supports_declaration;
+    for (const std::string_view name : {"border-radius", "-webkit-border-radius"}) {
+        for (const auto & [value, expected] :
+             {std::pair{"0", "0px"},
+              {"1px 2% 1px 2%", "1px 2%"},
+              {"1px 1px 1px 2% / 1px 2% 1px 2%", "1px 1px 1px 2% / 1px 2%"},
+              {"1px 1px 1px 1px / 1px 1px 2% 1px", "1px / 1px 1px 2%"},
+              {"1px 2% 2% 2% / 1px 2% 3px 2%", "1px 2% 2% / 1px 2% 3px"},
+              {"1px 2% / 1px 2%", "1px 2%"},
+              {"calc(20px / 2) / 5%", "calc(10px) / 5%"},
+              {"calc(-1px) / 10px", "calc(-1px) / 10px"}}) {
+            declaration_block block;
+            CHECK(supports_declaration(name, value));
+            CHECK(set_declaration(block, name, value, false));
+            CHECK_EQ(block.size(), std::size_t{4});
+            CHECK_EQ(declaration_value(block, name), std::string{expected});
+        }
+        declaration_block block;
+        CHECK(set_declaration(block, name, "1px 2px 3px / 4% 5%", true));
+        CHECK_EQ(declaration_value(block, "border-top-left-radius"), std::string{"1px 4%"});
+        CHECK_EQ(declaration_value(block, "border-top-right-radius"), std::string{"2px 5%"});
+        CHECK_EQ(declaration_value(block, "border-bottom-right-radius"), std::string{"3px 4%"});
+        CHECK_EQ(declaration_value(block, "border-bottom-left-radius"), std::string{"2px 5%"});
+        for (const std::string_view invalid :
+             {"auto", "-1px", "1px / -5%", "1px 2px 3px 4px 5px", "1px / 2px 3px 4px 5px 6px",
+              "/ 1px", "1px /", "1px // 2px", "1px / / 2px", "1px / 2px / 3px", "1px inherit",
+              "1px, 2px", "1", "1deg", "calc(1s)", "calc(1)"}) {
+            CHECK(!supports_declaration(name, invalid));
+            CHECK(!set_declaration(block, name, invalid, false));
+        }
+        CHECK_EQ(declaration_priority(block, name), std::string{"important"});
+        bool removed = false;
+        CHECK_EQ(remove_declaration(block, name, removed), std::string{"1px 2px 3px / 4% 5%"});
+        CHECK(removed && block.empty());
+    }
+    for (const std::string_view name :
+         {"border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius",
+          "border-bottom-left-radius", "border-start-start-radius", "border-start-end-radius",
+          "border-end-start-radius", "border-end-end-radius", "-webkit-border-top-left-radius",
+          "-webkit-border-top-right-radius", "-webkit-border-bottom-right-radius",
+          "-webkit-border-bottom-left-radius"}) {
+        declaration_block block;
+        CHECK(set_declaration(block, name, "1PX 1px", false));
+        CHECK_EQ(declaration_value(block, name), std::string{"1px"});
+        CHECK(set_declaration(block, name, "calc(10% + 1px) 2em", false));
+        for (const std::string_view invalid :
+             {"auto", "-1px", "1px -2%", "1px 2px 3px", "1px / 2px", "1px initial", "calc(1deg)"}) {
+            CHECK(!supports_declaration(name, invalid));
+            CHECK(!set_declaration(block, name, invalid, false));
+        }
+    }
+    declaration_block block;
+    CHECK(set_declaration(block, "-webkit-border-radius", "1px 2px", false));
+    CHECK_EQ(declaration_value(block, "border-radius"), std::string{"1px 2px"});
+    CHECK(set_declaration(block, "border-radius", "3px 4px", false));
+    CHECK_EQ(declaration_value(block, "-webkit-border-radius"), std::string{"3px 4px"});
+    CHECK(set_declaration(block, "-webkit-border-top-left-radius", "5px", false));
+    CHECK_EQ(declaration_value(block, "border-top-left-radius"), std::string{"5px"});
+    CHECK_EQ(round_trip("border-radius: 1px; border-start-start-radius: 2px; "
+                        "border-top-left-radius: 3px"),
+             std::string{"border-top-right-radius: 1px; border-bottom-right-radius: 1px; "
+                         "border-bottom-left-radius: 1px; border-start-start-radius: 2px; "
+                         "border-top-left-radius: 3px;"});
+    CHECK_EQ(round_trip("border-radius: initial"), std::string{"border-radius: initial;"});
+    CHECK_EQ(round_trip("border-radius: var(--radius)"),
+             std::string{"border-radius: var(--radius);"});
+}
+
+// css/css-backgrounds/parsing/border-image-*: grouped slice/width/outset and resets.
+void test_border_image() {
+    using ctbrowser::style::css::supports_declaration;
+    for (const auto & [value, expected] :
+         {std::pair{"stretch", "none"},
+          {"none 100% / 1 / 0 stretch", "none"},
+          {"none space space", "space"},
+          {"fill 1 2% 3 4% / auto", "1 2% 3 4% fill / auto"},
+          {"1//1px", "1 / / 1px"},
+          {"round repeat url('image.png') fill 1 2 / 3% / 4px",
+           "url(\"image.png\") 1 2 fill / 3% / 4px round repeat"},
+          {"1 1 1 1 / calc(20px / 2) / 2 2", "1 / calc(10px) / 2"},
+          {"calc(-1) / calc(-2px) / calc(-3)", "calc(-1) / calc(-2px) / calc(-3)"}}) {
+        declaration_block block;
+        CHECK(supports_declaration("border-image", value));
+        CHECK(set_declaration(block, "border-image", value, true));
+        CHECK_EQ(block.size(), std::size_t{5});
+        CHECK_EQ(declaration_value(block, "border-image"), std::string{expected});
+        CHECK_EQ(declaration_priority(block, "border-image-outset"), std::string{"important"});
+        bool removed = false;
+        CHECK_EQ(remove_declaration(block, "border-image", removed), std::string{expected});
+        CHECK(removed && block.empty());
+    }
+    declaration_block block;
+    CHECK(set_declaration(block, "border-image", "fill 1 2% 3 4% / 5% / 6 repeat", false));
+    CHECK_EQ(declaration_value(block, "border-image-source"), std::string{"none"});
+    CHECK_EQ(declaration_value(block, "border-image-slice"), std::string{"1 2% 3 4% fill"});
+    CHECK_EQ(declaration_value(block, "border-image-width"), std::string{"5%"});
+    CHECK_EQ(declaration_value(block, "border-image-outset"), std::string{"6"});
+    CHECK_EQ(declaration_value(block, "border-image-repeat"), std::string{"repeat"});
+    for (const std::string_view invalid : {"auto",
+                                           "none, url(image.png)",
+                                           "stretch repeat round",
+                                           "fill",
+                                           "1 2 3 4 5",
+                                           "1% fill 2%",
+                                           "1 / -2px",
+                                           "-1 / 2px",
+                                           "1 / 1 2 3 4 5",
+                                           "1 / / auto",
+                                           "1 / / 1%",
+                                           "1 / none / 1px",
+                                           "1 / 1px / auto",
+                                           "1 /",
+                                           "1 / /",
+                                           "1 / / / 2",
+                                           "1 none / 2",
+                                           "repeat none round",
+                                           "1 inherit",
+                                           "none none",
+                                           "1px",
+                                           "calc(1deg)"}) {
+        CHECK(!supports_declaration("border-image", invalid));
+        CHECK(!set_declaration(block, "border-image", invalid, false));
+    }
+    CHECK_EQ(declaration_value(block, "border-image-width"), std::string{"5%"});
+    CHECK(set_declaration(block, "border", "solid", false));
+    CHECK_EQ(declaration_value(block, "border-image"), std::string{"none"});
+    CHECK_EQ(round_trip("border-image: initial"), std::string{"border-image: initial;"});
+    CHECK_EQ(round_trip("border-image: var(--image)"), std::string{"border-image: var(--image);"});
+    for (const auto & [name, value, expected] :
+         {std::tuple{"border-image-slice", "fill 1 2 1 2", "1 2 fill"},
+          {"border-image-width", "1px 2% 3 AUTO", "1px 2% 3 auto"},
+          {"border-image-outset", "0 0 0 0", "0"},
+          {"border-image-source", "linear-gradient(red, blue)", "linear-gradient(red, blue)"}}) {
+        block.clear();
+        CHECK(supports_declaration(name, value));
+        CHECK(set_declaration(block, name, value, false));
+        CHECK_EQ(declaration_value(block, name), std::string{expected});
+    }
+    for (const auto & [name, value] : {std::pair{"border-image-slice", "1% fill 2%"},
+                                       {"border-image-slice", "-1"},
+                                       {"border-image-slice", "1px"},
+                                       {"border-image-slice", "fill"},
+                                       {"border-image-slice", "1 2 3 4 5"},
+                                       {"border-image-width", "-1px"},
+                                       {"border-image-width", "-1%"},
+                                       {"border-image-width", "-1"},
+                                       {"border-image-width", "1 2 3 4 5"},
+                                       {"border-image-width", "calc(1deg)"},
+                                       {"border-image-outset", "1%"},
+                                       {"border-image-outset", "calc(1%)"},
+                                       {"border-image-outset", "-1"},
+                                       {"border-image-outset", "auto"},
+                                       {"border-image-source", "auto"},
+                                       {"border-image-source", "none, url(image.png)"},
+                                       {"border-image-source", "url(a)url(b)"}}) {
+        CHECK(!supports_declaration(name, value));
+        CHECK(!set_declaration(block, name, value, false));
+    }
+}
+
+void test_repeating_gradients() {
+    using ctbrowser::style::css::computed_image;
+    using ctbrowser::style::css::supports_declaration;
+    for (const auto & [value, computed] :
+         {std::pair{"repeating-linear-gradient(-45deg, red, 30%, currentcolor 70%, lime)",
+                    "repeating-linear-gradient(-45deg, rgb(255, 0, 0), 30%, rgb(0, 0, 255) 70%, "
+                    "rgb(0, 255, 0))"},
+          {"repeating-radial-gradient(red, 30%, currentcolor 70%, lime)",
+           "repeating-radial-gradient(rgb(255, 0, 0), 30%, rgb(0, 0, 255) 70%, rgb(0, 255, 0))"},
+          {"repeating-conic-gradient(red, 30deg, currentcolor 70deg, lime)",
+           "repeating-conic-gradient(rgb(255, 0, 0), 30deg, rgb(0, 0, 255) 70deg, rgb(0, 255, "
+           "0))"}}) {
+        for (const std::string_view property :
+             {"border-image-source", "background-image", "mask-image", "list-style-image"}) {
+            declaration_block block;
+            CHECK(supports_declaration(property, value));
+            CHECK(set_declaration(block, property, value, false));
+            CHECK_EQ(declaration_value(block, property), std::string{value});
+        }
+        CHECK_EQ(computed_image(value, {"rgb(0, 0, 255)"}), std::string{computed});
+    }
+    for (const std::string_view function :
+         {"repeating-linear-gradient", "repeating-radial-gradient", "repeating-conic-gradient"}) {
+        for (const std::string_view stops :
+             {"30%, red, blue", "red, 30%, 40%, blue", "red, blue, 30%"}) {
+            const std::string value = std::string{function} + "(" + std::string{stops} + ")";
+            CHECK(!supports_declaration("border-image-source", value));
+        }
+    }
+    CHECK(
+        !supports_declaration("background-image", "unknown(repeating-linear-gradient(red, blue))"));
+    CHECK(
+        !supports_declaration("background-image", "repeating-linear-gradient(red, unknown(blue))"));
 }
 
 // css/css-multicol/parsing/columns-*: width/count in either order and optional height.
@@ -262,12 +463,70 @@ void test_columns() {
     CHECK(removed && block.empty());
 }
 
+// Background layer components reset omitted longhands and retain their own order.
+void test_background() {
+    using ctbrowser::style::css::supports_declaration;
+    declaration_block block;
+    CHECK(set_declaration(block, "background", "none", true));
+    CHECK_EQ(block.size(), std::size_t{8});
+    CHECK_EQ(declaration_value(block, "background-position"), std::string{"0% 0%"});
+    CHECK_EQ(declaration_value(block, "background-size"), std::string{"auto"});
+    CHECK_EQ(declaration_value(block, "background-origin"), std::string{"padding-box"});
+    CHECK_EQ(declaration_value(block, "background-clip"), std::string{"border-box"});
+    CHECK_EQ(declaration_priority(block, "background-attachment"), std::string{"important"});
+    CHECK_EQ(declaration_value(block, "background"), std::string{"none"});
+    CHECK(set_declaration(block, "background", "text border-area", false));
+    CHECK_EQ(declaration_value(block, "background-origin"), std::string{"border-box"});
+    CHECK_EQ(declaration_value(block, "background-clip"), std::string{"border-area text"});
+    CHECK_EQ(declaration_value(block, "background"), std::string{"border-area text"});
+    for (const auto & [value, expected] :
+         {std::pair{"no-repeat url(a)", "url(\"a\") no-repeat"},
+          {"url(a) 0% 0%/10rem", "url(\"a\") 0% 0% / 10rem auto"},
+          {"padding-box border-box", "none"},
+          {"border-area border-box", "border-area"},
+          {"border-area padding-box", "padding-box border-area"},
+          {"url(a) top left no-repeat, center/100% 100% white",
+           "url(\"a\") left top no-repeat, center center / 100% 100% white"}}) {
+        block.clear();
+        CHECK(supports_declaration("background", value));
+        CHECK(set_declaration(block, "background", value, false));
+        CHECK_EQ(declaration_value(block, "background"), std::string{expected});
+    }
+    CHECK_EQ(declaration_value(block, "background-image"), std::string{"url(\"a\"), none"});
+    CHECK_EQ(declaration_value(block, "background-repeat"), std::string{"no-repeat, repeat"});
+    for (const std::string_view invalid :
+         {"red, green", "black 0 url(a) / cover", "none none", "left /", "/ cover",
+          "left / cover / auto", "red blue", "left red top", "initial none",
+          "border-area border-area", "text text", "border-box padding-box content-box",
+          "left / -1px", "none,", ",none", "none,,none"}) {
+        block.clear();
+        CHECK_EQ(supports_declaration("background", invalid) ? std::string{invalid} : std::string{},
+                 std::string{});
+        CHECK(!set_declaration(block, "background", invalid, false));
+        CHECK(block.empty());
+    }
+    CHECK(!supports_declaration("background-position", "0 url(a)"));
+    CHECK(!supports_declaration("background-position", "calc(1px) red"));
+    CHECK(supports_declaration("background-position", "calc(1px + 2%) top"));
+    block.clear();
+    CHECK(set_declaration(block, "background", "var(--bg)", false));
+    CHECK_EQ(declaration_value(block, "background"), std::string{"var(--bg)"});
+    CHECK(set_declaration(block, "background", "inherit", false));
+    CHECK_EQ(declaration_value(block, "background-size"), std::string{"inherit"});
+    CHECK_EQ(round_trip("background: red !important; background: blue;"),
+             std::string{"background: red !important;"});
+}
+
 } // namespace
 
 int main() {
     test_shorthand_values();
     test_logical_groups();
     test_reads_and_all();
+    test_border_radius();
+    test_border_image();
+    test_repeating_gradients();
     test_columns();
+    test_background();
     REPORT("cssom_declarations");
 }

@@ -130,6 +130,73 @@ void install_uri(context & cx) {
         made->is_constructor = false;
         detail::install_arity(cx, made, 1);
     }
+    // Annex B.2.1 escape and unescape: the pre-URI percent encoding, and it is
+    // over UTF-16 CODE UNITS, not bytes - a unit below 256 is %XX and one above
+    // is %uXXXX, so `escape("\u{10401}")` is the two surrogate halves
+    // "%uD801%uDC01". Hence the round trip through wtf8_to_utf16: the WTF-8
+    // bytes would have answered %F0%90%90%81, which is encodeURI's answer.
+    detail::global_fn(cx, "escape", 1, [](context & c, std::span<value> a) {
+        const std::string before = c.current_stack();
+        const std::string in = string_arg(c, arg_at(a, 0));
+        if (detail::threw_since(c, before)) { return value::undefined(); }
+        static constexpr std::string_view kept =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@*_+-./";
+        static constexpr std::string_view digits = "0123456789ABCDEF";
+        std::string out;
+        for (const char16_t unit : wtf8_to_utf16(in)) {
+            if (unit < 0x80 && kept.find(static_cast<char>(unit)) != std::string_view::npos) {
+                out += static_cast<char>(unit);
+                continue;
+            }
+            out += '%';
+            if (unit >= 256) {
+                out += 'u';
+                out += digits[(unit >> 12) & 0xF];
+                out += digits[(unit >> 8) & 0xF];
+            }
+            out += digits[(unit >> 4) & 0xF];
+            out += digits[unit & 0xF];
+        }
+        return c.string(out);
+    });
+    detail::global_fn(cx, "unescape", 1, [](context & c, std::span<value> a) {
+        const std::string before = c.current_stack();
+        const std::string in = string_arg(c, arg_at(a, 0));
+        if (detail::threw_since(c, before)) { return value::undefined(); }
+        const std::u16string units = wtf8_to_utf16(in);
+        // The hexadecimal value of `count` units from `at`, or -1 when one of
+        // them is not a hex digit (a unit above 0x7F never is).
+        const auto hex_run = [&units](std::size_t at, std::size_t count) {
+            int total = 0;
+            for (std::size_t i = at; i < at + count; ++i) {
+                const int digit = units[i] < 0x80 ? hex_value(static_cast<char>(units[i])) : -1;
+                if (digit < 0) { return -1; }
+                total = total * 16 + digit;
+            }
+            return total;
+        };
+        std::u16string out;
+        out.reserve(units.size());
+        for (std::size_t k = 0; k < units.size(); ++k) {
+            const char16_t unit = units[k];
+            if (unit == u'%' && k + 6 <= units.size() && units[k + 1] == u'u') {
+                if (const int four = hex_run(k + 2, 4); four >= 0) {
+                    out += static_cast<char16_t>(four);
+                    k += 5;
+                    continue;
+                }
+            }
+            if (unit == u'%' && k + 3 <= units.size()) {
+                if (const int two = hex_run(k + 1, 2); two >= 0) {
+                    out += static_cast<char16_t>(two);
+                    k += 2;
+                    continue;
+                }
+            }
+            out += unit;
+        }
+        return c.string(utf16_to_wtf8(out));
+    });
 }
 
 // HTML §2.7 STRUCTURED CLONE: StructuredSerializeInternal and
@@ -262,14 +329,9 @@ struct cloner {
     [[nodiscard]] value copy_array(value v, array_object * source) {
         const value made = c.make_array();
         auto * out = static_cast<array_object *>(made.as_heap());
-        (void)out->set_js_length(static_cast<double>(source->items.size()));
-        // A hole stays a hole (the copy's length covers it, the walk below
-        // skips it as not enumerable; set_js_length padded with undefined).
-        for (const auto & [at, attrs] : source->element_attrs) {
-            if ((attrs & array_object::elem_hole) != 0) {
-                out->set_element_attrs(at, array_object::elem_hole);
-            }
-        }
+        // Every index a hole until the walk below copies an element into it,
+        // so a hole in the source stays one.
+        (void)out->set_js_length_with_holes(static_cast<double>(source->items.size()));
         return copy_own_enumerable(v, remember(v, made));
     }
 

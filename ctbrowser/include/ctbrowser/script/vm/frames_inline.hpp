@@ -93,8 +93,13 @@ inline auto context::each_root(std::size_t register_limit, std::size_t frame_lim
     -> void {
     // A script can replace every visible alias of its global object. The
     // realm still owns it between turns, and the next script receives it.
-    visit(root_label::globals, global_this_);
-    for (const auto & [name, v] : globals_) { visit(root_label::globals, v); }
+    // EVERY realm, not the current one: a frame's closures outlive the call
+    // that made them, and the page may call into one at any time.
+    for (const auto & realm : realms_) {
+        visit(root_label::globals, realm->global_this);
+        for (const auto & [name, v] : realm->globals) { visit(root_label::globals, v); }
+    }
+    for (const auto & [name, v] : realm_template_) { visit(root_label::globals, v); }
     const std::size_t top = std::min(register_limit, registers_.size());
     for (std::size_t i = 0; i < top; ++i) { visit(root_label::registers, registers_[i]); }
     // The receiver of a native call in progress. It is held in a C++

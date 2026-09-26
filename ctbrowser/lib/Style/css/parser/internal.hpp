@@ -77,7 +77,9 @@ public:
     // set when the text is not a selector at all.
     [[nodiscard]] stylesheet take_selector_list(bool & invalid,
                                                 const std::vector<namespace_declaration> * ns,
-                                                const nesting_context * nesting) {
+                                                const nesting_context * nesting,
+                                                bool forgiving = true) {
+        sheet_.forgiving = forgiving;
         if (ns != nullptr) {
             sheet_.namespaces = *ns;
         } else {
@@ -186,18 +188,21 @@ private:
                 ++k;
             } else if (prelude[k].kind == cv_kind::function &&
                        ascii_iequals(text(word), "layer(")) {
-                // `layer(<layer-name>)`: a name that does not parse makes the
-                // whole import invalid (CSS Cascade 5 §5.1).
+                // `layer(<layer-name>)`: a name that does not parse is no
+                // layer, and the call is where the media query list starts -
+                // a `<general-enclosed>` that never matches (CSS Cascade 5
+                // §5.1, layer-import-parsing).
                 std::string name;
-                if (!layer_name_of(sheet_.trimmed(sheet_.children_of(prelude[k])), name)) {
-                    return;
-                }
+                if (!layer_name_of(sheet_.trimmed(sheet_.children_of(prelude[k])), name)) { break; }
                 made.layered = true;
                 made.layer = std::move(name);
                 ++k;
             } else if (prelude[k].kind == cv_kind::function &&
                        ascii_iequals(text(word), "supports(")) {
                 made.supports = text_of_run(sheet_.children_of(prelude[k]));
+                // `supports()` with nothing in it is no condition, and like
+                // a bad layer() it starts a media query that never matches.
+                if (trim(made.supports, html_whitespace).empty()) { break; }
                 ++k;
             } else {
                 break;
@@ -306,8 +311,18 @@ private:
         const std::uint32_t first_selector = static_cast<std::uint32_t>(sheet_.selectors.size());
         const nesting_context nesting{context_.parent, context_.in_scope};
         const bool nested = !context_.parent.empty() || context_.in_scope;
+        bool invalid = false;
         const std::uint32_t count =
-            parse_selector_list(sheet_, prelude, *atoms_, nullptr, nested ? &nesting : nullptr);
+            parse_selector_list(sheet_, prelude, *atoms_, &invalid, nested ? &nesting : nullptr);
+        // A SELECTOR LIST WITH ONE INVALID SELECTOR IS INVALID WHOLE (Selectors
+        // 4 §3.1), and a style rule whose prelude is not a <selector-list> is
+        // dropped with its block (CSS Syntax 3 §9) - `#a::before.x, #a {}`
+        // styles nothing. An alternative this engine cannot MATCH is not
+        // invalid and stays, dead; only a syntax error drops the rule.
+        if (invalid) {
+            sheet_.selectors.resize(first_selector);
+            return;
+        }
         // The children see this rule's list, dead alternatives included: a
         // rule nested under a selector that cannot match compiles to one that
         // cannot match either, rather than to a top-level rule.

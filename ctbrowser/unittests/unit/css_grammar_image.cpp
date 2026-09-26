@@ -69,6 +69,14 @@ void test_the_specified_value() {
        "conic-gradient(rgb(191, 191, 191), rgb(64, 64, 64))");
     ok("image(red)", "image(red)");
     ok("cross-fade( 1% red, green)", "cross-fade(red 1%, green)");
+    ok("cross-fade(blue, linear-gradient(90deg, rgb(2, 0, 36) 0%, rgb(0, 212, 255) 100%))",
+       "cross-fade(blue, linear-gradient(90deg, rgb(2, 0, 36) 0%, rgb(0, 212, 255) 100%))");
+    ok("cross-fade(red 1%, cross-fade(red 2%, green))",
+       "cross-fade(red 1%, cross-fade(red 2%, green))");
+    ok("cross-fade(50% url(a.png), url(\"b.png\") 25%)",
+       "cross-fade(url(\"a.png\") 50%, url(\"b.png\") 25%)");
+    ok("cross-fade(url(red), blue)", "cross-fade(url(\"red\"), blue)");
+    ok(R"(cross-fade(url(a\2e png), red))", "cross-fade(url(\"a.png\"), red)");
     ok("light-dark(image(blue), url(\"b.png\"))", "light-dark(image(blue), url(\"b.png\"))");
     bad("linear-gradient(, red, blue)");
     bad("linear-gradient(red, blue, lab)");
@@ -82,7 +90,14 @@ void test_the_specified_value() {
     bad("radial-gradient(20px -30px at center, red, blue)");
     bad("image()");
     bad("image(red, blue)");
+    bad("cross-fade(auto blue, 50% red)");
+    bad("cross-fade(1px red, green)");
+    bad("cross-fade(red 20% 30%, green)");
+    bad("cross-fade(url(a.png) blue, green)");
     bad("none, auto");
+    std::string nested = "red";
+    for (int i = 0; i < 17; ++i) { nested = "cross-fade(blue, " + nested + ")"; }
+    bad(nested);
 }
 
 void test_the_computed_value() {
@@ -114,7 +129,11 @@ void test_the_computed_value() {
     computed("linear-gradient(in srgb, color(srgb 1 0 0), blue)",
              "linear-gradient(in srgb, color(srgb 1 0 0), rgb(0, 0, 255))");
     computed("image(red)", "image(rgb(255, 0, 0))");
+    computed("cross-fade(red 25%, linear-gradient(blue 0%, green 100%) 75%)",
+             "cross-fade(rgb(255, 0, 0) 25%, linear-gradient(rgb(0, 0, 255) 0%, "
+             "rgb(0, 128, 0) 100%) 75%)");
     computed("light-dark(image(blue), url(\"b.png\"))", "image(rgb(0, 0, 255))");
+    computed("light-dark(none, none)", "image(rgba(0, 0, 0, 0))");
     computed("none, url(\"http://x/\")", "none, url(\"http://x/\")");
 }
 

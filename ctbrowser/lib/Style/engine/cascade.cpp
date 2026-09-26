@@ -1,3 +1,5 @@
+#include "cascade_values.hpp"
+
 #include <ctbrowser/style/engine.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -26,6 +28,19 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     sibling_index_ = self.sibling_index;
     sibling_count_ = self.sibling_count;
     element_key_ = key_of(node);
+    // The containers this element's `cq*` units measure, as last laid out.
+    // A pseudo-element's are its originating element's own, that included.
+    cq_width_ = cq_height_ = -1.0f;
+    const std::size_t below = depth + (pseudo_wanted_ != atom{} ? 1 : 0);
+    if (below > 0 && below - 1 < cq_chain_.size()) {
+        const auto [inline_container, block_container] = cq_chain_[below - 1];
+        if (inline_container) {
+            if (const auto box = container_size_of(inline_container)) { cq_width_ = box->width; }
+        }
+        if (block_container) {
+            if (const auto box = container_size_of(block_container)) { cq_height_ = box->height; }
+        }
+    }
     // Gather only the rules whose RIGHTMOST compound could possibly match.
     matches_.clear();
     collect(index_.by_id, self.id, txn, ancestors, depth);
@@ -80,6 +95,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     // raw rule may say `margin` or `margin-block`, neither of which would match
     // a rollback of `margin-top`. Keep the rule index for origin/layer tests.
     std::vector<std::pair<std::size_t, declaration>> applied;
+    std::vector<std::pair<atom, std::size_t>> custom_positions;
     // `folding` is the current rule's position, or the size for inline style.
     std::size_t folding = matches_.size();
     const auto rolled_back = [this, &applied](atom property, std::size_t limit, const auto & keep) {
@@ -89,7 +105,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         }
         return applied.size();
     };
-    const auto put = [&out, &parent, &folding, &rolled_back, &applied,
+    const auto put = [&out, &parent, &folding, &rolled_back, &applied, &custom_positions,
                       this](const declaration & d) {
         std::string value = d.value;
         const std::string_view property = atoms_->text(d.property);
@@ -132,6 +148,15 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         }
         if (folding < matches_.size()) {
             applied.emplace_back(folding, declaration{d.property, value});
+        }
+        if (property.starts_with("--")) {
+            const auto position = std::ranges::find(custom_positions, d.property,
+                                                    &std::pair<atom, std::size_t>::first);
+            if (position == custom_positions.end()) {
+                custom_positions.emplace_back(d.property, at);
+            } else {
+                position->second = at;
+            }
         }
         if (value == "inherit") {
             value = std::string{parent ? parent->get(d.property) : std::string_view{}};
@@ -336,20 +361,46 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         return function_of(atoms_->intern(name));
     };
 
-    // EVERY SHORTHAND expand_shorthand DOES NOT SPLIT goes through the CSSOM's
-    // declaration block, which knows each one's grammar
-    // (properties/shorthands.cpp): `font`, `white-space`, `animation`, the
-    // flow-relative margins, insets and borders, `place-*`, `columns` ... What
-    // comes back is validated and canonical; a value the grammar refuses, or a
-    // shape the block keeps whole, is an empty block and the declaration
-    // stays as it was.
-    const auto split_via_block = [](std::string_view name, std::string_view text) {
-        css::declaration_block block;
-        if (css::longhands_of(name).empty()) { return block; } // a longhand
-        (void)css::set_declaration(block, name, text, false);
-        if (block.size() == 1 && ascii_iequals(block[0].name, name)) { block.clear(); }
-        return block;
+    // A custom property's substituted CSS-wide keyword belongs to its own
+    // cascade, before another var() reads it. Resolve dependencies first, but
+    // keep ordinary token streams lazy (including their attr() provenance).
+    std::vector<atom> resolving_keywords, resolved_keywords;
+    const std::function<void(atom)> resolve_keyword = [&](atom name) {
+        if (resolving_keywords.size() >= 20 ||
+            std::ranges::find(resolved_keywords, name) != resolved_keywords.end() ||
+            std::ranges::find(resolving_keywords, name) != resolving_keywords.end()) {
+            return;
+        }
+        resolving_keywords.push_back(name);
+        for (int guard = 0; guard < 20; ++guard) {
+            const auto own = std::ranges::find(out, name, &declaration::property);
+            if (own == out.end() || !css::may_have_var(own->value)) { break; }
+            const std::string value = own->value;
+            css::condition_environment scope = conditions;
+            scope.property = std::string{atoms_->text(name)};
+            scope.on_read = [&](std::string_view dependency) {
+                resolve_keyword(atoms_->intern(dependency));
+            };
+            const auto substituted =
+                css::substitute_var(value, lookup, *atoms_, attributes, &scope);
+            if (!substituted) { break; }
+            const std::string_view word = trim(*substituted, html_whitespace);
+            if (!css::is_wide_keyword(word)) { break; }
+            const auto position =
+                std::ranges::find(custom_positions, name, &std::pair<atom, std::size_t>::first);
+            const std::size_t saved = folding;
+            folding = position == custom_positions.end() ? matches_.size() : position->second;
+            put(declaration{name, ascii_lower_copy(word)});
+            folding = saved;
+        }
+        resolving_keywords.pop_back();
+        resolved_keywords.push_back(name);
     };
+    // put() may erase an unset property; iterate names, not declarations.
+    std::vector<atom> custom_names;
+    for (const declaration & d : out) { custom_names.push_back(d.property); }
+    for (const atom name : custom_names) { resolve_keyword(name); }
+
     // A `font` shorthand carries a font-size and a line-height of its own,
     // and the two pre-passes below need those before pass two splits it.
     const atom font_ = atoms_->intern_lower("font");
@@ -357,7 +408,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                                   atom wanted) -> std::optional<std::string> {
         if (d.property == wanted) { return d.value; }
         if (d.property != font_ || css::may_have_var(d.value)) { return std::nullopt; }
-        for (const css::declaration & one : split_via_block("font", d.value)) {
+        for (const css::declaration & one : cascade_detail::split_via_block("font", d.value)) {
             if (atoms_->intern_lower(one.name) == wanted) { return one.value; }
         }
         return std::nullopt;
@@ -721,15 +772,12 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                     }
                 }
             };
-            // Invalid-at-computed-value time applies to every longhand a
-            // shorthand governs. Removing a raw `overflow` declaration
-            // would leave an earlier overflow-x/y active, even though the
-            // later shorthand won the cascade and became `unset`.
-            if (property == "overflow") {
-                erase(atoms_->intern("overflow-x"));
-                erase(atoms_->intern("overflow-y"));
-            } else {
+            // An invalid winning shorthand resets every longhand it governs.
+            const auto longhands = css::longhands_of(property);
+            if (longhands.empty()) {
                 erase(physical(d.property));
+            } else {
+                for (const auto name : longhands) { erase(physical(atoms_->intern(name))); }
             }
         };
         const bool had_var = css::may_have_var(value);
@@ -828,13 +876,22 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             // the number 30, which font-style cannot take, and is invalid
             // at computed-value time (attr-all-types). A value that is
             // still a function - `min(10px, 5%)` - is valid as it stands.
-            if (had_var && !css::may_have_math(value)) {
-                const css::value_check checked = css::check_declaration(property, value);
+            // Image and layer sizes clamp each component separately. Validate
+            // substituted syntax even if some math remains unresolved, keeping
+            // negative literals distinct from negative calculation results.
+            const bool image_components = ascii_iequals_any(
+                property,
+                {"background", "border-image", "border-image-width", "border-image-outset",
+                 "border-image-slice", "background-size", "mask-size", "background-image",
+                 "mask-image", "border-image-source", "list-style-image"});
+            if (had_var && (!css::may_have_math(value) || image_components)) {
+                const css::value_check checked =
+                    css::check_declaration(property, image_components ? unfolded : value);
                 if (!checked.valid) {
                     unset();
                     return;
                 }
-                value = std::move(checked.serialized);
+                if (!image_components) { value = std::move(checked.serialized); }
             }
         }
         // FONT SIZE IS ALREADY RESOLVED - the pre-pass above did it, because
@@ -859,14 +916,13 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         // 6.4-6.5); `canonical_dimension_text` is a superset of the length case
         // and still answers `96px` for `1in`.
         const auto folded = [&](std::string text, atom longhand) {
-            if (auto canonical = css::canonical_dimension_text(text, lengths_for(longhand))) {
-                return std::move(*canonical);
-            }
-            return text;
+            return cascade_detail::fold_value(std::move(text), atoms_->text(longhand),
+                                              lengths_for(longhand));
         };
         const auto expanded = expand_shorthand(property, value);
         if (expanded.empty()) {
-            if (const css::declaration_block block = split_via_block(property, unfolded);
+            if (const css::declaration_block block =
+                    cascade_detail::split_via_block(property, unfolded);
                 !block.empty()) {
                 for (const css::declaration & one : block) {
                     const atom longhand = atoms_->intern_lower(one.name);

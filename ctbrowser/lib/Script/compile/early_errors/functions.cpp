@@ -87,6 +87,13 @@ void checker::check_function(std::int32_t idx, frame_kind what, bool super_call_
         frame{what, {}, {}, 0, 0, super_call_ok, strict_body, (bits & 1) != 0, (bits & 2) != 0});
     check_strict_bindings(names);
     if (strict_body && n.kind == nk::func_expr) { check_strict_binding(n.text, idx); }
+    // A DECLARATION's name is the enclosing scope's binding and is checked
+    // there - but a "use strict" body makes it strict mode code too (11.2.2),
+    // so `function arguments() { 'use strict'; }` is refused (15.2.1). Not the
+    // contextual rules: those read the enclosing frame, not this one.
+    if (strict_body && n.kind == nk::func_decl && (n.text == "eval" || n.text == "arguments")) {
+        report(quoted(n.text) + " may not be bound or assigned in strict mode code", idx);
+    }
     // 15.5.1 / 15.8.1: `yield` in a generator's parameters and `await` in an
     // async function's are errors - see in_parameters_.
     const bool outer_parameters = in_parameters_;
