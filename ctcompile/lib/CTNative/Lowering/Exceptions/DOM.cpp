@@ -442,12 +442,17 @@ struct DOMAttributeProof {
     }
     bool stringValue(mlir::Value value) {
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        // A saved Number.toString result may precede the protected body. Reuse
-        // its charged Number origin; producer effects and initial method identity
-        // still require the complete final DOM proof.
+        auto call = value.getDefiningOp<ctjs::CallOp>();
+        auto method =
+            call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+        // Saved getAttribute and Number.toString results may precede the protected
+        // body. Reuse their charged origins; producer effects and initial method
+        // identity still require the complete final DOM proof.
         return stringReads.contains(value) ||
                (constant && llvm::isa<ctjs::StringAttr, ctjs::NullAttr>(constant.getValue())) ||
-               numberStringCall(value.getDefiningOp<ctjs::CallOp>());
+               (method && ctjs::constantKey(method.getKey()) == "getAttribute" &&
+                attributeCall(call)) ||
+               numberStringCall(call);
     }
     static bool numberCallee(ctjs::CallOp call) {
         if (!call) { return false; }

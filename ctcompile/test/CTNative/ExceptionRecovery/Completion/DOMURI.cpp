@@ -4769,7 +4769,127 @@ static void testProtectedNumberStrings(mlir::MLIRContext & context) {
     }
 }
 
+static void testSavedAttributeStrings(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 24; ++control) {
+            std::string source = R"js(function guarded(anchor) {
+                const saved = anchor.getAttribute('data-number');
+                try {
+                    anchor.setAttribute('data-written', saved);
+                    return true;
+                } catch (error) { return error === anchor; }
+            })js";
+            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
+                source.replace(source.find(from.str()), from.size(), to.str());
+            };
+            if (control == 1) {
+                replace("try {", "try { anchor.setAttribute('data-number', '99');");
+            }
+            if (control == 2) {
+                replace("try {", "anchor.setAttribute('data-number', '99'); try {");
+            }
+            if (control == 3) {
+                replace("try {", "const alias = anchor; "
+                                 "alias.setAttribute('data-number', '99'); try {");
+            }
+            if (control == 4) { replace("return true;", "throw anchor;"); }
+            if (control == 5) { replace("anchor.getAttribute('data-number')", "unknown()"); }
+            if (control == 6) { replace("const saved =", "unknown(); const saved ="); }
+            if (control == 7) { replace("try {", "try { unknown();"); }
+            if (control == 8) {
+                replace("anchor.getAttribute('data-number')",
+                        "(unknown(), anchor.getAttribute('data-number'))");
+            }
+            if (control == 9) {
+                replace("const saved =", "anchor.getAttribute = anchor; const saved =");
+            }
+            if (control == 10) { replace("data-written", "bad name"); }
+            if (control == 11) { replace("data-written', saved", "data-written', null"); }
+            if (control == 16) { replace(".getAttribute(", ".unknown("); }
+            if (control == 21) { replace("try {", "anchor = false; try {"); }
+            if (control == 22) { replace("getAttribute('data-number')", "getAttribute(anchor)"); }
+            if (control == 23) {
+                replace("const saved =", "let saved =");
+                replace("try {", "saved = anchor; try {");
+            }
+            auto candidate = import(context, source, true);
+            if (!candidate) { continue; }
+            auto function = guarded(*candidate);
+            llvm::SmallVector<ctjs::CallOp> calls;
+            function.walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            if (!check(calls.size() >= 2, "saved attribute source retains producer and write")) {
+                continue;
+            }
+            auto anchor = function.getBody().front().getArgument(ctjs::implicit_arguments);
+            if (control == 12) {
+                calls.front().getReceiverMutable().assign(
+                    function.getBody().front().getArgument(0));
+            }
+            if (control == 13) { calls.front().getCalleeMutable().assign(anchor); }
+            if (control == 14) { calls.front().getArgsMutable().append(anchor); }
+            if (control == 15) { calls.front().getArgsMutable().clear(); }
+            mlir::Builder builder(&context);
+            for (auto call : calls) {
+                call->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+            }
+            HostContract request;
+            request.provider = provider;
+            request.entry = function.getSymName().str();
+            if (control != 18) { request.elementParameters = {0}; }
+            request.moduleSha256 = hostContractFingerprint(*candidate);
+            if (control == 17) { request.moduleSha256 = "stale"; }
+            const auto originalContract = request;
+            const auto original = printed(*candidate);
+            auto error = prepareDOMEntry(*candidate, request,
+                                         control == 19   ? 0
+                                         : control == 20 ? 500
+                                                         : 100000);
+            if (control >= 5) {
+                check(static_cast<bool>(error) && printed(*candidate) == original &&
+                          request.moduleSha256 == originalContract.moduleSha256 &&
+                          request.initialIntrinsics == originalContract.initialIntrinsics &&
+                          request.elementParameters == originalContract.elementParameters &&
+                          request.provider == originalContract.provider &&
+                          request.entry == originalContract.entry,
+                      "saved attribute refusal preserves source and contract despite forged proof");
+                if (error) { llvm::consumeError(std::move(error)); }
+                continue;
+            }
+            if (!check(!error, "saved nullable attribute completes its original protected write")) {
+                llvm::errs() << "saved attribute control " << control << ": "
+                             << llvm::toString(std::move(error)) << '\n';
+                continue;
+            }
+            DOMEntryAnalysis proof(*candidate, request);
+            check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                  "saved attribute still requires fresh complete DOM proof");
+            calls.clear();
+            guarded(*candidate).walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            const bool mutation = control >= 1 && control <= 3;
+            if (!check(calls.size() == (mutation ? 3u : 2u),
+                       "saved attribute read and ordered writes occur exactly once")) {
+                continue;
+            }
+            bool ordered = true;
+            for (unsigned index = 1; index < calls.size(); ++index) {
+                ordered &= calls[index - 1]->getBlock() == calls[index]->getBlock() &&
+                           calls[index - 1]->isBeforeInBlock(calls[index]);
+            }
+            const auto * read = proof.call(calls.front());
+            const auto * write = proof.call(calls.back());
+            check(
+                ordered && read && read->kind == HostDOMMethod::getAttribute && write &&
+                    write->kind == HostDOMMethod::setAttribute &&
+                    calls.back().getArgs()[1] == calls.front().getResult(),
+                "write consumes the original nullable snapshot across direct and alias mutations");
+        }
+    }
+}
+
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    testSavedAttributeStrings(context);
     testProtectedNumberStrings(context);
     testNumberNumberInputs(context);
     testBooleanNumberInputs(context);
