@@ -54,6 +54,11 @@ void test_class_fields_are_per_instance() {
                   " return e.constructor.name; } return 'none';",
                   "TypeError");
     expect_result("const k = Symbol('k'); class C { [k] = 7; } return new C()[k];", "7");
+    // an object literal's method: `super` starts at the implicit Object.prototype
+    expect_result(
+        "const o = { m() { return super.hasOwnProperty === Object.prototype.hasOwnProperty; } };"
+        " o.hasOwnProperty = null; return o.m();",
+        "true");
     // `static constructor() {}` is a static method, not the class's constructor
     expect_result("class C { static constructor() { return 's'; } constructor() { this.v = 1; } }"
                   " return C.constructor() + new C().v;",

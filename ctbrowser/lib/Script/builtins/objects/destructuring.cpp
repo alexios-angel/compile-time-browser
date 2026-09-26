@@ -309,6 +309,17 @@ void install_destructuring_iteration(context & cx) {
     // See super_get_name.
     cx.define_native(std::string{super_get_name}, [](context & c, std::span<value> a) {
         if (a.size() < 3) { return value::undefined(); }
+        // THE IMPLICIT Object.prototype: op::get_proto reads a plain object's
+        // [[Prototype]] field, which is null when it was never set and
+        // undefined when it was set to null (object_object::prototype) - so
+        // `{ m() { return super.x; } }` arrives here with null, and means
+        // Object.prototype. A home object is an object literal or a class's
+        // prototype or constructor, never an array, so null says nothing else.
+        if (a[0].is_null()) {
+            if (object_object * table = c.prototype(context::proto_kind::object)) {
+                a[0] = value::object(table);
+            }
+        }
         if (a[0].is_nullish()) {
             c.throw_error("TypeError", "Cannot read properties of " +
                                            std::string{a[0].is_null() ? "null" : "undefined"} +
