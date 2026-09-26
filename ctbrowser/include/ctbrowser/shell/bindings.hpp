@@ -623,6 +623,7 @@ private:
     [[nodiscard]] value matrix_object(context & cx, const transform & t);
 
     [[nodiscard]] value canvas_context_object(context & cx, node_id id);
+    void install_canvas_2d(context & cx);
 
     [[nodiscard]] value webgl_context_object(context & cx, node_id id, int version);
     void install_webgl_constants(script::object_object * obj, bool webgl2);

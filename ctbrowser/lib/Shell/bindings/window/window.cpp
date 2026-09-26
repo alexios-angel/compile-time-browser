@@ -396,147 +396,12 @@ void dom_bindings::install_window(context & cx) {
         return value::object(parser);
     });
 
-    // `new Path2D()` - a path recorded now and drawn later.
-    //
-    // Every 2D shape p5.js draws goes through one: a visitor walks the shape
-    // and emits path verbs, and the renderer hands the result to fill() or
-    // stroke(). So this is not an optional corner of the canvas API here, it is
-    // the whole 2D drawing path.
-    //
-    // The verbs are kept in a script array (see path_commands_property) rather
-    // than a C++ type: nothing but the canvas replay reads them, the GC already
-    // traces arrays, and `new Path2D(other)` is then a copy of one vector.
-    cx.define_native("Path2D", [](context & c, std::span<value> args) {
-        auto * path = c.allocate<script::object_object>();
-        if (const value proto = c.lookup_property(c.global("Path2D"), "prototype");
-            proto.is_object()) {
-            path->prototype = proto;
-        }
-        value commands = c.make_array();
-        auto * steps = static_cast<script::array_object *>(commands.as_heap());
-        // `new Path2D(other)` starts as a copy. p5 makes separate fill and
-        // stroke paths from one built path exactly this way.
-        if (!args.empty() && args[0].is_object()) {
-            const value source = c.lookup_property(args[0], std::string{path_commands_property});
-            if (source.is_array()) {
-                steps->items = static_cast<script::array_object *>(source.as_heap())->items;
-            }
-        }
-        path->set(std::string{path_commands_property}, commands);
-        // Each verb records the letter and its numbers, which is the same shape
-        // the canvas replay reads back.
-        const auto record = [&](std::string name, std::string letter, std::size_t count) {
-            path->set(name, value::object(c.allocate<script::native_object>(
-                                name, [steps, letter, count](context & inner, std::span<value> a) {
-                                    value step = inner.make_array();
-                                    auto * parts =
-                                        static_cast<script::array_object *>(step.as_heap());
-                                    parts->items.push_back(inner.string(letter));
-                                    for (std::size_t i = 0; i < count; ++i) {
-                                        parts->items.push_back(value::number(arg_number(a, i)));
-                                    }
-                                    steps->items.push_back(step);
-                                    return value::undefined();
-                                })));
-        };
-        record("moveTo", "M", 2);
-        record("lineTo", "L", 2);
-        record("quadraticCurveTo", "Q", 4);
-        record("bezierCurveTo", "C", 6);
-        record("rect", "R", 4);
-        record("arc", "A", 6);
-        record("ellipse", "E", 8);
-        record("closePath", "Z", 0);
-        // `addPath(other, matrix)` APPLIES THE MATRIX. The verbs are copied
-        // with their coordinates already transformed, which is what makes a
-        // path built once reusable at several places - p5 passes one when it
-        // clips, so this and clip() are the same feature arriving.
-        //
-        // A point-valued operand transforms exactly. An arc's or an ellipse's
-        // RADII do not: a matrix with a skew turns a circle into an ellipse at
-        // an angle, which these verbs cannot express. The centre is placed
-        // correctly and the radii take the matrix's scale, which is right for
-        // the translate/scale/rotate a page actually passes, and is written
-        // down here rather than discovered.
-        path->set("addPath",
-                  value::object(c.allocate<script::native_object>(
-                      "addPath", [steps](context & inner, std::span<value> a) {
-                          if (a.empty() || !a[0].is_object()) { return value::undefined(); }
-                          const value source =
-                              inner.lookup_property(a[0], std::string{path_commands_property});
-                          if (!source.is_array()) { return value::undefined(); }
-                          const auto & from =
-                              static_cast<script::array_object *>(source.as_heap())->items;
-                          if (a.size() < 2 || !a[1].is_object()) {
-                              steps->items.insert(steps->items.end(), from.begin(), from.end());
-                              return value::undefined();
-                          }
-                          const auto part = [&](const char * name, double fallback) {
-                              const value v = inner.lookup_property(a[1], name);
-                              return v.is_undefined() ? fallback : context::to_number(v);
-                          };
-                          const double ma = part("a", 1), mb = part("b", 0);
-                          const double mc = part("c", 0), md = part("d", 1);
-                          const double me = part("e", 0), mf = part("f", 0);
-                          // The scale each axis picks up, for the
-                          // radius-valued operands.
-                          const double sx = std::sqrt(ma * ma + mb * mb);
-                          const double sy = std::sqrt(mc * mc + md * md);
-                          for (const value & step : from) {
-                              if (!step.is_array()) { continue; }
-                              const auto & parts =
-                                  static_cast<script::array_object *>(step.as_heap())->items;
-                              if (parts.empty()) { continue; }
-                              value moved = inner.make_array();
-                              auto * out = static_cast<script::array_object *>(moved.as_heap());
-                              const std::string verb = inner.to_string(parts[0]);
-                              out->items.push_back(parts[0]);
-                              const auto number = [&](std::size_t i) {
-                                  return i < parts.size() ? context::to_number(parts[i]) : 0.0;
-                              };
-                              const auto push_point = [&](std::size_t i) {
-                                  const double x = number(i);
-                                  const double y = number(i + 1);
-                                  out->items.push_back(value::number(ma * x + mc * y + me));
-                                  out->items.push_back(value::number(mb * x + md * y + mf));
-                              };
-                              if (verb == "M" || verb == "L") {
-                                  push_point(1);
-                              } else if (verb == "Q") {
-                                  push_point(1);
-                                  push_point(3);
-                              } else if (verb == "C") {
-                                  push_point(1);
-                                  push_point(3);
-                                  push_point(5);
-                              } else if (verb == "R") {
-                                  push_point(1);
-                                  out->items.push_back(value::number(number(3) * sx));
-                                  out->items.push_back(value::number(number(4) * sy));
-                              } else if (verb == "A") {
-                                  push_point(1);
-                                  out->items.push_back(value::number(number(3) * sx));
-                                  for (std::size_t i = 4; i < parts.size(); ++i) {
-                                      out->items.push_back(parts[i]);
-                                  }
-                              } else if (verb == "E") {
-                                  push_point(1);
-                                  out->items.push_back(value::number(number(3) * sx));
-                                  out->items.push_back(value::number(number(4) * sy));
-                                  for (std::size_t i = 5; i < parts.size(); ++i) {
-                                      out->items.push_back(parts[i]);
-                                  }
-                              } else {
-                                  for (std::size_t i = 1; i < parts.size(); ++i) {
-                                      out->items.push_back(parts[i]);
-                                  }
-                              }
-                              steps->items.push_back(moved);
-                          }
-                          return value::undefined();
-                      })));
-        return value::object(path);
-    });
+    // `new Path2D()`, CanvasRenderingContext2D's members, CanvasGradient,
+    // CanvasPattern and DOMMatrix - the 2D canvas, installed by
+    // bindings/canvas.cpp. Every 2D shape p5.js draws goes through a Path2D, so
+    // this is not an optional corner of the canvas API: it is the whole 2D
+    // drawing path.
+    install_canvas_2d(cx);
 
     // `new ImageData(w, h)` or `new ImageData(data, w, h)`. A page builds one
     // to hand to putImageData, and a filter that returns a fresh ImageData
@@ -574,8 +439,8 @@ void dom_bindings::install_window(context & cx) {
     // instanceof is OrdinaryHasInstance a constructor without one is a
     // TypeError to test against - p5's WebGL textures ask `obj instanceof
     // ImageData` of every source. The objects each one makes inherit from it
-    // (make_image_data, the Path2D native).
-    for (const char * name : {"ImageData", "Path2D"}) {
+    // (make_image_data). Path2D makes its own, methods and all (canvas_path2d.cpp).
+    for (const char * name : {"ImageData"}) {
         const value ctor = cx.global(name);
         if (!ctor.is_kind(script::heap_kind::native)) { continue; }
         auto * proto = cx.allocate<script::object_object>();
