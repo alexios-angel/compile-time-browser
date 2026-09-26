@@ -398,11 +398,15 @@ void dom_bindings::document_open(context & cx) {
     // written: a doctype keeps it, anything else first puts it in quirks.
     doc_->set_quirks(false);
     if (auto * doc = document_object()) { doc->set("compatMode", cx.string("CSS1Compat")); }
-    // Step 11: the document takes the URL of the ENTRY document - the page
-    // whose script started this, which a frame's function called from the
-    // parent does not change (url-entry-document*.window.js).
+    // Step 11: a FULLY ACTIVE document takes the URL of the ENTRY document -
+    // the page whose script started this, which a frame's function called
+    // from the parent does not change (url-entry-document*.window.js). Fully
+    // active here: it has a window and is still reached through the live
+    // frame tree - a removed frame's document, or one whose frame navigated
+    // on, keeps its URL (url.window.js).
+    const bool fully_active = window_object() != nullptr && find_bindings_of(window_view_) == this;
     if (const dom_bindings * entry = find_bindings_of(cx.entry_realm().global_this);
-        entry != nullptr && entry != this) {
+        fully_active && entry != nullptr && entry != this) {
         take_url_of(cx, *entry);
     }
     // Steps 13-16: "loading", and a new, script-created parser whose insertion
