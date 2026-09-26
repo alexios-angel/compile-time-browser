@@ -73,6 +73,22 @@ void context::execute_call(instruction in, call_frame * vm_frame, const function
                 reg(in.a) = produced;
                 break;
             }
+            // A PROXY OVER A CALLABLE is called through its [[Call]] - the
+            // `apply` trap or its target - which invoke owns. A throw out of
+            // either has landed on a handler by the time it returns
+            // (unwinds_), and then the register is not ours to write.
+            if (callee.is_kind(heap_kind::proxy) && callee.is_callable()) {
+                const rooted keep_callee{*this, callee};
+                const rooted keep_receiver{*this, receiver};
+                std::vector<value> args{registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
+                                        registers_.begin() +
+                                            static_cast<std::ptrdiff_t>(arg_base + in.b)};
+                const rooted_values keep_args{*this, args};
+                const value produced = invoke(callee, args, receiver, /*constructing*/ false);
+                if (unwinds_ != unwound || throw_pending()) { break; }
+                reg(in.a) = produced;
+                break;
+            }
             if (!callee.is_kind(heap_kind::function)) {
                 {
                     std::string what =

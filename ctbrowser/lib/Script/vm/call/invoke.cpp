@@ -122,6 +122,26 @@ value context::invoke(value callable, std::span<const value> args, value this_va
         if (rethrow_pending()) { return value::undefined(); }
         return out;
     }
+    // A PROXY'S [[Call]] (10.5.12): the `apply` trap with (target, this,
+    // argsArray) and the handler as `this`, or - no trap - Call(target, ...),
+    // which is how a proxy over a proxy over a bound function reaches it. A
+    // revoked one is proxy_trap's TypeError. `typeof` already said "function"
+    // for any proxy over a callable (value::is_callable); this is what makes
+    // calling one agree, from `.call`/`.apply` and from op::call alike.
+    if (callable.is_kind(heap_kind::proxy)) {
+        auto * p = static_cast<proxy_object *>(callable.as_heap());
+        if (!p->target.is_callable()) { return value::undefined(); }
+        const rooted keep_callable{*this, callable};
+        bool failed = false;
+        const value trap = proxy_trap(callable, "apply", &failed);
+        if (failed || throw_pending()) { return value::undefined(); }
+        if (!trap.is_callable()) { return call(p->target, args, this_value); }
+        const rooted keep_trap{*this, trap};
+        const value list = make_array();
+        static_cast<array_object *>(list.as_heap())->items.assign(args.begin(), args.end());
+        const value trap_args[3] = {p->target, this_value, list};
+        return call(trap, trap_args, p->handler);
+    }
     if (!callable.is_kind(heap_kind::function) || program_ == nullptr) {
         return value::undefined();
     }

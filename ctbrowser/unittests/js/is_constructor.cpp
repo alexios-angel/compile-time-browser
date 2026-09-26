@@ -44,5 +44,21 @@ int main() {
               "Reflect.construct(Error, ['m'], N).mark + ',' + Reflect.construct(Error, ['m'], "
               "N).message; })()",
               "1,m");
+    // THE `new` OPERATOR ITSELF, not only Reflect.construct: the interpreter's
+    // op::construct ran an arrow, a generator and an async function as
+    // constructors while the other two tiers refused them.
+    js_expect("(function () { var out = []; [() => 1, function* () {}, async function () {},"
+              " async function* () {}].forEach(function (f) { try { new f(); out.push('no'); }"
+              " catch (e) { out.push(e.constructor === TypeError); } }); return out.join(); })()",
+              "true,true,true,true");
+    // A PROXY OVER A FUNCTION IS CALLED through its `apply` trap, or its
+    // target when there is none - directly, through .call, and through a
+    // proxy over a proxy over a bound function (10.5.12).
+    js_expect("(function () { var seen; var p = new Proxy(function (a) { return a; }, {"
+              " apply: function (t, self, args) { seen = this; return t(args[0]) + 1; } });"
+              " var sum = function (a, b) { return this.k + a"
+              " + b; }.bind({k: 10}, 1); var q = new Proxy(new Proxy(sum, {}), {apply: null});"
+              " return [p(1), p.call(null, 2), typeof seen, q(2)].join(); })()",
+              "2,3,object,13");
     REPORT("is_constructor");
 }
