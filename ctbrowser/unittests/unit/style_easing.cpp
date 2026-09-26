@@ -323,7 +323,7 @@ void test_composition() {
     // interpolates the angle; anything else is the decomposed 4x4 matrices.
     CHECK(interpolate_text("transform", "scaleZ(1) perspective(400px)",
                            "scaleZ(2) perspective(500px)", 0.5,
-                           context) == "scale3d(1, 1, 1.5) perspective(444.444444px)");
+                           context) == "scaleZ(1.5) perspective(444.444444px)");
     CHECK(interpolate_text("transform", "perspective(none)", "perspective(500px)", -1, context) ==
           "perspective(none)");
     CHECK(interpolate_text("transform", "rotateX(0deg)", "rotateX(720deg)", 0.5, context) ==

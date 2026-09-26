@@ -342,8 +342,9 @@ void test_the_angle_functions_take_an_angle() {
     bad("filter", "hue-rotate(min(1px))");
 
     // <zero> IS WHY ONLY A MATH FUNCTION IS JUDGED. `rotate( [ <angle> | <zero> ] )`
-    // is CSS Transforms 1's own spelling, so a literal `0` is a rotation.
-    ok("transform", "rotate(0)", "rotate(0)");
+    // is CSS Transforms 1's own spelling, so a literal `0` is a rotation -
+    // written as the angle it is (transform-valid).
+    ok("transform", "rotate(0)", "rotate(0deg)");
     ok("transform", "rotate(45deg)", "rotate(45deg)");
     ok("transform", "rotate(calc(45deg + 45deg))", "rotate(calc(90deg))");
     ok("transform", "rotate(atan2(1, 1))", "rotate(calc(45deg))");
