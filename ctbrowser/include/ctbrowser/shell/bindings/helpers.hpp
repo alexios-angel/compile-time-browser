@@ -78,9 +78,33 @@ template <class Obj>
 void define_getter(context & cx, Obj & obj, const std::string & name, script::native_fn get,
                    script::native_fn set = {},
                    std::uint8_t attrs = script::attr_enumerable | script::attr_configurable) {
-    obj.define_accessor(name, native(cx, "get " + name, std::move(get)),
-                        set ? native(cx, "set " + name, std::move(set)) : value::undefined(),
-                        attrs);
+    value setter = value::undefined();
+    if (set) {
+        setter = native(cx, "set " + name, std::move(set));
+        // An attribute setter's `length` is 1 (WebIDL 3.7.7), whatever it reads.
+        static_cast<script::native_object *>(setter.as_heap())
+            ->define("length", value::number(1), script::attr_configurable);
+    }
+    obj.define_accessor(name, native(cx, "get " + name, std::move(get)), setter, attrs);
+}
+// A WebIDL OPERATION (3.7.6): an enumerable data property whose function's
+// `length` is the number of REQUIRED arguments, and a call with fewer is a
+// TypeError before the body runs (overload resolution, 3.6.8 step 4).
+template <class Obj>
+void set_operation(context & cx, Obj & obj, const std::string & name, unsigned required,
+                   script::native_fn fn) {
+    auto * made = cx.allocate<script::native_object>(
+        name, [name, required, fn = std::move(fn)](context & c, std::span<value> args) {
+            if (args.size() < required) {
+                c.throw_error("TypeError", name + ": " + std::to_string(required) +
+                                               " argument(s) required, but only " +
+                                               std::to_string(args.size()) + " present");
+                return value::undefined();
+            }
+            return fn(c, args);
+        });
+    made->define("length", value::number(required), script::attr_configurable);
+    obj.set(name, value::object(made));
 }
 
 // WebIDL DICTIONARY MEMBERS - an event's init, observe()'s options, an
