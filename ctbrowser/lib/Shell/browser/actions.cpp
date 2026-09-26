@@ -31,8 +31,23 @@ void browser::activate(node_id target) {
     // HTML 4.10.4 - and that click has an activation behaviour of its own,
     // which is how the label's text toggles the checkbox. A disabled control
     // refuses it, in dom_bindings::click, as it refuses `element.click()`.
+    //
+    // ONCE: a control with no activation behaviour of its own - a <textarea> -
+    // leaves its click's activation target to the label it sits in, so the
+    // click forwarded to it came straight back here and was forwarded again,
+    // for ever; `<label>Notes <textarea>` hung the page on the first click.
+    // That second click is aimed at the label's interactive content, for
+    // which the activation behaviour is to do nothing - which is what the
+    // DOM's "click in progress" flag makes of it. ponytail: a thread-local
+    // stack for the flag, since only this one synthesized click can re-enter;
+    // a per-element flag in dom_bindings::click is the general form.
     if (tag == "label") {
-        if (labelled) { (void)bindings_->click(labelled); }
+        static thread_local std::vector<node_id> forwarding;
+        if (labelled && std::ranges::find(forwarding, target) == forwarding.end()) {
+            forwarding.push_back(target);
+            (void)bindings_->click(labelled);
+            forwarding.pop_back();
+        }
         return;
     }
     // A DISABLED control does nothing and dispatches nothing - it does not

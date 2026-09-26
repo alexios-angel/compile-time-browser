@@ -292,6 +292,14 @@ void test_activation_submits_and_resets() {
        " o.value = 'changed'; r.click(); seen.push(o.value);"
        " return seen.join(); })()",
        "true:btn,true:t,z");
+    // clicking-interactive-content.html: a <textarea> has no activation
+    // behaviour, so its click's activation target is the <label> around it,
+    // whose click at the textarea came back to the label - for ever.
+    is("(function () { var l = document.createElement('label');"
+       " var t = l.appendChild(document.createElement('textarea'));"
+       " document.body.appendChild(l); var n = 0;"
+       " t.addEventListener('click', function () { n++; }); t.click(); return n > 0; })()",
+       "true");
 }
 
 // --- output and textarea ---------------------------------------------------------------
