@@ -284,12 +284,17 @@ public:
     }
 
     // A control's FORM OWNER (HTML 4.10.18.3): with a `form` attribute, the
-    // first element in its tree whose id is the value - when that is a
-    // <form>, and none at all otherwise - else the <form> it is inside. A
-    // button outside its form that names it submits it.
+    // first element in its tree whose id is the value - when that is an HTML
+    // <form>, and none at all otherwise - else its nearest ancestor HTML
+    // <form>. A button outside its form that names it submits it. THE ONE
+    // ALGORITHM: the browser's default actions and every binding that asks
+    // for a form owner (control_helpers::form_owner) come here.
     [[nodiscard]] static node_id owning_form(const read_txn & txn, atom_table & atoms,
                                              node_id from) {
         const atom form_tag = atoms.intern_lower("form");
+        const auto is_form = [&](node_id at) {
+            return txn.element_ns(at) == node_ns::html && txn.tag(at).value_or(atom{}) == form_tag;
+        };
         if (const atom named = atoms.intern("form"); txn.has_attribute(from, named)) {
             const std::string_view id = txn.attribute_value(from, named);
             if (id.empty()) { return node_id{}; }
@@ -299,15 +304,15 @@ public:
                 const node_id at = pending.back();
                 pending.pop_back();
                 if (txn.attribute_value(at, id_attribute) == id) {
-                    return txn.tag(at).value_or(atom{}) == form_tag ? at : node_id{};
+                    return is_form(at) ? at : node_id{};
                 }
                 const std::span<const node_id> children = txn.children(at);
                 for (std::size_t i = children.size(); i-- > 0;) { pending.push_back(children[i]); }
             }
             return node_id{};
         }
-        for (node_id at = from; at; at = txn.parent(at)) {
-            if (txn.tag(at).value_or(atom{}) == form_tag) { return at; }
+        for (node_id at = txn.parent(from); at; at = txn.parent(at)) {
+            if (is_form(at)) { return at; }
         }
         return node_id{};
     }

@@ -128,26 +128,8 @@ node_id control_helpers::tree_top(const read_txn & txn, dom_bindings * b, node_i
 }
 
 node_id control_helpers::form_owner(const read_txn & txn, dom_bindings * b, node_id id) const {
-    const auto helpers = *this;
-    const std::string named = helpers.attribute_of(txn, b, id, "form");
-    if (txn.has_attribute(id, b->atoms_->intern("form"))) {
-        if (named.empty()) { return node_id{}; }
-        node_id found;
-        const auto walk = [&](auto && self, node_id at2) -> void {
-            if (found) { return; }
-            if (txn.attribute_value(at2, b->atoms_->intern("id")) == named) {
-                found = at2;
-                return;
-            }
-            for (const node_id child : txn.children(at2)) { self(self, child); }
-        };
-        walk(walk, helpers.tree_top(txn, b, id));
-        return found && helpers.is(txn, found, "form") ? found : node_id{};
-    }
-    for (node_id up = txn.parent(id); up; up = txn.parent(up)) {
-        if (helpers.is(txn, up, "form")) { return up; }
-    }
-    return node_id{};
+    // HTML 4.10.18.3 - form_store::owning_form is the one algorithm.
+    return form_store::owning_form(txn, *b->atoms_, id);
 }
 
 bool control_helpers::is_face(dom_bindings * b, node_id id) const {
