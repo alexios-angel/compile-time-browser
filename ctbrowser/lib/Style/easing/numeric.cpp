@@ -355,6 +355,26 @@ namespace ctbrowser::style::easing_detail {
         return parts[0] + ' ' + parts[1] + ' ' + parts[2];
     }
     if (property == "rotate" && ascii_iequals(text, "none")) { return "0deg"; }
+    // A TRANSFORM'S LENGTHS ARE ABSOLUTE once computed (CSS Transforms 1
+    // §7): `translateZ(2em)` is 32px at a 16px font, which is what pairs
+    // with `translateZ(3em)` (transform-interpolation-004). A percentage
+    // stays one; it needs the reference box.
+    if (property == "transform") {
+        const css::token_stream ts = css::tokenize(text);
+        std::string out;
+        for (const css::css_token & t : ts.tokens) {
+            if (t.type == css::token_type::eof) { break; }
+            const std::string_view piece = ts.text_of(t);
+            if (t.type == css::token_type::dimension && !ascii_iequals(ts.unit_of(t), "px")) {
+                if (const std::optional<float> px = css::length_text_to_px(piece, ctx)) {
+                    out += css::serialize_number(*px) + "px";
+                    continue;
+                }
+            }
+            out += piece;
+        }
+        return out;
+    }
     // `normal` spacing is none at all (CSS Text 4 §7.1-7.2): `word-spacing:
     // initial` pairs with `20px` (word-spacing-interpolation).
     if ((property == "word-spacing" || property == "letter-spacing") &&
@@ -362,16 +382,21 @@ namespace ctbrowser::style::easing_detail {
         return "0px";
     }
     // A <position>'s keywords are the percentages they name (CSS Values 5
-    // §position): `left top` pairs with `50% 50%`.
+    // §position): `left top` pairs with `50% 50%`, and perspective-origin's
+    // four-value `top 20% left 40%` adds to `left 60% top 80%`
+    // (perspective-origin-composition).
     if (property == "object-position" || property == "offset-anchor" ||
-        property == "offset-position") {
+        property == "offset-position" || property == "perspective-origin") {
         if (std::string computed = css::computed_position(text, "", ""); !computed.empty()) {
             return computed;
         }
     }
     // ...and so are transform-origin's, horizontal first whichever order they
-    // were written in, a z offset after them (CSS Transforms 1 §6): `top left`
-    // pairs with `100% 100%` (transform-origin-interpolation).
+    // were written in, and the z offset always written, `0px` when omitted
+    // (CSS Transforms 1 §6): `top left` pairs with `100% 100%`
+    // (transform-origin-interpolation), and `40px 60px` adds to `160px 140px
+    // 40px` (transform-origin-composition). serialized_shape drops the zero
+    // again.
     if (property == "transform-origin") {
         std::vector<std::string_view> words;
         for (const std::string_view raw : split_top_level(text, html_whitespace)) {
@@ -382,6 +407,9 @@ namespace ctbrowser::style::easing_detail {
         const auto keyword = [](std::string_view w) {
             return ascii_iequals_any(w, {"left", "right", "top", "bottom", "center"});
         };
+        if (words.size() == 2 && std::ranges::none_of(words, keyword)) {
+            return std::string{words[0]} + ' ' + std::string{words[1]} + " 0px";
+        }
         if (!words.empty() && words.size() <= 3 && std::ranges::any_of(words, keyword)) {
             const auto vertical = [](std::string_view w) {
                 return ascii_iequals_any(w, {"top", "bottom"});
@@ -401,7 +429,7 @@ namespace ctbrowser::style::easing_detail {
                 x = percent(words[swapped ? 1 : 0]);
                 y = percent(words[swapped ? 0 : 1]);
             }
-            return x + ' ' + y + (words.size() == 3 ? ' ' + std::string{words[2]} : "");
+            return x + ' ' + y + ' ' + (words.size() == 3 ? std::string{words[2]} : "0px");
         }
     }
     // An <absolute-size> is the length it names (CSS Fonts 4 §2.5's table
@@ -468,6 +496,11 @@ namespace ctbrowser::style::easing_detail {
     if (property.starts_with("border-") && property.ends_with("-radius")) {
         const auto halves = split_top_level(text, html_whitespace);
         if (halves.size() == 2 && halves[0] == halves[1]) { return std::string{halves[0]}; }
+    }
+    // A zero z offset is left out of a transform-origin, as it was written.
+    if (property == "transform-origin" && text.ends_with(" 0px") &&
+        split_top_level(text, html_whitespace).size() == 3) {
+        text.resize(text.size() - 4);
     }
     return text;
 }

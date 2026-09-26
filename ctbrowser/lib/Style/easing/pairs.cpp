@@ -189,12 +189,13 @@ struct gap_shape {
     return out;
 }
 
-// One track size of each list, blended: the same function's arguments one by
+// One track size of each list, blended as `wa * x + wb * y` - (1 - p, p) for an
+// interpolation, (1, 1) for an addition: the same function's arguments one by
 // one, two numbers of one type as numbers - never below zero - and anything
-// else discrete, track by track.
-[[nodiscard]] std::string blend_track(std::string_view x, std::string_view y, double p,
+// else discrete, track by track (the nearer end, or the added value).
+[[nodiscard]] std::string blend_track(std::string_view x, std::string_view y, double wa, double wb,
                                       const css::length_context & ctx) {
-    if (x == y) { return std::string{x}; }
+    if (x == y && !(wa == 1 && wb == 1)) { return std::string{x}; }
     const auto function = [](std::string_view text, std::string_view name) {
         return ascii_istarts_with(text, name) && text.ends_with(')');
     };
@@ -207,25 +208,29 @@ struct gap_shape {
         if (a.size() != b.size()) { break; }
         std::string out{name};
         for (std::size_t i = 0; i < a.size(); ++i) {
-            out += (i == 0 ? "" : ", ") +
-                   blend_track(trim(a[i], html_whitespace), trim(b[i], html_whitespace), p, ctx);
+            out += (i == 0 ? "" : ", ") + blend_track(trim(a[i], html_whitespace),
+                                                      trim(b[i], html_whitespace), wa, wb, ctx);
         }
         return out + ")";
     }
     if (const std::optional<numeric_pair> n = numeric_of(x, y, ctx)) {
-        css::calc_result out = mix(n->a, n->b, p);
+        css::calc_result out = n->a;
+        out.px = wa * n->a.px + wb * n->b.px;
+        out.percent = wa * n->a.percent + wb * n->b.percent;
+        out.has_percent = n->a.has_percent || n->b.has_percent;
         if (!out.has_percent) { out.px = std::max(out.px, 0.0); }
         return css::serialize_calc(out);
     }
-    return std::string{p < 0.5 ? x : y};
+    return std::string{wb < 0.5 ? x : y};
 }
 
 // Two track lists of one shape - the same number of tracks, the same
-// repeat()s with the same counts - blended track by track, with the line
-// names of the nearer end (§7.2.5). nullopt for two shapes, or an auto
-// repeat, which is discrete.
+// repeat()s with the same counts - blended track by track as blend_track
+// weighs them, with the line names of the nearer end (§7.2.5). nullopt for two
+// shapes, or an auto repeat, which is discrete.
 [[nodiscard]] std::optional<std::string> interpolate_tracks(std::string_view from,
-                                                            std::string_view to, double p,
+                                                            std::string_view to, double wa,
+                                                            double wb,
                                                             const css::length_context & ctx) {
     const auto shape_of = [](std::string_view text, std::vector<std::string_view> & sizes,
                              std::string & shape) {
@@ -258,11 +263,11 @@ struct gap_shape {
         return std::nullopt;
     }
     // The nearer end's words, its sizes replaced by the blend in order.
-    const std::string_view skeleton = p < 0.5 ? from : to;
+    const std::string_view skeleton = wb < 0.5 ? from : to;
     std::size_t next = 0;
     std::string out;
     const auto size_text = [&] {
-        std::string one = blend_track(a[next], b[next], p, ctx);
+        std::string one = blend_track(a[next], b[next], wa, wb, ctx);
         ++next;
         return one;
     };
@@ -409,7 +414,7 @@ struct size_form {
     }
     const std::optional<numeric_pair> n = numeric_of(basis, basis, ctx);
     if (!n || n->a.is_number) { return std::nullopt; }
-    std::string by{basis};
+    std::string by = css::serialize_calc(n->a);
     if (n->a.has_percent) {
         // `P%` is P/100 of `100%`, and `calc(P% + L)` adds its length to that.
         by = css::serialize_number(n->a.percent / 100) + " * size";
@@ -664,6 +669,16 @@ struct size_sum_reader {
     if (property == "transform") {
         if (const std::optional<std::string> t = interpolate_transform(from, to, p)) { return *t; }
     }
+    // TWO PALETTES MIX (CSS Fonts 4 §9.1): between the ends the value is
+    // `palette-mix(in oklab, from, to p%)`, the percentage left out at the
+    // even share, and each end is itself (font-palette-interpolation).
+    if (property == "font-palette") {
+        if (p <= 0) { return std::string{from}; }
+        if (p >= 1) { return std::string{to}; }
+        const double percent = p * 100;
+        return "palette-mix(in oklab, " + std::string{from} + ", " + std::string{to} +
+               (percent == 50 ? std::string{} : " " + css::serialize_number(percent) + "%") + ")";
+    }
     // `vertical-align` IS THREE VALUES IN ONE (CSS Inline 3 §4.4), written
     // with its defaults left out: when the keywords agree the baseline shift
     // interpolates as the length it is, an omitted one being zero -
@@ -743,7 +758,7 @@ struct size_sum_reader {
     // TWO TRACK LISTS OF ONE SHAPE blend track by track (CSS Grid 2 §7.2.5);
     // two shapes are discrete.
     if (property == "grid-template-columns" || property == "grid-template-rows") {
-        if (const std::optional<std::string> t = interpolate_tracks(from, to, p, ctx)) {
+        if (const std::optional<std::string> t = interpolate_tracks(from, to, 1 - p, p, ctx)) {
             return *t;
         }
         interpolable = false;
@@ -851,6 +866,11 @@ struct size_sum_reader {
     }
     if (property == "clip") {
         return blend_rects(underlying, value, 1, 1, ctx).value_or(std::string{value});
+    }
+    // Two track lists of one shape add track by track, inside their
+    // repeat()s too (grid-template-columns-composition).
+    if (property == "grid-template-columns" || property == "grid-template-rows") {
+        return interpolate_tracks(underlying, value, 1, 1, ctx).value_or(std::string{value});
     }
     const bool single = comma_items(underlying).size() == 1 && comma_items(value).size() == 1;
     if (const auto a = single ? css::resolve_color(underlying, {}) : std::nullopt,

@@ -839,12 +839,62 @@ void promote(transform_fn & fn) {
     return out;
 }
 
+// Two WHOLE 2D lists accumulated as matrices (CSS Transforms 2 §16, for lists
+// that do not pair function by function): each decomposed into a translation,
+// a rotation, a skew - the shear of the rows once scaled out, which is the 2D
+// case of the 3D decomposition - and a scale; the translations, angles and
+// skews summed, the scales each summed less one, and recomposed.
+// `translateX(100px) rotate(90deg)` accumulating `translateX(100px)` is
+// `matrix(0, 1, -1, 0, 200, 0)` (transform-translate-composition). nullopt
+// for a percentage, a 3D list or a singular matrix.
+[[nodiscard]] std::optional<std::string> accumulate_as_matrices(
+    const std::vector<transform_fn> & a, const std::vector<transform_fn> & b) {
+    for (const std::vector<transform_fn> * list : {&a, &b}) {
+        for (const transform_fn & fn : *list) {
+            if (std::ranges::any_of(fn.pct, [](double v) { return v != 0; })) {
+                return std::nullopt;
+            }
+        }
+    }
+    const matrix3d x = matrix3d_of(a), y = matrix3d_of(b);
+    if (!flat(x) || !flat(y)) { return std::nullopt; }
+    struct parts {
+        double tx, ty, sx, sy, skew, angle;
+    };
+    const auto split = [](const matrix3d & m) -> std::optional<parts> {
+        double r0x = m[0], r0y = m[1], r1x = m[4], r1y = m[5];
+        parts out{m[12], m[13], std::hypot(r0x, r0y), 0, 0, 0};
+        if (out.sx == 0) { return std::nullopt; }
+        r0x /= out.sx, r0y /= out.sx;
+        out.skew = r0x * r1x + r0y * r1y;
+        r1x -= out.skew * r0x, r1y -= out.skew * r0y;
+        out.sy = std::hypot(r1x, r1y);
+        if (out.sy == 0) { return std::nullopt; }
+        r1x /= out.sy, r1y /= out.sy, out.skew /= out.sy;
+        if (r0x * r1y - r0y * r1x < 0) {
+            out.sx = -out.sx;
+            r0x = -r0x, r0y = -r0y;
+        }
+        out.angle = std::atan2(r0y, r0x) * 180.0 / std::numbers::pi;
+        return out;
+    };
+    const std::optional<parts> u = split(x), v = split(y);
+    if (!u || !v) { return std::nullopt; }
+    const double r = radians(u->angle + v->angle);
+    matrix2d m{1, 0, 0, 1, u->tx + v->tx, u->ty + v->ty};
+    m = multiply(m, {std::cos(r), std::sin(r), -std::sin(r), std::cos(r), 0, 0});
+    m = multiply(m, {1, 0, u->skew + v->skew, 1, 0, 0});
+    m = multiply(m, {u->sx + v->sx - 1, 0, 0, u->sy + v->sy - 1, 0, 0});
+    return matrix_text(m);
+}
+
 // CSS Transforms 2 §14, accumulation of two transform lists: function by
 // function when the lists match in length and primitive - a translate sums,
 // a scale sums its excess over 1, a rotate or skew sums its angles, a matrix
 // pair is decomposed, summed the same way and recomposed - and otherwise the
-// keyframe's list is appended to the underlying one. A matrix that cannot
-// be decomposed (singular) leaves the keyframe's value alone.
+// two whole lists as matrices, above; what neither can do is left to the
+// caller, which appends. A matrix that cannot be decomposed (singular)
+// leaves the keyframe's value alone.
 [[nodiscard]] std::optional<std::string> accumulate_transform(std::string_view underlying,
                                                               std::string_view value) {
     const std::optional<std::vector<transform_fn>> a = parse_transforms(underlying);
@@ -852,9 +902,11 @@ void promote(transform_fn & fn) {
     if (!a || !b) { return std::nullopt; }
     if (a->empty()) { return std::string{value}; }
     if (b->empty()) { return std::string{underlying}; }
-    if (a->size() != b->size()) { return std::nullopt; }
+    if (a->size() != b->size()) { return accumulate_as_matrices(*a, *b); }
     for (std::size_t i = 0; i < a->size(); ++i) {
-        if (primitive_of((*a)[i].name) != primitive_of((*b)[i].name)) { return std::nullopt; }
+        if (primitive_of((*a)[i].name) != primitive_of((*b)[i].name)) {
+            return accumulate_as_matrices(*a, *b);
+        }
     }
     std::string out;
     for (std::size_t i = 0; i < a->size(); ++i) {
@@ -974,6 +1026,16 @@ void promote(transform_fn & fn) {
                css::serialize_number(tidy(z)) + " " + css::serialize_number(tidy(angle)) + "deg";
     };
     const auto near = [](double u, double v) { return std::fabs(u - v) < 1e-6; };
+    // A WHOLE NUMBER OF TURNS about one axis, against another axis, is a
+    // rotation by nothing too, and takes the other's axis: `1 2 3 360deg` to
+    // `0 1 0 100deg` is 200deg about y at 2 (rotate-composition).
+    if (!(near(a->x, b->x) && near(a->y, b->y) && near(a->z, b->z))) {
+        if (std::fmod(a->angle, 360.0) == 0) {
+            *a = rotation{b->x, b->y, b->z, 0};
+        } else if (std::fmod(b->angle, 360.0) == 0) {
+            *b = rotation{a->x, a->y, a->z, 0};
+        }
+    }
     if (near(a->x, b->x) && near(a->y, b->y) && near(a->z, b->z)) {
         return text(a->x, a->y, a->z, (1 - p) * a->angle + p * b->angle);
     }
