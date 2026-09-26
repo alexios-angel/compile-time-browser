@@ -22,6 +22,95 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Number identity conversions and carried Boolean literals, 2026-09-26 UTC
+
+Continued **046fd654** and its exact nested `Number(Number(hasAttribute))`
+normal-return refusal. The preceding interrupted work was fully landed and
+`codex-wip-20260907` was already an ancestor. Saved native/source/escape candidates
+survived service interruptions; the parent finished source and transaction checks.
+
+**d5249696** adds exact Number inputs at the existing protected-effect,
+final DOM admission and typed lowering checks. The charged Number-origin proof
+still grants no authority to producer effects; both arms, initial bindings,
+receiver/arity, fingerprint and complete private DOM reproof remain required.
+The existing scalar helper forwards the live Number unchanged, preserving NaN,
+infinities, signed zero and saved reads. Forty-eight provider/control cases
+cover 16 admissions and 32 transactional refusals; all earlier test bodies remain.
+
+**f135a50a** follows identical SSA branch yields on the literal side of a
+strict Boolean test. The existing tag/polarity, saved-read, all-arm effect and
+retention proofs remain intact. Twelve retention rows and eight mutation states
+bring the fixture to 616 literal rows and 286 live states, including fresh/stale
+solvers, forged markers and budget cutoffs. No raw escape-oracle or native
+lifetime improvement is claimed.
+
+**51996cf6** retains and executes the complete HANDOFF witness, a saved
+Number converted after a DOM mutation, and a nested Number reciprocal over
+13 inputs including NaN/infinities/signed zero. Twelve new refusal controls keep
+the boundary explicit. All 52 prior direct sources, two outer sources, 44 raw
+helper sources, 140 literal entries and 97 generated refusal bodies are unchanged.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Four exact CTests each passed 1/1
+(total elapsed): `ctcompile_escape_analysis_arrays` **5.82 s**,
+`ctcompile_escape_analysis_completion` **0.02 s**,
+`ctcompile_exception_recovery` **19.96 s** and `ctcompile_host_contract` **2.79 s**.
+
+The three selected source cases passed **24 generated C++ files, 48 GCC/Clang
+executions, 12 admitted configurations and 76 refusals** (16 selected bodies
+across four configurations, plus 12 zero budgets). Both providers, printers and
+optimization settings, both flag states, ordered Node/interpreter observations,
+two documents and 16 lifetimes pass. Source and linked-symbol checks reject
+Script/AOT. All 24 generated files were retrieved; inspected explicit snapshot
+output converts the Boolean to a Number before mutation and uses that saved
+Number afterward, with no second conversion. Deduced reciprocal/session output
+uses typed arithmetic, public DOM calls, borrowed element_ref and document RAII.
+All seven final local/devbox hashes match. No gate retries were needed. This is
+selected harness validation, not a full caught-node lit run.
+
+Independent native review and parent source/transaction/escape review pass.
+Local checks: three ordered Node oracles, 19 JavaScript syntax checks, Python
+syntax/Black, six changed C++ files with the pinned formatter and diff checks.
+Repository `tools/format.sh --check` exits 1 with the same six existing diagnostics
+in untouched `select_and_options.cpp:602`, `node_methods.cpp:63` and
+`Style/css/properties/gaps.cpp:189`. No passing build, CTest or native source check
+was replayed.
+
+**Next measured boundary:** a protected Number `toString()` call still refuses:
+
+```javascript
+function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number')).toString();
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+```
+
+The complete source was imported and refused with `ctbrowser-dom-v1`, Number
+in the initial-intrinsic contract and optimization disabled. Its diagnostic is
+`native DOM source: DOM URI requires its fingerprinted initial provider binding`.
+No native execution is claimed for this probe. Continue the exact Number method
+and saved String-value effect proofs through protected completion, retaining
+source order and complete final DOM admission. This is the Number/toString path
+used by Bootstrap's data normalizer; do not add URI intrinsics or remove the
+handler to bypass the refusal.
+
+Full CTest/compiler lit, other fixtures/outer catches, broad corpus/matrices,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance were skipped. The native application driver, full Bootstrap and
+broader escape work remain unfinished.
+
+Linux executable/script checks found live Claude loop 3319 and wrapper 3318;
+Windows Get-CimInstance succeeded with 343 processes and no Claude identities.
+Concurrent rules applied; gates waited for Claude browser/DOM/ranges work.
+Claude's pending UTF-16/GC/global-descriptor work on `ctbrowser-wpt` is not included.
+No browser/shared implementation edits, local builds, push or history rewrite.
+Durable evidence: `../ctcompile-plan/evidence/2026-09-26-number-input/`.
+
 ## Boolean Number inputs and exact comparison operands, 2026-09-26 UTC
 
 Resumed the interrupted iteration 49 at **eb492403**, identified by the seven
