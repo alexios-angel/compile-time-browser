@@ -366,54 +366,95 @@ void canvas_context::clip(const canvas_path & path, fill_rule rule) {
 
 void canvas_context::draw_shadow(const canvas_path & path, fill_rule rule,
                                  const canvas_paint & paint) {
-    // Offsets and blur are in CSS pixels, NOT through the transform. The
-    // shadow of a shape off the canvas can land on it, so the shape is
-    // rasterised over the canvas moved back by the offset and widened by the
-    // blur's reach.
-    const int ox = static_cast<int>(std::lround(state_.shadow_x));
-    const int oy = static_cast<int>(std::lround(state_.shadow_y));
-    const double sigma = state_.shadow_blur / 2.0;
-    // ponytail: past a reach of 1024 pixels a shadow is spread too thin to
-    // matter, and the buffer stops growing with it.
-    const int reach = sigma > 0 ? static_cast<int>(std::ceil(std::min(sigma * 3.0, 1024.0))) : 0;
-    const int left = -ox - reach;
-    const int top = -oy - reach;
-    const int w = width() + 2 * reach;
-    const int h = height() + 2 * reach;
-    if (w <= 0 || h <= 0) { return; }
-    std::vector<float> alpha(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0.0f);
-    std::vector<std::uint32_t> row;
-    for_each_span(path, rule, top, top + h - 1, [&](int y, int x0, int x1) {
-        x0 = std::max(left, x0);
-        x1 = std::min(left + w - 1, x1);
-        if (x1 < x0) { return; }
-        float * out =
-            alpha.data() + static_cast<std::size_t>(y - top) * static_cast<std::size_t>(w);
-        if (paint.is_solid()) {
-            const float a = static_cast<float>(paint.solid.alpha()) / 255.0f;
-            for (int x = x0; x <= x1; ++x) { out[x - left] = a; }
-            return;
+    // Offsets and blur are in CSS pixels, NOT through the transform. Only the
+    // shape's own box, moved by the offset and widened by the blur, can be
+    // shaded - so that box on the canvas is all that is rasterised, blurred
+    // and composited, and a glow round a small shape costs the shape, not the
+    // canvas. The shadow of a shape off the canvas can still land on it.
+    double min_x = std::numeric_limits<double>::infinity();
+    double min_y = min_x;
+    double max_x = -min_x;
+    double max_y = -min_x;
+    for (const canvas_path::subpath & s : path.subpaths) {
+        for (const point & p : s.points) {
+            if (!std::isfinite(p.x) || !std::isfinite(p.y)) { return; } // fills nothing
+            min_x = std::min(min_x, static_cast<double>(p.x));
+            min_y = std::min(min_y, static_cast<double>(p.y));
+            max_x = std::max(max_x, static_cast<double>(p.x));
+            max_y = std::max(max_y, static_cast<double>(p.y));
         }
-        sample_row(paint, y, x0, x1, row);
-        for (int x = x0; x <= x1; ++x) {
-            out[x - left] =
-                static_cast<float>(row[static_cast<std::size_t>(x - x0)] >> 24) / 255.0f;
-        }
-    });
+    }
+    if (min_x > max_x) { return; }
+    // Rasterising clamps rows to a billion pixels either way, so a shadow
+    // thrown further than that cannot come back to the canvas - and the int
+    // arithmetic below stays in range.
+    const double shift_x = std::round(state_.shadow_x);
+    const double shift_y = std::round(state_.shadow_y);
+    if (std::fabs(shift_x) > 1e9 || std::fabs(shift_y) > 1e9) { return; }
+    const int ox = static_cast<int>(shift_x);
+    const int oy = static_cast<int>(shift_y);
     // A Gaussian of standard deviation shadowBlur / 2, as THREE BOX BLURS each
     // way - within a few percent of the true curve, and a constant cost per
-    // pixel whatever the blur, where a direct kernel is quadratic in it.
+    // pixel whatever the blur, where a direct kernel is quadratic in it. The
+    // box widths are the ones whose three-fold convolution has the Gaussian's
+    // variance (Kovesi, "Fast almost-Gaussian filtering"). A blur past a
+    // million pixels is transparent everywhere, and bounded so the widths fit.
+    const double sigma = std::min(state_.shadow_blur / 2.0, 1.0e6);
+    std::array<int, 3> radius{};
     if (sigma > 0) {
-        // The box widths whose three-fold convolution has the Gaussian's
-        // variance (Kovesi, "Fast almost-Gaussian filtering").
         const double ideal = std::sqrt(12.0 * sigma * sigma / 3.0 + 1.0);
         int lower = static_cast<int>(std::floor(ideal));
         if (lower % 2 == 0) { --lower; }
         const double m = (12.0 * sigma * sigma - 3.0 * lower * lower - 12.0 * lower - 9.0) /
                          (-4.0 * lower - 4.0);
-        const int smaller = static_cast<int>(std::lround(m));
+        const auto smaller = std::lround(m);
+        for (int i = 0; i < 3; ++i) {
+            radius[static_cast<std::size_t>(i)] = ((i < smaller ? lower : lower + 2) - 1) / 2;
+        }
+    }
+    // How far the blur carries a pixel: the three boxes end to end.
+    // ponytail: past 1024 pixels a shadow is spread too thin to matter, and
+    // the buffer stops growing with it.
+    const int reach = std::min(radius[0] + radius[1] + radius[2], 1024);
+
+    // The canvas pixels the shadow can shade, and the buffer round them: every
+    // shape pixel the blur carries onto one of them.
+    const double x0 = std::max(0.0, std::floor(min_x) + ox - reach - 1);
+    const double y0 = std::max(0.0, std::floor(min_y) + oy - reach - 1);
+    const double x1 = std::min(width() - 1.0, std::ceil(max_x) + ox + reach + 1);
+    const double y1 = std::min(height() - 1.0, std::ceil(max_y) + oy + reach + 1);
+    if (x0 > x1 || y0 > y1) { return; }
+    const int shade_left = static_cast<int>(x0);
+    const int shade_top = static_cast<int>(y0);
+    const int shade_right = static_cast<int>(x1);
+    const int shade_bottom = static_cast<int>(y1);
+    const int left = shade_left - reach;
+    const int top = shade_top - reach;
+    const int w = shade_right - shade_left + 1 + 2 * reach;
+    const int h = shade_bottom - shade_top + 1 + 2 * reach;
+    std::vector<float> alpha(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0.0f);
+    std::vector<std::uint32_t> row;
+    // Shape pixel (x, y) shades canvas pixel (x + ox, y + oy).
+    for_each_span(path, rule, top - oy, top - oy + h - 1, [&](int y, int x0s, int x1s) {
+        x0s = std::max(left - ox, x0s);
+        x1s = std::min(left - ox + w - 1, x1s);
+        if (x1s < x0s) { return; }
+        float * out =
+            alpha.data() + static_cast<std::size_t>(y + oy - top) * static_cast<std::size_t>(w);
+        const int at = ox - left;
+        if (paint.is_solid()) {
+            const float a = static_cast<float>(paint.solid.alpha()) / 255.0f;
+            for (int x = x0s; x <= x1s; ++x) { out[x + at] = a; }
+            return;
+        }
+        sample_row(paint, y, x0s, x1s, row);
+        for (int x = x0s; x <= x1s; ++x) {
+            out[x + at] = static_cast<float>(row[static_cast<std::size_t>(x - x0s)] >> 24) / 255.0f;
+        }
+    });
+    if (sigma > 0) {
         std::vector<float> scratch(alpha.size(), 0.0f);
-        const auto box = [&](std::vector<float> & from, std::vector<float> & to, int radius,
+        const auto box = [&](std::vector<float> & from, std::vector<float> & to, int r,
                              bool across) {
             const int lines = across ? h : w;
             const int length = across ? w : h;
@@ -423,32 +464,29 @@ void canvas_context::draw_shadow(const canvas_path & path, fill_rule rule,
                               : static_cast<std::size_t>(i) * static_cast<std::size_t>(w) +
                                     static_cast<std::size_t>(line);
             };
-            const float scale = 1.0f / static_cast<float>(2 * radius + 1);
+            const float scale = 1.0f / static_cast<float>(2 * r + 1);
             for (int line = 0; line < lines; ++line) {
                 float sum = 0;
-                for (int i = 0; i <= std::min(radius, length - 1); ++i) {
-                    sum += from[index(line, i)];
-                }
+                for (int i = 0; i <= std::min(r, length - 1); ++i) { sum += from[index(line, i)]; }
                 for (int i = 0; i < length; ++i) {
                     to[index(line, i)] = sum * scale;
-                    if (i + radius + 1 < length) { sum += from[index(line, i + radius + 1)]; }
-                    if (i - radius >= 0) { sum -= from[index(line, i - radius)]; }
+                    if (i + r + 1 < length) { sum += from[index(line, i + r + 1)]; }
+                    if (i - r >= 0) { sum -= from[index(line, i - r)]; }
                 }
             }
         };
-        for (int pass_index = 0; pass_index < 3; ++pass_index) {
-            const int radius = ((pass_index < smaller ? lower : lower + 2) - 1) / 2;
-            box(alpha, scratch, radius, true);
-            box(scratch, alpha, radius, false);
+        for (const int r : radius) {
+            box(alpha, scratch, r, true);
+            box(scratch, alpha, r, false);
         }
     }
     const pass composited{*this};
     const color shade = state_.shadow_color;
-    for (int y = 0; y < height(); ++y) {
+    for (int y = shade_top; y <= shade_bottom; ++y) {
         const std::size_t source_row =
-            static_cast<std::size_t>(y + reach) * static_cast<std::size_t>(w);
-        for (int x = 0; x < width(); ++x) {
-            const float a = alpha[source_row + static_cast<std::size_t>(x + reach)];
+            static_cast<std::size_t>(y - top) * static_cast<std::size_t>(w);
+        for (int x = shade_left; x <= shade_right; ++x) {
+            const float a = alpha[source_row + static_cast<std::size_t>(x - left)];
             if (a <= 0 || clipped_out(x, y)) { continue; }
             const auto shadow_alpha = static_cast<std::uint8_t>(
                 std::clamp(static_cast<float>(shade.alpha()) * a, 0.0f, 255.0f) + 0.5f);
