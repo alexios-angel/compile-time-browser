@@ -687,6 +687,7 @@ void dom_bindings::install_window(context & cx) {
     // lines from the cause. 100% of WPT was unrunnable for one missing alias.
     cx.define_global("self", window_view);
     cx.define_global("performance", value::object(performance));
+    install_history(cx, *window); // `history`, window/history.cpp
 
     // THE BROWSING-CONTEXT CHAIN, WHICH TERMINATES HERE. This document is
     // always the top one: there are no iframes and no `window.open`, so `parent`

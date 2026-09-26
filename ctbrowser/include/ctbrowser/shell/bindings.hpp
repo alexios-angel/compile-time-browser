@@ -733,6 +733,7 @@ private:
     [[nodiscard]] std::pair<dom_bindings *, node_id> choose_navigable(std::string_view target);
     void navigate_frame(dom_bindings & navigable, node_id element, form_navigation navigation);
     void install_window_open(context & cx, script::object_object & window);
+    void install_history(context & cx, script::object_object & window);
     const request_handler * request_handler_ = nullptr; // the primary's
     [[nodiscard]] std::optional<resource_reply> ask_request_handler(resource_request request);
     // Returns the bindings over the frame's document (null when no wrapper).
