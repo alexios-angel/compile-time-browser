@@ -304,6 +304,23 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-string-read-conditional-prefix-return": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null;
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-string-read-conditional-prefix-snapshot": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null;
+  try {
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -408,6 +425,8 @@ NUMBER_CONDITIONAL_READS = {
     "write-number-read-conditional-return-snapshot": ("flag", "0"),
     "write-number-read-conditional-divide-return": ("flag", "Infinity"),
     "write-number-read-arithmetic-conditional-callee": ("data-closed", "1"),
+    "write-string-read-conditional-prefix-return": ("flag", "null"),
+    "write-string-read-conditional-prefix-snapshot": ("flag", "null"),
 }
 
 
@@ -1172,6 +1191,53 @@ def main():
                     "anchor.unknown()",
                 ),
                 ("prefix-effect", "const saved =", "anchor.unknown(); const saved ="),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
+    conditional_string_body = (
+        SOURCES["write-string-read-conditional-prefix-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    )
+    refusals.update(
+        {
+            "write-string-read-conditional-prefix-"
+            + name: conditional_string_body.replace(before, after)
+            for name, before, after in (
+                ("unknown-condition", "anchor.hasAttribute('flag')", "anchor.unknown"),
+                (
+                    "condition-effect",
+                    "anchor.hasAttribute('flag')",
+                    "(anchor.unknown(), anchor.hasAttribute('flag'))",
+                ),
+                (
+                    "then-effect",
+                    "anchor.getAttribute('data-number')",
+                    "(anchor.unknown(), anchor.getAttribute('data-number'))",
+                ),
+                ("else-effect", ": null;", ": (anchor.unknown(), null);"),
+                ("then-coercion", "anchor.getAttribute('data-number')", "anchor"),
+                ("else-coercion", ": null;", ": anchor;"),
+                (
+                    "wrong-receiver",
+                    "anchor.getAttribute('data-number')",
+                    "(0, anchor.getAttribute)('data-number')",
+                ),
+                (
+                    "rebound-getter",
+                    "const saved =",
+                    "anchor.getAttribute = anchor.setAttribute; const saved =",
+                ),
+                ("missing-argument", "getAttribute('data-number')", "getAttribute()"),
+                (
+                    "extra-argument",
+                    "getAttribute('data-number')",
+                    "getAttribute('data-number', 'extra')",
+                ),
+                (
+                    "coercing-name",
+                    "getAttribute('data-number')",
+                    "getAttribute(anchor)",
+                ),
                 ("invalid-name", "'data-written'", "'bad name'"),
             )
         }
