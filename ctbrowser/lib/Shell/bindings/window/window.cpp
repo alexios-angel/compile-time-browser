@@ -619,8 +619,15 @@ void dom_bindings::install_window(context & cx) {
         // mediaDevices and getUserMedia are ABSENT rather than stubbed: a page
         // feature-detects them, and a stub that exists but cannot deliver a
         // stream fails later and worse than one that was never there.
+        // `oscpu`: the Gecko compatibility mode's NavigatorID member (HTML
+        // 8.9.1.1) - this engine's userAgent names neither Chrome nor WebKit,
+        // so it is in that mode, and the platform is what oscpu reports.
+        navigator->set("oscpu", cx.string("ctbrowser"));
         window->set("navigator", value::object(navigator));
         cx.define_global("navigator", value::object(navigator));
+        // `clientInformation`, the legacy [Replaceable] alias: the same object.
+        window->set("clientInformation", value::object(navigator));
+        cx.define_global("clientInformation", value::object(navigator));
     }
 
     // `screen`. One window, and it is the viewport.
