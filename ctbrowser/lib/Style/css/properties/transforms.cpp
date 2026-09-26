@@ -426,7 +426,11 @@ bool match_transform_property(std::string_view property, const token_stream & ts
         const std::optional<origin> o = read_origin(ts, at, {});
         if (o) {
             if (o->y.empty()) {
-                answer = o->x;
+                // A LONE VALUE is one axis with the other `center` (CSS
+                // Transforms 1 §6), and serialises as the pair:
+                // `left center`, `center top` (transform-origin-valid).
+                const bool vertical = ascii_iequals(o->x, "top") || ascii_iequals(o->x, "bottom");
+                answer = vertical ? "center " + o->x : o->x + " center";
             } else {
                 answer = o->x + " " + o->y + (o->z.empty() ? "" : " " + o->z);
             }

@@ -64,6 +64,10 @@ constexpr property_syntax table[] = {
      "auto", false, true},
     {"block-size", k::length_percentage, "auto min-content max-content fit-content stretch", "auto",
      false, true},
+    // CSS Sizing 4 §3.1: `size` is `<'width'> <'height'>?`, the one given for
+    // both when the second is left out (size-shorthand). @page's descriptor of
+    // the same name never reaches here - the parser drops @page's block.
+    {"size", k::freeform, "", "auto", false, false, true},
     // `interpolate-size` says whether an animation may interpolate BETWEEN a
     // keyword size and a length. Nothing animates here, so the property does
     // nothing - but it is a real property with a real two-keyword grammar, and

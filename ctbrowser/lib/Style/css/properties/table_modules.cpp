@@ -211,11 +211,16 @@ constexpr property_syntax modules[] = {
     {"scroll-padding-block-end", k::length_percentage, "auto", "auto", false, true},
     {"scroll-padding-inline-start", k::length_percentage, "auto", "auto", false, true},
     {"scroll-padding-inline-end", k::length_percentage, "auto", "auto", false, true},
+    // CSS Overflow 5 §scroll-axis-lock: `auto | none`, whether a scroll
+    // gesture sticks to the axis it began on. Nothing scrolls by gesture
+    // here, so it is a value and no behaviour (scroll-axis-lock-computed).
+    {"scroll-axis-lock", k::keyword_only, "auto none", "auto", false, false},
     {"overscroll-behavior", k::freeform, "", "auto", false, false, true},
-    {"overscroll-behavior-x", k::keyword_only, "contain none auto", "auto", false, false},
-    {"overscroll-behavior-y", k::keyword_only, "contain none auto", "auto", false, false},
-    {"overscroll-behavior-block", k::keyword_only, "contain none auto", "auto", false, false},
-    {"overscroll-behavior-inline", k::keyword_only, "contain none auto", "auto", false, false},
+    {"overscroll-behavior-x", k::keyword_only, "contain none auto chain", "auto", false, false},
+    {"overscroll-behavior-y", k::keyword_only, "contain none auto chain", "auto", false, false},
+    {"overscroll-behavior-block", k::keyword_only, "contain none auto chain", "auto", false, false},
+    {"overscroll-behavior-inline", k::keyword_only, "contain none auto chain", "auto", false,
+     false},
     // --- CSS Logical, Sizing, Box ----------------------------------------------
     {"min-inline-size", k::length_percentage, "auto min-content max-content fit-content stretch",
      "0px", false, true},

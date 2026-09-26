@@ -30,6 +30,8 @@ enum class shape : std::uint8_t {
     mask,            // CSS Masking 1 §7.1: comma-separated `<mask-layer>`s
     position_try,    // `position-try`: `<'position-try-order'>? <'position-try-fallbacks'>`
     text_spacing,    // `text-spacing`: `none | auto | <'text-spacing-trim'> || <'text-autospace'>`
+    font_synthesis,  // CSS Fonts 4 §4.7: `none`, or each named synthesis `auto` and the
+                     // rest `none` - `oblique-only` being the style one's third value
     border_image,    // source || slice [ / width? [ / outset ]? ] || repeat
     radius,          // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
     place,           // `place-*`: an align value then a justify one, each of several words
@@ -144,6 +146,11 @@ inline constexpr shorthand_syntax table[] = {
     {"flex", shape::flex, "flex-grow flex-shrink flex-basis", ""},
     {"flex-flow", shape::bar, "flex-direction flex-wrap", "row"},
     {"list-style", shape::bar, "list-style-position list-style-image list-style-type", "outside"},
+    {"size", shape::pair, "width height", ""},
+    {"font-synthesis", shape::font_synthesis,
+     "font-synthesis-weight font-synthesis-style font-synthesis-small-caps "
+     "font-synthesis-position",
+     ""},
     {"margin-inline", shape::pair, "margin-inline-start margin-inline-end", ""},
     {"margin-block", shape::pair, "margin-block-start margin-block-end", ""},
     {"padding-inline", shape::pair, "padding-inline-start padding-inline-end", ""},

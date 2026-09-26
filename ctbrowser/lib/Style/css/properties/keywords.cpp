@@ -63,7 +63,9 @@ constexpr or_grammar or_grammars[] = {
      "content"},
     // `normal | [ [ size | inline-size ] || scroll-state ]`, CSS Conditional 5 §4.2.
     {"container-type", "normal", {"size inline-size", "scroll-state"}, true},
-    {"font-synthesis", "none", {"weight", "style", "small-caps", "position"}, true},
+    // `oblique-only` is the style synthesis a shorthand may name instead of
+    // `style` (csswg-drafts#9390): the two share a slot.
+    {"font-synthesis", "none", {"weight", "style oblique-only", "small-caps", "position"}, true},
     {"font-variant-ligatures",
      "normal none",
      {"common-ligatures no-common-ligatures", "discretionary-ligatures no-discretionary-ligatures",
@@ -88,11 +90,12 @@ constexpr or_grammar or_grammars[] = {
      true,
      "block-start block-end",
      "block"},
-    // `none | [ space | ideographic-space ] && auto-phrase?`, CSS Text 4 §8.2.
+    // `none | [ space | ideographic-space ] && auto-phrase?`, CSS Text 4 §8.2,
+    // in the order written: `&&` does not reorder (word-space-transform-valid).
     {"word-space-transform",
      "none",
      {"space ideographic-space", "auto-phrase"},
-     true,
+     false,
      {},
      {},
      {},
