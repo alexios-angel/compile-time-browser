@@ -192,7 +192,7 @@ constexpr property_syntax modules[] = {
     {"scrollbar-width", k::keyword_only, "auto thin none", "auto", false, false},
     {"scrollbar-color", k::freeform, "", "auto", true, false},
     {"scroll-behavior", k::keyword_only, "auto smooth", "auto", false, false},
-    {"scroll-marker-group", k::keyword_only, "none before after", "none", false, false},
+    {"scroll-marker-group", k::freeform, "", "none", false, false}, // keywords.cpp
     {"scroll-target-group", k::keyword_only, "none auto", "none", false, false},
     // --- CSS Scroll Snap --------------------------------------------------------
     {"scroll-snap-type", k::freeform, "", "none", false, false},
@@ -349,7 +349,7 @@ constexpr property_syntax modules[] = {
     {"ruby-align", k::keyword_only, "start center space-between space-around", "space-around", true,
      false},
     {"ruby-merge", k::keyword_only, "separate merge auto", "separate", true, false},
-    {"ruby-overhang", k::keyword_only, "auto none", "auto", true, false},
+    {"ruby-overhang", k::freeform, "", "auto", true, false}, // declaration.cpp
     {"ruby-position", k::freeform, "", "alternate", true, false},
     {"quotes", k::freeform, "", "auto", true, false},
     // --- CSS Lists, Generated Content -------------------------------------------------

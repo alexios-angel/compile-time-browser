@@ -112,8 +112,20 @@ constexpr or_grammar or_grammars[] = {
      "contain scale-down",
      "scale-down"},
     {"hanging-punctuation", "none", {"first", "force-end allow-end", "last"}, false},
-    {"text-emphasis-position", "auto", {"over under", "right left"}, true},
+    // `right` is the default side and the shortest spelling leaves it out
+    // (CSSOM §6.7.2): `over right` is `over` (text-emphasis-position-valid).
+    {"text-emphasis-position",
+     "auto",
+     {"over under", "right left"},
+     true,
+     "over right",
+     "over",
+     "under right",
+     "under"},
     {"ruby-position", "inter-character", {"alternate", "over under"}, true},
+    // `none | [ before | after ] && [ links | tabs ]?`, CSS Overflow 5 §3.2:
+    // the group's side, and how its markers behave.
+    {"scroll-marker-group", "none", {"before after", "links tabs"}, true, {}, {}, {}, {}, true},
     {"text-autospace",
      "normal auto no-autospace",
      {"ideograph-alpha", "ideograph-numeric", "punctuation", "insert replace"},

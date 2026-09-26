@@ -90,7 +90,10 @@ struct cursor {
     }
     if (t.type == token_type::dimension) {
         const std::string unit = ascii_lower_copy(c.ts.unit_of(t));
-        if (t.number < 0) { return std::nullopt; }
+        // A negative length as written is invalid; one being COMPUTED is a
+        // calc() the cascade folded, and clamps to the range (CSS Values 4
+        // §10.12): `calc(10px - 0.5em)` at a 40px font is `0px`.
+        if (t.number < 0 && (ctx.lengths == nullptr || unit == "fr")) { return std::nullopt; }
         if (unit == "fr") {
             if (!allow_flex) { return std::nullopt; }
             ++c.i;
@@ -104,9 +107,12 @@ struct cursor {
             if (typed.value.type != numeric_type::length) { return std::nullopt; }
             if (ctx.lengths != nullptr) {
                 ++c.i;
-                return serialize_calc(typed.value);
+                calc_result v = typed.value;
+                if (v.px < 0 && !v.has_percent) { v.px = 0; }
+                return serialize_calc(v);
             }
         }
+        if (t.number < 0) { return std::nullopt; }
         ++c.i;
         return serialize_number(t.number) + unit;
     }
@@ -534,8 +540,10 @@ bool sized_run(cursor & c, size_kind kind, const grid_context & ctx, std::string
         ++c.i;
     }
     if (direction.empty() && !dense) { return std::nullopt; }
-    if (direction.empty()) { direction = "row"; }
-    return dense ? direction + " dense" : direction;
+    // The shortest spelling (CSSOM §6.7.2): `row` is the default, so `row
+    // dense` is `dense` (grid-auto-flow-valid, -computed).
+    if (dense) { return direction == "column" ? "column dense" : "dense"; }
+    return direction;
 }
 
 } // namespace
@@ -888,7 +896,7 @@ bool split_grid(std::string_view value, std::vector<std::string> & out) {
     if (flow_side(parts[0], dense, sizes)) {
         const std::optional<std::string> columns = track_list_of(ts, parts[1], false);
         if (!columns) { return false; }
-        out = {"none", *columns, "none", sizes, "auto", "row" + dense};
+        out = {"none", *columns, "none", sizes, "auto", dense.empty() ? "row" : "dense"};
         return true;
     }
     dense.clear();
@@ -913,8 +921,8 @@ std::string fold_grid(std::span<const std::string> v) {
     if (auto_rows_initial && auto_columns_initial && ascii_iequals(flow, "row")) {
         return fold_grid_template(v.first(3));
     }
-    const bool dense = flow.ends_with(" dense");
-    const std::string_view direction = std::string_view{flow}.substr(0, flow.find(' '));
+    const bool dense = flow.ends_with("dense");
+    const std::string_view direction = flow.starts_with("column") ? "column" : "row";
     if (ascii_iequals(areas, "none") && ascii_iequals(rows, "none") && direction == "row" &&
         auto_columns_initial) {
         return std::string{"auto-flow"} + (dense ? " dense" : "") +

@@ -457,6 +457,15 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(std::move(serialized));
     }
 
+    // `auto | spaces`, CSS Ruby 1 §4.2, `none` the legacy spelling of
+    // `spaces` and parsed as it (ruby-overhang-valid).
+    if (ascii_iequals(property, "ruby-overhang")) {
+        const std::string_view word = trim(simplified, html_whitespace);
+        if (ascii_iequals(word, "auto")) { return yes("auto"); }
+        if (ascii_iequals(word, "spaces") || ascii_iequals(word, "none")) { return yes("spaces"); }
+        return {};
+    }
+
     // `auto | <length-percentage>{1,2}`, CSS Text Decoration 4 §2.7: how far
     // a line starts and ends inside its text, the end defaulting to the start
     // and written once when the two agree.
