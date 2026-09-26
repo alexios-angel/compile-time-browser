@@ -116,7 +116,7 @@ void tree_builder::close() {
 }
 
 void tree_builder::pump() {
-    while (!aborted_ && !finished_) {
+    while (!aborted_ && !finished_ && !paused_) {
         lexer_.set_input(std::string_view{stream_}.substr(0, limit()), truncated());
         const token t = lexer_.next();
         if (t.kind == token_kind::incomplete) { return; }
@@ -152,6 +152,27 @@ void tree_builder::run_script(node_id script) {
     on_script_(script);
     --nesting_;
     if (!insertion_points_.empty()) { insertion_points_.pop_back(); }
+    // A parsing-blocking script the hook left pending. Inside a script -
+    // this `</script>` came from its document.write - the parser pauses and
+    // the write returns; the script runs when the nesting level is zero.
+    if (nesting_ > 0) {
+        if (pending_blocking_) { paused_ = true; }
+        return;
+    }
+    paused_ = false;
+    // "Run the pending parsing-blocking script": with the insertion point
+    // just before the next input character, so its own writes land there.
+    while (pending_blocking_ && !aborted_) {
+        const std::function<void()> run = std::move(pending_blocking_);
+        pending_blocking_ = nullptr;
+        insertion_points_.push_back(lexer_.position());
+        ++nesting_;
+        run();
+        --nesting_;
+        if (!insertion_points_.empty()) { insertion_points_.pop_back(); }
+        // Back at level zero: a script the one just run wrote is next.
+        paused_ = false;
+    }
 }
 
 // ============================================================================

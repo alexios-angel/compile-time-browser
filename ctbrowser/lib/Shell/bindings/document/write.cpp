@@ -219,24 +219,36 @@ void dom_bindings::prepare_parser_script(node_id script) {
         return;
     }
     const bool external = !src.empty();
-    if (!run_script_) {
-        // A FRAME'S DOCUMENT HAS NO RUNNER - the browser's is the page's - but
-        // it has a realm, and its parser pauses at this `</script>` like the
-        // page's does: the script runs now, in the frame's realm.
-        if (realm_ != nullptr && cx_ != nullptr && !prepared.module) {
-            execute_script_element(*cx_, script, prepared.source);
-            if (external) { announce_load(script, true); }
-        }
-        return;
-    }
-    if (!run_script_(prepared)) {
-        parser_->abort();
-        return;
-    }
     // "Execute the script element" step 8: `load` at the element for an
     // external script, once it has run; an inline classic script fires
     // nothing at all.
-    if (external) { announce_load(script, true); }
+    const auto execute = [this, script, external, prepared = std::move(prepared)] {
+        if (!run_script_) {
+            // A FRAME'S DOCUMENT HAS NO RUNNER - the browser's is the page's -
+            // but it has a realm, and its parser pauses at this `</script>`
+            // like the page's does: the script runs in the frame's realm.
+            if (realm_ != nullptr && cx_ != nullptr) {
+                execute_script_element(*cx_, script, prepared.source);
+                if (external) { announce_load(script, true); }
+            }
+            return;
+        }
+        if (!run_script_(prepared)) {
+            if (parser_ != nullptr) { parser_->abort(); }
+            return;
+        }
+        if (external) { announce_load(script, true); }
+    };
+    // An inline classic script runs NOW (step 33's last case). An external
+    // one is the PENDING PARSING-BLOCKING SCRIPT, which the parser runs once
+    // no script is on the stack - at once for the page's own parse, after the
+    // writing script for one document.write wrote (script_005.html and
+    // friends: [1, 2, 3, 4], not [1, 3, 2, 4]).
+    if (external) {
+        parser_->set_pending_blocking_script(execute);
+        return;
+    }
+    execute();
 }
 
 // "THE END", HTML 13.2.7, from step 2 - the readiness change - on. Step 3's

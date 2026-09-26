@@ -211,6 +211,17 @@ public:
     // (or defers it, or ignores it) and may call `write` from inside.
     using script_hook = std::function<void(node_id)>;
     void set_script_hook(script_hook hook) { on_script_ = std::move(hook); }
+    // THE PENDING PARSING-BLOCKING SCRIPT (13.2.6.4.8, "an end tag whose tag
+    // name is script"): the hook prepared an external classic script the
+    // parser must not read past. It runs once the script nesting level is
+    // back to zero - straight after the hook for the document's own parser,
+    // and for a `<script src>` that document.write wrote, only when the
+    // script that called write() has returned: until then the parser is
+    // PAUSED at the written `</script>`, the rest of the written text
+    // waiting in the stream.
+    void set_pending_blocking_script(std::function<void()> run) {
+        pending_blocking_ = std::move(run);
+    }
 
     // "CREATE AN ELEMENT FOR A TOKEN" FOR A CUSTOM ELEMENT (13.2.6.1 steps
     // 7-11), which only the shell can do: it owns the registry and runs the
@@ -541,6 +552,8 @@ private:
     bool finished_ = false;
     bool aborted_ = false;
     int nesting_ = 0;
+    std::function<void()> pending_blocking_;
+    bool paused_ = false; // the parser pause flag
 };
 
 } // namespace ctbrowser::html
