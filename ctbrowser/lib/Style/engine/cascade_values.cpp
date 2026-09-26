@@ -38,6 +38,32 @@ bool has_viewport_unit(std::string_view text) {
     return false;
 }
 
+std::string resolve_container_units(std::string text, const css::length_context & lengths) {
+    if (text.find("cq") == std::string::npos && text.find("CQ") == std::string::npos) {
+        return text;
+    }
+    const css::token_stream ts = css::tokenize(text);
+    std::string out;
+    bool changed = false;
+    for (const css::css_token & t : ts.tokens) {
+        if (t.type == css::token_type::eof) { break; }
+        const std::string_view piece = ts.text_of(t);
+        if (t.type == css::token_type::dimension && ascii_istarts_with(ts.unit_of(t), "cq")) {
+            // In double precision, as a folded calc() is: `10cqh` of 768 is
+            // 76.8px, not the float's 76.800003px.
+            const css::math_answer answer = css::evaluate_math(piece, lengths);
+            if (answer.outcome == css::math_outcome::resolved && !answer.value.is_number &&
+                !answer.value.has_percent) {
+                out += css::serialize_number(answer.value.px) + "px";
+                changed = true;
+                continue;
+            }
+        }
+        out += piece;
+    }
+    return changed ? out : text;
+}
+
 std::string fold_value(std::string text, std::string_view name,
                        const css::length_context & lengths) {
     if (name == "background-size" || name == "mask-size") {

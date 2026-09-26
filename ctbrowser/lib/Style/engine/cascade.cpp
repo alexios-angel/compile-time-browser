@@ -864,6 +864,12 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         // below against the LONGHAND's own bases and range - a shorthand has
         // neither (`border-block-width: 3px calc(10px - 0.5em)` is 3px and a
         // width clamped to 0px, not a refused `-10px`).
+        // A CONTAINER UNIT HAS ITS ANSWER HERE, the one place that knows the
+        // element's query container (CSS Conditional 5 §4.3): `left: 10cqw`
+        // is 7px against a 70px container, and the small viewport's share
+        // on an axis no container sizes (container-units-small-viewport-
+        // fallback). The computed value is the absolute length.
+        value = cascade_detail::resolve_container_units(std::move(value), lengths_for(d.property));
         const std::string unfolded = value;
         // CALC, AFTER SUBSTITUTION AND BEFORE EXPANSION - the same ordering
         // argument as the shorthands: `-1 * var(x)` has no arithmetic to do
