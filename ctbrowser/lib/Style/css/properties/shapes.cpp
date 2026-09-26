@@ -529,6 +529,14 @@ constexpr std::string_view geometry_boxes =
 [[nodiscard]] bool parse_shape_body(std::string_view body, shape_parts & out) {
     const std::vector<std::string_view> items = split_top_level(body, ",");
     if (items.size() < 2) { return false; }
+    // split_top_level drops an empty item; a stray comma leaves one too few.
+    std::size_t commas = 0;
+    int depth = 0;
+    for (const char c : body) {
+        depth += c == '(' ? 1 : c == ')' ? -1 : 0;
+        commas += depth == 0 && c == ',' ? 1U : 0U;
+    }
+    if (commas + 1 != items.size()) { return false; }
     const std::vector<std::string_view> head = words_of(items.front());
     std::size_t k = 0;
     if (!head.empty() && ascii_iequals_any(head[0], {"nonzero", "evenodd"})) {
