@@ -414,8 +414,8 @@ value_check check_declaration(std::string_view property, std::string_view value,
     }
 
     // THE INDIVIDUAL TRANSFORMS AND THE ORIGINS (transforms.cpp).
-    if (p->kind == k::freeform &&
-        ascii_iequals_any(property, {"rotate", "scale", "translate", "transform-origin"})) {
+    if (p->kind == k::freeform && ascii_iequals_any(property, {"rotate", "scale", "translate",
+                                                               "transform", "transform-origin"})) {
         std::string serialized;
         if (match_transform_property(property, ts, found, serialized)) {
             if (serialized.empty()) { return {}; }

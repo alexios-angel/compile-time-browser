@@ -623,6 +623,17 @@ void test_gap_rule_lists_and_their_neighbours() {
     bad("outline-color", "invert");
     CHECK(supports_declaration("grid-template-columns", "repeat(2, minmax(10px, 1fr))"));
     CHECK(supports_declaration("transform", "skewX(10deg)"));
+    // transform's functions are counted and typed (transform-valid/-invalid).
+    ok("transform", "translateX(-4px) scale(250%, 1) skew(90deg, 0)",
+       "translateX(-4px) scale(2.5, 1) skew(90deg, 0deg)");
+    ok("transform", "perspective(none) rotate3d(1, 0, 0, 0)",
+       "perspective(none) rotate3d(1, 0, 0, 0deg)");
+    bad("transform", "30px");
+    bad("transform", "none scale(2)");
+    bad("transform", "matrix(1, 2)");
+    bad("transform", "rotate(0, 0)");
+    bad("transform", "scaleX(2), scaleY(3)");
+    bad("transform", "perspective(1000)");
 }
 
 // CSS Shapes 1's <basic-shape>, specified: defaults left out, positions and
