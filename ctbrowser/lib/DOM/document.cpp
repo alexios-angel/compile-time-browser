@@ -745,6 +745,22 @@ void document::set_element_namespace(node_id element, atom uri) {
     element_namespaces_.insert_or_assign(shadow_key(element), uri);
 }
 
+void document::set_null_custom_element_registry(node_id element) {
+    null_registries_.insert_or_assign(shadow_key(element), true);
+}
+
+bool document::null_custom_element_registry(node_id element) const {
+    return !null_registries_.empty() && null_registries_.contains(shadow_key(element));
+}
+
+bool read_txn::null_custom_element_registry(node_id id) const noexcept {
+    return doc_->null_custom_element_registry(id);
+}
+
+std::optional<bool> read_txn::custom_element_defined(node_id id) const {
+    return doc_->custom_element_defined(id);
+}
+
 std::expected<node_id, dom_error> document::attach_shadow(node_id host, shadow_tree how) {
     const auto txn = read();
     if (!txn.contains(host)) { return std::unexpected{dom_error::no_such_node}; }
@@ -794,18 +810,28 @@ std::vector<node_id> document::shadow_roots() const {
     return roots;
 }
 
+// THE PARSER'S EDITS ARE LOGGED like any other while a reader asked for the
+// log (log_writes): its insertions are DOM "insert"s, which move live ranges
+// and assign slottables (DOM 4.2.3) - a custom element the parser constructs
+// attaches its shadow tree before its children arrive, and those children are
+// what its slots then show (shadow-dom/slotchange-customelements.html). Off,
+// which is every parse nothing observes, it is the one load it always was.
 void document::builder::append(node_id parent, node_id child) {
     node * parent_node = doc_->find(parent);
     node * child_node = doc_->find(child);
     if (parent_node == nullptr || child_node == nullptr) { return; }
     parent_node->children.push_back(child);
     child_node->parent = parent;
+    doc_->note_edit(write_note::edit::inserted, parent, child, parent_node->children.size() - 1);
 }
 
 void document::builder::reparent(node_id child, node_id new_parent) {
     node * child_node = doc_->find(child);
     if (child_node == nullptr) { return; }
     if (node * previous = doc_->find(child_node->parent); previous != nullptr) {
+        const auto at = std::ranges::find(previous->children, child);
+        doc_->note_edit(write_note::edit::removed, child_node->parent, child,
+                        static_cast<std::size_t>(at - previous->children.begin()));
         const auto gone = std::ranges::remove(previous->children, child);
         previous->children.erase(gone.begin(), gone.end());
     }
@@ -817,8 +843,10 @@ void document::builder::insert_before(node_id parent, node_id child, node_id bef
     node * child_node = doc_->find(child);
     if (parent_node == nullptr || child_node == nullptr) { return; }
     auto & items = parent_node->children;
-    items.insert(std::ranges::find(items, before), child); // end() when absent: append
+    const auto at = items.insert(std::ranges::find(items, before), child); // end(): append
     child_node->parent = parent;
+    doc_->note_edit(write_note::edit::inserted, parent, child,
+                    static_cast<std::size_t>(at - items.begin()));
 }
 
 atom document::foreign_namespace_of(node_ns element_ns, atom name) const {
