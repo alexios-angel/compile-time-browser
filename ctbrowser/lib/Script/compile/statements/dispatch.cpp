@@ -166,11 +166,13 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                         proto().emit(
                             instruction{op::set_upvalue, static_cast<std::uint16_t>(up), r});
                     }
-                } else if (!with_scopes_.empty()) {
+                } else if (!with_scopes_.empty() || find_local_entry(fn(), decl.text) != nullptr) {
                     // INSIDE A `with` the initialiser is a PutValue on the name
                     // as the with resolves it (14.3.2.1 step 1: ResolveBinding
                     // from the running environment) - the object's property
-                    // when it has one - and `var x;` alone writes nothing.
+                    // when it has one - and `var x;` alone writes nothing. So
+                    // inside a `catch (x)`, whose parameter a `var x` may share
+                    // (B.3.4): the initialiser writes the parameter.
                     if (decl.a >= 0) {
                         const bool outer_declaring = declaring_;
                         declaring_ = true;
