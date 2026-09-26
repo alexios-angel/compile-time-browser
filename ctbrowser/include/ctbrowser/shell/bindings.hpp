@@ -957,6 +957,8 @@ private:
     [[nodiscard]] node_id root_of_tree(const read_txn & txn, node_id from, bool composed) const;
 
     [[nodiscard]] node_id body_or_frameset_of(value self);
+    // A window-forwarded handler on a body/frameset of a windowless document.
+    [[nodiscard]] bool windowless_forward(value self, std::string_view name);
     void refresh_forwarded_handler(context & cx, node_id element, const std::string & name);
     flat_map<std::string, node_id> forwarded_from_;
     std::vector<node_id> bodies_; // every wrapped body/frameset, rebuilt when a wrapper is made

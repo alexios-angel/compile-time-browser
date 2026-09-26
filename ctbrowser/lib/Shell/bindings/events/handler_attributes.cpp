@@ -94,6 +94,7 @@ constexpr std::string_view global_event_handlers[] = {"onabort",
                                                       "onchange",
                                                       "onclick",
                                                       "onclose",
+                                                      "oncommand",
                                                       "oncontextlost",
                                                       "oncontextmenu",
                                                       "oncontextrestored",
@@ -171,16 +172,6 @@ constexpr std::string_view global_event_handlers[] = {"onabort",
                                                       "onwebkitanimationstart",
                                                       "onwebkittransitionend",
                                                       "onwheel"};
-
-// WindowEventHandlers - the ones that are the WINDOW's business rather than an
-// element's, and the reason `Body-FrameSet-Event-Handlers.html` exists at all:
-// HTML also puts these on `<body>` and `<frameset>`, where they FORWARD. See
-// install_event_handler_attributes for what is and is not wired here.
-constexpr std::string_view window_event_handlers[] = {
-    "onafterprint",       "onbeforeprint", "onbeforeunload",       "onhashchange",
-    "onlanguagechange",   "onmessage",     "onmessageerror",       "onoffline",
-    "ononline",           "onpagehide",    "onpageshow",           "onpopstate",
-    "onrejectionhandled", "onstorage",     "onunhandledrejection", "onunload"};
 
 // WHERE A HANDLER IS ACTUALLY KEPT. Three slots per name and each answers a
 // different question, which is why one would not do:
@@ -332,6 +323,17 @@ node_id dom_bindings::body_or_frameset_of(value self) {
     return is ? id : node_id{};
 }
 
+// A forwarded handler of a body or frameset whose document has NO WINDOW - a
+// DOMParser's, createHTMLDocument's: "determining the target of an event
+// handler" (8.1.8.1) finds no target, so the getter answers null and the
+// setter does nothing. Asked of the element's own document's bindings, since
+// the accessors are this document's and the element may be another's.
+bool dom_bindings::windowless_forward(value self, std::string_view name) {
+    if (!forwards_to_window(name)) { return false; }
+    dom_bindings & owner = target_owner(self);
+    return owner.window_object() == nullptr && owner.body_or_frameset_of(self);
+}
+
 // A forwarded CONTENT attribute reaches the window from here, lazily: there is
 // no attribute-change hook, so the element's `on<name>` text is compared with
 // what was last compiled from it on every read of the handler - through the
@@ -377,6 +379,7 @@ void dom_bindings::refresh_forwarded_handler(context & cx, node_id element,
 // rather than a null in it - see assigned_slot.
 value dom_bindings::event_handler_get(context & cx, value self, const std::string & name) {
     if (!self.is_object()) { return value::null(); }
+    if (windowless_forward(self, name)) { return value::null(); }
     const auto in_realm = enter_realm(cx);
     auto * object = static_cast<script::object_object *>(self.as_heap());
     if (forwards_to_window(name) && window_object() != nullptr) {
@@ -439,7 +442,7 @@ value dom_bindings::event_handler_get(context & cx, value self, const std::strin
 // is eventually invoked, which is where the specification puts the failure.
 void dom_bindings::event_handler_set(context & cx, value self, const std::string & name,
                                      value given) {
-    if (!self.is_object()) { return; }
+    if (!self.is_object() || windowless_forward(self, name)) { return; }
     const auto in_realm = enter_realm(cx);
     auto * object = static_cast<script::object_object *>(self.as_heap());
     // `body.onload = f` IS `window.onload = f` - see forwards_to_window.
@@ -581,16 +584,11 @@ void dom_bindings::queue_details_toggle(node_id details, bool was_open, bool ope
 // the prototype chain is not owned, so `window.onload = fn` would define a
 // global and never run the setter.
 //
-// WHAT IS NOT HERE, said plainly. HTML forwards six of these from `<body>` and
-// `<frameset>` to the window - `onblur`, `onerror`, `onfocus`, `onload`,
-// `onresize`, `onscroll` are the WINDOW's when read or written through a body
-// element - and that is not wired, because forwarding without the other half
-// is worse than neither. The other half is the attribute-change hook: setting
-// the CONTENT attribute on a body element has to compile the handler onto the
-// window there and then, and the only place that can happen is `setAttribute`,
-// which is another file. With forwarding and no hook, `body.onblur` reads the
-// window's slot, which the previous case left explicitly null, and the
-// reflection case that passes today would fail instead.
+// AND ON <body> AND <frameset> THE WINDOW'S OWN: both interfaces include
+// WindowEventHandlers, and there those - like the six window-reflecting names
+// they inherit from HTMLElement - read and write the WINDOW's handler
+// (forwards_to_window; refresh_forwarded_handler carries a content attribute
+// across).
 void dom_bindings::install_event_handler_attributes(context & cx) {
     // The interface prototypes are built on the first `wrap()`, which is after
     // this - so ask for them now. It is a no-op if they already exist and it is
@@ -621,6 +619,15 @@ void dom_bindings::install_event_handler_attributes(context & cx) {
             install(attribute, std::span<script::object_object *>{&document_proto, 1});
         }
     }
+    std::vector<script::object_object *> window_hosts;
+    for (const std::string_view interface : {"HTMLBodyElement", "HTMLFrameSetElement"}) {
+        if (const value proto = interface_prototype(interface); proto.is_object()) {
+            window_hosts.push_back(static_cast<script::object_object *>(proto.as_heap()));
+        }
+    }
+    for (const std::string_view attribute : window_event_handlers) {
+        install(attribute, window_hosts);
+    }
     if (auto * window = window_object()) { install_window_handlers(cx, *window); }
 }
 
@@ -641,9 +648,8 @@ void dom_bindings::install_handler_accessor(context & cx, std::string_view attri
     for (script::object_object * host : where) { host->define_accessor(name, getter, setter); }
 }
 
-// A WINDOW'S HANDLERS - GlobalEventHandlers and WindowEventHandlers, the latter
-// the window's alone here (see the note above on what forwarding would need) -
-// over THIS document's storage: the page's window in install, a frame's in
+// A WINDOW'S HANDLERS - GlobalEventHandlers and WindowEventHandlers - over THIS
+// document's storage: the page's window in install, a frame's in
 // install_frame_realm, so `<body onload>` in a frame is the frame window's.
 void dom_bindings::install_window_handlers(context & cx, script::object_object & window) {
     script::object_object * host = &window;
