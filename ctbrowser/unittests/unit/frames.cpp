@@ -599,7 +599,19 @@ void test_a_javascript_source_is_its_string_result() {
     if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"js|0"}); }
 }
 
+// A FRAME IN A FRAME'S DOCUMENT LOADS ON THE TICK, not only when its
+// `contentWindow` is read: the tick reconciles the page's frames and each
+// frame document's own (html-forms/test-003.html waited for such a `load`).
+void test_a_frame_inside_a_frame_document_loads() {
+    is("<iframe id=b></iframe><script>var d = document.getElementById('b').contentDocument;"
+       " var n = d.createElement('iframe'); n.src = 'inner.html'; window.nested = 'none';"
+       " n.onload = function () { window.nested = n.contentDocument.title; };"
+       " d.body.appendChild(n);</script>",
+       "window.nested", "inner");
+}
+
 int main() {
+    test_a_frame_inside_a_frame_document_loads();
     test_a_frame_document_is_laid_out_at_the_size_of_its_box();
     test_the_frames_are_indexed_on_the_window();
     test_a_frame_loaded_at_a_fragment_has_a_target();
