@@ -14,6 +14,56 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Round thirteen and the root's fixes — 2026-09-26
+
+Round thirteen's four agents (CSS4, HTML4, DOM4, VM) were all cut off by the
+account's session limit after about three hours and none reported; each
+branch was merged whole at its last green gate (VM's gated work in progress
+committed first), plus the root's `d96215f1`, `c1d6125c` and `5dc27425`.
+Measured at `037fbaae` (combined gate 250/250) against `6011bf8d`, the same
+instrument as the outage batch below.
+
+| suite | files PASS `6011bf8d` → `037fbaae` | subtests PASS `6011bf8d` → `037fbaae` |
+|---|---:|---:|
+| `css` | 2,187 → **2,234** | 99,154 → **101,800** |
+| `html` | 869 → **898** | 75,210 → **76,338** |
+| `dom` | 436 → **451** | 52,725 → **54,914** |
+| `shadow-dom` | 107 → **111** | 14,661 → **14,669** |
+| `custom-elements` | 119 → **127** | 3,952 → **4,017** |
+| `domparsing` | 24 → **24** | 704 → **704** |
+| `selection` | 69 → **75** | 33,736 → **34,008** |
+| `url` | 41 → **42** | 9,606 → **9,994** |
+| **WPT total** | 3,852 → **3,962** (+110) | 289,748 → **296,444** |
+| test262 (ran) | 48,110 → **48,233** (+123) | — |
+
+**Five files lost**, each assigned: `form-double-submit-multiple-targets.html`
+by design - HTML's "plan to navigate" keeps ONE planned navigation per form,
+and the test's own header says what it checks is unspecified;
+`shadow-dom/.../html-forms/test-003.html` (a form in a second document
+targeting the main document's iframe no longer loads it twice) and three
+css transform/viewport files are round fourteen's first items.
+
+What moved it: `url/failure.html` passes (1,175 subtests - a real Location
+object and `window.open()`); `Document-characterSet-normalization-1/2`
+(654, ctdrive now answers `encoding.py` as wptserve does);
+`Range-insertNode.html` runs (1,537 of 1,840) since the about:blank load
+fires during insertion; calc-size() interpolation and a long CSS tail
+(`css-conformance.md`); the eight `event-handler-attributes-*` files
+(WindowEventHandlers forwarded on `<body>`/`<frameset>`, and WebIDL2's parse
+of html.idl no longer quadratic - a failed sticky regex exec searched the
+rest of its input); custom elements built by `createElementNS`; and the VM
+round (`test262.md`). `Range-surroundContents.html` became a CRASH: it runs
+far enough now to reach the 4 GB cap - every Range was a GC root (fixed
+after this measurement, below).
+
+**A second instrument: `html/canvas`.** Not in the shared corpus; a sparse
+checkout at the same pin in `~/.cache/wpt-canvas` (`/resources/`, `/common/`,
+`/html/canvas/element/`, `/html/canvas/resources/`, `/images/`, `/fonts/`),
+run as `run-wpt.py --wpt-dir ~/.cache/wpt-canvas --dir html/canvas/element`.
+Baseline at `c1d6125c`: **371 of 1,220 runnable files PASS, 987 subtests**
+- whole APIs missing (gradients, patterns, `roundRect`, `reset`, `arcTo`,
+the context's own curves, `isPointInPath`, line dashes) before any pixel.
+
 ## The outage batch: GC pins, UTF-16 strings, testdriver — 2026-09-26
 
 Six pieces of work built and gated on the devbox while `/mnt/c` was
