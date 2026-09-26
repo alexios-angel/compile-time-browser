@@ -3899,7 +3899,7 @@ static void testNumberAttributeOrigins(mlir::MLIRContext & context) {
                                          control == 13   ? 0
                                          : control == 14 ? 500
                                                          : 100000);
-            if (control >= 3) {
+            if (control >= 3 && control != 10) {
                 check(static_cast<bool>(error) && printed(*candidate) == original &&
                           request.moduleSha256 == originalContract.moduleSha256 &&
                           request.initialIntrinsics == originalContract.initialIntrinsics &&
@@ -3938,7 +3938,132 @@ static void testNumberAttributeOrigins(mlir::MLIRContext & context) {
     }
 }
 
+static void testProtectedNumberReads(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    const std::string source = R"js(function guarded(element) {
+        try {
+            const saved = Number(element.getAttribute('data-number'));
+            element.setAttribute('data-written', saved);
+            throw element;
+        } catch (error) { return error === element; }
+    })js";
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 24; ++control) {
+            auto text = source;
+            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
+                text.replace(text.find(from.str()), from.size(), to.str());
+            };
+            if (control == 1) {
+                replace("element.setAttribute('data-written'",
+                        "element.setAttribute('data-number', '99'); "
+                        "element.setAttribute('data-written'");
+            }
+            if (control == 2) { replace("throw element;", "return true;"); }
+            if (control == 3 || control == 4) {
+                replace("element.getAttribute('data-number')", control == 3 ? "'7.5'" : "null");
+            }
+            if (control == 5 || control == 23) {
+                replace("element.getAttribute('data-number')",
+                        control == 5 ? "element.hasAttribute('flag') ? "
+                                       "element.getAttribute('data-number') : null"
+                                     : "element.hasAttribute('flag') ? "
+                                       "element.getAttribute('data-number') : element");
+            }
+            if (control == 12) { replace("getAttribute", "unknown"); }
+            if (control == 13) { replace("data-written", "bad name"); }
+            if (control == 17) { replace("'data-written', saved", "'data-written', element"); }
+            if (control == 18) { replace("try {", "Number = element; try {"); }
+            if (control == 19) { replace("const saved", "unknown(); const saved"); }
+            auto candidate = import(context, text, true);
+            if (!candidate) { continue; }
+            auto function = guarded(*candidate);
+            llvm::SmallVector<ctjs::CallOp> originalCalls;
+            ctjs::LoadGlobalOp number;
+            function.walk([&](ctjs::CallOp call) { originalCalls.push_back(call); });
+            function.walk([&](ctjs::LoadGlobalOp load) {
+                if (load.getName() == "Number") { number = load; }
+            });
+            if (!check(number && originalCalls.size() >= 2,
+                       "protected Number source retains original calls and binding")) {
+                continue;
+            }
+            // Imported status edges forward the callee through block arguments;
+            // source order identifies these calls without assuming direct SSA.
+            auto conversion = originalCalls[1];
+            auto read = originalCalls.front();
+            auto element = function.getBody().front().getArgument(3);
+            if (control == 7) { number.setName("Other"); }
+            if (control == 8) { conversion.getReceiverMutable().assign(element); }
+            if (control == 9) { conversion.getArgsMutable().append(element); }
+            if (control == 10) { conversion.getArgsMutable().clear(); }
+            if (control == 11) { conversion.getArgsMutable().assign(element); }
+            if (control == 20) { read.getReceiverMutable().assign(read.getCallee()); }
+            if (control == 21) { read.getArgsMutable().append(element); }
+            if (control == 22) { read.getArgsMutable().assign(element); }
+            mlir::Builder builder(&context);
+            number->setAttr("ctnative.host_intrinsic", builder.getStringAttr("Number"));
+            for (auto call : originalCalls) {
+                call->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+            }
+            HostContract request;
+            request.provider = provider;
+            request.entry = function.getSymName().str();
+            request.elementParameters = {0};
+            if (control != 6) { request.initialIntrinsics = {"Number"}; }
+            request.moduleSha256 = hostContractFingerprint(*candidate);
+            const auto originalContract = request;
+            if (control == 16) { number.setName("Other"); }
+            const auto original = printed(*candidate);
+            auto error = prepareDOMEntry(*candidate, request,
+                                         control == 14   ? 0
+                                         : control == 15 ? 500
+                                                         : 100000);
+            // Control 5 also transports the Number callee through the If result.
+            // Its independent callable-origin proof remains a measured boundary.
+            if (control >= 5) {
+                check(static_cast<bool>(error) && printed(*candidate) == original &&
+                          request.moduleSha256 == originalContract.moduleSha256 &&
+                          request.initialIntrinsics == originalContract.initialIntrinsics &&
+                          request.elementParameters == originalContract.elementParameters &&
+                          request.provider == originalContract.provider &&
+                          request.entry == originalContract.entry,
+                      "protected conversion refuses incomplete identity, input, effect or budget");
+                if (error) { llvm::consumeError(std::move(error)); }
+                continue;
+            }
+            if (!check(!error, "protected read and conversion preserve original completion")) {
+                llvm::errs() << "control " << control << ": " << llvm::toString(std::move(error))
+                             << '\n';
+                continue;
+            }
+            DOMEntryAnalysis proof(*candidate, request);
+            check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                  "protected read and conversion require fresh complete DOM proof");
+            if (control > 2) { continue; }
+            llvm::SmallVector<ctjs::CallOp> calls;
+            candidate->walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            if (!check(calls.size() == (control == 1 ? 4u : 3u),
+                       "protected read, conversion and writes execute exactly once")) {
+                continue;
+            }
+            const auto * getter = proof.call(calls[0]);
+            const auto * numeric = proof.call(calls[1]);
+            const auto * setter = proof.call(calls.back());
+            check(getter && getter->kind == HostDOMMethod::getAttribute && numeric &&
+                      numeric->kind == HostDOMMethod::number && setter &&
+                      setter->kind == HostDOMMethod::setAttribute &&
+                      calls[1].getArgs()[0] == calls[0].getResult() &&
+                      calls.back().getArgs()[1] == calls[1].getResult() &&
+                      calls[0]->isBeforeInBlock(calls[1]) && calls[1]->isBeforeInBlock(calls[2]) &&
+                      (control != 1 || calls[2]->isBeforeInBlock(calls[3])),
+                  "protected write consumes the exact read-time Number snapshot in source order");
+        }
+    }
+}
+
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    testProtectedNumberReads(context);
     testNumberAttributeOrigins(context);
     testInvocationCallableReads(context);
     testInvocationCellReads(context);
