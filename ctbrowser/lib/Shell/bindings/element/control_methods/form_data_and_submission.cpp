@@ -70,7 +70,9 @@ void dom_bindings::install_control_form_data(context & cx) {
         const auto add = [&](const std::string & name, value held) {
             list->items.push_back(make_entry(c, name, held));
         };
-        for (const node_id one : helpers.elements_of_form(b, form)) {
+        // The form's SUBMITTABLE elements (4.10.21.4 step 4) - an image
+        // button among them, which form.elements does not list.
+        for (const node_id one : helpers.submittable_of_form(b, form)) {
             const auto txn = b->doc_->read();
             if (!txn.contains(one) || helpers.is_disabled(txn, b, one)) { continue; }
             // A FORM-ASSOCIATED CUSTOM ELEMENT (step 5.5-5.7): its submission

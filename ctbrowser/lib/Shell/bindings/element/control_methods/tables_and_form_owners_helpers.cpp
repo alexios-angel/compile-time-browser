@@ -200,6 +200,20 @@ std::vector<node_id> control_helpers::elements_of_form(dom_bindings * b, node_id
     return out;
 }
 
+std::vector<node_id> control_helpers::submittable_of_form(dom_bindings * b, node_id form) const {
+    const auto helpers = *this;
+    std::vector<node_id> out;
+    const auto txn = b->doc_->read();
+    if (!txn.contains(form)) { return out; }
+    helpers.walk_tree(txn, helpers.tree_top(txn, b, form), [&](node_id at2) {
+        if ((helpers.is_submittable(txn, at2) || helpers.is_face(b, at2)) &&
+            helpers.form_owner(txn, b, at2) == form) {
+            out.push_back(at2);
+        }
+    });
+    return out;
+}
+
 bool control_helpers::is_disabled(const read_txn & txn, dom_bindings * b, node_id id) const {
     const auto helpers = *this;
     const atom disabled = b->atoms_->intern("disabled");
