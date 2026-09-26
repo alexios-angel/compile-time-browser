@@ -161,7 +161,8 @@ void test_reads_and_all() {
     CHECK_EQ(block.size(), std::size_t{1});
     CHECK_EQ(declaration_value(block, "margin"), std::string{"var(--a)"});
     CHECK_EQ(declaration_value(block, "margin-top"), std::string{});
-    CHECK(longhands_of("grid").empty());
+    CHECK(longhands_of("color").empty());
+    CHECK_EQ(longhands_of("grid").size(), std::size_t{6});
     CHECK_EQ(longhands_of("border").size(), std::size_t{17});
 
     // setproperty-null-undefined, cssstyledeclaration-csstext: a colour is

@@ -168,7 +168,16 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             if (const layout::fragment * up = fragment_for(fragments_, parent)) {
                 at.basis = up->bounds.width;
                 at.basis_height = up->bounds.height;
-                if (up_box != nullptr) {
+                // A `display: contents` parent has no box, so neither padding
+                // nor border of its own (getComputedStyle-pseudo).
+                bool boxless = false;
+                if (styles_ != nullptr) {
+                    const auto found = styles_->find(style::engine::key_of(parent));
+                    boxless = found != styles_->end() && found->second &&
+                              collapse_keyword(found->second->get(atoms_->intern("display"))) ==
+                                  "contents";
+                }
+                if (up_box != nullptr && !boxless) {
                     const layout::side_lengths & pad = up_box->padding;
                     // A PERCENTAGE PADDING RESOLVES AGAINST THE WIDTH on all four
                     // sides (CSS 2.1 §8.4), so the vertical pair is subtracted
@@ -731,47 +740,6 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                        px_text(static_cast<float>(std::max(answer.value.px, 0.0)));
             }
             return out.empty() ? collapse_keyword(text) : out;
-        }
-        // 4i. A FONT WEIGHT IS A NUMBER in [1, 1000] (CSS Fonts 4 §2.2):
-        //     `normal` is 400, `bold` 700, and `bolder` and `lighter` are the
-        //     table's step from the parent's computed weight
-        //     (font-weight-computed).
-        if (property == "font-weight") {
-            const auto weight_at = [&](auto && self, std::size_t up) -> double {
-                if (up >= at.chain.size()) { return 400; }
-                const std::string word = collapse_keyword(
-                    up == 0 ? declared(property) : declared_on(at.chain[up], property));
-                if (word.empty() || word == "normal") { return 400; }
-                if (word == "bold") { return 700; }
-                if (word == "bolder" || word == "lighter") {
-                    const double parent = self(self, up + 1);
-                    // The cascade inherits the TEXT, so a child of a `bolder`
-                    // parent reads `bolder` too; the parent's own step is the
-                    // child's value. ponytail: a declared `bolder` inside a
-                    // declared `bolder` reads as inherited; know which was
-                    // declared when the cascade says so.
-                    if (up + 1 < at.chain.size() &&
-                        collapse_keyword(declared_on(at.chain[up + 1], property)) == word) {
-                        return parent;
-                    }
-                    if (word == "bolder") {
-                        return parent < 350   ? 400
-                               : parent < 550 ? 700
-                               : parent < 900 ? 900
-                                              : parent;
-                    }
-                    return parent < 100 ? parent : parent < 550 ? 100 : parent < 750 ? 400 : 700;
-                }
-                const style::css::math_answer answer = style::css::evaluate_math(word, {});
-                if (answer.outcome != style::css::math_outcome::resolved ||
-                    !answer.value.is_number) {
-                    return -1;
-                }
-                return std::clamp(answer.value.px, 1.0, 1000.0);
-            };
-            const double weight = weight_at(weight_at, 0);
-            if (weight >= 0) { return number_text(static_cast<float>(weight)); }
-            return collapse_keyword(text);
         }
         // 4h. offset-rotate's angle in degrees, `reverse` as `auto 180deg`
         //     (Motion Path 1 §4.4, offset-rotate-computed).
