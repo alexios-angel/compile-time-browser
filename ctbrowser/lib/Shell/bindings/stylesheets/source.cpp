@@ -364,9 +364,177 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
     return ok ? out : std::string{};
 }
 
+// `@font-face`'s `src` (CSS Fonts 4 §4.3): a comma list of `<url> [
+// format(<font-format>) ]? [ tech(<font-tech>#) ]?` and `local(<family-name>)`,
+// each entry read on its own - one that does not parse is dropped, not the
+// descriptor - and the descriptor invalid only when no entry is left. The
+// canonical text of what is left, or nothing.
+[[nodiscard]] std::string font_face_src(std::string_view text) {
+    using style::css::token_type;
+    const style::css::token_stream ts = style::css::tokenize(text);
+    std::vector<std::vector<std::size_t>> entries(1);
+    int depth = 0;
+    for (std::size_t i = 0; i < ts.tokens.size(); ++i) {
+        const token_type type = ts.tokens[i].type;
+        if (type == token_type::eof) { break; }
+        if (type == token_type::comma && depth == 0) {
+            entries.emplace_back();
+            continue;
+        }
+        if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+        if (type == token_type::close_paren && depth > 0) { --depth; }
+        if (type != token_type::whitespace || depth > 0) { entries.back().push_back(i); }
+    }
+    static constexpr std::string_view formats[] = {
+        "collection", "embedded-opentype", "opentype", "svg", "truetype", "woff", "woff2"};
+    static constexpr std::string_view techs[] = {
+        "features-opentype", "features-aat", "features-graphite", "color-colrv0",
+        "color-colrv1",      "color-svg",    "color-sbix",        "color-cbdt",
+        "variations",        "palettes",     "incremental"};
+    const auto name_of = [&](std::size_t i) {
+        const std::string_view raw = ts.text_of(ts.tokens[i]);
+        return ascii_lower_copy(raw.substr(0, raw.size() - 1));
+    };
+    // The significant tokens of the function opened at entry[k], and where
+    // the entry goes on after its `)`.
+    const auto arguments = [&](const std::vector<std::size_t> & entry, std::size_t & k) {
+        std::vector<std::size_t> inner;
+        int level = 0;
+        for (++k; k < entry.size(); ++k) {
+            const token_type type = ts.tokens[entry[k]].type;
+            if (type == token_type::close_paren && level == 0) {
+                ++k;
+                return std::optional{inner};
+            }
+            if (type == token_type::function || type == token_type::open_paren) { ++level; }
+            if (type == token_type::close_paren) { --level; }
+            if (type != token_type::whitespace) { inner.push_back(entry[k]); }
+        }
+        return std::optional<std::vector<std::size_t>>{};
+    };
+    std::string out;
+    for (const std::vector<std::size_t> & entry : entries) {
+        if (entry.empty()) { continue; }
+        std::size_t k = 0;
+        std::string one;
+        const style::css::css_token & first = ts.tokens[entry[0]];
+        if (first.type == token_type::function && name_of(entry[0]) == "local") {
+            const std::optional<std::vector<std::size_t>> inner = arguments(entry, k);
+            if (!inner || inner->empty() || k != entry.size()) { continue; }
+            if (inner->size() == 1 && ts.tokens[inner->front()].type == token_type::string) {
+                one = "local(" + std::string{ts.text_of(ts.tokens[inner->front()])} + ")";
+            } else {
+                std::string family;
+                bool ok = true;
+                for (const std::size_t at : *inner) {
+                    ok = ok && ts.tokens[at].type == token_type::ident;
+                    family += (family.empty() ? "" : " ") + std::string{ts.text_of(ts.tokens[at])};
+                }
+                if (!ok || (inner->size() == 1 && (style::css::is_wide_keyword(family) ||
+                                                   ascii_iequals(family, "default")))) {
+                    continue;
+                }
+                one = "local(" + family + ")";
+            }
+        } else {
+            std::string location, modifiers;
+            if (first.type == token_type::url) {
+                location = ts.text_of(first);
+                k = 1;
+            } else if (first.type == token_type::function && name_of(entry[0]) == "url") {
+                const std::optional<std::vector<std::size_t>> inner = arguments(entry, k);
+                if (!inner || inner->empty() ||
+                    ts.tokens[inner->front()].type != token_type::string) {
+                    continue;
+                }
+                location = ts.value_of(ts.tokens[inner->front()]);
+                // Its <url-modifier>s (CSS Values 4 §4.5.1.1) - cross-origin(),
+                // integrity(), referrer-policy() - as written.
+                for (std::size_t n = 1; n < inner->size(); ++n) {
+                    const style::css::css_token & t = ts.tokens[(*inner)[n]];
+                    const bool tight =
+                        t.type == token_type::close_paren || t.type == token_type::comma ||
+                        (n > 1 && ts.tokens[(*inner)[n - 1]].type == token_type::function);
+                    modifiers += (tight ? "" : " ") + std::string{ts.text_of(t)};
+                }
+            } else {
+                continue;
+            }
+            one = "url(\"" + location + "\"" + modifiers + ")";
+            bool ok = true;
+            if (k < entry.size() && ts.tokens[entry[k]].type == token_type::function &&
+                name_of(entry[k]) == "format") {
+                const std::optional<std::vector<std::size_t>> inner = arguments(entry, k);
+                ok = inner && inner->size() == 1;
+                if (ok) {
+                    const style::css::css_token & t = ts.tokens[inner->front()];
+                    const std::string word = ascii_lower_copy(ts.text_of(t));
+                    ok = t.type == token_type::string ||
+                         (t.type == token_type::ident && ascii_iequals_any(word, formats));
+                    one += " format(" +
+                           (t.type == token_type::string ? std::string{ts.text_of(t)} : word) + ")";
+                }
+            }
+            if (ok && k < entry.size() && ts.tokens[entry[k]].type == token_type::function &&
+                name_of(entry[k]) == "tech") {
+                const std::optional<std::vector<std::size_t>> inner = arguments(entry, k);
+                ok = inner && !inner->empty() && inner->size() % 2 == 1;
+                std::string list;
+                for (std::size_t n = 0; ok && n < inner->size(); ++n) {
+                    const style::css::css_token & t = ts.tokens[(*inner)[n]];
+                    if (n % 2 == 1) {
+                        ok = t.type == token_type::comma;
+                        continue;
+                    }
+                    const std::string word = ascii_lower_copy(ts.text_of(t));
+                    ok = t.type == token_type::ident && ascii_iequals_any(word, techs);
+                    list += (list.empty() ? "" : ", ") + word;
+                }
+                one += " tech(" + list + ")";
+            }
+            if (!ok || k != entry.size()) { continue; }
+        }
+        out += (out.empty() ? "" : ", ") + one;
+    }
+    return out;
+}
+
+// The `@font-face` descriptors with a grammar checked here (CSS Fonts 4 §4):
+// `src`, the three metric overrides - `[ normal | <percentage [0,∞]> ]{1,2}` -
+// and `size-adjust`, a `<percentage [0,∞]>`. The canonical text, empty for a
+// value the grammar refuses, and nullopt for any other descriptor.
+[[nodiscard]] std::optional<std::string> font_face_descriptor(std::string_view name,
+                                                              std::string_view text) {
+    if (name == "src") { return font_face_src(text); }
+    const bool metric =
+        name == "ascent-override" || name == "descent-override" || name == "line-gap-override";
+    if (!metric && name != "size-adjust") { return std::nullopt; }
+    const style::css::token_stream ts = style::css::tokenize(text);
+    std::string out;
+    std::size_t count = 0;
+    for (const style::css::css_token & t : ts.tokens) {
+        if (t.type == style::css::token_type::eof) { break; }
+        if (t.type == style::css::token_type::whitespace) { continue; }
+        const bool normal = metric && t.type == style::css::token_type::ident &&
+                            ascii_iequals(ts.text_of(t), "normal");
+        const bool share = t.type == style::css::token_type::percentage && t.number >= 0;
+        if ((!normal && !share) || ++count > (metric ? 2u : 1u)) { return std::string{}; }
+        out += (out.empty() ? "" : " ") +
+               (normal ? std::string{"normal"} : ascii_lower_copy(ts.text_of(t)));
+    }
+    return out;
+}
+
 bool store_declaration(dom_bindings::css_rule_record & rule, const std::string & css_name,
                        std::string_view text, bool important) {
     if (!declaration_allowed(rule, css_name, text)) { return false; }
+    if (const std::optional<std::string> canonical =
+            rule.type == font_face_rule && !trim(text, html_whitespace).empty()
+                ? font_face_descriptor(css_name, text)
+                : std::nullopt) {
+        if (canonical->empty()) { return false; }
+        return style::css::set_declaration(rule.declarations, css_name, *canonical, important);
+    }
     if (rule.type == page_rule && (css_name == "size" || css_name == "page-orientation") &&
         !trim(text, html_whitespace).empty()) {
         const std::string canonical = page_descriptor_value(css_name, text);
@@ -387,6 +555,14 @@ void parse_declarations_into(dom_bindings::css_rule_record & rule, std::string_v
                                        name, value);
         },
         &rule);
+    if (rule.type == font_face_rule) {
+        std::erase_if(rule.declarations, [](style::css::declaration & d) {
+            std::optional<std::string> canonical = font_face_descriptor(d.name, d.value);
+            if (!canonical) { return false; }
+            d.value = std::move(*canonical);
+            return d.value.empty();
+        });
+    }
     if (rule.type != page_rule) { return; }
     std::erase_if(rule.declarations, [](style::css::declaration & d) {
         if (d.name != "size" && d.name != "page-orientation") { return false; }
