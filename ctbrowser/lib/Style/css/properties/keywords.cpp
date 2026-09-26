@@ -861,6 +861,41 @@ constexpr pair_grammar pair_grammars[] = {
     return std::nullopt;
 }
 
+// `symbols( <symbols-type>? <string>+ )` (CSS Counter Styles 3 §6.1, without
+// the <image> alternative engines leave out): two symbols at least for
+// `numeric` and `alphabetic`, and `additive` is no type here. `inner` is the
+// significant tokens between the parentheses.
+[[nodiscard]] bool symbols_valid(const token_stream & ts, std::span<const std::size_t> inner) {
+    std::size_t first = 0;
+    std::size_t least = 1;
+    if (!inner.empty() && ts.tokens[inner[0]].type == token_type::ident) {
+        const std::string kind = ascii_lower_copy(ts.text_of(ts.tokens[inner[0]]));
+        if (!has_keyword("cyclic numeric alphabetic symbolic fixed", kind)) { return false; }
+        if (kind == "numeric" || kind == "alphabetic") { least = 2; }
+        first = 1;
+    }
+    for (std::size_t i = first; i < inner.size(); ++i) {
+        if (ts.tokens[inner[i]].type != token_type::string) { return false; }
+    }
+    return inner.size() - first >= least;
+}
+
+// `<counter-style> | <string> | none` (CSS Lists 3 §3.3): one identifier,
+// one string, or one symbols() - checked only; the freeform path writes it.
+[[nodiscard]] bool list_style_type_valid(const token_stream & ts, const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.size() == 1) {
+        const token_type t = ts.tokens[at[0]].type;
+        return t == token_type::ident || t == token_type::string;
+    }
+    if (at.size() < 2 || ts.tokens[at[0]].type != token_type::function ||
+        !ascii_iequals(ts.text_of(ts.tokens[at[0]]), "symbols(") ||
+        ts.tokens[at.back()].type != token_type::close_paren) {
+        return false;
+    }
+    return symbols_valid(ts, std::span{at}.subspan(1, at.size() - 2));
+}
+
 // A <'position-area'> as position-try-fallbacks lists it (CSS Anchor
 // Positioning 1 §3.1): one or two keywords of one grammar - x with y, block
 // with inline, self-block with self-inline, or two axis-free ones - with
@@ -994,26 +1029,8 @@ constexpr pair_grammar pair_grammars[] = {
     const auto single_ident = [&](const std::vector<std::size_t> & arg) {
         return arg.size() == 1 && type_of(arg[0]) == token_type::ident;
     };
-    // `symbols( <symbols-type>? [ <string> | <image> ]+ )`: two symbols at
-    // least for `numeric` and `alphabetic`, and `additive` is not a type here.
     const auto symbols_ok = [&](std::size_t open, std::size_t close) {
-        std::size_t k = open + 1;
-        std::size_t least = 1;
-        if (k < close && type_of(k) == token_type::ident) {
-            const std::string kind = name_of(k);
-            if (!has_keyword("cyclic numeric alphabetic symbolic fixed", kind)) { return false; }
-            if (kind == "numeric" || kind == "alphabetic") { least = 2; }
-            ++k;
-        }
-        std::size_t count = 0;
-        for (; k < close; ++k, ++count) {
-            if (type_of(k) == token_type::function) {
-                k = close_of(k);
-            } else if (type_of(k) != token_type::string && type_of(k) != token_type::url) {
-                return false;
-            }
-        }
-        return count >= least;
+        return symbols_valid(ts, std::span{at}.subspan(open + 1, close - open - 1));
     };
     // counter( <counter-name>, <counter-style>? ) and counters( <counter-name>,
     // <string>, <counter-style>? ).
@@ -1029,7 +1046,9 @@ constexpr pair_grammar pair_grammars[] = {
         }
         if (args.size() == fixed) { return true; }
         const std::vector<std::size_t> & style = args[fixed];
-        if (single_ident(style)) { return name_of(style[0]) != "none"; }
+        if (single_ident(style)) {
+            return name_of(style[0]) != "none" && !is_wide_keyword(name_of(style[0]));
+        }
         return !style.empty() && type_of(style[0]) == token_type::function &&
                name_of(style[0]) == "symbols" && close_of(style[0]) == style.back() &&
                symbols_ok(style[0], style.back());
@@ -1441,6 +1460,10 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
     if (!handled && ascii_iequals(property, "position-try-fallbacks")) {
         handled = true;
         answer = position_try_fallbacks(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "list-style-type") &&
+        !list_style_type_valid(ts, found)) {
+        handled = true;
     }
     // `content` is only checked here; the freeform path writes a valid one.
     if (!handled && ascii_iequals(property, "content") && !content_valid(ts, found)) {
