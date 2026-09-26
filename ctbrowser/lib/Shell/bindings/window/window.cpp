@@ -1073,11 +1073,10 @@ void dom_bindings::install_dom_parser(context & cx) {
         set_operation(
             cx, *made.proto, "parseFromString", 2, [top](context & c, std::span<value> a) {
                 const value self = c.current_this();
-                const value * window =
-                    self.is_object()
-                        ? static_cast<script::object_object *>(self.as_heap())
-                              ->find(parser_window_slot)
-                        : nullptr;
+                const value * window = self.is_object()
+                                           ? static_cast<script::object_object *>(self.as_heap())
+                                                 ->find(parser_window_slot)
+                                           : nullptr;
                 if (window == nullptr) {
                     c.throw_error("TypeError", "Illegal invocation");
                     return value::undefined();

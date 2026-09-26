@@ -833,9 +833,9 @@ void dom_bindings::install_form_owner(context & cx) {
             }
             return owner ? self.wrap(c, owner) : value::null();
         };
-        proto->define_accessor(
-            "form", value::object(cx.allocate<script::native_object>("form", get)),
-            value::undefined());
+        proto->define_accessor("form",
+                               value::object(cx.allocate<script::native_object>("form", get)),
+                               value::undefined());
     }
 }
 
