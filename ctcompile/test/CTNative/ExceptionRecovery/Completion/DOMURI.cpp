@@ -3899,7 +3899,7 @@ static void testNumberAttributeOrigins(mlir::MLIRContext & context) {
                                          control == 13   ? 0
                                          : control == 14 ? 500
                                                          : 100000);
-            if (control >= 3 && control != 10) {
+            if (control >= 3 && control != 10 && control != 17) {
                 check(static_cast<bool>(error) && printed(*candidate) == original &&
                           request.moduleSha256 == originalContract.moduleSha256 &&
                           request.initialIntrinsics == originalContract.initialIntrinsics &&
@@ -3919,6 +3919,13 @@ static void testNumberAttributeOrigins(mlir::MLIRContext & context) {
                   "saved Number origin requires fresh complete DOM proof");
             llvm::SmallVector<ctjs::CallOp> calls;
             candidate->walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            if (control == 17 && check(calls.size() == 3, "saved arithmetic keeps three calls")) {
+                auto add = calls.back().getArgs()[1].getDefiningOp<ctjs::BinaryOp>();
+                check(add && add.getKind() == ctjs::BinaryKind::Add &&
+                          add.getLhs() == calls[1].getResult() && calls[1]->isBeforeInBlock(add) &&
+                          add->isBeforeInBlock(calls.back()),
+                      "protected arithmetic consumes the saved Number before writing");
+            }
             if (control < 2 && check(calls.size() == (control == 1 ? 4u : 3u),
                                      "saved read and Number conversion execute exactly once")) {
                 const auto * read = proof.call(calls[0]);
@@ -4062,7 +4069,129 @@ static void testProtectedNumberReads(mlir::MLIRContext & context) {
     }
 }
 
+static void testProtectedNumberArithmetic(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    const std::array expressions = {"converted + 1",
+                                    "converted - 1",
+                                    "converted * 2",
+                                    "converted / 0",
+                                    "converted % 3",
+                                    "converted ** 2",
+                                    "converted << 1",
+                                    "converted >> 1",
+                                    "converted >>> 1",
+                                    "converted & 3",
+                                    "converted | 3",
+                                    "converted ^ 3",
+                                    "-converted",
+                                    "+converted",
+                                    "~converted",
+                                    "element.hasAttribute('flag') ? converted + 1 : converted - 1",
+                                    "converted + element",
+                                    "element + converted",
+                                    "converted + '1'",
+                                    "converted + true",
+                                    "converted + null",
+                                    "converted + 1n",
+                                    "converted + unknown()",
+                                    "element.hasAttribute('flag') ? converted : element"};
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 32; ++control) {
+            std::string source = R"js(function guarded(element) {
+                try {
+                    const converted = Number(element.getAttribute('data-number'));
+                    const saved = converted + 1;
+                    element.setAttribute('data-written', saved);
+                    throw element;
+                } catch (error) { return error === element; }
+            })js";
+            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
+                source.replace(source.find(from.str()), from.size(), to.str());
+            };
+            if (control < expressions.size()) { replace("converted + 1", expressions[control]); }
+            if (control == 29) { replace("const converted", "unknown(); const converted"); }
+            if (control == 30) { replace("throw element;", "return true;"); }
+            if (control == 31) {
+                replace("element.setAttribute('data-written'",
+                        "element.setAttribute('data-number', '99'); "
+                        "element.setAttribute('data-written'");
+            }
+            auto candidate = import(context, source, true);
+            if (!candidate) { continue; }
+            auto function = guarded(*candidate);
+            ctjs::LoadGlobalOp number;
+            ctjs::BinaryOp arithmetic;
+            function.walk([&](ctjs::LoadGlobalOp load) {
+                if (load.getName() == "Number") { number = load; }
+            });
+            function.walk([&](ctjs::BinaryOp binary) { arithmetic = binary; });
+            if (!check(static_cast<bool>(number), "protected arithmetic retains Number load")) {
+                continue;
+            }
+            mlir::Builder builder(&context);
+            number->setAttr("ctnative.host_intrinsic", builder.getStringAttr("Number"));
+            if (arithmetic) {
+                arithmetic->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+            }
+            if (control == 26) {
+                if (!check(static_cast<bool>(arithmetic), "arithmetic mutation has a producer")) {
+                    continue;
+                }
+                arithmetic.getRhsMutable().assign(function.getBody().front().getArgument(3));
+            }
+            HostContract request;
+            request.provider = provider;
+            request.entry = function.getSymName().str();
+            request.elementParameters = {0};
+            if (control != 24) { request.initialIntrinsics = {"Number"}; }
+            request.moduleSha256 = hostContractFingerprint(*candidate);
+            const auto originalContract = request;
+            if (control == 25) { number.setName("Other"); }
+            const auto original = printed(*candidate);
+            auto error = prepareDOMEntry(*candidate, request,
+                                         control == 27   ? 0
+                                         : control == 28 ? 500
+                                                         : 100000);
+            if (control >= 16 && control < 30) {
+                check(static_cast<bool>(error) && printed(*candidate) == original &&
+                          request.moduleSha256 == originalContract.moduleSha256 &&
+                          request.initialIntrinsics == originalContract.initialIntrinsics &&
+                          request.elementParameters == originalContract.elementParameters &&
+                          request.provider == originalContract.provider &&
+                          request.entry == originalContract.entry,
+                      "protected arithmetic refuses coercion, effects, stale proofs and budgets");
+                if (error) { llvm::consumeError(std::move(error)); }
+                continue;
+            }
+            if (!check(!error, "exact Number arithmetic completes its protected source")) {
+                llvm::errs() << "arithmetic control " << control << ": "
+                             << llvm::toString(std::move(error)) << '\n';
+                continue;
+            }
+            DOMEntryAnalysis proof(*candidate, request);
+            check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                  "protected arithmetic requires fresh complete DOM proof");
+            if (control != 0 && control < 30) { continue; }
+            llvm::SmallVector<ctjs::CallOp> calls;
+            candidate->walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            if (!check(calls.size() == (control == 31 ? 4u : 3u),
+                       "protected arithmetic keeps all read, conversion and write calls")) {
+                continue;
+            }
+            auto add = calls.back().getArgs()[1].getDefiningOp<ctjs::BinaryOp>();
+            check(add && add.getKind() == ctjs::BinaryKind::Add &&
+                      calls[1].getArgs()[0] == calls[0].getResult() &&
+                      add.getLhs() == calls[1].getResult() && calls[0]->isBeforeInBlock(calls[1]) &&
+                      calls[1]->isBeforeInBlock(add) && add->isBeforeInBlock(calls[2]) &&
+                      (control != 31 || calls[2]->isBeforeInBlock(calls[3])),
+                  "arithmetic and writes retain the original converted snapshot and order");
+        }
+    }
+}
+
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    testProtectedNumberArithmetic(context);
     testProtectedNumberReads(context);
     testNumberAttributeOrigins(context);
     testInvocationCallableReads(context);

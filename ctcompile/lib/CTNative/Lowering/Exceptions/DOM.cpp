@@ -648,6 +648,13 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 unary && unary.getKind() == ctjs::UnaryKind::Not) {
                 continue;
             }
+            // Only exact Number arithmetic avoids coercion and implicit throws.
+            // Reuse the charged origin proof, but keep checking every producer
+            // independently; a Number result alone never discharges its effects.
+            if (llvm::isa<ctjs::UnaryOp, ctjs::BinaryOp, ctjs::BinaryStaticOp>(operation) &&
+                attributes.numberValue(operation.getResult(0))) {
+                continue;
+            }
             if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
                 load && load.getName() == "Number") {
                 continue; // Kept in order; the final proof requires the initial intrinsic.
