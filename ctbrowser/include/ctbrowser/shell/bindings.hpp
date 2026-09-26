@@ -1024,6 +1024,7 @@ private:
     flat_map<std::string, value> named_collections_;
     std::vector<node_id> moved_by_mutation_;
     bool moving_ = false;
+    bool step_in_shadow_ = false; // the dispatch step fire_at invokes is in a shadow tree
 
 public:
     [[nodiscard]] std::span<const node_id> moved_by_mutation() const;
