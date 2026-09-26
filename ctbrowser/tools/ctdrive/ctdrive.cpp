@@ -21,6 +21,8 @@
 
 #include <ctbrowser.hpp>
 
+#include "wpt_handlers.hpp"
+
 // PLAIN SOCKETS. This used Asio, and the engine's dependency on it is gone -
 // a tool in the same repository reintroducing it would put the header back on
 // every build that compiles the examples. What a one-client line protocol
@@ -482,6 +484,15 @@ int main(int argc, char ** argv) {
                           ? ctbrowser::browser::source_kind::xml
                           : ctbrowser::browser::source_kind::html;
     options.asset_path = file.parent_path();
+    // A DOCUMENT ROOT IS A WPT RUN (tools/wpt/run-wpt.py sets it), and a WPT
+    // page talks to wptserve's Python handlers as well as to its files: the
+    // ones the corpus's form and frame tests reach are emulated in
+    // wpt_handlers.cpp and answer before the registry does.
+    ctbrowser::apply_environment(options);
+    if (!options.document_root.empty()) {
+        options.on_request = ctdrive::wpt_handlers(
+            std::filesystem::absolute(options.document_root).lexically_normal().generic_string());
+    }
     options.on_ready = [&](ctbrowser::browser & page) {
         page.set_location(url);
         page.load_document(source.str(), kind);
