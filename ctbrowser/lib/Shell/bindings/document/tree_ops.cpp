@@ -7,6 +7,11 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
+namespace {
+// clone_node's "no fallback registry", as distinct from "the default one".
+binding_detail::custom_element_registry no_fallback_registry;
+} // namespace
+
 node_id dom_bindings::copy_subtree(const read_txn & from, node_id node, node_id parent) {
     node_id made;
     // Every kind the parser produces. A comment used to arrive as an element
@@ -33,6 +38,11 @@ node_id dom_bindings::copy_subtree(const read_txn & from, node_id node, node_id 
             doc_->set_element_namespace(made, uri);
         }
         for (const attribute & a : from.attributes(node)) { (void)doc_->set_attribute(made, a); }
+        // A null registry the fragment parser gave it travels with it; the
+        // rest of the registries are assign_parsed_registries' to decide.
+        if (from.null_custom_element_registry(node)) {
+            doc_->set_null_custom_element_registry(made);
+        }
         break;
     }
     (void)doc_->append_child(parent, made);
@@ -54,9 +64,52 @@ node_id dom_bindings::copy_subtree(const read_txn & from, node_id node, node_id 
 // element was created in is in the owner's `namespaces_` and not the tree, and
 // a `<template>`'s contents are in the owner's document and not under the
 // element.
+//
+// THE CUSTOM ELEMENT REGISTRIES (DOM 4.4 "clone a single node" step 2): an
+// element's copy has the source's registry, or `fallback` when that is null
+// (importNode's), and a global one becomes THIS document's; a clonable shadow
+// root's copy likewise, without the fallback. A clone of template contents
+// is the inert document's and has none - its root is marked, not every
+// element (custom_elements.cpp, "which registry a node has").
 node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool deep,
-                                 const dom_bindings * owner) {
+                                 const dom_bindings * owner, custom_element_registry * fallback) {
     const dom_bindings & src = owner == nullptr ? *this : *owner;
+    const bool same_document = &src == this;
+    // importNode's fallback is the importing document's registry, and so is
+    // an adoption's starting point (node_from corrects it after); the
+    // recursion's "none at all" is `no_fallback_registry`.
+    if (fallback == &no_fallback_registry) {
+        fallback = nullptr;
+    } else if (!same_document && fallback == nullptr) {
+        fallback = document_registry();
+    }
+    // A CLONE OF TEMPLATE CONTENTS IS THE INERT DOCUMENT'S - cloneNode's,
+    // which has no fallback; importNode's copy is the importing document's.
+    const bool inert_source = [&] {
+        if (!same_document || fallback != nullptr) { return false; }
+        const node_id top = from.root_of_tree(source, true);
+        return static_cast<bool>(src.doc_->template_of(top)) ||
+               src.inert_roots_.contains(top.key());
+    }();
+    // NOTHING TO COPY when every registry involved is a default: one document,
+    // no scoped registry in the realm, and no exception recorded in it.
+    const bool defaults_only = [&] {
+        if (!same_document || !node_registries_.empty() || !shadow_registries_.empty() ||
+            scoped_document_registry_ != nullptr || doc_->has_null_custom_element_registries()) {
+            return false;
+        }
+        for (const auto & registry : primary().registries_) {
+            if (registry->document == nullptr) { return false; }
+        }
+        return true;
+    }();
+    const auto effective_global = [this](custom_element_registry * registry) {
+        custom_element_registry * mine = document_registry();
+        return registry != nullptr && registry->document != nullptr && mine != nullptr &&
+                       mine->document != nullptr
+                   ? mine
+                   : nullptr;
+    };
     node_id made;
     switch (from.kind(source).value_or(node_kind::element)) {
     case node_kind::text: made = doc_->create_text(from.text(source)); break;
@@ -92,6 +145,15 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
         for (const attribute & held : from.attributes(source)) {
             (void)doc_->set_attribute(made, held);
         }
+        if (custom_element_registry * registry =
+                defaults_only ? nullptr : src.registry_of_node(from, source);
+            !defaults_only && (registry != nullptr || fallback != nullptr || !inert_source)) {
+            if (registry == nullptr) { registry = fallback; }
+            if (registry != nullptr && registry->document != nullptr) {
+                registry = effective_global(registry);
+            }
+            set_node_registry(doc_->read(), made, registry);
+        }
         // HTML 4.12.1's cloning steps: the copy's `already started` is the
         // source's - a script that never ran clones into one that will.
         if (std::ranges::find(src.unstarted_scripts_, source) != src.unstarted_scripts_.end()) {
@@ -113,36 +175,56 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
         }
         break;
     }
+    // A copy that lands under another copy is not a root: only the outermost
+    // keeps the inert mark (see the note above).
+    const auto adopt_copy = [&](node_id parent, node_id copy) {
+        (void)doc_->append_child(parent, copy);
+        if (inert_source) { inert_roots_.erase(copy.key()); }
+    };
     if (deep) {
         for (const node_id child : from.children(source)) {
-            (void)doc_->append_child(made, clone_node(from, child, true, owner));
+            adopt_copy(made, clone_node(from, child, true, owner, fallback));
         }
         // HTML 4.12.3, the cloning steps for a template: its CONTENTS clone
         // with it, into the copy's own contents fragment. They are not
-        // children of the element, so the loop above never sees them.
+        // children of the element, so the loop above never sees them - and
+        // they are the inert document's, so no fallback registry.
         if (const node_id contents = src.doc_->template_content(source)) {
             const node_id copied = doc_->create_fragment();
             doc_->set_template_content(made, copied);
             for (const node_id child : from.children(contents)) {
-                (void)doc_->append_child(copied, clone_node(from, child, true, owner));
+                adopt_copy(copied, clone_node(from, child, true, owner, &no_fallback_registry));
             }
         }
     }
     // DOM 4.4 "clone a node" step 6: A CLONABLE SHADOW ROOT GOES WITH ITS
     // HOST, and whole - a shallow copy of the host still gets every node of
     // the shadow tree (shadow-root-clonable.html). The metadata is copied
-    // out first: attaching to a host in the same document may move it.
+    // out first: attaching to a host in the same document may move it. Its
+    // registry is the source root's, a global one this document's, and its
+    // children are cloned WITHOUT the fallback (step 6.4's note).
     if (const node_id root = src.doc_->shadow_root_of(source)) {
         const document::shadow_tree * held = src.doc_->shadow_tree_of(root);
-        if (held != nullptr && held->clonable) {
+        // AN ADOPTION MOVES THE SHADOW TREE WHATEVER ITS `clonable` - it is
+        // the same host, in another document (node_from's copy is the move).
+        if (held != nullptr && (held->clonable || adopting_)) {
             const document::shadow_tree how = *held;
+            custom_element_registry * registry =
+                defaults_only ? nullptr : src.registry_of_node(from, root);
             if (const auto mine = doc_->attach_shadow(made, how)) {
+                if (!defaults_only) {
+                    if (registry != nullptr && registry->document != nullptr) {
+                        registry = effective_global(registry);
+                    }
+                    set_node_registry(doc_->read(), *mine, registry);
+                }
                 for (const node_id child : from.children(root)) {
-                    (void)doc_->append_child(*mine, clone_node(from, child, true, owner));
+                    adopt_copy(*mine, clone_node(from, child, true, owner, &no_fallback_registry));
                 }
             }
         }
     }
+    if (inert_source) { inert_roots_.emplace(made.key(), true); }
     return made;
 }
 
@@ -244,7 +326,9 @@ node_id dom_bindings::node_from(context & cx, value v, bool whole_fragment) {
         const auto from = owner->doc_->read();
         const bool fragment = !whole_fragment && from.kind(source).value_or(node_kind::element) ==
                                                      node_kind::document_fragment;
-        made = fragment ? doc_->create_fragment() : clone_node(from, source, true, owner);
+        const bool was_adopting = std::exchange(adopting_, true);
+        made = fragment ? doc_->create_fragment()
+                        : clone_node(from, source, true, owner, &no_fallback_registry);
         const auto rebind = [&](auto && self, node_id old, node_id fresh) -> void {
             if (const auto it = owner->wrappers_.find(old.key()); it != owner->wrappers_.end()) {
                 script::object_object * obj = it->second;
@@ -266,10 +350,15 @@ node_id dom_bindings::node_from(context & cx, value v, bool whole_fragment) {
             for (std::size_t i = 0; i < olds.size() && i < news.size(); ++i) {
                 self(self, olds[i], news[i]);
             }
+            // ...and its shadow tree, which went with it: the ShadowRoot a
+            // page holds and every node in it are the moved ones too.
+            const node_id old_root = owner->doc_->shadow_root_of(old);
+            const node_id new_root = doc_->shadow_root_of(fresh);
+            if (old_root && new_root) { self(self, old_root, new_root); }
         };
         if (fragment) {
             for (const node_id child : from.children(source)) {
-                const node_id copy = clone_node(from, child, true, owner);
+                const node_id copy = clone_node(from, child, true, owner, &no_fallback_registry);
                 (void)doc_->append_child(made, copy);
                 rebind(rebind, child, copy);
                 moved.push_back(child);
@@ -277,6 +366,18 @@ node_id dom_bindings::node_from(context & cx, value v, bool whole_fragment) {
         } else {
             rebind(rebind, source, made);
             moved.push_back(source);
+        }
+        adopting_ = was_adopting;
+        // AND THE REGISTRIES, which an adoption changes as a clone does not
+        // (custom_elements.cpp, adopt_registries): what was null or global
+        // takes this document's, from its parent where it had one.
+        const auto mine = doc_->read();
+        if (fragment) {
+            for (const node_id child : mine.children(made)) {
+                adopt_registries(mine, child, nullptr, false);
+            }
+        } else {
+            adopt_registries(mine, made, nullptr, false);
         }
     }
     for (const node_id gone : moved) { (void)owner->doc_->remove_child(gone); }
@@ -389,6 +490,20 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
     }
     const auto from = scratch.read();
     for (const node_id child : from.children(body)) { copy_subtree(from, child, into); }
+    {
+        // THE CONTEXT'S REGISTRY for what the parser made (HTML 13.4: the
+        // fragment's root is created with it, and each element with its
+        // intended parent's). A template's target is its CONTENTS, a fragment,
+        // whose registry is null (the innerHTML setter's step 2).
+        const auto txn = doc_->read();
+        custom_element_registry * inherited = registry_of_node(txn, target);
+        if (into != target) { inherited = nullptr; }
+        if (scratch.has_null_custom_element_registries() || inherited != document_registry()) {
+            for (const node_id child : txn.children(into)) {
+                assign_parsed_registries(txn, child, inherited);
+            }
+        }
+    }
     upgrade_created_subtree(into); // [CEReactions] - see custom_elements.cpp
     mutated();
 }
@@ -492,6 +607,12 @@ void dom_bindings::set_outer_html(context & cx, node_id target, std::string_view
     {
         const auto txn = doc_->read();
         for (const node_id held : txn.children(fragment)) { moving.push_back(held); }
+        // The parent is the context, and its registry the fragment's (see
+        // set_inner_html).
+        custom_element_registry * inherited = registry_of_node(txn, parent);
+        if (scratch.has_null_custom_element_registries() || inherited != document_registry()) {
+            for (const node_id held : moving) { assign_parsed_registries(txn, held, inherited); }
+        }
     }
     for (const node_id one : moving) { (void)doc_->insert_before(parent, one, target); }
     (void)doc_->remove_child(target);
@@ -542,6 +663,18 @@ std::string dom_bindings::serialize_html(node_id target, bool outer, bool serial
         if (how->serializable) { out += " shadowrootserializable=\"\""; }
         if (how->manual_slots) { out += " shadowrootslotassignment=\"manual\""; }
         if (how->clonable) { out += " shadowrootclonable=\"\""; }
+        // ...and `shadowrootcustomelementregistry` unless the root's registry
+        // is what parsing the markup back would give it: null beside a null
+        // document registry, or global beside a global one.
+        const custom_element_registry * document_has = document_registry();
+        const custom_element_registry * root_has = registry_of_node(txn, root);
+        const auto global = [](const custom_element_registry * r) {
+            return r != nullptr && r->document != nullptr;
+        };
+        if (!(document_has == nullptr && root_has == nullptr) &&
+            !(global(document_has) && global(root_has))) {
+            out += " shadowrootcustomelementregistry=\"\"";
+        }
         out += ">";
         for (const node_id child : txn.children(root)) { wr(child); }
         out += "</template>";
