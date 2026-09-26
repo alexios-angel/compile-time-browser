@@ -614,7 +614,9 @@ void dom_bindings::install_control_select_options(context & cx) {
                 const value select = c.lookup_property(
                     c.current_this(), CTBROWSER_SYMBOL_KEY("sym:ctbrowser:options-owner"));
                 dom_bindings * b = owner_of(select);
-                if (b == nullptr) { return {nullptr, node_id{}}; }
+                if (b == nullptr) {
+                    return {nullptr, node_id{}};
+                }
                 return {b, b->handle_of(select)};
             };
             on->define_accessor(

@@ -663,7 +663,9 @@ std::pair<dom_bindings *, node_id> dom_bindings::choose_navigable(std::string_vi
     const std::pair<dom_bindings *, node_id> own = holding(this);
     if (keyword.empty() || keyword == "_self") { return own; }
     if (keyword == "_parent") { return own.first == nullptr ? own : holding(own.first); }
-    if (keyword == "_top" || keyword == "_blank") { return {nullptr, node_id{}}; }
+    if (keyword == "_top" || keyword == "_blank") {
+        return {nullptr, node_id{}};
+    }
     const atom name = atoms_->intern("name");
     if (own.first != nullptr) {
         const auto txn = own.first->doc_->read();
