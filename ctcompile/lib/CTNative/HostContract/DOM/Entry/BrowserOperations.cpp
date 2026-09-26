@@ -562,9 +562,16 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             return true;
         }
         if (hasKind(invoke.getCallee(), Kind::selectorCall)) {
-            if (arguments.size() != 2 || !hasKind(arguments[0], Kind::element) ||
+            // The selector's checked js_element_t construction stays at this
+            // call. A root read may be absent; it grants no presence fact to
+            // other uses, and preceding source effects must still run.
+            const bool checkedRoot =
+                arguments.size() == 2 && hasKind(arguments[0], Kind::nullableElement) &&
+                provedDocumentRoots.contains(arguments[0].getDefiningOp<ctjs::GetPropertyOp>());
+            if (arguments.size() != 2 || (!hasKind(arguments[0], Kind::element) && !checkedRoot) ||
                 !hasKind(arguments[1], Kind::string)) {
-                refusal = "DOM prototype selector call requires an explicit Element and String";
+                refusal = "DOM prototype selector call requires an explicit Element or checked "
+                          "document root and String";
                 return false;
             }
             const auto kind = provedMethods.find(method)->second;
