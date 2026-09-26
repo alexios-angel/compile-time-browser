@@ -88,6 +88,12 @@ int main() {
     js_expect("(function(){ function F() { this.t = eval('new.target'); }"
               " return new F().t === F; })()",
               "true");
+    // ...as an arrow's is its enclosing function's, eval or not...
+    js_expect("(function(){ function F() { this.a = (() => new.target)();"
+              " this.b = (() => eval('new.target'))(); }"
+              " var f = new F(), g = {}; F.call(g);"
+              " return (f.a === F) + ',' + (f.b === F) + ',' + g.a; })()",
+              "true,true,undefined");
     // ...its `let`, `const` and `class` are its own, strict or not...
     js_expect("(function(){ eval('let q = 1; class K {}'); return typeof q + typeof K; })()",
               "undefinedundefined");

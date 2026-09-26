@@ -466,6 +466,14 @@ public:
     // Does the subtree say `eval(...)` - a direct eval, which may say `super`
     // for the function it is in (the same walk as mentions_super).
     [[nodiscard]] bool mentions_direct_eval(std::int32_t idx, bool root) const;
+    // AN ARROW'S new.target IS ITS ENCLOSING FUNCTION'S (15.3.3: it has none
+    // of its own), and load_new_target reads the running frame's - the
+    // arrow's, undefined. A function whose body has an arrow saying
+    // `new.target` or `eval(` (arrow_wants_new_target) keeps its own in this
+    // hidden boxed local, which the arrow reads as an upvalue (emit_new_target).
+    static constexpr std::string_view new_target_local = "@new.target";
+    [[nodiscard]] bool arrow_wants_new_target(std::int32_t idx, bool in_arrow) const;
+    void emit_new_target(std::uint16_t dst);
     // The flag of the derived constructor `this` resolves to from here, or
     // nothing: this frame's, or through any number of arrows, the nearest
     // non-arrow frame's.

@@ -124,7 +124,7 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
     // frame. Every transpiler emits it (Babel's `_classCallCheck` guard is
     // built on it) and Babylon.js uses it in its decorator metadata; it
     // reached this compiler as a PARSE error until ctjs learned it.
-    case vp::nk::new_target: proto().emit(instruction{op::load_new_target, dst}); break;
+    case vp::nk::new_target: emit_new_target(dst); break;
     // Regular expressions are DEFERRED, not overlooked: they need a regex
     // engine, and the standard library says the same about String.match and
     // the RegExp forms of replace/split. Rejecting one by name beats
@@ -359,6 +359,15 @@ void compiler_impl::compile_named_expr(std::int32_t idx, std::uint16_t dst, std:
         }
     }
     compile_expr(idx, dst);
+}
+
+void compiler_impl::emit_new_target(std::uint16_t dst) {
+    if (out_.functions[fn().proto].is_arrow &&
+        binding_position(new_target_local).first != no_binding) {
+        emit_plain_read(new_target_local, dst);
+        return;
+    }
+    proto().emit(instruction{op::load_new_target, dst});
 }
 
 bool compiler_impl::is_anonymous_function_definition(std::int32_t idx) const {

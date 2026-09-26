@@ -386,6 +386,13 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         proto().emit(instruction{op::load_false, flag});
         proto().emit(instruction{op::new_cell, flag});
     }
+    // THE new.target ITS ARROWS SEE - see new_target_local.
+    if (!out_.functions[index].is_arrow && arrow_wants_new_target(n.a, false)) {
+        const std::uint16_t held = declare_local(std::string{new_target_local});
+        fn().locals.back().boxed = true;
+        proto().emit(instruction{op::load_new_target, held});
+        proto().emit(instruction{op::new_cell, held});
+    }
     // Declarations are hoisted to the top of the body BEFORE any nested
     // function is compiled. Without this, a nested function DECLARATION
     // (which hoists, so it compiles first) resolves the enclosing local

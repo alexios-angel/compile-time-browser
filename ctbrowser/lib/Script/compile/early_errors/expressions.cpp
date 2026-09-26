@@ -648,7 +648,9 @@ void checker::walk_expression(std::int32_t idx) {
         // reach it: outside a function - an indirect eval, or a direct one
         // whose `this` is the global one - it is the SyntaxError of 19.2.1.1
         // step 7.a (inFunction false, and the body Contains NewTarget).
-        if (eval_ != nullptr && enclosing_non_arrow() == frame_kind::script) {
+        // Nor does it reach a MODULE: no embedder hands one a function body
+        // (16.2.1.1: a ModuleItemList may not Contain NewTarget).
+        if ((eval_ != nullptr || module_()) && enclosing_non_arrow() == frame_kind::script) {
             report("`new.target` outside a function", idx);
         }
         return;

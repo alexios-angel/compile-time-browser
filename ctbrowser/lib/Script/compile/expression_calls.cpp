@@ -596,7 +596,7 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
     // The eval's `new.target` is its caller's (GetNewTarget reads the this
     // environment it shares).
     const std::uint16_t target = alloc_reg();
-    proto().emit(instruction{op::load_new_target, target});
+    emit_new_target(target);
     for (const local * l : handed) {
         const std::uint16_t r = alloc_reg();
         proto().emit(instruction{op::move, r, l->reg});
