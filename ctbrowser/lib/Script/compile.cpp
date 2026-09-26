@@ -84,6 +84,7 @@ program compile_source(std::string_view source, script_kind kind, bool completio
         return out;
     }
     out.source = std::string{source};
+    out.eval_code = completion_value;
     detail::compiler_impl c{tree, out};
     c.module_scope_ = kind == script_kind::module_;
     // THE CALLER'S BYTES, not `out.source`. Every `node::text` is a view into

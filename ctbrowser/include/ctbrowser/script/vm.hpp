@@ -34,7 +34,9 @@ public:
     // new binding is undefined, and a name the global object already owns,
     // in the binding table or as a property defined on the object itself,
     // keeps its value.
-    void declare_global_var(std::string name);
+    // A SCRIPT's `var` (`configurable` false) is also enumerable and cannot be
+    // deleted; an eval's (true) can.
+    void declare_global_var(std::string name, bool configurable = true);
 
     // THE THREE VALUE PROPERTIES OF THE GLOBAL OBJECT (19.1): NaN, Infinity
     // and undefined are { writable: false, enumerable: false, configurable:

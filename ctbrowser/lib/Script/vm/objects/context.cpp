@@ -57,9 +57,12 @@ value context::make_global_object(realm_record & r) {
     const auto trap = [&](const char * name, native_fn fn) {
         handler->set(name, value::object(allocate<native_object>(name, std::move(fn))));
     };
+    // A DECLARED name's own property on the target is a placeholder
+    // (declare_global_var): the table answers it, in every trap below.
     trap("get", [realm](context & cx, std::span<value> args) {
         auto * object = static_cast<object_object *>(args[0].as_heap());
         const std::string name = cx.to_string(args[1]);
+        if (realm->declared.contains(name)) { return realm->globals[name]; }
         if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
             return cx.lookup_property(args[0], name);
         }
@@ -74,7 +77,9 @@ value context::make_global_object(realm_record & r) {
         if (immutable_global(name)) {
             return value::boolean(false); // 19.1: read-only - a TypeError in strict code
         }
-        if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
+        if (realm->declared.contains(name)) {
+            realm->globals[name] = args[2];
+        } else if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
             cx.store_property(args[0], name, args[2]);
         } else {
             realm->globals[name] = args[2];
@@ -91,10 +96,15 @@ value context::make_global_object(realm_record & r) {
     // [[GetOwnProperty]] SEES THE BINDINGS TOO: `Object.getOwnPropertyDescriptor
     // (this, "Array")` is how test262 verifies every global's attributes, and a
     // binding in the table is what clause 17 describes - { writable: true,
-    // enumerable: false, configurable: true }. The target's own properties
-    // answer first, as `get` has them.
+    // enumerable: false, configurable: true } - unless a script DECLARED it,
+    // which makes it enumerable and not configurable (realm_record::declared).
+    // The target's own properties answer first, as `get` has them.
     trap("getOwnPropertyDescriptor", [realm](context & cx, std::span<value> args) {
         const std::string name = cx.to_string(args[1]);
+        if (realm->declared.contains(name)) {
+            return cx.from_property_descriptor(
+                property_descriptor::data(realm->globals[name], attr_writable | attr_enumerable));
+        }
         property_descriptor found;
         if (cx.own_property(args[0], name, found)) { return cx.from_property_descriptor(found); }
         const auto it = realm->globals.find(name);

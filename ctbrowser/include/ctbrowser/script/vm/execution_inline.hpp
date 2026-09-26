@@ -53,7 +53,7 @@ inline auto context::define_global(std::string name, value v) -> void {
     current_realm().globals[std::move(name)] = v;
 }
 
-inline auto context::declare_global_var(std::string name) -> void {
+inline auto context::declare_global_var(std::string name, bool configurable) -> void {
     realm_record & realm = current_realm();
     if (realm.globals.find(name) != realm.globals.end()) { return; }
     // The global object is a proxy over the table; what `Object.defineProperty
@@ -67,6 +67,18 @@ inline auto context::declare_global_var(std::string name) -> void {
     }
     property_descriptor own;
     if (holder.is_object() && own_property(holder, name, own)) { return; }
+    if (!configurable) {
+        realm.declared[name] = true;
+        // AND A PROPERTY THE PROXY'S TARGET REALLY HAS: a trap may report a
+        // non-configurable property only if the target owns one (10.5.5's
+        // invariants - `getOwnPropertyDescriptor` is a TypeError otherwise).
+        // A placeholder; the table stays the storage the VM and compiled
+        // code read, and the traps answer a declared name from it.
+        if (holder.is_object()) {
+            static_cast<object_object *>(holder.as_heap())
+                ->define(name, value::undefined(), attr_writable | attr_enumerable);
+        }
+    }
     realm.globals[std::move(name)] = value::undefined();
 }
 
@@ -222,7 +234,7 @@ inline auto context::set_module_evaluator(std::function<bool(context &, module_r
     if (!prog.ok || prog.functions.empty()) { return value::undefined(); }
     // Its `var`s exist before it starts, as run() gives a script's
     // (19.2.1.3 EvalDeclarationInstantiation binds them the same way).
-    for (const std::string & name : prog.hoisted_vars) { declare_global_var(name); }
+    for (const std::string & name : prog.hoisted_vars) { declare_global_var(name, prog.eval_code); }
     auto * entry = allocate<closure_object>(&prog.functions[0]);
     entry->owner = &prog;
     entry->realm = &current_realm();

@@ -53,6 +53,11 @@ struct closure_object;
 // what it does not see is the page's own `var`s.
 struct realm_record {
     string_flat_map<value> globals;
+    // THE NAMES A SCRIPT DECLARED - `var`, and a block function's Annex B var:
+    // enumerable and NOT configurable, so `delete` refuses them (16.1.7
+    // CreateGlobalVarBinding). Every other binding in `globals` is a built-in's
+    // or a plain assignment's, { writable, !enumerable, configurable }.
+    string_flat_map<bool> declared;
     value global_this = value::undefined();
     // See context::set_undeclared_name_hook.
     std::function<value(std::string_view)> undeclared_name;

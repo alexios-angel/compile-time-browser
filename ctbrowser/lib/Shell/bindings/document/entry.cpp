@@ -549,7 +549,7 @@ void dom_bindings::execute_script_element(context & cx, node_id id, const std::s
         const script::program & kept = cx.own_program(std::move(compiled));
         // Its `var`s exist before it starts, as a parser-run script's do
         // (browser/scripts.cpp; GlobalDeclarationInstantiation).
-        for (const std::string & name : kept.hoisted_vars) { cx.declare_global_var(name); }
+        for (const std::string & name : kept.hoisted_vars) { cx.declare_global_var(name, false); }
         auto * entry = cx.allocate<script::closure_object>(&kept.functions[0]);
         entry->owner = &kept;
         entry->realm = &cx.current_realm();

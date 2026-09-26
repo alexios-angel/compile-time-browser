@@ -877,6 +877,9 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
                    if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
                    auto * target = static_cast<script::object_object *>(args[0].as_heap());
                    const std::string name = c.to_string(args[1]);
+                   // A script's `var`: the window's own property of that name is
+                   // a placeholder (context::declare_global_var); the table has it.
+                   if (realm_of->declared.contains(name)) { return realm_of->globals[name]; }
                    if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
                        return c.lookup_property(args[0], name);
                    }
@@ -913,7 +916,9 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
         // An own property of the window keeps its own storage - `innerWidth` is
         // refreshed on the object every frame, and routing it to the globals
         // would leave a read seeing the stale one.
-        if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
+        if (realm_of->declared.contains(name)) {
+            realm_of->globals[name] = args[2];
+        } else if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
             c.store_property(args[0], name, args[2]);
         } else {
             realm_of->globals[name] = args[2];
@@ -939,24 +944,42 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
     // agree with `has`: a global is an own data property of the Window - the
     // globals table IS its property storage here - and a named element or
     // frame is HTML 7.3.3's, enumerable and configurable and not writable.
-    set_method(cx, *window_handler, "getOwnPropertyDescriptor",
-               [named_value, frame_at, realm_of](context & c, std::span<value> args) {
-                   if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
+    set_method(
+        cx, *window_handler, "getOwnPropertyDescriptor",
+        [named_value, frame_at, realm_of](context & c, std::span<value> args) {
+            if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
+            const std::string name = c.to_string(args[1]);
+            // A script's `var` is not configurable (16.1.7), and the
+            // window owns a placeholder of it so the proxy may say so.
+            if (realm_of->declared.contains(name)) {
+                return c.from_property_descriptor(context::property_descriptor::data(
+                    realm_of->globals[name], script::attr_writable | script::attr_enumerable));
+            }
+            context::property_descriptor own;
+            if (c.own_property(args[0], name, own)) { return c.from_property_descriptor(own); }
+            if (const auto it = realm_of->globals.find(name); it != realm_of->globals.end()) {
+                return c.from_property_descriptor(
+                    context::property_descriptor::data(it->second, script::attr_default));
+            }
+            value held = frame_at(c, name);
+            if (held.is_undefined()) { held = named_value(c, name); }
+            if (held.is_undefined()) { return value::undefined(); }
+            return c.from_property_descriptor(context::property_descriptor::data(
+                held, script::attr_enumerable | script::attr_configurable));
+        });
+    // `delete window.x` reaches the binding table as `set` does - it only
+    // deleted from the object behind the proxy, and the global survived - and
+    // a script's `var` refuses (16.1.7: not configurable).
+    set_method(cx, *window_handler, "deleteProperty",
+               [realm_of](context & c, std::span<value> args) {
+                   if (args.size() < 2 || !args[0].is_object()) { return value::boolean(true); }
                    const std::string name = c.to_string(args[1]);
                    context::property_descriptor own;
                    if (c.own_property(args[0], name, own)) {
-                       return c.from_property_descriptor(own);
+                       return value::boolean(c.delete_own_property(args[0], name));
                    }
-                   if (const auto it = realm_of->globals.find(name);
-                       it != realm_of->globals.end()) {
-                       return c.from_property_descriptor(
-                           context::property_descriptor::data(it->second, script::attr_default));
-                   }
-                   value held = frame_at(c, name);
-                   if (held.is_undefined()) { held = named_value(c, name); }
-                   if (held.is_undefined()) { return value::undefined(); }
-                   return c.from_property_descriptor(context::property_descriptor::data(
-                       held, script::attr_enumerable | script::attr_configurable));
+                   (void)realm_of->globals.erase(name);
+                   return value::boolean(true);
                });
     return value::object(
         cx.allocate<script::proxy_object>(window_target, value::object(window_handler)));

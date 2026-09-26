@@ -169,7 +169,7 @@ std::size_t dom_bindings::run_due_callbacks() {
             } else {
                 const script::program & held = cx_->own_program(std::move(compiled));
                 for (const std::string & name : held.hoisted_vars) {
-                    cx_->declare_global_var(name);
+                    cx_->declare_global_var(name, false);
                 }
                 auto * entry = cx_->allocate<script::closure_object>(&held.functions[0]);
                 entry->owner = &held;
