@@ -2,6 +2,7 @@
 """Confined node catches preserve identity and reads without a native throw."""
 
 import argparse
+import json
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -66,6 +67,23 @@ SOURCES = {
   } catch (error) { return error === anchor && saved === 7.5; }
 }
 """,
+    "write-number-read": """function customElements(anchor) {
+  const saved = Number(anchor.getAttribute('data-number'));
+  try {
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-snapshot": """function customElements(anchor) {
+  const saved = Number(anchor.getAttribute('data-number'));
+  try {
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -80,6 +98,23 @@ SOURCES = {
 }
 """,
 }
+
+
+NUMBER_READ_INPUTS = (
+    (None, "0"),
+    ("", "0"),
+    (" -0 ", "0"),
+    ("NaN", "NaN"),
+    ("+Infinity", "Infinity"),
+    ("-Infinity", "-Infinity"),
+    ("0x10", "16"),
+    ("0b11", "3"),
+    ("7.5", "7.5"),
+    ("1e-7", "1e-7"),
+    ("1e21", "1e+21"),
+    ("invalid", "NaN"),
+    ("\u00a042\ufeff", "42"),
+)
 
 
 WRITE_EXPECTED = {
@@ -145,11 +180,17 @@ HELPER_OBSERVER = """function observe(repeat) {
 var result0 = observe(false), result1 = observe(true);
 """
 
-NUMBER_WRITE_OBSERVER = """function observe(closed) {
+NUMBER_WRITE_OBSERVER = """function observe(closed, number) {
   const saved = {};
   if (closed) saved['data-closed'] = 'yes';
+  if (number !== undefined && number !== null) saved['data-number'] = number;
   let trace = '';
   const anchor = {
+    getAttribute(name) {
+      const value = name in saved ? saved[name] : null;
+      trace += 'get:' + name + '=' + value + ';';
+      return value;
+    },
     hasAttribute(name) {
       const value = name in saved;
       trace += 'read:' + name + '=' + value + ';';
@@ -190,6 +231,19 @@ def main():
             script = source + WRITE_OBSERVER
         if name.startswith("write-number-"):
             script = source + NUMBER_WRITE_OBSERVER
+        number_read = name.startswith("write-number-read")
+        if number_read:
+            script = script.replace(
+                "var result0 = observe(false), result1 = observe(true);",
+                "\n".join(
+                    f"var result{index} = ["
+                    + ", ".join(
+                        f"observe({closed}, {json.dumps(value)})" for value, _ in NUMBER_READ_INPUTS
+                    )
+                    + "].join('|');"
+                    for index, closed in enumerate(("false", "true"))
+                ),
+            )
         if name == "helper-next-record":
             script = source + HELPER_OBSERVER
         nested = name.startswith("mixed-node-nested-") or name == "nested-protected-normal-read"
@@ -251,6 +305,20 @@ def main():
                 )
         if name in WRITE_EXPECTED:
             expected = WRITE_EXPECTED[name]
+        if number_read:
+            trace = "|".join(
+                "true:get:data-number="
+                + ("null" if value is None else value)
+                + ";"
+                + ("write:data-number=99;" if name.endswith("-snapshot") else "")
+                + "write:data-written="
+                + result
+                + ";"
+                for value, result in NUMBER_READ_INPUTS
+            )
+            expected = "".join(
+                f"result{index}={json.dumps(trace, ensure_ascii=False)}\n" for index in (0, 1)
+            )
         if name == "helper-next-record":
             expected = (
                 'result0="false:read:data-yielded=false;write:data-next=false;write:data-yielded=yes;"\n'
@@ -262,6 +330,8 @@ def main():
             if output != expected:
                 raise RuntimeError(f"{name}: catch oracle differs: {result}")
         ir, contract = dom.prepare(args, name, source, 1, entry_name="customElements")
+        if number_read:
+            contract["initial_intrinsics"] = ["Number"]
         checks = (
             "assert(@ENTRY@(element)); assert(@ENTRY@(alias)); assert(@ENTRY@(foreign));"
             if name in ("identity", "conditional-node-identity", "conditional", "protected-read")
@@ -357,7 +427,7 @@ def main():
                 exercise(doc, button, [&] { return @ENTRY@(alias); });
                 exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
             """
-        if name.startswith("write-number-"):
+        if name.startswith("write-number-") and not number_read:
             expected_writes = {
                 "write-number-return": [("data-written", '"42"')],
                 "write-number-corners": [
@@ -401,6 +471,49 @@ def main():
                 """.replace("@ANSWER@", "closed" if name == "write-number-snapshot" else "true")
                 .replace("@COUNT@", str(len(expected_writes)))
                 .replace("@WRITES@", write_checks)
+            )
+        if number_read:
+            inputs = ",\n".join(
+                "{"
+                + ("nullptr" if value is None else json.dumps(value, ensure_ascii=False))
+                + ", "
+                + json.dumps(result)
+                + "}"
+                for value, result in NUMBER_READ_INPUTS
+            )
+            checks = (
+                r"""
+                const auto exercise = [&](ctbrowser::document & target, node_id id, auto && call) {
+                    const auto number = target.atoms().intern("data-number");
+                    const auto written = target.atoms().intern("data-written");
+                    const char * cases[][2] = {@INPUTS@};
+                    target.log_writes(true);
+                    for (const auto & test : cases) {
+                        assert(target.remove_attribute(id, number));
+                        assert(target.remove_attribute(id, written));
+                        if (test[0]) { assert(target.set_attribute(id, number, test[0])); }
+                        (void)target.take_writes();
+                        assert(call());
+                        const auto writes = target.take_writes();
+                        assert(writes.size() == @COUNT@);
+                        for (const auto & write : writes) { assert(write.node == id && !write.text); }
+                        assert(writes.back().name == written);
+                        assert(target.read().attribute_value(id, written) == test[1]);
+                        @SNAPSHOT@
+                    }
+                };
+                exercise(doc, button, [&] { return @ENTRY@(alias); });
+                exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
+            """.replace("@INPUTS@", inputs)
+                .replace("@COUNT@", "2" if name.endswith("-snapshot") else "1")
+                .replace(
+                    "@SNAPSHOT@",
+                    (
+                        'assert(writes.front().name == number); assert(target.read().attribute_value(id, number) == "99");'
+                        if name.endswith("-snapshot")
+                        else "assert(target.read().has_attribute(id, number) == (test[0] != nullptr)); if (test[0]) { assert(target.read().attribute_value(id, number) == test[0]); }"
+                    ),
+                )
             )
         checks += " (void)pressed; (void)alias;"
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
@@ -453,6 +566,12 @@ def main():
     }
     refusals.update(
         {
+            "write-number-read-without-intrinsic": "const saved = Number(anchor.getAttribute('data-number')); try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-rebound-intrinsic": "Number = anchor; const saved = Number(anchor.getAttribute('data-number')); try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-coercing-input": "const saved = Number(anchor); try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-unknown-getter": "const saved = Number(anchor.unknown); try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-invalid-name": "const saved = Number(anchor.getAttribute('data-number')); try { anchor.setAttribute('bad name', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-mixed-join": "const saved = anchor.hasAttribute('data-closed') ? Number(anchor.getAttribute('data-number')) : anchor; try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
             "mixed-protected-throw-call": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { decodeURIComponent('%'); throw anchor; } } catch (error) { return error === anchor; } return false;",
             "mixed-rethrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { throw error; } return false;",
             "mixed-return-borrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { return error; } return false;",
@@ -487,6 +606,10 @@ def main():
                 manifest = dict(
                     contract, provider=provider, initial_intrinsics=["decodeURIComponent"]
                 )
+                if name.startswith("write-number-read-") and not name.endswith(
+                    "-without-intrinsic"
+                ):
+                    manifest["initial_intrinsics"].append("Number")
                 if name == "invocation-without-contract":
                     manifest["element_parameters"] = []
                 dom.lower(
