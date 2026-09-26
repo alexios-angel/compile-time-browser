@@ -90,8 +90,14 @@ namespace regexp_detail {
 // The array `exec` returns: the whole match, then each group, with `index`,
 // `input`, `groups` and - under `d` - `indices` alongside (22.2.7.2 steps
 // 19-36). ctjs's wrapper dropped the positions; they were always in the match.
-[[nodiscard]] value exec_result(context & cx, const rx::rx_prog & program, const std::string & s,
+//
+// THE MATCHER'S POSITIONS ARE BYTES into the WTF-8 text, and they cut the
+// strings; every position the result REPORTS - `index` and each `indices`
+// pair - is the UTF-16 index a script counts in (string_object::unit_index).
+[[nodiscard]] value exec_result(context & cx, const rx::rx_prog & program, value subject,
                                 const rx::rx_match & m) {
+    const auto & str = *static_cast<const string_object *>(subject.as_heap());
+    const std::string & s = str.text;
     value out = cx.make_array();
     const context::rooted keep{cx, out};
     auto * arr = static_cast<array_object *>(out.as_heap());
@@ -123,8 +129,10 @@ namespace regexp_detail {
     }
     arr->groups = groups;
     arr->is_match = true;
-    arr->index = value::number(static_cast<double>(m.begin));
-    arr->input = cx.string(s);
+    arr->index = value::number(static_cast<double>(str.unit_index(m.begin)));
+    // The subject itself: a string's identity is not observable, and it is
+    // the same text.
+    arr->input = subject;
     // AND AS OWN DATA PROPERTIES, which is what CreateDataProperty makes them
     // (steps 22-23 and 25): `hasOwnProperty("groups")`, a page's write, a
     // delete, OwnPropertyKeys - index, input, groups, then `indices` - and no
@@ -144,8 +152,10 @@ namespace regexp_detail {
             if (from < 0) { return value::undefined(); }
             value p = cx.make_array();
             auto * xy = static_cast<array_object *>(p.as_heap());
-            xy->items.push_back(value::number(static_cast<double>(from)));
-            xy->items.push_back(value::number(static_cast<double>(to)));
+            xy->items.push_back(
+                value::number(static_cast<double>(str.unit_index(static_cast<std::size_t>(from)))));
+            xy->items.push_back(
+                value::number(static_cast<double>(str.unit_index(static_cast<std::size_t>(to)))));
             return p;
         };
         list->items.push_back(
@@ -187,11 +197,14 @@ bool regexp_slots(value v, std::string & source, std::string & flags) {
     return true;
 }
 
-std::size_t advance_string_index(const std::string & s, std::size_t index, bool full_unicode) {
-    if (!full_unicode || index + 1 >= s.size()) { return index + 1; }
-    std::size_t next = index + 1;
-    while (next < s.size() && (static_cast<unsigned char>(s[next]) & 0xC0u) == 0x80u) { ++next; }
-    return next;
+// AdvanceStringIndex, 22.2.7.3, in units: past one code unit, or - under `u`
+// and `v` - past the whole surrogate pair that starts at `index`.
+std::size_t advance_string_index(const string_object & s, std::size_t index, bool full_unicode) {
+    if (!full_unicode || index + 1 >= s.length()) { return index + 1; }
+    const char16_t first = s.unit(index);
+    if (first < 0xD800 || first > 0xDBFF) { return index + 1; }
+    const char16_t second = s.unit(index + 1);
+    return second >= 0xDC00 && second <= 0xDFFF ? index + 2 : index + 1;
 }
 
 bool get_last_index(context & cx, value rx, double & out) {
@@ -242,8 +255,16 @@ value regexp_exec(context & cx, value rx, value subject) {
 // RegExpBuiltinExec, 22.2.7.2. `lastIndex` is read through [[Get]] and
 // ToLength - a page may have written anything into it - and written back
 // through Set with Throw=true, so a frozen pattern refuses with a TypeError.
+//
+// lastIndex is a UNIT index and the matcher walks BYTES: the one conversion
+// in is locate, and the ones out are unit_index. A lastIndex at a pair's low
+// half is where the two views part: under `u` the input is code points and
+// the match starts at the pair holding it (step 13.b); without `u` the
+// matcher would start at the lone half, which a matcher over bytes cannot
+// stand on, so it starts after the pair - a pattern that matches a lone low
+// surrogate against half of a pair is the case this does not model.
 [[nodiscard]] value builtin_exec(context & cx, const std::shared_ptr<regex_cache> & cache, value rx,
-                                 const std::string & subject) {
+                                 value subject) {
     std::string source;
     std::string flags;
     if (!regexp_slots(rx, source, flags)) { return value::null(); }
@@ -252,15 +273,23 @@ value regexp_exec(context & cx, value rx, value subject) {
     if (!get_last_index(cx, rx, last)) { return value::undefined(); }
     const bool stateful = program->global || program->sticky;
     if (!stateful) { last = 0; }
+    const auto & str = *static_cast<const string_object *>(subject.as_heap());
+    const bool full_unicode =
+        flags.find('u') != std::string::npos || flags.find('v') != std::string::npos;
     rx::rx_match m;
-    const bool hit = program->ok && last <= static_cast<double>(subject.size()) &&
-                     rx::rx_search(*program, subject, static_cast<std::size_t>(last), m) &&
-                     (!program->sticky || m.begin == static_cast<std::size_t>(last));
+    bool hit = program->ok && last <= static_cast<double>(str.length());
+    if (hit) {
+        const utf16::position at = str.locate(static_cast<std::size_t>(last));
+        std::size_t start = at.byte;
+        if (at.low_half && !full_unicode) { (void)decode_utf8(str.text, start); }
+        hit = rx::rx_search(*program, str.text, start, m) &&
+              (!program->sticky || (m.begin == start && (full_unicode || !at.low_half)));
+    }
     if (!hit) {
         if (stateful && !set_last_index(cx, rx, 0)) { return value::undefined(); }
         return value::null();
     }
-    if (stateful && !set_last_index(cx, rx, static_cast<double>(m.end))) {
+    if (stateful && !set_last_index(cx, rx, static_cast<double>(str.unit_index(m.end)))) {
         return value::undefined();
     }
     const value result = exec_result(cx, *program, subject, m);
@@ -301,10 +330,10 @@ void set_legacy_statics(context & cx, value result) {
     if (captures > 0) { fields->items[legacy_last_paren] = capture(captures - 1); }
     fields->items[legacy_subject] = match->input;
     fields->items[legacy_begin] = match->index;
-    fields->items[legacy_end] = value::number(
-        match->index.as_number() +
-        static_cast<double>(
-            static_cast<const string_object *>(match->items[0].as_heap())->text.size()));
+    fields->items[legacy_end] =
+        value::number(match->index.as_number() +
+                      static_cast<double>(
+                          static_cast<const string_object *>(match->items[0].as_heap())->length()));
     for (std::size_t i = 0; i < 9 && i < captures; ++i) {
         fields->items[legacy_paren1 + i] = capture(i);
     }
@@ -386,11 +415,24 @@ value regexp_string_iterator_next(context & cx, std::span<value>) {
     if (value * done = it->find("@#Done"); done != nullptr && done->as_boolean()) {
         return finish(value::undefined(), true);
     }
-    const bool global = context::truthy(*it->find("@#Global"));
-    const bool full_unicode = context::truthy(*it->find("@#FullUnicode"));
+    // THE SLOTS ARE PROPERTIES, and a computed key can spell `@#` - so this
+    // reads them as a page may have left them: a missing flag is the
+    // TypeError a missing slot is, and the subject is made a string again
+    // before anything below treats it as one.
+    const value * global_slot = it->find("@#Global");
+    const value * unicode_slot = it->find("@#FullUnicode");
+    if (global_slot == nullptr || unicode_slot == nullptr) {
+        cx.throw_error("TypeError",
+                       "next called on an object that is not a RegExp String Iterator");
+        return value::undefined();
+    }
+    const bool global = context::truthy(*global_slot);
+    const bool full_unicode = context::truthy(*unicode_slot);
     const value rx = *matcher;
-    const std::string s = cx.to_string(*subject);
-    const value match = regexp_exec(cx, rx, *subject);
+    const value s = subject->is_string() ? *subject : cx.string(cx.to_string(*subject));
+    if (cx.throw_pending()) { return value::undefined(); }
+    const context::rooted keep_subject{cx, s};
+    const value match = regexp_exec(cx, rx, s);
     if (match.is_undefined()) { return value::undefined(); }
     if (match.is_null()) {
         it->define("@#Done", value::boolean(true), attr_none);
@@ -406,7 +448,8 @@ value regexp_string_iterator_next(context & cx, std::span<value>) {
         double this_index = 0;
         if (!get_last_index(cx, rx, this_index)) { return value::undefined(); }
         const std::size_t next =
-            advance_string_index(s, static_cast<std::size_t>(this_index), full_unicode);
+            advance_string_index(*static_cast<const string_object *>(s.as_heap()),
+                                 static_cast<std::size_t>(this_index), full_unicode);
         if (!set_last_index(cx, rx, static_cast<double>(next))) { return value::undefined(); }
     }
     return finish(match, false);

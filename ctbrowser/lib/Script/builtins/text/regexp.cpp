@@ -46,7 +46,18 @@ bool get_substitution(context & cx, const std::string & matched, const std::stri
                       std::size_t position, std::span<const value> captures, value named_captures,
                       const std::string & tpl, std::string & out) {
     out.clear();
-    const std::size_t tail = std::min(subject.size(), position + matched.size());
+    // `position` is a UNIT index, as the specification's is (22.1.3.19.1
+    // steps 2-5): `$\`` is the subject's first `position` units and `$'` what
+    // follows the match, both cut as UTF-16 would cut them - converted only
+    // when the template names one, which is rarely.
+    const auto before_match = [&] {
+        return utf16::slice(subject, {0, false}, utf16::locate(subject, position));
+    };
+    const auto after_match = [&] {
+        const std::size_t tail =
+            std::min(utf16::length(subject), position + utf16::length(matched));
+        return utf16::slice(subject, utf16::locate(subject, tail), {subject.size(), false});
+    };
     std::size_t length = 0;
     const auto expand = [&](bool build) {
         length = 0;
@@ -70,10 +81,10 @@ bool get_substitution(context & cx, const std::string & matched, const std::stri
                 if (!append(matched)) { return false; }
                 ++i;
             } else if (next == '`') {
-                if (!append(std::string_view{subject}.substr(0, position))) { return false; }
+                if (!append(before_match())) { return false; }
                 ++i;
             } else if (next == '\'') {
-                if (!append(std::string_view{subject}.substr(tail))) { return false; }
+                if (!append(after_match())) { return false; }
                 ++i;
             } else if (next >= '0' && next <= '9') {
                 // `$nn` when two digits name a group that exists, else `$n`, else
@@ -332,13 +343,15 @@ void install_regexp(context & cx) {
                     array_object * record = legacy_record(c, shown);
                     if (record == nullptr) { return value::undefined(); }
                     if (field >= 0) { return record->items[static_cast<std::size_t>(field)]; }
-                    const std::string & subject =
-                        static_cast<string_object *>(record->items[legacy_subject].as_heap())->text;
+                    // Unit positions, like the match's `index`.
+                    const auto & subject = *static_cast<const string_object *>(
+                        record->items[legacy_subject].as_heap());
                     const auto begin =
                         static_cast<std::size_t>(record->items[legacy_begin].as_number());
                     const auto end =
                         static_cast<std::size_t>(record->items[legacy_end].as_number());
-                    return c.string(field == -1 ? subject.substr(0, begin) : subject.substr(end));
+                    return c.string(field == -1 ? subject.slice(0, begin)
+                                                : subject.slice(end, subject.length()));
                 });
             detail::install_arity(cx, static_cast<native_object *>(getter.as_heap()), 0);
             value setter = value::undefined();
@@ -523,11 +536,15 @@ void install_regexp(context & cx) {
     // --- exec, test, toString, compile --------------------------------------
     method(cx, regexp_proto, "exec", 1, [cache](context & c, std::span<value> a) -> value {
         if (this_regexp(c, "RegExp.prototype.exec") == nullptr) { return value::undefined(); }
-        if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }
+        const value arg = arg_at(a, 0);
+        if (!stringable_arg(c, arg)) { return value::undefined(); }
         const value self = c.current_this();
         const detail::unwind_watch watch{c};
-        const std::string subject = c.to_string(arg_at(a, 0));
+        // The subject AS A STRING VALUE: the result's `input` is it, and the
+        // units it has measured stay on it for the next exec over it.
+        const value subject = arg.is_string() ? arg : c.string(c.to_string(arg));
         if (watch.threw()) { return value::undefined(); }
+        const context::rooted keep{c, subject};
         return builtin_exec(c, cache, self, subject);
     });
     // %RegExp.prototype.exec% by a name no page can reach or replace: what
@@ -615,6 +632,7 @@ void install_regexp(context & cx) {
         if (watch.threw()) { return value::undefined(); }
         const value subject = c.string(s);
         const context::rooted keep{c, subject};
+        const auto & str = *static_cast<const string_object *>(subject.as_heap());
         std::string flags;
         if (!read_flags(c, rx, flags)) { return value::undefined(); }
         if (flags.find('g') == std::string::npos) { return regexp_exec(c, rx, subject); }
@@ -635,7 +653,7 @@ void install_regexp(context & cx) {
                 double this_index = 0;
                 if (!get_last_index(c, rx, this_index)) { return value::undefined(); }
                 const std::size_t next =
-                    advance_string_index(s, static_cast<std::size_t>(this_index), full_unicode);
+                    advance_string_index(str, static_cast<std::size_t>(this_index), full_unicode);
                 if (!set_last_index(c, rx, static_cast<double>(next))) {
                     return value::undefined();
                 }
@@ -713,6 +731,11 @@ void install_regexp(context & cx) {
         if (watch.threw()) { return value::undefined(); }
         const value subject = c.string(s);
         const context::rooted keep{c, subject};
+        // Every position below is in UNITS - `index`, the replacer's argument,
+        // lastIndex - and the pieces between matches are cut through the
+        // subject's own marks.
+        const auto & str = *static_cast<const string_object *>(subject.as_heap());
+        const std::size_t length = str.length();
         const value replace_value = arg_at(a, 1);
         const bool functional = replace_value.is_callable();
         std::string tpl;
@@ -745,7 +768,7 @@ void install_regexp(context & cx) {
                 double this_index = 0;
                 if (!get_last_index(c, rx, this_index)) { return value::undefined(); }
                 const std::size_t next =
-                    advance_string_index(s, static_cast<std::size_t>(this_index), full_unicode);
+                    advance_string_index(str, static_cast<std::size_t>(this_index), full_unicode);
                 if (!set_last_index(c, rx, static_cast<double>(next))) {
                     return value::undefined();
                 }
@@ -766,7 +789,7 @@ void install_regexp(context & cx) {
             double position = c.to_number_value(raw_position);
             if (watch.threw()) { return value::undefined(); }
             position = std::isnan(position) ? 0 : std::trunc(position);
-            position = std::clamp(position, 0.0, static_cast<double>(s.size()));
+            position = std::clamp(position, 0.0, static_cast<double>(length));
             const auto at = static_cast<std::size_t>(position);
             std::vector<value> captures;
             for (std::size_t n = 1; n <= n_captures; ++n) {
@@ -810,23 +833,24 @@ void install_regexp(context & cx) {
                 }
             }
             if (at >= next_source_position) {
-                const std::size_t prefix = at - next_source_position;
-                if (!check_string_growth(c, accumulated.size(), prefix)) {
+                const std::string prefix = str.slice(next_source_position, at);
+                if (!check_string_growth(c, accumulated.size(), prefix.size())) {
                     return value::undefined();
                 }
-                accumulated.append(s, next_source_position, prefix);
+                accumulated += prefix;
                 if (!check_string_growth(c, accumulated.size(), replacement.size())) {
                     return value::undefined();
                 }
                 accumulated += replacement;
-                next_source_position = at + matched.size();
+                next_source_position = at + utf16::length(matched);
             }
         }
-        if (next_source_position < s.size()) {
-            if (!check_string_growth(c, accumulated.size(), s.size() - next_source_position)) {
+        if (next_source_position < length) {
+            const std::string rest = str.slice(next_source_position, length);
+            if (!check_string_growth(c, accumulated.size(), rest.size())) {
                 return value::undefined();
             }
-            accumulated.append(s, next_source_position);
+            accumulated += rest;
         }
         return c.string(accumulated);
     });
@@ -878,6 +902,7 @@ void install_regexp(context & cx) {
         if (watch.threw()) { return value::undefined(); }
         const value subject = c.string(s);
         const context::rooted keep{c, subject};
+        const auto & str = *static_cast<const string_object *>(subject.as_heap());
         const value ctor = species_constructor(c, rx, c.global("RegExp"));
         if (ctor.is_undefined()) { return value::undefined(); }
         std::string flags;
@@ -907,7 +932,8 @@ void install_regexp(context & cx) {
         }
         if (watch.threw()) { return value::undefined(); }
         if (lim == 0) { return out; }
-        const std::size_t size = s.size();
+        // p, q and e are UNIT positions (22.2.6.14 steps 19-25).
+        const std::size_t size = str.length();
         if (size == 0) {
             const value z = regexp_exec(c, splitter, subject);
             if (z.is_undefined()) { return value::undefined(); }
@@ -922,17 +948,17 @@ void install_regexp(context & cx) {
             const value z = regexp_exec(c, splitter, subject);
             if (z.is_undefined()) { return value::undefined(); }
             if (z.is_null()) {
-                q = advance_string_index(s, q, full_unicode);
+                q = advance_string_index(str, q, full_unicode);
                 continue;
             }
             double end = 0;
             if (!get_last_index(c, splitter, end)) { return value::undefined(); }
             const std::size_t e = std::min(static_cast<std::size_t>(end), size);
             if (e == p) {
-                q = advance_string_index(s, q, full_unicode);
+                q = advance_string_index(str, q, full_unicode);
                 continue;
             }
-            parts->items.push_back(c.string(s.substr(p, q - p)));
+            parts->items.push_back(c.string(str.slice(p, q)));
             if (static_cast<double>(parts->items.size()) == lim) { return out; }
             p = e;
             const double captures = detail::array_like_length(c, z);
@@ -947,7 +973,7 @@ void install_regexp(context & cx) {
             }
             q = p;
         }
-        parts->items.push_back(c.string(s.substr(p)));
+        parts->items.push_back(c.string(str.slice(p, size)));
         return out;
     });
 }

@@ -22,8 +22,8 @@ struct json_value::member {
 };
 
 // The error is the byte position after the existing parser's trailing whitespace skip.
-// Preserves existing behavior: raw non-control bytes pass through, lone escaped
-// surrogates become U+FFFD, and out-of-range numbers become positive zero.
+// Raw non-control bytes pass through, a lone escaped surrogate is kept as its
+// WTF-8 (what a JS string holds), and out-of-range numbers become positive zero.
 // Nesting uses the call stack with no added depth limit.
 [[nodiscard]] std::expected<json_value, std::size_t> parse_json(std::string_view text);
 

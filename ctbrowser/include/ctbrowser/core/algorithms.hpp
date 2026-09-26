@@ -144,6 +144,17 @@ constexpr void append_utf8(std::string & out, char32_t cp) {
     }
 }
 
+// Infra's ISOMORPHIC DECODE: each byte as the code point of the same value,
+// U+0000-U+00FF. It is what a "binary string" is - atob's answer, FileReader's
+// readAsBinaryString, a canvas's PNG on its way to btoa - now that a script
+// reads a string by UTF-16 code unit and not by byte.
+[[nodiscard]] inline std::string isomorphic_decode(std::string_view bytes) {
+    std::string out;
+    out.reserve(bytes.size());
+    for (const char byte : bytes) { append_utf8(out, static_cast<unsigned char>(byte)); }
+    return out;
+}
+
 // WTF-8 CONCATENATION (WTF-8 §4.3): a high surrogate ending one piece and a
 // low surrogate starting the next - `ED A0..AF xx` then `ED B0..BF xx` -
 // are one code point once they meet, as the UTF-16 they stand for would be.

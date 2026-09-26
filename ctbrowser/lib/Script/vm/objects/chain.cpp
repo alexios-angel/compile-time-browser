@@ -40,7 +40,7 @@ value context::own_keys(value source) {
         // enumerable (10.4.3.1), and come first.
         auto * obj = static_cast<object_object *>(source.as_heap());
         if (const value * slot = primitive_slot(source); slot != nullptr && slot->is_string()) {
-            const std::size_t n = static_cast<string_object *>(slot->as_heap())->text.size();
+            const std::size_t n = static_cast<string_object *>(slot->as_heap())->length();
             for (std::size_t i = 0; i < n; ++i) {
                 keys->items.push_back(string(std::to_string(i)));
             }
@@ -257,9 +257,9 @@ void context::copy_own_properties(value target, value source) {
         // object, whose own enumerable properties are its indices - `{...
         // "ab"}` is {0: "a", 1: "b"} - counted in the unit `length` and
         // charAt count here (lookup_index answers the same one-unit strings).
-        const std::string text = static_cast<string_object *>(source.as_heap())->text;
-        for (std::size_t i = 0; i < text.size(); ++i) {
-            into->set(std::to_string(i), string(std::string{text[i]}));
+        const string_object text{static_cast<string_object *>(source.as_heap())->text};
+        for (std::size_t i = 0; i < text.length(); ++i) {
+            into->set(std::to_string(i), string(text.unit_text(i)));
         }
     }
 }

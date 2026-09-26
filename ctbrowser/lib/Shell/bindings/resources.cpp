@@ -510,10 +510,12 @@ void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
     switch (waiting.kind) {
     case read_kind::text:
     case read_kind::binary_string:
-        // The same thing here, and honestly so: strings are BYTES in this engine,
-        // so a "binary string" and a decoded UTF-8 one are one value. A page that
-        // reads text it wrote as UTF-8 gets it back unchanged.
-        reader->set("result", cx.string(bytes));
+        // readAsText decodes UTF-8 (the stored text is UTF-8 already); a
+        // "binary string" is each byte as the code unit of the same value -
+        // Infra's isomorphic decode - which is what btoa takes back.
+        reader->set(
+            "result",
+            cx.string(waiting.kind == read_kind::binary_string ? isomorphic_decode(bytes) : bytes));
         break;
     case read_kind::data_url: {
         std::string type = "application/octet-stream";

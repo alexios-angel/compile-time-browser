@@ -39,16 +39,17 @@ enum legacy_field : std::size_t {
 [[nodiscard]] object_object * regexp_table(value v);
 [[nodiscard]] object_object * this_regexp(context & cx, const char * method);
 [[nodiscard]] std::string escape_pattern(const std::string & source);
-[[nodiscard]] value exec_result(context & cx, const rx::rx_prog & program, const std::string & s,
+// `subject` is a string value; the result's positions are its UNIT indices.
+[[nodiscard]] value exec_result(context & cx, const rx::rx_prog & program, value subject,
                                 const rx::rx_match & m);
 bool has_regexp_matcher(value v);
 bool regexp_slots(value v, std::string & source, std::string & flags);
-std::size_t advance_string_index(const std::string & s, std::size_t index, bool full_unicode);
+std::size_t advance_string_index(const string_object & s, std::size_t index, bool full_unicode);
 bool get_last_index(context & cx, value rx, double & out);
 bool set_last_index(context & cx, value rx, double v);
 value regexp_exec(context & cx, value rx, value subject);
 [[nodiscard]] value builtin_exec(context & cx, const std::shared_ptr<regex_cache> & cache, value rx,
-                                 const std::string & subject);
+                                 value subject);
 // UpdateLegacyRegExpStaticProperties from an exec result, or - for undefined -
 // InvalidateLegacyRegExpStaticProperties, as RegExpBuiltinExec runs them.
 void set_legacy_statics(context & cx, value result);

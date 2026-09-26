@@ -429,7 +429,7 @@ void install_dynamic_function(context & cx) {
         bool ok = true;
         if (target.is_string()) {
             std::uint32_t at = 0;
-            const std::size_t n = static_cast<string_object *>(target.as_heap())->text.size();
+            const std::size_t n = static_cast<string_object *>(target.as_heap())->length();
             ok = !(key == "length" || (object_object::array_index_key(key, at) && at < n));
         } else if (target.is_object_like()) {
             ok = c.delete_own_property(target, key);

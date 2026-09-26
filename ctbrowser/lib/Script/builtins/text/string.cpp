@@ -6,6 +6,12 @@
 // Everything shared - the argument helpers, namespace detail, and these
 // functions' declarations - is in ../internal.hpp; what String reaches into
 // RegExp for is in internal.hpp beside this.
+//
+// EVERY INDEX AND LENGTH HERE IS IN UTF-16 CODE UNITS, as 22.1.3 writes them,
+// over text stored as WTF-8 (script/utf16.hpp). A method is handed the
+// receiver's string_object, which measures itself once: an ASCII string's
+// unit index IS its byte index, and any other string answers through the
+// marks it keeps (value/base.hpp).
 
 #include "internal.hpp"
 
@@ -29,7 +35,24 @@ namespace {
 // body, which is what makes it impossible for the next method added here to
 // forget it: a body is handed the already-coerced string and never sees the
 // receiver at all.
-using text_body = std::function<value(context &, const std::string &, std::span<value>)>;
+//
+// A PRIMITIVE RECEIVER IS HANDED OVER AS ITSELF - the frame holds it, so it
+// outlives the call - which is no copy per call, and a string that has
+// measured its units stays measured across a loop of `s.charCodeAt(i)`.
+// Anything else is ToString'd into a string_object on the stack, which the
+// collector never sees.
+using text_body = std::function<value(context &, const string_object &, std::span<value>)>;
+
+[[nodiscard]] value with_this_text(context & c, const text_body & body, std::span<value> a) {
+    const value self = c.current_this();
+    if (self.is_string()) {
+        return body(c, *static_cast<const string_object *>(self.as_heap()), a);
+    }
+    const std::string before = c.current_stack();
+    const string_object text{detail::this_string(c)};
+    if (detail::threw_since(c, before)) { return value::undefined(); }
+    return body(c, text, a);
+}
 
 [[nodiscard]] native_fn on_text(std::string owner, text_body body) {
     return [owner = std::move(owner), body = std::move(body)](context & c,
@@ -38,10 +61,7 @@ using text_body = std::function<value(context &, const std::string &, std::span<
             c.throw_error("TypeError", owner + " called on null or undefined");
             return value::undefined();
         }
-        const std::string before = c.current_stack();
-        const std::string self = detail::this_string(c);
-        if (detail::threw_since(c, before)) { return value::undefined(); }
-        return body(c, self, a);
+        return with_this_text(c, body, a);
     };
 }
 
@@ -276,13 +296,65 @@ namespace {
     return cx.call(method, std::span<const value>{&subject, 1}, rx);
 }
 
-// StringIndexOf, 6.1.4.1: an empty search string is found at any position
+// StringIndexOf, 6.1.4.1, in UNITS: the first index at or after `from` where
+// `needle` occurs, or npos. An empty search string is found at any position
 // up to and including the length, which is what makes
 // `"abc".replaceAll("", "_")` "_a_b_c_".
-[[nodiscard]] std::size_t string_index_of(const std::string & s, const std::string & search,
-                                          std::size_t from) {
-    if (search.empty()) { return from <= s.size() ? from : std::string::npos; }
-    return s.find(search, from);
+//
+// A BYTE SEARCH STANDS IN FOR THE UNIT SEARCH whenever the needle holds no
+// lone surrogate: UTF-8 is self-synchronising, so a match of well-formed text
+// begins and ends on code point boundaries, and those are unit boundaries -
+// the one byte-to-unit conversion is at the hit. A needle WITH a lone
+// surrogate is the case no byte of the subject spells - `"\uD83D"` is half of
+// the four bytes of U+1F600 - and is searched as UTF-16.
+[[nodiscard]] std::size_t index_of(const string_object & s, std::string_view needle,
+                                   std::size_t from) {
+    if (from > s.length()) { return std::string::npos; }
+    if (needle.empty()) { return from; }
+    if (s.bytewise()) { return s.text.find(needle, from); }
+    // ponytail: a needle holding a lone surrogate converts the whole subject
+    // on every call, so split/replace by one is O(n * matches); keep a UTF-16
+    // copy on string_object if a page ever does that to a large text.
+    if (utf16::has_lone_surrogate(needle)) {
+        return wtf8_to_utf16(s.text).find(wtf8_to_utf16(needle), from);
+    }
+    const utf16::position at = s.locate(from);
+    std::size_t byte = at.byte;
+    // A well-formed needle cannot begin at a pair's low half: the next code
+    // point is the first place it can.
+    if (at.low_half) { (void)decode_utf8(s.text, byte); }
+    const std::size_t found = s.text.find(needle, byte);
+    return found == std::string::npos ? found : s.unit_index(found);
+}
+
+// The last index at or before `from` (at most the length) where `needle`
+// occurs - lastIndexOf's loop, 22.1.3.11 steps 9-11.
+[[nodiscard]] std::size_t last_index_of(const string_object & s, std::string_view needle,
+                                        std::size_t from) {
+    if (s.bytewise()) { return s.text.rfind(needle, from); }
+    if (needle.empty()) { return from; }
+    if (utf16::has_lone_surrogate(needle)) {
+        return wtf8_to_utf16(s.text).rfind(wtf8_to_utf16(needle), from);
+    }
+    // At a low half the latest a well-formed needle may start is its pair's
+    // first unit - which is exactly the byte locate answers.
+    const std::size_t found = s.text.rfind(needle, s.locate(from).byte);
+    return found == std::string::npos ? found : s.unit_index(found);
+}
+
+// Does `needle` occur at unit `at` exactly? startsWith and endsWith.
+[[nodiscard]] bool occurs_at(const string_object & s, std::string_view needle, std::size_t at) {
+    if (needle.empty()) { return at <= s.length(); }
+    if (s.bytewise()) {
+        return at <= s.text.size() && s.text.compare(at, needle.size(), needle) == 0;
+    }
+    if (utf16::has_lone_surrogate(needle)) {
+        const std::u16string hay = wtf8_to_utf16(s.text);
+        const std::u16string pin = wtf8_to_utf16(needle);
+        return at <= hay.size() && hay.compare(at, pin.size(), pin) == 0;
+    }
+    const utf16::position p = s.locate(at);
+    return !p.low_half && s.text.compare(p.byte, needle.size(), needle) == 0;
 }
 
 } // namespace
@@ -324,32 +396,31 @@ void install_string(context & cx) {
                        return dispatched;
                    }
                    if (detail::threw_since(c, before)) { return value::undefined(); }
-                   const std::string self = detail::this_string(c);
-                   if (detail::threw_since(c, before)) { return value::undefined(); }
-                   return body(c, self, a);
+                   return with_this_text(c, body, a);
                });
     };
-    text("charAt", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("charAt", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
         // A NEGATIVE POSITION IS OUT OF RANGE, not clamped to zero - that is
         // `at`'s job, not `charAt`'s. Clamping made `"abc".charAt(-1)` answer
         // "a" where the specification says "".
         const double i = integer_arg(c, a, 0);
-        if (!(i >= 0 && i < static_cast<double>(s.size()))) { return c.string(std::string{}); }
-        return c.string(std::string{s[static_cast<std::size_t>(i)]});
+        if (!(i >= 0 && i < static_cast<double>(s.length()))) { return c.string(std::string{}); }
+        return c.string(s.unit_text(static_cast<std::size_t>(i)));
     });
     // `at` is charAt that counts from the END for a negative index, which is
     // the whole reason to reach for it - `s.at(-1)` is the last character.
     // Arrays had it and strings did not, and the two are meant to match.
-    text("at", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("at", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
         // integer_arg, not num_at: a NaN index is 0 here, and casting it to
         // size_t instead is what hung the engine on `s.at(undefined)`.
         double i = integer_arg(c, a, 0);
-        if (i < 0) { i += static_cast<double>(s.size()); }
+        const auto length = static_cast<double>(s.length());
+        if (i < 0) { i += length; }
         // Written so a NaN could not survive it even if one arrived: the guard
         // is now a range CHECK rather than two comparisons that are both false
         // for NaN and fall through to an out-of-bounds read.
-        if (!(i >= 0 && i < static_cast<double>(s.size()))) { return value::undefined(); }
-        return c.string(std::string{s[static_cast<std::size_t>(i)]});
+        if (!(i >= 0 && i < length)) { return value::undefined(); }
+        return c.string(s.unit_text(static_cast<std::size_t>(i)));
     });
     // `toString` and `valueOf`, 22.1.3.28 and 22.1.3.35. Both exist so that
     // generic code written against "any value" works on a string: `String(x)`,
@@ -362,16 +433,16 @@ void install_string(context & cx) {
         return this_string_value(c, "String.prototype.toString");
     });
     // 22.1.3.36 String.prototype[@@iterator]: a String Iterator over the
-    // receiver's characters - BY BYTE, which is what `for (c of s)` and
-    // `[...s]` do here (context::iterable_values) and what string_basics pins;
-    // a code-point walk in one place and not the other would be a third
-    // answer. `length` is 0 and the name is "[Symbol.iterator]" (20.2.4.1).
+    // receiver's CODE POINTS (22.1.5.1) - a surrogate pair is one element and
+    // a lone surrogate one of its own - which is what `for (c of s)` and
+    // `[...s]` do too (context::iterable_values), so the three agree. `length`
+    // is 0 and the name is "[Symbol.iterator]" (20.2.4.1).
     {
         auto * iterator_fn = cx.allocate<native_object>(
             "[Symbol.iterator]",
             on_text("String.prototype[Symbol.iterator]",
-                    [](context & c, const std::string & s, std::span<value>) -> value {
-                        const value list = c.iterable_values(c.string(s));
+                    [](context & c, const string_object & s, std::span<value>) -> value {
+                        const value list = c.iterable_values(c.string(s.text));
                         return detail::list_iterator(c, list, "String Iterator");
                     }));
         detail::install_arity(cx, iterator_fn, 0);
@@ -381,16 +452,25 @@ void install_string(context & cx) {
     method(cx, string_proto, "valueOf", 0, [](context & c, std::span<value>) {
         return this_string_value(c, "String.prototype.valueOf");
     });
-    text("codePointAt", 1, [](context & c, const std::string & str, std::span<value> a) -> value {
+    text("codePointAt", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
         // Out of range - including NEGATIVE, which used to clamp to zero and
         // answer with the first character - is undefined.
         const double raw = integer_arg(c, a, 0);
-        if (!(raw >= 0 && raw < static_cast<double>(str.size()))) { return value::undefined(); }
+        const std::size_t length = s.length();
+        if (!(raw >= 0 && raw < static_cast<double>(length))) { return value::undefined(); }
+        // CodePointAt, 11.1.4: a lead surrogate followed by a trail is the
+        // pair's code point; anything else is the unit itself, a lone half
+        // included.
         const auto i = static_cast<std::size_t>(raw);
-        // BYTES, not code points - strings are bytes in this engine
-        // (docs/script.md), so this agrees with charCodeAt rather than
-        // pretending to a UTF-16 view that nothing else here has.
-        return value::number(static_cast<double>(static_cast<unsigned char>(str[i])));
+        const char16_t first = s.unit(i);
+        if (first >= 0xD800 && first <= 0xDBFF && i + 1 < length) {
+            const char16_t second = s.unit(i + 1);
+            if (second >= 0xDC00 && second <= 0xDFFF) {
+                return value::number(
+                    static_cast<double>(0x10000 + ((first - 0xD800) << 10) + (second - 0xDC00)));
+            }
+        }
+        return value::number(static_cast<double>(first));
     });
     // `normalize` is the IDENTITY here, and says so: strings are bytes, so
     // there is no decomposition to compose. Returning the string unchanged is
@@ -416,7 +496,8 @@ void install_string(context & cx) {
         return 0xD000u | (static_cast<std::uint32_t>(b1 & 0x3Fu) << 6) | (b2 & 0x3Fu);
     };
     text("isWellFormed", 0,
-         [wtf8_surrogate](context &, const std::string & s, std::span<value>) -> value {
+         [wtf8_surrogate](context &, const string_object & str, std::span<value>) -> value {
+             const std::string & s = str.text;
              for (std::size_t i = 0; i < s.size(); ++i) {
                  const std::uint32_t cu = wtf8_surrogate(s, i);
                  if (cu == 0) { continue; }
@@ -427,7 +508,8 @@ void install_string(context & cx) {
              return value::boolean(true);
          });
     text("toWellFormed", 0,
-         [wtf8_surrogate](context & c, const std::string & s, std::span<value>) -> value {
+         [wtf8_surrogate](context & c, const string_object & str, std::span<value>) -> value {
+             const std::string & s = str.text;
              std::string out;
              for (std::size_t i = 0; i < s.size(); ++i) {
                  const std::uint32_t cu = wtf8_surrogate(s, i);
@@ -447,7 +529,7 @@ void install_string(context & cx) {
              }
              return c.string(out);
          });
-    text("normalize", 0, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("normalize", 0, [](context & c, const string_object & s, std::span<value> a) -> value {
         const std::string before = c.current_stack();
         const std::string form = has_index(a, 0) ? string_arg(c, a[0]) : std::string{"NFC"};
         if (detail::threw_since(c, before)) { return value::undefined(); }
@@ -456,10 +538,11 @@ void install_string(context & cx) {
                           "The normalization form should be one of NFC, NFD, NFKC, NFKD");
             return c.string(std::string{});
         }
-        return c.string(s);
+        return c.string(s.text);
     });
     text("localeCompare", 1,
-         [](context & c, const std::string & self, std::span<value> a) -> value {
+         [](context & c, const string_object & receiver, std::span<value> a) -> value {
+             const std::string & self = receiver.text;
              // Byte order, which is the locale this engine has. The argument is
              // ToString'd through `arg_at` and not `str_at`: a MISSING one is
              // `undefined`, and ToString(undefined) is "undefined" - so
@@ -467,21 +550,18 @@ void install_string(context & cx) {
              const std::string other = string_arg(c, arg_at(a, 0));
              return value::number(self < other ? -1 : (self == other ? 0 : 1));
          });
-    text("charCodeAt", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("charCodeAt", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
         // Out of range - including NEGATIVE - is NaN, not the first character.
         const std::string before = c.current_stack();
         const double i = integer_arg(c, a, 0);
         if (detail::threw_since(c, before)) { return value::undefined(); }
-        if (!(i >= 0 && i < static_cast<double>(s.size()))) { return value::number(std::nan("")); }
-        // A BYTE, like `length` and charAt and every other index here: a
-        // UTF-16 answer from this one method alone made `s.charAt(i)` and
-        // `s.charCodeAt(i)` describe different characters, and code that walks
-        // a string with both - testharnessreport.js's quote(), which is how
-        // every WPT result leaves the page - wrote half a character and an
-        // invalid byte after it. UTF-16 comes for every index at once, or not
-        // at all (docs/script.md, "The UTF-16 gap").
-        return value::number(
-            static_cast<double>(static_cast<unsigned char>(s[static_cast<std::size_t>(i)])));
+        if (!(i >= 0 && i < static_cast<double>(s.length()))) {
+            return value::number(std::nan(""));
+        }
+        // A CODE UNIT, as `length` and charAt and every other index here count
+        // them - they came together, because one of them alone made
+        // `s.charAt(i)` and `s.charCodeAt(i)` describe different characters.
+        return value::number(static_cast<double>(s.unit(static_cast<std::size_t>(i))));
     });
     // ALL FIVE OF THESE TAKE A POSITION, and all five used to ignore it - so
     // `"abc".indexOf("a", 1)` answered 0 where the specification says -1, and
@@ -499,16 +579,16 @@ void install_string(context & cx) {
     // `valueOf` - and the position went through the STATIC `context::to_number`,
     // which cannot run one at all, so `"abc".indexOf("c", {valueOf: () => 1})`
     // read NaN, became 0, and could not be told from `indexOf("c")`.
-    text("indexOf", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("indexOf", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
         const std::string before = c.current_stack();
         const std::string needle = string_arg(c, arg_at(a, 0));
         if (detail::threw_since(c, before)) { return value::undefined(); }
         const auto from = static_cast<std::size_t>(
-            std::clamp(integer_arg(c, a, 1), 0.0, static_cast<double>(s.size())));
-        const std::size_t found = s.find(needle, from);
+            std::clamp(integer_arg(c, a, 1), 0.0, static_cast<double>(s.length())));
+        const std::size_t found = index_of(s, needle, from);
         return value::number(found == std::string::npos ? -1 : static_cast<double>(found));
     });
-    text("lastIndexOf", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("lastIndexOf", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
         const std::string before = c.current_stack();
         const std::string needle = string_arg(c, arg_at(a, 0));
         if (detail::threw_since(c, before)) { return value::undefined(); }
@@ -518,13 +598,12 @@ void install_string(context & cx) {
         // line rather than a special case (22.1.3.10 steps 4 and 5).
         const double raw = c.to_number_value(arg_at(a, 1));
         const double at = std::isnan(raw) ? std::numeric_limits<double>::infinity() : raw;
-        const auto last = at >= static_cast<double>(s.size())
-                              ? std::string::npos
-                              : static_cast<std::size_t>(std::max(0.0, at));
-        const std::size_t found = s.rfind(needle, last);
+        const auto last = static_cast<std::size_t>(
+            std::clamp(std::trunc(at), 0.0, static_cast<double>(s.length())));
+        const std::size_t found = last_index_of(s, needle, last);
         return value::number(found == std::string::npos ? -1 : static_cast<double>(found));
     });
-    text("includes", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("includes", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
         const std::string before = c.current_stack();
         if (is_regexp_value(c, arg_at(a, 0))) {
             c.throw_error("TypeError",
@@ -536,10 +615,10 @@ void install_string(context & cx) {
         const std::string needle = string_arg(c, arg_at(a, 0));
         if (detail::threw_since(c, before)) { return value::undefined(); }
         const auto from = static_cast<std::size_t>(
-            std::clamp(integer_arg(c, a, 1), 0.0, static_cast<double>(s.size())));
-        return value::boolean(s.find(needle, from) != std::string::npos);
+            std::clamp(integer_arg(c, a, 1), 0.0, static_cast<double>(s.length())));
+        return value::boolean(index_of(s, needle, from) != std::string::npos);
     });
-    text("startsWith", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("startsWith", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
         const std::string before = c.current_stack();
         if (is_regexp_value(c, arg_at(a, 0))) {
             c.throw_error("TypeError",
@@ -551,10 +630,10 @@ void install_string(context & cx) {
         const std::string needle = string_arg(c, arg_at(a, 0));
         if (detail::threw_since(c, before)) { return value::undefined(); }
         const auto from = static_cast<std::size_t>(
-            std::clamp(integer_arg(c, a, 1), 0.0, static_cast<double>(s.size())));
-        return value::boolean(std::string_view{s}.substr(from).starts_with(needle));
+            std::clamp(integer_arg(c, a, 1), 0.0, static_cast<double>(s.length())));
+        return value::boolean(occurs_at(s, needle, from));
     });
-    text("endsWith", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("endsWith", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
         const std::string before = c.current_stack();
         if (is_regexp_value(c, arg_at(a, 0))) {
             c.throw_error("TypeError",
@@ -567,40 +646,42 @@ void install_string(context & cx) {
         if (detail::threw_since(c, before)) { return value::undefined(); }
         // endsWith takes an END position, not a start: `"abc".endsWith("b", 2)`
         // asks whether the first two characters end in "b".
-        const double end = has_index(a, 1) ? integer_arg(c, a, 1) : static_cast<double>(s.size());
-        const auto stop =
-            static_cast<std::size_t>(std::clamp(end, 0.0, static_cast<double>(s.size())));
-        return value::boolean(std::string_view{s}.substr(0, stop).ends_with(needle));
+        const auto length = static_cast<double>(s.length());
+        const double end = has_index(a, 1) ? integer_arg(c, a, 1) : length;
+        const auto stop = static_cast<std::size_t>(std::clamp(end, 0.0, length));
+        const std::size_t units = utf16::length(needle);
+        return value::boolean(units <= stop && occurs_at(s, needle, stop - units));
     });
-    text("slice", 2, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("slice", 2, [](context & c, const string_object & s, std::span<value> a) -> value {
         // Each ToIntegerOrInfinity is `?`: a throw from the first ends the
         // method before the second argument is coerced (its valueOf unrun).
         const detail::unwind_watch watch{c};
-        const std::size_t from = clamp_index(integer_arg(c, a, 0), s.size());
+        const std::size_t length = s.length();
+        const std::size_t from = clamp_index(integer_arg(c, a, 0), length);
         if (watch.threw()) { return value::undefined(); }
         // has_index: `slice(1, undefined)` ends at the LENGTH, not at 0.
-        const std::size_t to =
-            has_index(a, 1) ? clamp_index(integer_arg(c, a, 1), s.size()) : s.size();
-        return c.string(to > from ? s.substr(from, to - from) : std::string{});
+        const std::size_t to = has_index(a, 1) ? clamp_index(integer_arg(c, a, 1), length) : length;
+        return c.string(s.slice(from, to));
     });
-    text("substring", 2, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("substring", 2, [](context & c, const string_object & s, std::span<value> a) -> value {
         // substring CLAMPS a negative to zero, unlike slice which counts from
         // the end - that difference between the two is the whole reason both
         // exist - and it SWAPS its arguments if they are backwards. has_index
         // so an explicit `undefined` end still means "to the end" rather than
         // zero.
         const detail::unwind_watch watch{c};
+        const std::size_t length = s.length();
         std::size_t from = static_cast<std::size_t>(std::max(0.0, integer_arg(c, a, 0)));
         if (watch.threw()) { return value::undefined(); }
         std::size_t to = has_index(a, 1)
                              ? static_cast<std::size_t>(std::max(0.0, integer_arg(c, a, 1)))
-                             : s.size();
-        from = std::min(from, s.size());
-        to = std::min(to, s.size());
+                             : length;
+        from = std::min(from, length);
+        to = std::min(to, length);
         if (from > to) { std::swap(from, to); }
-        return c.string(s.substr(from, to - from));
+        return c.string(s.slice(from, to));
     });
-    text("substr", 2, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("substr", 2, [](context & c, const string_object & s, std::span<value> a) -> value {
         // LEGACY, and present because real code still uses it - Phaser 4 calls
         // it fourteen times and died on the first. It is Annex B rather than
         // the main specification, which is why it was missed: it takes a START
@@ -615,7 +696,7 @@ void install_string(context & cx) {
         const detail::unwind_watch watch{c};
         const double raw = integer_arg(c, a, 0);
         if (watch.threw()) { return value::undefined(); } // the length is not coerced
-        const auto size = static_cast<double>(s.size());
+        const auto size = static_cast<double>(s.length());
         const double start = raw < 0 ? std::max(size + raw, 0.0) : std::min(raw, size);
         const auto from = static_cast<std::size_t>(start);
         // A missing length means "to the end"; a negative one means nothing.
@@ -623,13 +704,13 @@ void install_string(context & cx) {
         double want = has_index(a, 1) ? integer_arg(c, a, 1) : size - start;
         if (std::isnan(want) || want < 0) { want = 0; }
         const auto count = static_cast<std::size_t>(std::min(want, size - start));
-        return c.string(s.substr(from, count));
+        return c.string(s.slice(from, from + count));
     });
     // 22.1.3.23. A separator with @@split - every RegExp - answers through it
     // (regexp.cpp's [@@split] is the specification's sticky walk); the string
     // form is here.
     text_after_dispatch("split", 2, "@@split", false,
-                        [](context & c, const std::string & s, std::span<value> a) -> value {
+                        [](context & c, const string_object & s, std::span<value> a) -> value {
                             const std::string before = c.current_stack();
                             value out = c.make_array();
                             const context::rooted keep{c, out};
@@ -652,25 +733,29 @@ void install_string(context & cx) {
                             if (detail::threw_since(c, before)) { return value::undefined(); }
                             if (limit == 0) { return out; }
                             if (separator.is_undefined()) {
-                                result->items.push_back(c.string(s));
+                                result->items.push_back(c.string(s.text));
                                 return out;
                             }
+                            // BY CODE UNIT for the empty separator: a pair is
+                            // two elements, each its lone half.
+                            const std::size_t length = s.length();
                             if (sep.empty()) {
-                                for (const char ch : s) {
+                                for (std::size_t i = 0; i < length; ++i) {
                                     if (result->items.size() >= limit) { break; }
-                                    result->items.push_back(c.string(std::string{ch}));
+                                    result->items.push_back(c.string(s.unit_text(i)));
                                 }
                                 return out;
                             }
                             std::size_t at = 0;
+                            const std::size_t step = utf16::length(sep);
                             while (result->items.size() < limit) {
-                                const std::size_t found = s.find(sep, at);
+                                const std::size_t found = index_of(s, sep, at);
                                 if (found == std::string::npos) {
-                                    result->items.push_back(c.string(s.substr(at)));
+                                    result->items.push_back(c.string(s.slice(at, length)));
                                     break;
                                 }
-                                result->items.push_back(c.string(s.substr(at, found - at)));
-                                at = found + sep.size();
+                                result->items.push_back(c.string(s.slice(at, found)));
+                                at = found + step;
                             }
                             return out;
                         });
@@ -684,7 +769,7 @@ void install_string(context & cx) {
     // '|')` searched for the literal text of the regex object and, finding
     // none, returned the string unchanged. Silent, and it is the commonest use
     // of the method - acorn builds its keyword tables with exactly that call.
-    const auto replace_string = [](context & c, const std::string & self, std::span<value> a,
+    const auto replace_string = [](context & c, const string_object & self, std::span<value> a,
                                    bool all) -> value {
         const std::string before = c.current_stack();
         // Steps 3-8: ToString(searchValue), then IsCallable(replaceValue), then
@@ -698,16 +783,19 @@ void install_string(context & cx) {
             tpl = string_arg(c, replace_value);
             if (detail::threw_since(c, before)) { return value::undefined(); }
         }
+        // Every position is in units: what the replacer is handed, and where
+        // GetSubstitution cuts `$`` and `$'`.
+        const std::size_t search_length = utf16::length(search);
         std::vector<std::size_t> positions;
-        const std::size_t advance = std::max<std::size_t>(1, search.size());
-        for (std::size_t at = string_index_of(self, search, 0); at != std::string::npos;
-             at = string_index_of(self, search, at + advance)) {
+        const std::size_t advance = std::max<std::size_t>(1, search_length);
+        for (std::size_t at = index_of(self, search, 0); at != std::string::npos;
+             at = index_of(self, search, at + advance)) {
             positions.push_back(at);
             if (!all) { break; }
         }
         std::string out;
         std::size_t end_of_last = 0;
-        const value subject = c.string(self);
+        const value subject = c.string(self.text);
         const context::rooted keep{c, subject};
         for (const std::size_t at : positions) {
             std::string replacement;
@@ -718,39 +806,37 @@ void install_string(context & cx) {
                 if (detail::threw_since(c, before)) { return value::undefined(); }
                 replacement = string_arg(c, produced);
                 if (detail::threw_since(c, before)) { return value::undefined(); }
-            } else if (!get_substitution(c, search, self, at, {}, value::undefined(), tpl,
+            } else if (!get_substitution(c, search, self.text, at, {}, value::undefined(), tpl,
                                          replacement)) {
                 return value::undefined();
             }
-            const std::size_t prefix = at - end_of_last;
-            if (!check_string_growth(c, out.size(), prefix)) { return value::undefined(); }
-            out.append(self, end_of_last, prefix);
+            const std::string prefix = self.slice(end_of_last, at);
+            if (!check_string_growth(c, out.size(), prefix.size())) { return value::undefined(); }
+            out += prefix;
             if (!check_string_growth(c, out.size(), replacement.size())) {
                 return value::undefined();
             }
             out += replacement;
-            end_of_last = at + search.size();
+            end_of_last = at + search_length;
         }
-        if (end_of_last < self.size()) {
-            if (!check_string_growth(c, out.size(), self.size() - end_of_last)) {
-                return value::undefined();
-            }
-            out.append(self, end_of_last);
-        }
+        const std::string rest = self.slice(end_of_last, self.length());
+        if (!check_string_growth(c, out.size(), rest.size())) { return value::undefined(); }
+        out += rest;
         return c.string(out);
     };
 
     text_after_dispatch(
         "replace", 2, "@@replace", false,
-        [replace_string](context & c, const std::string & s, std::span<value> a) -> value {
+        [replace_string](context & c, const string_object & s, std::span<value> a) -> value {
             return replace_string(c, s, a, false);
         });
     // `match` - the single commonest thing done with a regular expression.
     // 22.1.3.13: the argument's own @@match, else RegExpCreate and the new
     // pattern's @@match, which is where the `g` / no-`g` shapes are decided.
     text_after_dispatch("match", 1, "@@match", false,
-                        [](context & c, const std::string & self, std::span<value> a) -> value {
-                            return create_and_invoke(c, arg_at(a, 0), nullptr, "@@match", self);
+                        [](context & c, const string_object & self, std::span<value> a) -> value {
+                            return create_and_invoke(c, arg_at(a, 0), nullptr, "@@match",
+                                                     self.text);
                         });
     // `search` - WHERE a pattern matches, or -1. It is the smallest of the
     // regular-expression string methods and it was the one missing, which is
@@ -762,36 +848,37 @@ void install_string(context & cx) {
     // canvas simply showed the clear colour. One missing method, and a whole
     // renderer draws nothing.
     text_after_dispatch("search", 1, "@@search", false,
-                        [](context & c, const std::string & self, std::span<value> a) -> value {
-                            return create_and_invoke(c, arg_at(a, 0), nullptr, "@@search", self);
+                        [](context & c, const string_object & self, std::span<value> a) -> value {
+                            return create_and_invoke(c, arg_at(a, 0), nullptr, "@@search",
+                                                     self.text);
                         });
     // 22.1.3.14 matchAll: the non-global refusal first, then the argument's
     // @@matchAll, then RegExpCreate with "g" - which is what makes
     // `"aaa".matchAll("a")` three matches rather than the first forever.
     text_after_dispatch("matchAll", 1, "@@matchAll", true,
-                        [](context & c, const std::string & self, std::span<value> a) -> value {
-                            return create_and_invoke(c, arg_at(a, 0), "g", "@@matchAll", self);
+                        [](context & c, const string_object & self, std::span<value> a) -> value {
+                            return create_and_invoke(c, arg_at(a, 0), "g", "@@matchAll", self.text);
                         });
     text_after_dispatch(
         "replaceAll", 2, "@@replace", true,
-        [replace_string](context & c, const std::string & s, std::span<value> a) -> value {
+        [replace_string](context & c, const string_object & s, std::span<value> a) -> value {
             return replace_string(c, s, a, true);
         });
     // UNICODE'S DEFAULT CASE CONVERSION, from a table generated off the pinned
     // Unicode release (case_mapping.cpp says why that is not the host
     // dependence the ASCII-only fold was avoiding): `"Straße".toUpperCase()`
     // is "STRASSE" and a final Σ lowercases to ς, as in every browser.
-    text("toUpperCase", 0, [](context & c, const std::string & s, std::span<value>) -> value {
-        return c.string(unicode_case(s, true));
+    text("toUpperCase", 0, [](context & c, const string_object & s, std::span<value>) -> value {
+        return c.string(unicode_case(s.text, true));
     });
-    text("toLowerCase", 0, [](context & c, const std::string & s, std::span<value>) -> value {
-        return c.string(unicode_case(s, false));
+    text("toLowerCase", 0, [](context & c, const string_object & s, std::span<value>) -> value {
+        return c.string(unicode_case(s.text, false));
     });
-    text("trim", 0, [](context & c, const std::string & s, std::span<value>) -> value {
+    text("trim", 0, [](context & c, const string_object & s, std::span<value>) -> value {
         std::size_t from = 0;
         std::size_t to = 0;
-        trim_bounds(s, true, true, from, to);
-        return c.string(s.substr(from, to - from));
+        trim_bounds(s.text, true, true, from, to);
+        return c.string(s.text.substr(from, to - from));
     });
     // 22.1.3.16. THE COUNT IS ToIntegerOrInfinity AND THEN A RANGE CHECK, not
     // a clamp: `"x".repeat(-1)` and `"".repeat(Infinity)` are each a RangeError
@@ -799,7 +886,8 @@ void install_string(context & cx) {
     // clamp could not see the case that mattered - an object count coerces to
     // NaN through the static to_number, `std::clamp` passes NaN straight
     // through, and the cast to size_t is undefined behaviour. See integer_arg.
-    text("repeat", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("repeat", 1, [](context & c, const string_object & str, std::span<value> a) -> value {
+        const std::string & s = str.text;
         const double n = integer_arg(c, a, 0);
         if (n < 0 || std::isinf(n)) {
             c.throw_error("RangeError", "Invalid count value");
@@ -825,42 +913,47 @@ void install_string(context & cx) {
     // observable-operations.js asserts exactly that sequence of valueOf and
     // toString calls. Coercing the filler first, as this did, gets the answer
     // right and the log wrong.
-    const auto pad = [](context & c, const std::string & self, std::span<value> a, bool at_start) {
+    const auto pad = [](context & c, const string_object & self, std::span<value> a,
+                        bool at_start) {
         const double want = integer_arg(c, a, 0);
+        const std::size_t length = self.length();
         // ToLength: negative and NaN are 0, so there is nothing to do. This is
         // the line `'abc'.padStart(NaN, 'def')` needed - it used to cast NaN to
         // a size_t and loop appending until the process died.
-        if (!(want > static_cast<double>(self.size()))) { return c.string(self); }
+        if (!(want > static_cast<double>(length))) { return c.string(self.text); }
         if (want > max_string_length) {
             c.throw_error("RangeError", "Invalid string length");
             return c.string("");
         }
-        const std::string filler = has_index(a, 1) ? string_arg(c, a[1]) : " ";
-        if (filler.empty()) { return c.string(self); }
-        const auto fill_length = static_cast<std::size_t>(want) - self.size();
+        const string_object filler{has_index(a, 1) ? string_arg(c, a[1]) : std::string{" "}};
+        const std::size_t unit = filler.length();
+        if (unit == 0) { return c.string(self.text); }
+        // The filler repeated and CUT IN UNITS: `"abc".padEnd(6, "\u{1F4A9}")`
+        // ends in a lone lead surrogate, as the specification's does.
+        const auto fill_length = static_cast<std::size_t>(want) - length;
         std::string filled;
         filled.reserve(fill_length);
-        while (filled.size() < fill_length) { filled += filler; }
-        filled.resize(fill_length);
-        return c.string(at_start ? filled + self : self + filled);
+        for (std::size_t n = fill_length / unit; n > 0; --n) { filled += filler.text; }
+        filled += filler.slice(0, fill_length % unit);
+        return c.string(at_start ? filled + self.text : self.text + filled);
     };
-    text("padStart", 1, [pad](context & c, const std::string & s, std::span<value> a) -> value {
+    text("padStart", 1, [pad](context & c, const string_object & s, std::span<value> a) -> value {
         return pad(c, s, a, true);
     });
-    text("padEnd", 1, [pad](context & c, const std::string & s, std::span<value> a) -> value {
+    text("padEnd", 1, [pad](context & c, const string_object & s, std::span<value> a) -> value {
         return pad(c, s, a, false);
     });
-    text("trimStart", 0, [](context & c, const std::string & s, std::span<value>) -> value {
+    text("trimStart", 0, [](context & c, const string_object & s, std::span<value>) -> value {
         std::size_t from = 0;
         std::size_t to = 0;
-        trim_bounds(s, true, false, from, to);
-        return c.string(s.substr(from, to - from));
+        trim_bounds(s.text, true, false, from, to);
+        return c.string(s.text.substr(from, to - from));
     });
-    text("trimEnd", 0, [](context & c, const std::string & s, std::span<value>) -> value {
+    text("trimEnd", 0, [](context & c, const string_object & s, std::span<value>) -> value {
         std::size_t from = 0;
         std::size_t to = 0;
-        trim_bounds(s, false, true, from, to);
-        return c.string(s.substr(from, to - from));
+        trim_bounds(s.text, false, true, from, to);
+        return c.string(s.text.substr(from, to - from));
     });
     // Annex B.2.2.15-16: trimLeft and trimRight are not copies, they ARE
     // trimStart and trimEnd - the same function objects, so their `name` reads
@@ -889,7 +982,7 @@ void install_string(context & cx) {
     for (const html_method m : html_methods) {
         const std::string_view attribute = m.attribute;
         text(m.name, attribute.empty() ? 0 : 1,
-             [m, attribute](context & c, const std::string & s, std::span<value> a) -> value {
+             [m, attribute](context & c, const string_object & s, std::span<value> a) -> value {
                  std::string out = std::string{"<"} + m.tag;
                  if (!attribute.empty()) {
                      const std::string before = c.current_stack();
@@ -908,7 +1001,7 @@ void install_string(context & cx) {
                      out += '"';
                  }
                  out += '>';
-                 out += s;
+                 out += s.text;
                  out += "</";
                  out += m.tag;
                  out += '>';
@@ -922,15 +1015,17 @@ void install_string(context & cx) {
     // exactly the host dependence core/algorithms.hpp exists to prevent. With
     // no ECMA-402 there is no locale to tailor for (Turkish dotless i), and
     // 22.1.3.26 lets the locale forms answer the default.
-    text("toLocaleUpperCase", 0, [](context & c, const std::string & s, std::span<value>) -> value {
-        return c.string(unicode_case(s, true));
-    });
-    text("toLocaleLowerCase", 0, [](context & c, const std::string & s, std::span<value>) -> value {
-        return c.string(unicode_case(s, false));
-    });
-    text("concat", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+    text("toLocaleUpperCase", 0,
+         [](context & c, const string_object & s, std::span<value>) -> value {
+             return c.string(unicode_case(s.text, true));
+         });
+    text("toLocaleLowerCase", 0,
+         [](context & c, const string_object & s, std::span<value>) -> value {
+             return c.string(unicode_case(s.text, false));
+         });
+    text("concat", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
         const std::string before = c.current_stack();
-        std::string out = s;
+        std::string out = s.text;
         for (std::size_t i = 0; i < a.size(); ++i) {
             out += string_arg(c, a[i]);
             if (detail::threw_since(c, before)) { return value::undefined(); }

@@ -558,11 +558,9 @@ std::partial_ordering context::compare_relational(value a, value b) {
     if (pa.is_string() && pb.is_string()) {
         const std::string & x = static_cast<string_object *>(pa.as_heap())->text;
         const std::string & y = static_cast<string_object *>(pb.as_heap())->text;
-        // Byte order. For ASCII that IS code-unit order, and it parts company
-        // with the specification only on non-BMP text, where UTF-16 sorts
-        // surrogates below U+E000 and UTF-8 does not - the same representation
-        // gap docs/script.md records for `length` and `charCodeAt`.
-        const int r = x.compare(y);
+        // CODE UNIT order (7.2.13 step 3), which UTF-8's byte order is not
+        // once a surrogate pair meets U+E000-U+FFFF - utf16::compare.
+        const int r = utf16::compare(x, y);
         return r < 0   ? std::partial_ordering::less
                : r > 0 ? std::partial_ordering::greater
                        : std::partial_ordering::equivalent;

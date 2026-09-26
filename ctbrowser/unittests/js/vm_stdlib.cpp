@@ -205,8 +205,8 @@ void test_string_statics() {
     expect_result("return String.fromCharCode(104, 105);", "hi");
     expect_result("return String.fromCharCode.apply(null, [97, 98, 99]);", "abc");
     expect_result("return String(42);", "42");
-    // above 0x7F encodes as UTF-8, because strings here are bytes
-    expect_result("return String.fromCharCode(233).length;", "2");
+    // one code unit, whatever its UTF-8 is
+    expect_result("return String.fromCharCode(233).length;", "1");
 }
 
 // btoa and atob are BYTE oriented: btoa's argument is a binary string of values

@@ -24,13 +24,13 @@ int main() {
             Object.is(p[5], -0) + '|' + JSON.stringify(p);
     )JS",
                   R"(true|true|true|true|[{"a":[]},null,true,false,"x",0])");
-    // These are the original byte-string and from_chars deviations, not V8's.
+    // A pair is two units, a lone surrogate one; the from_chars cases are V8's.
     expect_result(R"JS(
         return JSON.parse('"\\ud83d\\ude00"').length + '|' +
             JSON.parse('"\\ud800"').length + '|' + JSON.parse('1e400') + '|' +
             Object.is(JSON.parse('-1e-400'), 0);
     )JS",
-                  "4|3|0|true");
+                  "2|1|0|true");
 
     expect_result(R"JS(
         const seen = [];

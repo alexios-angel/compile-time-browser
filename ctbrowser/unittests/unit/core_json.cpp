@@ -65,11 +65,12 @@ int main() {
     CHECK_EQ(std::get<std::string>(parsed(R"("a\u0000b")").data), (std::string{"a\0b", 3}));
     CHECK_EQ(std::get<std::string>(parsed(R"("\u0041\u00e9\u20AC\ud83d\ude00")").data),
              "A\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80");
-    CHECK_EQ(std::get<std::string>(parsed(R"("\ud800\u0041\udc00")").data), "\xEF\xBF\xBD"
+    // A lone surrogate is kept as its WTF-8, which is what a JS string holds.
+    CHECK_EQ(std::get<std::string>(parsed(R"("\ud800\u0041\udc00")").data), "\xED\xA0\x80"
                                                                             "A"
-                                                                            "\xEF\xBF\xBD");
+                                                                            "\xED\xB0\x80");
     CHECK_EQ(std::get<std::string>(parsed(R"("\ud800\ud800\udc00")").data),
-             "\xEF\xBF\xBD\xF0\x90\x80\x80");
+             "\xED\xA0\x80\xF0\x90\x80\x80");
     // The original reader passes raw bytes through, including malformed UTF-8.
     CHECK_EQ(std::get<std::string>(parsed("\"\xC3\xA9\xFF\xED\xA0\x80\"").data),
              "\xC3\xA9\xFF\xED\xA0\x80");

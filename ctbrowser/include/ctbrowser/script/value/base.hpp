@@ -14,6 +14,7 @@
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/core/symbol.hpp>
+#include <ctbrowser/script/utf16.hpp>
 
 // The JS value, in one 64-bit word: NaN-boxed, so every value is a machine
 // word passed in a register, with no allocation to represent a number.
@@ -187,9 +188,65 @@ inline bool value::is_kind(heap_kind k) const noexcept {
     return is_heap() && as_heap()->kind == k;
 }
 
+// A mark string_object keeps every `utf16_stride` code units: the code point
+// holding unit k * utf16_stride, by its first byte and its first unit (one
+// less than k * utf16_stride when that unit is a pair's low half).
+struct utf16_mark {
+    std::uint32_t byte;
+    std::uint32_t unit;
+};
+inline constexpr std::size_t utf16_stride = 32;
+
+// A JS STRING: UTF-16 code units, stored as their WTF-8 in `text` (see
+// script/utf16.hpp for why the storage is not UTF-16).
+//
+// `text` never changes once the string exists, so what the members below
+// measure is measured ONCE and kept: the length in units on first use, and -
+// for a string that is not every-byte-one-unit - a mark every 32 units on the
+// first indexed read, so `s[i]` walks at most 32 code points from the nearest.
+// An ASCII string, which is nearly every string a page makes, pays one scan in
+// its life and answers every index from its bytes after that. The marks cost
+// eight bytes per 32 units, and only a non-ASCII string that is indexed has
+// them.
 struct string_object final : heap_object {
     std::string text;
     explicit string_object(std::string s) : heap_object(heap_kind::string), text(std::move(s)) {}
+
+    // The length in UTF-16 code units - what `length` answers.
+    [[nodiscard]] std::size_t length() const {
+        if (units_ == unmeasured) { units_ = utf16::length(text); }
+        return units_;
+    }
+    // Is every byte one unit? Then an index into `text` IS a unit index, and
+    // nothing below decodes.
+    [[nodiscard]] bool bytewise() const { return length() == text.size(); }
+    // Where unit `i` (at most the length) lives in `text`.
+    [[nodiscard]] utf16::position locate(std::size_t i) const;
+    // The unit index of byte offset `byte`, which begins a code point.
+    [[nodiscard]] std::size_t unit_index(std::size_t byte) const;
+    // Code unit `i`, which must be below the length.
+    [[nodiscard]] char16_t unit(std::size_t i) const {
+        if (bytewise()) { return static_cast<char16_t>(static_cast<unsigned char>(text[i])); }
+        return utf16::unit_at(text, locate(i));
+    }
+    // The one-unit string at `i` - what `s[i]` and charAt answer.
+    [[nodiscard]] std::string unit_text(std::size_t i) const {
+        if (bytewise()) { return text.substr(i, 1); }
+        return utf16::unit_text(unit(i));
+    }
+    // Units [from, to) as WTF-8, a split pair leaving its lone half; empty
+    // unless from < to <= length().
+    [[nodiscard]] std::string slice(std::size_t from, std::size_t to) const {
+        if (from >= to) { return {}; }
+        if (bytewise()) { return text.substr(from, to - from); }
+        return utf16::slice(text, locate(from), locate(to));
+    }
+
+private:
+    static constexpr std::size_t unmeasured = static_cast<std::size_t>(-1);
+    [[nodiscard]] const utf16_mark * marks() const;
+    mutable std::size_t units_ = unmeasured;
+    mutable std::unique_ptr<utf16_mark[]> marks_;
 };
 
 // The spelling that marks a property key as a SYMBOL rather than a string:

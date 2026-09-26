@@ -338,12 +338,17 @@ value context::iterable_values(value v) {
     // nothing. Callers must not mutate what they get.
     if (v.is_array()) { return v; }
     if (v.is_string()) {
-        // A string iterates by CHARACTER. The index loop already did this through
-        // `length`, and doing it here too means spread and for-of agree.
+        // A string iterates by CODE POINT (22.1.5.1): a surrogate pair is one
+        // element and a lone surrogate one of its own - exactly the WTF-8
+        // sequences the text is made of, one decode_utf8 step each. Spread and
+        // for-of both come here, so they agree.
         value out = make_array();
         auto * items = static_cast<array_object *>(out.as_heap());
-        for (const char c : static_cast<string_object *>(v.as_heap())->text) {
-            items->items.push_back(string(std::string{c}));
+        const std::string text = static_cast<string_object *>(v.as_heap())->text;
+        for (std::size_t at = 0; at < text.size();) {
+            const std::size_t from = at;
+            (void)decode_utf8(text, at);
+            items->items.push_back(string(text.substr(from, at - from)));
         }
         return out;
     }

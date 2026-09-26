@@ -152,11 +152,9 @@ struct json_reader {
                         at = saved;
                     }
                 }
-                // A LONE SURROGATE cannot be spelled in UTF-8 and a string here
-                // is UTF-8 bytes, so it becomes U+FFFD rather than an
-                // ill-formed string. It is the same deviation that makes
-                // `isWellFormed` unimplementable here.
-                if (code >= 0xD800 && code <= 0xDFFF) { code = 0xFFFD; }
+                // A LONE SURROGATE stays one, as the three-byte WTF-8 form a
+                // script's string holds it in (script/utf16.hpp): `JSON.parse
+                // ('"\ud800"').charCodeAt(0)` is 0xD800.
                 append_utf8(out, code);
                 break;
             }
