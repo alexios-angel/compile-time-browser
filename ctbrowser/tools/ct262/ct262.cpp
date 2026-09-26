@@ -253,6 +253,16 @@ void install_262(context & cx) {
     }
     host->set("agent", value::object(agent));
 
+    // `AbstractModuleSource`: the %AbstractModuleSource% intrinsic, which is
+    // not a global - the engine keeps it on Function.prototype under a private
+    // key (builtins/objects/function.cpp) for exactly this.
+    if (auto * fn_proto = cx.prototype(context::proto_kind::function)) {
+        if (const value * intrinsic =
+                fn_proto->find(CTBROWSER_PRIVATE_KEY("AbstractModuleSource"))) {
+            host->set("AbstractModuleSource", *intrinsic);
+        }
+    }
+
     cx.define_global("$262", value::object(host));
 }
 

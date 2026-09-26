@@ -651,6 +651,40 @@ void install_dynamic_function(context & cx) {
               "async function*", context::proto_kind::async_generator);
     intrinsic(context::proto_kind::async_function, "AsyncFunction", "async function",
               context::proto_kind::count_);
+    // %AbstractModuleSource% (source phase imports, 28.1.1): not a global -
+    // the abstract class every module source class extends. Constructing it
+    // is the TypeError of 28.1.1.1 whether or not `new` is used, and its
+    // prototype's @@toStringTag getter answers a source's
+    // [[ModuleSourceClassName]], undefined for any value without one. This
+    // engine makes no module source yet, so nothing has the slot; the host
+    // reaches the intrinsic through Function.prototype's private key
+    // (ct262's $262.AbstractModuleSource).
+    if (object_object * fn_proto = cx.prototype(context::proto_kind::function)) {
+        object_object * table = detail::new_table(cx);
+        auto * ctor =
+            cx.allocate<native_object>("AbstractModuleSource", [](context & c, std::span<value>) {
+                c.throw_error("TypeError", "%AbstractModuleSource% is abstract - it cannot be "
+                                           "called or constructed");
+                return value::undefined();
+            });
+        ctor->define("length", value::number(0), attr_configurable);
+        ctor->define("name", cx.string("AbstractModuleSource"), attr_configurable);
+        ctor->define("prototype", value::object(table), attr_none);
+        table->define("constructor", value::object(ctor), attr_writable | attr_configurable);
+        auto * tag = detail::method_native(
+            cx, "get [Symbol.toStringTag]", [](context & c, std::span<value>) {
+                const value self = c.current_this();
+                if (!self.is_object()) { return value::undefined(); }
+                const value * name = static_cast<object_object *>(self.as_heap())
+                                         ->find(CTBROWSER_PRIVATE_KEY("ModuleSourceClassName"));
+                return name == nullptr ? value::undefined() : *name;
+            });
+        detail::install_arity(cx, tag, 0);
+        table->define_accessor(CTBROWSER_SYMBOL_KEY("toStringTag"), value::object(tag),
+                               value::undefined(), attr_configurable);
+        fn_proto->define(CTBROWSER_PRIVATE_KEY("AbstractModuleSource"), value::object(ctor),
+                         attr_none);
+    }
 }
 
 // See class_defined_name: the class's own members, made non-enumerable.
