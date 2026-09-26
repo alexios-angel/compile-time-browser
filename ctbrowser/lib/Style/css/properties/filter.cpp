@@ -51,8 +51,10 @@ struct filter_context {
                                   ts.tokens.front().type == token_type::percentage)) {
         const css_token & t = ts.tokens.front();
         const bool percent = t.type == token_type::percentage;
-        if (t.number < 0) { return std::nullopt; }
-        double v = t.number;
+        // A negative literal is only a computed value's when the cascade
+        // folded a calc() to it - `calc(-10)` - which clamps (filter-computed).
+        if (t.number < 0 && !computed) { return std::nullopt; }
+        double v = std::max(0.0, t.number);
         if (capped) { v = std::min(v, percent ? 100.0 : 1.0); }
         if (computed) { return serialize_number(percent ? v / 100.0 : v); }
         return serialize_number(v) + (percent ? "%" : "");
