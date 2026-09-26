@@ -14,6 +14,55 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Rounds eight to ten, Temporal and direct eval — 2026-09-25
+
+Eight suites and the whole of test262, measured at the session's start
+(`c246c9b5`) and at the round-ten merge (`b9c6662e`). Same instrument
+throughout: WPT `3f6b09ae`, the devbox, four workers, a 4 GB cap per
+driver, `CTBROWSER_GL_DRIVER=deterministic`; test262 four workers, 10 s,
+2 GB.
+
+| suite | files PASS `c246c9b5` → `b9c6662e` | of runnable | subtests PASS `c246c9b5` → `b9c6662e` |
+|---|---:|---:|---:|
+| `css` | 1,648 → **2,041** | 2,926 | 71,216 → **90,003** |
+| `html` | 706 → **814** | 1,149 | 73,567 → **74,214** |
+| `dom` | 387 → **408** | 504 | 51,827 → **52,396** |
+| `shadow-dom` | 66 → **98** | 182 | 8,545 → **8,637** |
+| `custom-elements` | 70 → **88** | 180 | 3,471 → **3,584** |
+| `domparsing` | 17 → **24** | 69 | 327 → **704** |
+| `selection` | 41 → **57** | 96 | 33,332 → **33,638** |
+| `url` | 39 → **39** | 49 | 9,269 → **9,269** |
+| **WPT total** | 2,974 → **3,569** (+595) | 5,155 | 251,554 → **272,445** |
+| test262 (ran) | 42,009 → **47,425** (+5,416) | 49,377 | — |
+
+Between them, the round-nine merge (`178a634f`) and its fixes (`42839a4d`)
+measured css 1,882 files / 88,957 subtests, html 777, dom 401, shadow-dom
+95, custom-elements 76, domparsing 21, selection 52 (the `m-m4` run), and
+test262 42,416 at `178a634f`.
+
+What moved it: rounds eight to ten (four worktree agents each: CSS, HTML
+forms, DOM/custom elements/shadow DOM, test262 built-ins and language),
+merged and gated by the root; **Temporal** (0 → 4,603 of 4,603 runnable
+`built-ins/Temporal` files: ISO calendar, UTC and fixed-offset zones,
+exact `__int128` arithmetic, RFC 9557 parsing, relative rounding - see
+`test262.md`); and in the root's own areas a frame realm's `Function` and
+`eval`, `reportError` at the calling window, timer IDL conversions,
+`queueMicrotask` exceptions reported at the callback's window, and
+immutable `NaN`/`Infinity`/`undefined` on every global.
+
+**Files lost, `c246c9b5` → `b9c6662e`, each named:**
+`css/css-values/random-item-in-container-query.tentative.html` (handed to
+round eleven's CSS agent) and `css/cssom/serialize-values.html` (open),
+`dom/events/EventListener-handleEvent-cross-realm.html` and
+`html/.../promise-rejection-events-iframe.html` (frame realms: the
+listener's and the rejection's global), and four test262 files - Array.from
+closing its iterator (fixed at `2f073d06`), two `instanceof` with a
+primitive left side whose right side is `Function.prototype` (it is not
+callable in this engine), and `superclass-static-method-override.js`.
+
+Direct eval (`e764b92c`) took test262 to **47,431**, and the fixes on top
+of it to **47,525 at `2123355a`** (+94, zero lost) - see `test262.md`.
+
 ## Background shorthand and strict String conversion — 2026-09-18
 
 Full `css/` replay at `fd54d8b1`: **1,647/2,926 runnable files PASS,

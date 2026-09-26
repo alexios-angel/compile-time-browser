@@ -11,6 +11,62 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Rounds eight to ten — 2026-09-25
+
+Full `css/` at the round-ten merge `b9c6662e`: **2,041/2,926 runnable files
+PASS, 90,003 subtests PASS**, from **1,648 and 71,216** at `c246c9b5` - **+393
+files, +18,787 subtests** over three rounds of a CSS agent, each merged and
+gated by the root. Same WPT `3f6b09ae`, devbox, four workers, 4 GB cap,
+deterministic GL driver. Every module that gained three files or a hundred
+subtests, and any that lost a file:
+
+| module | files PASS `c246c9b5` / `b9c6662e` | subtests PASS `c246c9b5` / `b9c6662e` |
+|---|---:|---:|
+| `css/css-conditional` | 8 / 130 | 1,676 / 2,839 |
+| `css/css-gaps` | 14 / 70 | 363 / 4,097 |
+| `css/css-properties-values-api` | 5 / 48 | 129 / 205 |
+| `css/selectors` | 130 / 142 | 4,545 / 4,641 |
+| `css/css-ui` | 31 / 43 | 1,281 / 1,313 |
+| `css/css-text-decor` | 18 / 29 | 451 / 1,175 |
+| `css/css-sizing` | 20 / 30 | 2,540 / 2,890 |
+| `css/css-text` | 73 / 83 | 1,470 / 1,794 |
+| `css/css-masking` | 24 / 33 | 1,325 / 4,733 |
+| `css/css-fonts` | 54 / 63 | 3,130 / 3,555 |
+| `css/css-cascade` | 52 / 61 | 1,016 / 1,068 |
+| `css/motion` | 13 / 21 | 1,643 / 3,504 |
+| `css/css-overflow` | 19 / 27 | 286 / 349 |
+| `css/mediaqueries` | 9 / 16 | 277 / 1,381 |
+| `css/css-shapes` | 7 / 13 | 328 / 1,750 |
+| `css/css-values` | 177 / 183 | 7,678 / 7,903 |
+| `css/css-inline` | 13 / 19 | 254 / 291 |
+| `css/css-lists` | 9 / 13 | 365 / 396 |
+| `css/filter-effects` | 14 / 17 | 350 / 2,020 |
+| `css/css-grid` | 25 / 28 | 1,869 / 2,662 |
+| `css/css-transitions` | 17 / 20 | 759 / 811 |
+| `css/css-break` | 19 / 22 | 514 / 540 |
+| `css/css-variables` | 31 / 34 | 451 / 461 |
+| `css/css-images` | 23 / 26 | 3,074 / 3,081 |
+| `css/css-animations` | 30 / 33 | 438 / 442 |
+| `css/css-view-transitions` | 8 / 10 | 337 / 967 |
+| `css/css-transforms` | 33 / 35 | 3,310 / 3,539 |
+| `css/cssom` | 161 / 160 | 3,178 / 3,299 |
+
+The largest movers are whole features the three rounds implemented:
+container queries - `@container` chosen by style over the laid-out
+container, the `cq*` units, `style()` and `scroll-state()` queries
+(`css-conditional` 8 -> 130); the gap-rule lists of `css-gaps`; registered
+custom properties (`@property` and `CSS.registerProperty`, including inside
+`@container`); `<basic-shape>` and `path()` for `clip-path`,
+`shape-outside` and `offset-path` (with `ray()`); the `mask-border`
+longhands; `@supports` `selector()`, `at-rule()`, `font-format()` and
+`font-tech()`.
+
+Two files that passed at `c246c9b5` do not at `b9c6662e`:
+`css/css-values/random-item-in-container-query.tentative.html` (handed to
+round eleven's CSS agent) and `css/cssom/serialize-values.html` (open);
+`css-color` lost 14 subtests with its files unchanged. `wpt.md` has the
+eight-suite table this is one row of.
+
 ## Background shorthand and typed position grammar — 2026-09-18
 
 Full `css/` replay at `fd54d8b1`: **1,647/2,926 runnable files PASS,

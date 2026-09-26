@@ -133,3 +133,7 @@ The following sections retain the complete original text and measurements.
 - [Measured at `6edb7421` — 2026-09-16, round four (T2: language + annexB)](test262/02-measured-at-15f47064--2026-09-12-evening.md#measured-at-6edb7421--2026-09-16-round-four-t2-language--annexb)
 <a id="measured-at-273773cd--2026-09-16-rounds-two-and-three-merged"></a>
 - [Measured at `273773cd` — 2026-09-16, rounds two and three merged](test262/02-measured-at-15f47064--2026-09-12-evening.md#measured-at-273773cd--2026-09-16-rounds-two-and-three-merged)
+<a id="rounds-eight-to-ten-and-temporal--2026-09-25"></a>
+- [Rounds eight to ten, and Temporal — 2026-09-25](test262/03-measured-2026-09-25.md#rounds-eight-to-ten-and-temporal--2026-09-25)
+<a id="direct-eval--2026-09-25"></a>
+- [Direct eval — 2026-09-25](test262/03-measured-2026-09-25.md#direct-eval--2026-09-25)
