@@ -131,6 +131,9 @@ void compiler_impl::compile_program() {
                 }
             }
         }
+        // Sorted, for binding_immutability's binary search: every write to a
+        // global asks, and a large script has many of both.
+        std::ranges::sort(script_consts_);
     }
     if (module_scope_) {
         // THEN THE IMPORTS, still at entry: a function declared anywhere in

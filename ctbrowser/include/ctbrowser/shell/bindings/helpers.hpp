@@ -172,4 +172,8 @@ inline constexpr std::string_view handle_property = "__node";
 // GC traces them with no new heap kind, and a page can be shown what it built.
 inline constexpr std::string_view path_commands_property = "__cmds";
 
+// THE BYTES BEHIND A BufferSource - an ArrayBuffer, or any view onto one with
+// its offset and length applied (window/encoding.cpp). False for anything else.
+[[nodiscard]] bool buffer_source_bytes(context & c, value source, std::vector<std::uint8_t> & out);
+
 } // namespace ctbrowser::shell

@@ -78,15 +78,27 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         // a call, member or operator after it is the SyntaxError, where the
         // parser read one expression. Found as the leftmost operand being a
         // function or class that no `(` stands in front of.
+        // ONLY A CONTINUATION THAT CANNOT START A STATEMENT is judged: `(x)`,
+        // `[a]`, a template, `+1`, `-1` and `/re/` after the `}` begin a new,
+        // valid statement, and refusing them refused a valid module whole.
         if (n.kind == nk::export_decl && n.c == 1 && n.a >= 0) {
             std::int32_t left = n.a;
+            std::int32_t after = -1; // the first continuation past the declaration
             while (at(left).a >= 0 && (at(left).kind == nk::call || at(left).kind == nk::member ||
                                        at(left).kind == nk::index || at(left).kind == nk::binary ||
                                        at(left).kind == nk::tagged || at(left).kind == nk::seq)) {
+                after = left;
                 left = at(left).a;
             }
             const vp::node & first = at(left);
-            if (left != n.a && (first.kind == nk::func_expr || first.kind == nk::class_decl)) {
+            const bool cannot_start = after >= 0 && [&] {
+                const vp::node & next = at(after);
+                return (next.kind == nk::call && kids(next).empty()) || next.kind == nk::member ||
+                       next.kind == nk::seq ||
+                       (next.kind == nk::binary && next.text != "+" && next.text != "-" &&
+                        next.text != "/");
+            }();
+            if (cannot_start && (first.kind == nk::func_expr || first.kind == nk::class_decl)) {
                 const std::size_t where = offset_of(left);
                 std::size_t i = where == early_error::nowhere ? 0 : where;
                 while (i > 0 && (source_[i - 1] == ' ' || source_[i - 1] == '\t' ||

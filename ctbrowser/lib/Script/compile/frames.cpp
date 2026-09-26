@@ -395,8 +395,8 @@ immutability compiler_impl::binding_immutability(std::string_view name) {
                                                             : immutability::none;
         }
     }
-    return std::ranges::find(script_consts_, name) != script_consts_.end() ? immutability::strict
-                                                                           : immutability::none;
+    return std::ranges::binary_search(script_consts_, name) ? immutability::strict
+                                                            : immutability::none;
 }
 
 bool compiler_impl::refuse_immutable_write(immutability readonly) {

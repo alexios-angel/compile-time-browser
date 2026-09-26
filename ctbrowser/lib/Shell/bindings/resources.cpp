@@ -161,17 +161,27 @@ bool fill_headers(context & c, header_list & list, value init, const char * wher
     if (const value method = c.lookup_property(init, "@@iterator"); method.is_callable()) {
         const value items = c.iterable_values(init);
         if (c.throw_pending()) { return false; }
-        const context::rooted keep_items{c, items};
-        for (const value & item : static_cast<script::array_object *>(items.as_heap())->items) {
+        // COPIED AND ROOTED, both levels: iterable_values hands an Array
+        // argument back ITSELF, so these vectors can be the page's own - and
+        // a name's toString that pushes onto one reallocates it under a
+        // range-for (or a reference) still walking it.
+        std::vector<value> entries = static_cast<script::array_object *>(items.as_heap())->items;
+        const context::rooted_values keep_entries{c, entries};
+        for (const value item : entries) {
             const value pair = c.iterable_values(item);
             if (c.throw_pending()) { return false; }
-            const auto & parts = static_cast<script::array_object *>(pair.as_heap())->items;
+            std::vector<value> parts = static_cast<script::array_object *>(pair.as_heap())->items;
             if (parts.size() != 2) {
                 c.throw_error("TypeError",
                               std::string{where} + ": a header pair must have two elements");
                 return false;
             }
-            if (!add(c.to_string(parts[0]), c.to_string(parts[1]))) { return false; }
+            const context::rooted_values keep_parts{c, parts};
+            std::string name = c.to_string(parts[0]);
+            if (c.throw_pending()) { return false; }
+            const std::string text = c.to_string(parts[1]);
+            if (c.throw_pending()) { return false; }
+            if (!add(std::move(name), text)) { return false; }
         }
         return true;
     }
@@ -190,14 +200,11 @@ bool fill_headers(context & c, header_list & list, value init, const char * wher
 // The bytes of a u8 array, or of anything carrying one in `__bytes` - a Blob,
 // an ArrayBuffer, a File.
 [[nodiscard]] std::string bytes_of(context & c, value source) {
-    value held = source;
-    if (source.is_object()) { held = c.lookup_property(source, "__bytes"); }
-    std::string out;
-    if (!held.is_array()) { return out; }
-    for (const value & b : static_cast<script::array_object *>(held.as_heap())->items) {
-        out += static_cast<char>(static_cast<int>(context::to_number(b)) & 0xFF);
-    }
-    return out;
+    // A Blob's or an ArrayBuffer's `__bytes`, or a view's window onto its
+    // buffer - a view's own `items` are empty (typed_arrays/internal.hpp).
+    std::vector<std::uint8_t> bytes;
+    if (!buffer_source_bytes(c, source, bytes)) { return {}; }
+    return std::string{bytes.begin(), bytes.end()};
 }
 
 [[nodiscard]] value u8_of(context & c, std::string_view bytes) {
@@ -265,18 +272,13 @@ struct extracted_body {
         out += "--" + boundary + "--\r\n";
         return {out, "multipart/form-data; boundary=" + boundary};
     }
-    // An ArrayBuffer or a view onto one: its bytes, and no type. A byte view
-    // is its own bytes; a wider one is read through its buffer. ponytail: the
-    // whole buffer, a view's offset and length not applied. A plain array is
-    // no BufferSource - it is stringified, below, as WebIDL's union says.
+    // An ArrayBuffer or a view onto one: its bytes, the view's offset and
+    // length applied, and no type. A plain array is no BufferSource - it is
+    // stringified, below, as WebIDL's union says.
     if (body.is_array()) {
-        const auto kind = static_cast<script::array_object *>(body.as_heap())->elements;
-        if (kind == script::element_kind::u8 || kind == script::element_kind::i8 ||
-            kind == script::element_kind::u8_clamped) {
+        if (static_cast<script::array_object *>(body.as_heap())->elements !=
+            script::element_kind::none) {
             return {bytes_of(c, body), {}};
-        }
-        if (kind != script::element_kind::none) {
-            return {bytes_of(c, c.lookup_property(body, "buffer")), {}};
         }
     } else if (body.is_object() && !c.lookup_property(body, "__bytes").is_undefined()) {
         return {bytes_of(c, body), {}};

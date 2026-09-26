@@ -648,7 +648,7 @@ void dom_bindings::install_control_form_data(context & cx) {
     // "Reset" a form (HTML 4.10.21.5): a cancelable `reset` first, then each
     // resettable control whose owner it is. reset() and a reset button's
     // activation behaviour (`reset_form_`, the browser's) are both this.
-    const auto reset_form = [this, helpers](context & c, node_id form, bool ce_reactions) {
+    const auto reset_steps = [this, helpers](context & c, node_id form, bool ce_reactions) {
         if (helpers.fire(c, this, form, "reset", true, true, helpers.plain)) { return; }
         // HTML 4.10.21.5: each RESETTABLE element whose form
         // owner is this form runs its reset algorithm, in
@@ -734,6 +734,16 @@ void dom_bindings::install_control_form_data(context & cx) {
                     return value::undefined();
                 }));
         }
+    };
+    // "LOCKED FOR RESET" (4.10.21.5 steps 1, 2 and 5): a `reset` listener that
+    // resets the same form again - form.reset(), or a click on its reset
+    // button - does nothing, where it recursed until the stack gave out.
+    const auto locked = std::make_shared<std::vector<std::uint64_t>>();
+    const auto reset_form = [reset_steps, locked](context & c, node_id form, bool ce_reactions) {
+        if (std::ranges::find(*locked, form.key()) != locked->end()) { return; }
+        locked->push_back(form.key());
+        reset_steps(c, form, ce_reactions);
+        std::erase(*locked, form.key());
     };
     reset_form_ = [this, reset_form](node_id form) {
         if (cx_ != nullptr && form) { reset_form(*cx_, form, false); }

@@ -839,6 +839,9 @@ void install_object(context & cx) {
         const auto close = [&] {
             const bool parked = c.throw_pending();
             const value thrown = parked ? c.take_pending_throw() : value::undefined();
+            // ROOTED: taken, the throw is reachable from nothing else, and
+            // `return()` is a call - a safepoint.
+            const context::rooted keep_thrown{c, thrown};
             detail::iterator_close_quietly(c, iterator);
             if (parked) { c.throw_value(thrown); }
         };
