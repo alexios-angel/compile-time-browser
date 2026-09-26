@@ -45,10 +45,33 @@ void compiler_impl::compile_break(const vp::node & n) {
     }
     // Leaving a try block by jumping out of it has to drop its handler, or
     // the catch stays reachable after the loop is gone.
-    for (std::size_t i = handler_depth_; i > loop->handler_depth; --i) {
+    const std::size_t target = static_cast<std::size_t>(loop - loops_.data());
+    for (std::size_t depth = close_crossed_iterators(target + 1);
+         depth > loops_[target].handler_depth; --depth) {
         proto().emit(instruction{op::pop_handler});
     }
-    loop->breaks.push_back(proto().emit(instruction{op::jump}));
+    loops_[target].breaks.push_back(proto().emit(instruction{op::jump}));
+}
+
+// A `break` or `continue` that leaves a for-of for an OUTER loop closes it
+// (14.7.5.7 ForIn/OfBodyEvaluation step 6.l: IteratorClose on the abrupt
+// completion) - its own break does, at patch_breaks, and one aimed further
+// out jumped straight past. Innermost first, each at its own handler depth,
+// so a catch between two loops sees the inner one's close error. Answers the
+// handler depth it popped down to.
+std::size_t compiler_impl::close_crossed_iterators(std::size_t first) {
+    std::size_t depth = handler_depth_;
+    const std::uint32_t mark = reg_mark();
+    for (std::size_t i = loops_.size(); i-- > first;) {
+        if (!loops_[i].iterator_record) { continue; }
+        for (; depth > loops_[i].handler_depth; --depth) {
+            proto().emit(instruction{op::pop_handler});
+        }
+        const std::uint16_t scratch = alloc_reg();
+        emit_iterator_native(iterator_close_name, scratch, *loops_[i].iterator_record, 0);
+        release_to(mark);
+    }
+    return depth;
 }
 
 void compiler_impl::compile_continue(const vp::node & n) {
@@ -60,10 +83,12 @@ void compiler_impl::compile_continue(const vp::node & n) {
     if (route_exit_through_finally(static_cast<std::size_t>(loop - loops_.data()), true)) {
         return;
     }
-    for (std::size_t i = handler_depth_; i > loop->handler_depth; --i) {
+    const std::size_t target = static_cast<std::size_t>(loop - loops_.data());
+    for (std::size_t depth = close_crossed_iterators(target + 1);
+         depth > loops_[target].handler_depth; --depth) {
         proto().emit(instruction{op::pop_handler});
     }
-    loop->continues.push_back(proto().emit(instruction{op::jump}));
+    loops_[target].continues.push_back(proto().emit(instruction{op::jump}));
 }
 
 void compiler_impl::compile_labeled(const vp::node & n) {

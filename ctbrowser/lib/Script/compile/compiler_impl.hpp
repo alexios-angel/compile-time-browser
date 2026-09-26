@@ -741,6 +741,8 @@ public:
     [[nodiscard]] loop_context * loop_for(std::string_view label);
 
     void compile_break(const vp::node & n);
+    // Close the for-of iterators of loops_[first..] - see the definition.
+    [[nodiscard]] std::size_t close_crossed_iterators(std::size_t first);
 
     void compile_continue(const vp::node & n);
 
