@@ -519,16 +519,8 @@ void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
         std::string type = "application/octet-stream";
         const value given = cx.lookup_property(waiting.blob, "type");
         if (!given.is_undefined() && !cx.to_string(given).empty()) { type = cx.to_string(given); }
-        // Through the standard library's btoa, so one base64 encoder decides what
-        // this means here.
-        const value encoder = cx.global("btoa");
-        std::string encoded;
-        if (encoder.is_callable()) {
-            const value text = cx.string(bytes);
-            const value args[1] = {text};
-            encoded = cx.to_string(cx.call(encoder, args));
-        }
-        reader->set("result", cx.string("data:" + type + ";base64," + encoded));
+        // The bytes through core's encoder, not the page's `btoa`.
+        reader->set("result", cx.string("data:" + type + ";base64," + base64_encode(bytes)));
         break;
     }
     case read_kind::array_buffer: {

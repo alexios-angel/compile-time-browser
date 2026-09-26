@@ -112,6 +112,34 @@ std::string utf16_to_wtf8(std::u16string_view units) {
     return -1;
 }
 
+std::string base64_encode(std::string_view bytes, bool url, bool omit_padding) {
+    const std::string_view alphabet =
+        url ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+            : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((bytes.size() + 2) / 3 * 4);
+    for (std::size_t i = 0; i < bytes.size(); i += 3) {
+        const unsigned b0 = static_cast<unsigned char>(bytes[i]);
+        const unsigned b1 = i + 1 < bytes.size() ? static_cast<unsigned char>(bytes[i + 1]) : 0;
+        const unsigned b2 = i + 2 < bytes.size() ? static_cast<unsigned char>(bytes[i + 2]) : 0;
+        const unsigned triple = (b0 << 16) | (b1 << 8) | b2;
+        out += alphabet[(triple >> 18) & 0x3F];
+        out += alphabet[(triple >> 12) & 0x3F];
+        // The padding is what says how many of the last three bytes were real.
+        if (i + 1 < bytes.size()) {
+            out += alphabet[(triple >> 6) & 0x3F];
+        } else if (!omit_padding) {
+            out += '=';
+        }
+        if (i + 2 < bytes.size()) {
+            out += alphabet[triple & 0x3F];
+        } else if (!omit_padding) {
+            out += '=';
+        }
+    }
+    return out;
+}
+
 // The buffer is sized by rounding the character count UP to a whole group:
 // `n / 4 * 3` assumes the padding is present, and unpadded "aGVsbG8" is seven
 // characters that decode to FIVE bytes, not three.

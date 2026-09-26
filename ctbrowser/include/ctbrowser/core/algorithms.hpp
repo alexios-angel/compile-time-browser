@@ -241,4 +241,11 @@ inline void join_surrogates(std::string & text) {
 // than fatal. A truncated tail decodes as far as it goes.
 [[nodiscard]] std::string base64_decode(std::string_view text);
 
+// Bytes to base64 (RFC 4648 section 4, or section 5's URL alphabet with `url`),
+// padded to a multiple of four unless `omit_padding`. What btoa answers after
+// its isomorphic encode, what Uint8Array.prototype.toBase64 answers, and what a
+// data: URL made from bytes - a canvas's PNG, a Blob - carries.
+[[nodiscard]] std::string base64_encode(std::string_view bytes, bool url = false,
+                                        bool omit_padding = false);
+
 } // namespace ctbrowser

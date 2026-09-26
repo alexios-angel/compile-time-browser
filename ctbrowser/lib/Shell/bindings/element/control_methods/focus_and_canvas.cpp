@@ -139,16 +139,11 @@ void dom_bindings::install_control_focus_canvas(context & cx) {
     };
     define_operation(cx, canvas, "toDataURL", 0, [canvas_bytes](context & c, std::span<value>) {
         const std::vector<std::byte> png = canvas_bytes(c);
-        std::string binary;
-        binary.reserve(png.size());
-        for (const std::byte b : png) { binary += static_cast<char>(b); }
-        // Through the standard library's own btoa, so ONE base64 encoder decides
-        // what this means here.
-        const value encoder = c.global("btoa");
-        if (!encoder.is_callable()) { return c.string("data:image/png;base64,"); }
-        const value text = c.string(binary);
-        const value args[1] = {text};
-        return c.string("data:image/png;base64," + c.to_string(c.call(encoder, args)));
+        // The bytes themselves, through core's encoder - not the page's `btoa`,
+        // which a page may have replaced and which takes a string.
+        return c.string("data:image/png;base64," +
+                        base64_encode(std::string_view{reinterpret_cast<const char *>(png.data()),
+                                                       png.size()}));
     });
     define_operation(cx, canvas, "toBlob", 1,
                      [this, canvas_bytes](context & c, std::span<value> args) {
