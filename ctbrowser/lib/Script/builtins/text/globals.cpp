@@ -257,7 +257,7 @@ void install_uri(context & cx) {
 // is an Error named DataCloneError. A platform object is told by its chain: an
 // instance of an interface the host installed (a builtin global that is not an
 // intrinsic) is copied when the host named that interface serializable
-// (context::set_serializable_interfaces) and refused otherwise.
+// (context::set_serializable_interface) and refused otherwise.
 namespace {
 
 void throw_data_clone_error(context & c, std::string message) {
@@ -324,19 +324,23 @@ struct cloner {
         return nullptr;
     }
 
-    // A [Serializable] platform object's serialization steps, the host's
-    // state being its own properties - internal ones included, which is where
-    // a binding keeps what a script cannot see (a Blob's bytes, a FileList's
-    // files). Each value is cloned in turn; a function or an accessor is the
+    // A [Serializable] platform object's serialization steps: the own
+    // properties its interface names as state (context::
+    // set_serializable_interface) - internal ones included, which is where a
+    // binding keeps what a script cannot see (a Blob's bytes, a FileList's
+    // files) - and no other. A page's expando is not the platform object's
+    // state. Each value is cloned in turn; a function or an accessor is the
     // platform's own and is shared, not copied.
-    [[nodiscard]] value copy_platform(value v, object_object * source, value prototype) {
+    [[nodiscard]] value copy_platform(value v, object_object * source, value prototype,
+                                      const std::vector<std::string> & state) {
         const value made = c.make_object();
         auto * out = static_cast<object_object *>(made.as_heap());
         out->prototype = prototype;
         (void)remember(v, made);
         std::vector<std::pair<std::string, std::uint8_t>> keys;
-        source->each_own_entry_in_order(
-            [&](const std::string & key, std::uint8_t a) { keys.emplace_back(key, a); });
+        source->each_own_entry_in_order([&](const std::string & key, std::uint8_t a) {
+            if (std::ranges::find(state, key) != state.end()) { keys.emplace_back(key, a); }
+        });
         for (const auto & [key, a] : keys) {
             if (accessor_entry * pair = source->find_accessor(key)) {
                 out->define_accessor(key, pair->getter, pair->setter, a);
@@ -348,7 +352,6 @@ struct cloner {
             if (c.throw_pending()) { return value::undefined(); }
             out->define(key, copied, a);
         }
-        out->extensible = source->extensible;
         return made;
     }
 
@@ -402,8 +405,9 @@ struct cloner {
         // below: a Blob keeps its bytes under `__bytes`, which is what an
         // ArrayBuffer's store is found by (buffer_store).
         if (const interface_entry * platform = platform_interface(v)) {
-            if (!c.serializable_interface(platform->name)) { return fail("a " + platform->name); }
-            return copy_platform(v, source, platform->prototype);
+            const std::vector<std::string> * state = c.serializable_interface(platform->name);
+            if (state == nullptr) { return fail("a " + platform->name); }
+            return copy_platform(v, source, platform->prototype, *state);
         }
         // A primitive wrapper: Boolean, Number, String, BigInt. A Symbol
         // wrapper is the error a symbol is.

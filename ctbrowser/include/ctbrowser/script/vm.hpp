@@ -45,16 +45,22 @@ public:
     [[nodiscard]] bool is_intrinsic_name(std::string_view name) const {
         return intrinsic_names_.contains(name);
     }
-    // THE HOST'S SERIALIZABLE INTERFACES (HTML 2.7.2 [Serializable]): an
-    // instance of one of these structuredClone copies - its own properties,
-    // internal ones included, onto a fresh object of the same interface
-    // prototype. An instance of any OTHER platform interface - a builtin
-    // global's prototype that is not an intrinsic's - is a DataCloneError.
-    void set_serializable_interfaces(std::vector<std::string> names) {
-        for (std::string & name : names) { serializable_interfaces_[std::move(name)] = true; }
+    // A SERIALIZABLE INTERFACE OF THE HOST'S (HTML 2.7.2 [Serializable]): an
+    // instance of one structuredClone copies onto a fresh object of the same
+    // interface prototype, and what it copies is `state` - the own properties
+    // the binding keeps an instance's state in, internal ones included, which
+    // are its serialization steps. Nothing else: a page's expando on a Blob is
+    // not the Blob's, and is neither copied nor able to make the clone fail.
+    // An instance of any OTHER platform interface - a builtin global's
+    // prototype that is not an intrinsic's - is a DataCloneError.
+    void set_serializable_interface(std::string name, std::vector<std::string> state) {
+        serializable_interfaces_[std::move(name)] = std::move(state);
     }
-    [[nodiscard]] bool serializable_interface(std::string_view name) const {
-        return serializable_interfaces_.contains(name);
+    // Its state keys, or null when `name` is not a serializable interface.
+    [[nodiscard]] const std::vector<std::string> * serializable_interface(
+        std::string_view name) const {
+        const auto it = serializable_interfaces_.find(name);
+        return it == serializable_interfaces_.end() ? nullptr : &it->second;
     }
 
     // CreateGlobalVarBinding (9.1.1.4.17): a script's or an eval's `var` - a
@@ -1013,8 +1019,9 @@ private:
     // See set_realm_template.
     string_flat_map<value> realm_template_;
     string_flat_map<bool> realm_template_builtin_;
-    string_flat_map<bool> intrinsic_names_;         // see mark_globals_builtin
-    string_flat_map<bool> serializable_interfaces_; // see set_serializable_interfaces
+    string_flat_map<bool> intrinsic_names_; // see mark_globals_builtin
+    // See set_serializable_interface.
+    string_flat_map<std::vector<std::string>> serializable_interfaces_;
     std::vector<value> registers_;
     std::vector<call_frame> frames_;
     // WHERE THE TYPE ORACLE'S OBSERVATIONS GO, or null - and null selects the
