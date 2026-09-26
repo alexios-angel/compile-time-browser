@@ -1,6 +1,7 @@
 #include <ctbrowser/shell/page/canvas.hpp>
 
 #include <charconv>
+#include <limits>
 
 // canvas: the method bodies - the pixel half. canvas_path.cpp is the geometry.
 // The header says what these do; this says how.
@@ -307,7 +308,17 @@ void canvas_context::fill(const canvas_path & path, fill_rule rule) {
 }
 
 void canvas_context::stroke(const canvas_path & path) {
-    paint_path(stroke_outline(path), fill_rule::nonzero, state_.stroke);
+    // The dashes worth building are the ones that can land - on the canvas, or
+    // off it by no more than a shadow's offset and blur can bring back.
+    rect cull{0, 0, static_cast<float>(width()), static_cast<float>(height())};
+    if (shadows_drawn()) {
+        const auto sx = static_cast<float>(state_.shadow_x);
+        const auto sy = static_cast<float>(state_.shadow_y);
+        const float blur = 1025; // draw_shadow's widest spread, and a pixel
+        cull = rect{std::min(0.0f, -sx) - blur, std::min(0.0f, -sy) - blur,
+                    cull.width + std::fabs(sx) + 2 * blur, cull.height + std::fabs(sy) + 2 * blur};
+    }
+    paint_path(stroke_outline(path, cull), fill_rule::nonzero, state_.stroke);
 }
 
 void canvas_context::draw_focus_ring(const canvas_path & path) {
@@ -355,54 +366,95 @@ void canvas_context::clip(const canvas_path & path, fill_rule rule) {
 
 void canvas_context::draw_shadow(const canvas_path & path, fill_rule rule,
                                  const canvas_paint & paint) {
-    // Offsets and blur are in CSS pixels, NOT through the transform. The
-    // shadow of a shape off the canvas can land on it, so the shape is
-    // rasterised over the canvas moved back by the offset and widened by the
-    // blur's reach.
-    const int ox = static_cast<int>(std::lround(state_.shadow_x));
-    const int oy = static_cast<int>(std::lround(state_.shadow_y));
-    const double sigma = state_.shadow_blur / 2.0;
-    // ponytail: past a reach of 1024 pixels a shadow is spread too thin to
-    // matter, and the buffer stops growing with it.
-    const int reach = sigma > 0 ? static_cast<int>(std::ceil(std::min(sigma * 3.0, 1024.0))) : 0;
-    const int left = -ox - reach;
-    const int top = -oy - reach;
-    const int w = width() + 2 * reach;
-    const int h = height() + 2 * reach;
-    if (w <= 0 || h <= 0) { return; }
-    std::vector<float> alpha(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0.0f);
-    std::vector<std::uint32_t> row;
-    for_each_span(path, rule, top, top + h - 1, [&](int y, int x0, int x1) {
-        x0 = std::max(left, x0);
-        x1 = std::min(left + w - 1, x1);
-        if (x1 < x0) { return; }
-        float * out =
-            alpha.data() + static_cast<std::size_t>(y - top) * static_cast<std::size_t>(w);
-        if (paint.is_solid()) {
-            const float a = static_cast<float>(paint.solid.alpha()) / 255.0f;
-            for (int x = x0; x <= x1; ++x) { out[x - left] = a; }
-            return;
+    // Offsets and blur are in CSS pixels, NOT through the transform. Only the
+    // shape's own box, moved by the offset and widened by the blur, can be
+    // shaded - so that box on the canvas is all that is rasterised, blurred
+    // and composited, and a glow round a small shape costs the shape, not the
+    // canvas. The shadow of a shape off the canvas can still land on it.
+    double min_x = std::numeric_limits<double>::infinity();
+    double min_y = min_x;
+    double max_x = -min_x;
+    double max_y = -min_x;
+    for (const canvas_path::subpath & s : path.subpaths) {
+        for (const point & p : s.points) {
+            if (!std::isfinite(p.x) || !std::isfinite(p.y)) { return; } // fills nothing
+            min_x = std::min(min_x, static_cast<double>(p.x));
+            min_y = std::min(min_y, static_cast<double>(p.y));
+            max_x = std::max(max_x, static_cast<double>(p.x));
+            max_y = std::max(max_y, static_cast<double>(p.y));
         }
-        sample_row(paint, y, x0, x1, row);
-        for (int x = x0; x <= x1; ++x) {
-            out[x - left] =
-                static_cast<float>(row[static_cast<std::size_t>(x - x0)] >> 24) / 255.0f;
-        }
-    });
+    }
+    if (min_x > max_x) { return; }
+    // Rasterising clamps rows to a billion pixels either way, so a shadow
+    // thrown further than that cannot come back to the canvas - and the int
+    // arithmetic below stays in range.
+    const double shift_x = std::round(state_.shadow_x);
+    const double shift_y = std::round(state_.shadow_y);
+    if (std::fabs(shift_x) > 1e9 || std::fabs(shift_y) > 1e9) { return; }
+    const int ox = static_cast<int>(shift_x);
+    const int oy = static_cast<int>(shift_y);
     // A Gaussian of standard deviation shadowBlur / 2, as THREE BOX BLURS each
     // way - within a few percent of the true curve, and a constant cost per
-    // pixel whatever the blur, where a direct kernel is quadratic in it.
+    // pixel whatever the blur, where a direct kernel is quadratic in it. The
+    // box widths are the ones whose three-fold convolution has the Gaussian's
+    // variance (Kovesi, "Fast almost-Gaussian filtering"). A blur past a
+    // million pixels is transparent everywhere, and bounded so the widths fit.
+    const double sigma = std::min(state_.shadow_blur / 2.0, 1.0e6);
+    std::array<int, 3> radius{};
     if (sigma > 0) {
-        // The box widths whose three-fold convolution has the Gaussian's
-        // variance (Kovesi, "Fast almost-Gaussian filtering").
         const double ideal = std::sqrt(12.0 * sigma * sigma / 3.0 + 1.0);
         int lower = static_cast<int>(std::floor(ideal));
         if (lower % 2 == 0) { --lower; }
         const double m = (12.0 * sigma * sigma - 3.0 * lower * lower - 12.0 * lower - 9.0) /
                          (-4.0 * lower - 4.0);
-        const int smaller = static_cast<int>(std::lround(m));
+        const auto smaller = std::lround(m);
+        for (int i = 0; i < 3; ++i) {
+            radius[static_cast<std::size_t>(i)] = ((i < smaller ? lower : lower + 2) - 1) / 2;
+        }
+    }
+    // How far the blur carries a pixel: the three boxes end to end.
+    // ponytail: past 1024 pixels a shadow is spread too thin to matter, and
+    // the buffer stops growing with it.
+    const int reach = std::min(radius[0] + radius[1] + radius[2], 1024);
+
+    // The canvas pixels the shadow can shade, and the buffer round them: every
+    // shape pixel the blur carries onto one of them.
+    const double x0 = std::max(0.0, std::floor(min_x) + ox - reach - 1);
+    const double y0 = std::max(0.0, std::floor(min_y) + oy - reach - 1);
+    const double x1 = std::min(width() - 1.0, std::ceil(max_x) + ox + reach + 1);
+    const double y1 = std::min(height() - 1.0, std::ceil(max_y) + oy + reach + 1);
+    if (x0 > x1 || y0 > y1) { return; }
+    const int shade_left = static_cast<int>(x0);
+    const int shade_top = static_cast<int>(y0);
+    const int shade_right = static_cast<int>(x1);
+    const int shade_bottom = static_cast<int>(y1);
+    const int left = shade_left - reach;
+    const int top = shade_top - reach;
+    const int w = shade_right - shade_left + 1 + 2 * reach;
+    const int h = shade_bottom - shade_top + 1 + 2 * reach;
+    std::vector<float> alpha(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0.0f);
+    std::vector<std::uint32_t> row;
+    // Shape pixel (x, y) shades canvas pixel (x + ox, y + oy).
+    for_each_span(path, rule, top - oy, top - oy + h - 1, [&](int y, int x0s, int x1s) {
+        x0s = std::max(left - ox, x0s);
+        x1s = std::min(left - ox + w - 1, x1s);
+        if (x1s < x0s) { return; }
+        float * out =
+            alpha.data() + static_cast<std::size_t>(y + oy - top) * static_cast<std::size_t>(w);
+        const int at = ox - left;
+        if (paint.is_solid()) {
+            const float a = static_cast<float>(paint.solid.alpha()) / 255.0f;
+            for (int x = x0s; x <= x1s; ++x) { out[x + at] = a; }
+            return;
+        }
+        sample_row(paint, y, x0s, x1s, row);
+        for (int x = x0s; x <= x1s; ++x) {
+            out[x + at] = static_cast<float>(row[static_cast<std::size_t>(x - x0s)] >> 24) / 255.0f;
+        }
+    });
+    if (sigma > 0) {
         std::vector<float> scratch(alpha.size(), 0.0f);
-        const auto box = [&](std::vector<float> & from, std::vector<float> & to, int radius,
+        const auto box = [&](std::vector<float> & from, std::vector<float> & to, int r,
                              bool across) {
             const int lines = across ? h : w;
             const int length = across ? w : h;
@@ -412,32 +464,29 @@ void canvas_context::draw_shadow(const canvas_path & path, fill_rule rule,
                               : static_cast<std::size_t>(i) * static_cast<std::size_t>(w) +
                                     static_cast<std::size_t>(line);
             };
-            const float scale = 1.0f / static_cast<float>(2 * radius + 1);
+            const float scale = 1.0f / static_cast<float>(2 * r + 1);
             for (int line = 0; line < lines; ++line) {
                 float sum = 0;
-                for (int i = 0; i <= std::min(radius, length - 1); ++i) {
-                    sum += from[index(line, i)];
-                }
+                for (int i = 0; i <= std::min(r, length - 1); ++i) { sum += from[index(line, i)]; }
                 for (int i = 0; i < length; ++i) {
                     to[index(line, i)] = sum * scale;
-                    if (i + radius + 1 < length) { sum += from[index(line, i + radius + 1)]; }
-                    if (i - radius >= 0) { sum -= from[index(line, i - radius)]; }
+                    if (i + r + 1 < length) { sum += from[index(line, i + r + 1)]; }
+                    if (i - r >= 0) { sum -= from[index(line, i - r)]; }
                 }
             }
         };
-        for (int pass_index = 0; pass_index < 3; ++pass_index) {
-            const int radius = ((pass_index < smaller ? lower : lower + 2) - 1) / 2;
-            box(alpha, scratch, radius, true);
-            box(scratch, alpha, radius, false);
+        for (const int r : radius) {
+            box(alpha, scratch, r, true);
+            box(scratch, alpha, r, false);
         }
     }
     const pass composited{*this};
     const color shade = state_.shadow_color;
-    for (int y = 0; y < height(); ++y) {
+    for (int y = shade_top; y <= shade_bottom; ++y) {
         const std::size_t source_row =
-            static_cast<std::size_t>(y + reach) * static_cast<std::size_t>(w);
-        for (int x = 0; x < width(); ++x) {
-            const float a = alpha[source_row + static_cast<std::size_t>(x + reach)];
+            static_cast<std::size_t>(y - top) * static_cast<std::size_t>(w);
+        for (int x = shade_left; x <= shade_right; ++x) {
+            const float a = alpha[source_row + static_cast<std::size_t>(x - left)];
             if (a <= 0 || clipped_out(x, y)) { continue; }
             const auto shadow_alpha = static_cast<std::uint8_t>(
                 std::clamp(static_cast<float>(shade.alpha()) * a, 0.0f, 255.0f) + 0.5f);
@@ -592,37 +641,46 @@ void canvas_context::draw_text(std::string_view text_in, float x, float y, bool 
         shift_y = -descent;
     }
     const point origin = state_.matrix.apply(x + shift_x, y + shift_y); // the BASELINE
-    // A pixel of margin each side for antialiasing and any overhang, and an
-    // integral left/top so the fraction stays in `where` and sub-pixel
-    // positioning survives the round trip.
-    // A stroke reaches half the line width past the glyphs' edges.
+    if (!std::isfinite(origin.x) || !std::isfinite(origin.y)) { return; }
+    // THE RUN'S BOX: a pixel of margin each side for antialiasing and any
+    // overhang, an integral left/top so the fraction stays in `where` and
+    // sub-pixel positioning survives the round trip, and for a stroke the
+    // half line width it reaches past the glyphs' edges. In double: a page
+    // may put text a long way off the canvas.
     const double reach = stroke ? state_.line_width / 2 * state_.matrix.scale_bound() : 0.0;
     const int pad = stroke ? static_cast<int>(std::ceil(std::min(reach, 256.0))) + 1 : 0;
-    const int left = static_cast<int>(std::floor(origin.x)) - 1 - pad;
-    const int top = static_cast<int>(std::floor(origin.y - ascent)) - 1 - pad;
-    const int w = static_cast<int>(std::ceil(width)) + 3 + 2 * pad;
-    const int h = static_cast<int>(std::ceil(ascent + descent)) + 3 + 2 * pad;
-
-    // Clipped to the canvas, so a run drawn mostly off the edge costs only the
-    // part that lands - and an entirely off-canvas run costs nothing.
-    const int from_x = std::max(0, left);
-    const int from_y = std::max(0, top);
-    const int to_x = std::min(pixels_->width, left + w);
-    const int to_y = std::min(pixels_->height, top + h);
-    if (from_x >= to_x || from_y >= to_y) { return; }
+    const double box_left = std::floor(static_cast<double>(origin.x)) - 1 - pad;
+    const double box_top = std::floor(static_cast<double>(origin.y - ascent)) - 1 - pad;
+    const double box_right = box_left + std::ceil(width) + 3 + 2 * pad;
+    const double box_bottom = box_top + std::ceil(ascent + descent) + 3 + 2 * pad;
+    // ONLY THE PART THAT CAN LAND is rasterised: the box clipped to the canvas
+    // - grown by the pad for a stroke, whose band at the edge depends on the
+    // glyphs that far beyond it. A run drawn mostly off the edge costs only
+    // the part that lands, and an entirely off-canvas run costs nothing.
+    if (box_right <= 0 || box_bottom <= 0 || box_left >= pixels_->width ||
+        box_top >= pixels_->height) {
+        return;
+    }
+    const int left = static_cast<int>(std::max(box_left, -static_cast<double>(pad)));
+    const int top = static_cast<int>(std::max(box_top, -static_cast<double>(pad)));
+    const int w =
+        static_cast<int>(std::min(box_right, static_cast<double>(pixels_->width + pad))) - left;
+    const int h =
+        static_cast<int>(std::min(box_bottom, static_cast<double>(pixels_->height + pad))) - top;
 
     // The glyphs as a coverage MASK, painted through the drawing model like
     // any shape, for everything the direct path below cannot do: an outline,
     // a gradient or pattern, an operator other than source-over.
     if (stroke || !state_.fill.is_solid() || state_.composite_mode != composite::source_over) {
-        paint_glyphs(text, origin, ascent, width, reach, left, top, w, h, stroke);
+        paint_glyphs(text, origin, ascent, width, reach, pad, left, top, w, h, stroke);
         return;
     }
+    // With no pad the box is all on the canvas.
     raster::surface scratch{w, h};
-    for (int sy = from_y; sy < to_y; ++sy) {
-        const std::span<std::uint32_t> row = scratch.row(sy - top);
-        for (int sx = from_x; sx < to_x; ++sx) {
-            row[static_cast<std::size_t>(sx - left)] = pixels_->at(sx, sy);
+    for (int sy = 0; sy < h; ++sy) {
+        const std::span<std::uint32_t> row = scratch.row(sy);
+        for (int sx = 0; sx < w; ++sx) {
+            row[static_cast<std::size_t>(sx)] = pixels_->at(left + sx, top + sy);
         }
     }
 
@@ -643,17 +701,102 @@ void canvas_context::draw_text(std::string_view text_in, float x, float y, bool 
 
     backend.draw_run(where, run, raster::pixel_rect{0, 0, w, h}, scratch);
 
-    for (int sy = from_y; sy < to_y; ++sy) {
-        const std::span<const std::uint32_t> row = scratch.row(sy - top);
-        for (int sx = from_x; sx < to_x; ++sx) {
+    for (int sy = 0; sy < h; ++sy) {
+        const std::span<const std::uint32_t> row = scratch.row(sy);
+        for (int sx = 0; sx < w; ++sx) {
             // Text is clipped like everything else - a clip that let glyphs
             // through would be visible on the first label drawn near an edge.
-            if (clipped_out(sx, sy)) { continue; }
-            pixels_->put(sx, sy, row[static_cast<std::size_t>(sx - left)]);
+            if (clipped_out(left + sx, top + sy)) { continue; }
+            pixels_->put(left + sx, top + sy, row[static_cast<std::size_t>(sx)]);
         }
     }
     touch();
 }
+
+namespace {
+
+// THE SQUARED DISTANCE FROM EVERY CELL TO THE NEAREST ONE HOLDING 0, in place,
+// over a w x h grid whose other cells hold `far_away`: Felzenszwalb and
+// Huttenlocher's exact Euclidean distance transform ("Distance Transforms of
+// Sampled Functions") - the lower envelope of a parabola per cell, down every
+// column and then along every row. O(w * h), however far the distances run.
+constexpr double far_away = 1e12;
+void squared_distances(std::vector<double> & grid, std::size_t w, std::size_t h) {
+    const std::size_t longest = std::max(w, h);
+    std::vector<double> f(longest);
+    std::vector<double> z(longest + 1);
+    std::vector<std::size_t> v(longest);
+    constexpr double infinity = std::numeric_limits<double>::infinity();
+    const auto line = [&](std::size_t start, std::size_t stride, std::size_t n) {
+        for (std::size_t i = 0; i < n; ++i) { f[i] = grid[start + i * stride]; }
+        // Where the parabolas rooted at q and p cross.
+        const auto meet = [&](std::size_t q, std::size_t p) {
+            const auto dq = static_cast<double>(q);
+            const auto dp = static_cast<double>(p);
+            return ((f[q] + dq * dq) - (f[p] + dp * dp)) / (2 * dq - 2 * dp);
+        };
+        std::size_t k = 0;
+        v[0] = 0;
+        z[0] = -infinity;
+        z[1] = infinity;
+        for (std::size_t q = 1; q < n; ++q) {
+            double s = meet(q, v[k]);
+            while (s <= z[k]) { s = meet(q, v[--k]); }
+            ++k;
+            v[k] = q;
+            z[k] = s;
+            z[k + 1] = infinity;
+        }
+        k = 0;
+        for (std::size_t q = 0; q < n; ++q) {
+            while (z[k + 1] < static_cast<double>(q)) { ++k; }
+            const double d = static_cast<double>(q) - static_cast<double>(v[k]);
+            grid[start + q * stride] = d * d + f[v[k]];
+        }
+    };
+    for (std::size_t x = 0; x < w; ++x) { line(x, w, h); }
+    for (std::size_t y = 0; y < h; ++y) { line(y * w, 1, w); }
+}
+
+// THE STROKE OF A COVERAGE MASK: the cells within reach of the glyphs' edge -
+// an inside one (coverage at least half) with an outside one no further than
+// `in_reach`, or an outside one with an inside one no further than
+// `out_reach`. Beyond the mask counts as outside.
+[[nodiscard]] std::vector<std::uint8_t> stroke_band(const raster::surface & mask, int in_reach,
+                                                    int out_reach) {
+    const auto w = static_cast<std::size_t>(mask.width());
+    const auto h = static_cast<std::size_t>(mask.height());
+    // One cell of outside all round.
+    const std::size_t gw = w + 2;
+    const std::size_t gh = h + 2;
+    std::vector<std::uint8_t> inside(gw * gh, 0);
+    for (std::size_t y = 0; y < h; ++y) {
+        const std::span<const std::uint32_t> row = mask.row(static_cast<int>(y));
+        for (std::size_t x = 0; x < w; ++x) {
+            inside[(y + 1) * gw + x + 1] = static_cast<std::uint8_t>((row[x] >> 24) >= 128);
+        }
+    }
+    std::vector<std::uint8_t> band(w * h, 0);
+    std::vector<double> grid(gw * gh);
+    for (const bool to_inside : {false, true}) {
+        const int reach = to_inside ? out_reach : in_reach;
+        if (reach <= 0) { continue; }
+        for (std::size_t i = 0; i < grid.size(); ++i) {
+            grid[i] = (inside[i] != 0) == to_inside ? 0.0 : far_away;
+        }
+        squared_distances(grid, gw, gh);
+        const double limit = static_cast<double>(reach) * static_cast<double>(reach);
+        for (std::size_t y = 0; y < h; ++y) {
+            for (std::size_t x = 0; x < w; ++x) {
+                const std::size_t at = (y + 1) * gw + x + 1;
+                if ((inside[at] != 0) != to_inside && grid[at] <= limit) { band[y * w + x] = 1; }
+            }
+        }
+    }
+    return band;
+}
+
+} // namespace
 
 // Text through the mask. The font backend gives glyph COVERAGE, not outlines,
 // so a fill is that coverage and a stroke is traced on it: a pixel is on the
@@ -662,8 +805,8 @@ void canvas_context::draw_text(std::string_view text_in, float x, float y, bool 
 // mask-traced outline is a pixel coarse at the corners; glyph outlines from
 // the backend would make strokeText exact.
 void canvas_context::paint_glyphs(const std::string & text, point origin, float ascent,
-                                  float advance, double reach, int left, int top, int w, int h,
-                                  bool stroke) {
+                                  float advance, double reach, int pad, int left, int top, int w,
+                                  int h, bool stroke) {
     const raster::font_backend & backend = fonts();
     raster::surface scratch{w, h};
     ctbrowser::paint::paint_command run;
@@ -678,23 +821,15 @@ void canvas_context::paint_glyphs(const std::string & text, point origin, float 
         ctbrowser::paint::font_face{state_.font_family, state_.font_bold, state_.font_italic};
     run.fill = color::rgba(255, 255, 255);
     backend.draw_run(run.bounds, run, raster::pixel_rect{0, 0, w, h}, scratch);
-    const auto coverage = [&](int sx, int sy) -> std::uint32_t {
-        if (sx < 0 || sy < 0 || sx >= w || sy >= h) { return 0; }
-        return scratch.row(sy)[static_cast<std::size_t>(sx)] >> 24;
-    };
     // The inner half of the band reaches ceil(reach) in, the outer half
-    // floor(reach) out, so a one-pixel line is one pixel and not two.
-    const int in_reach = std::max(1, static_cast<int>(std::ceil(reach)));
-    const int out_reach = static_cast<int>(std::floor(reach));
-    const auto near = [&](int sx, int sy, int radius, bool want) {
-        for (int dy = -radius; dy <= radius; ++dy) {
-            for (int dx = -radius; dx <= radius; ++dx) {
-                if (dx * dx + dy * dy > radius * radius) { continue; }
-                if ((coverage(sx + dx, sy + dy) >= 128) == want) { return true; }
-            }
-        }
-        return false;
-    };
+    // floor(reach) out, so a one-pixel line is one pixel and not two - and
+    // neither past the pad, the most of the glyphs the scratch holds beyond
+    // the canvas.
+    std::vector<std::uint8_t> band;
+    if (stroke) {
+        band = stroke_band(scratch, std::min(pad, std::max(1, static_cast<int>(std::ceil(reach)))),
+                           std::min(pad, static_cast<int>(std::floor(reach))));
+    }
     const canvas_paint & paint = stroke ? state_.stroke : state_.fill;
     const pass composited{*this};
     std::vector<std::uint32_t> colors;
@@ -704,12 +839,11 @@ void canvas_context::paint_glyphs(const std::string & text, point origin, float 
         for (int sx = 0; sx < w; ++sx) {
             const int x = left + sx;
             if (x < 0 || x >= width() || clipped_out(x, y)) { continue; }
-            std::uint32_t cover = coverage(sx, sy);
-            if (stroke) {
-                const bool in = cover >= 128;
-                cover =
-                    (in ? near(sx, sy, in_reach, false) : near(sx, sy, out_reach, true)) ? 255 : 0;
-            }
+            const auto at = static_cast<std::size_t>(sy) * static_cast<std::size_t>(w) +
+                            static_cast<std::size_t>(sx);
+            const std::uint32_t cover = stroke
+                                            ? (band[at] != 0 ? 255u : 0u)
+                                            : scratch.row(sy)[static_cast<std::size_t>(sx)] >> 24;
             if (cover == 0) { continue; }
             color source = paint.solid;
             if (!paint.is_solid()) {

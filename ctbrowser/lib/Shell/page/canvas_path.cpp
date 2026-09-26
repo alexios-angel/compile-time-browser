@@ -379,7 +379,7 @@ std::optional<std::array<float, 4>> canvas_gradient::sample(double x, double y) 
 // nonzero fill of all of them is exactly their union: an overlap is painted
 // once, which is what 2d.path.stroke.overlap's half-transparent green asks.
 
-canvas_path canvas_context::stroke_outline(const canvas_path & path) const {
+canvas_path canvas_context::stroke_outline(const canvas_path & path, const rect & cull) const {
     canvas_path out;
     const transform & m = state_.matrix;
     if (!m.invertible()) { return out; }
@@ -508,6 +508,57 @@ canvas_path canvas_context::stroke_outline(const canvas_path & path) const {
     double dash_total = 0;
     for (const double d : state_.dash) { dash_total += d; }
     const bool dashed = !state_.dash.empty() && dash_total > 0 && std::isfinite(dash_total);
+    const std::size_t entries = state_.dash.size();
+
+    // WHERE A DASH CAN SHOW: `cull` grown by the farthest any piece of a dash
+    // reaches from its centre line - half the width, a square cap's corner or
+    // a miter's tip - through the transform's largest stretch (bounded by its
+    // Frobenius norm), and a pixel or two for rounding. A stretch of path
+    // outside it only moves the pattern on, arithmetically: a one-pixel dash
+    // along a line a billion pixels long costs the dashes that land.
+    const double stretch =
+        std::sqrt(static_cast<double>(m.a) * m.a + static_cast<double>(m.b) * m.b +
+                  static_cast<double>(m.c) * m.c + static_cast<double>(m.d) * m.d);
+    const double tip =
+        std::max(std::numbers::sqrt2, state_.join == line_join::miter ? state_.miter_limit : 1.0);
+    const double spread = hw * stretch * tip + 2;
+    const double cull_x0 = static_cast<double>(cull.x) - spread;
+    const double cull_y0 = static_cast<double>(cull.y) - spread;
+    const double cull_x1 = static_cast<double>(cull.right()) + spread;
+    const double cull_y1 = static_cast<double>(cull.bottom()) + spread;
+    // The part of the user-space segment a -> b inside that area, as a range
+    // of the parameter along it: Liang and Barsky's clip of the segment's
+    // device image, whose parameters the affine map preserves. Empty when the
+    // first is not below the second.
+    const auto visible = [&](vec a, vec b) {
+        const vec p{m.a * a.x + m.c * a.y + m.e, m.b * a.x + m.d * a.y + m.f};
+        const vec q{m.a * b.x + m.c * b.y + m.e, m.b * b.x + m.d * b.y + m.f};
+        const vec d = q - p;
+        double t0 = 0;
+        double t1 = 1;
+        // Keep the t where denom * t <= numer.
+        const auto bound = [&](double denom, double numer) {
+            if (denom == 0) {
+                if (numer < 0) { t1 = -1; }
+                return;
+            }
+            if (denom < 0) {
+                t0 = std::max(t0, numer / denom);
+            } else {
+                t1 = std::min(t1, numer / denom);
+            }
+        };
+        bound(-d.x, p.x - cull_x0);
+        bound(d.x, cull_x1 - p.x);
+        bound(-d.y, p.y - cull_y0);
+        bound(d.y, cull_y1 - p.y);
+        return std::pair{t0, t1};
+    };
+    // ponytail: a stroke of more than a million dash intervals draws nothing,
+    // as Skia's does (kMaxDashCount) - each interval is an outline of its own,
+    // and this bounds the memory. Culling keeps real pages far below it.
+    constexpr double most_intervals = 1e6;
+    double intervals = 0;
 
     for (const canvas_path::subpath & sub : path.subpaths) {
         // Back to user space, with ZERO-LENGTH SEGMENTS PRUNED: a moveTo and a
@@ -536,20 +587,56 @@ canvas_path canvas_context::stroke_outline(const canvas_path & path) const {
         // DASHES: walk the outline with the pattern, starting lineDashOffset
         // into it, and stroke each "on" run as an open polyline of its own.
         if (closed) { pts.push_back(pts.front()); }
+        std::vector<std::pair<double, double>> shown(pts.size() - 1);
+        double shown_length = 0;
+        for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+            shown[i] = visible(pts[i], pts[i + 1]);
+            if (shown[i].first < shown[i].second) {
+                shown_length += length(pts[i + 1] - pts[i]) * (shown[i].second - shown[i].first);
+            }
+        }
+        if (shown_length > 0) {
+            intervals += (shown_length / dash_total + 1) * static_cast<double>(entries);
+            if (intervals > most_intervals) { return canvas_path{}; }
+        }
+
         std::size_t index = 0;
         double into = std::fmod(state_.dash_offset, dash_total);
         if (into < 0) { into += dash_total; }
         while (into >= state_.dash[index]) {
             into -= state_.dash[index];
-            index = (index + 1) % state_.dash.size();
+            index = (index + 1) % entries;
         }
         double remaining = state_.dash[index] - into;
         bool on = index % 2 == 0;
         std::vector<vec> run;
-        if (on) { run.push_back(pts[0]); }
-        for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
-            const vec a = pts[i];
-            const vec b = pts[i + 1];
+        const auto next_entry = [&] {
+            index = (index + 1) % entries;
+            on = index % 2 == 0;
+            remaining = state_.dash[index];
+        };
+        // The run so far ends here, cut where the path leaves the area - so
+        // its cap is out of sight too.
+        const auto finish = [&] {
+            if (on) { stroke_polyline(run, false); }
+            run.clear();
+        };
+        // `len` along the pattern, drawing nothing: whole periods at once,
+        // since the list is even and a period ends where it began.
+        const auto skip = [&](double len) {
+            if (len < remaining) {
+                remaining -= len;
+                return;
+            }
+            len = std::fmod(len - remaining, dash_total);
+            for (std::size_t step = 0;; ++step) {
+                next_entry();
+                if (len < remaining || step == entries) { break; }
+                len -= remaining;
+            }
+            remaining = std::max(0.0, remaining - len);
+        };
+        const auto walk = [&](vec a, vec b) {
             const double seg = length(b - a);
             double done = 0;
             while (seg - done > remaining) {
@@ -562,14 +649,35 @@ canvas_path canvas_context::stroke_outline(const canvas_path & path) const {
                 } else {
                     run = {q};
                 }
-                on = !on;
-                index = (index + 1) % state_.dash.size();
-                remaining = state_.dash[index];
+                next_entry();
             }
             remaining -= seg - done;
             if (on) { run.push_back(b); }
+        };
+        for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+            const vec a = pts[i];
+            const vec b = pts[i + 1];
+            const double seg = length(b - a);
+            const auto [t0, t1] = shown[i];
+            if (!(t0 < t1)) {
+                finish();
+                skip(seg);
+                continue;
+            }
+            if (t0 > 0) {
+                finish();
+                skip(seg * t0);
+            }
+            const vec entry = t0 > 0 ? a + (b - a) * t0 : a;
+            const vec exit = t1 < 1 ? a + (b - a) * t1 : b;
+            if (on && run.empty()) { run.push_back(entry); }
+            walk(entry, exit);
+            if (t1 < 1) {
+                finish();
+                skip(seg * (1 - t1));
+            }
         }
-        if (on) { stroke_polyline(run, false); }
+        finish();
     }
     return out;
 }
@@ -619,7 +727,9 @@ bool canvas_context::is_point_in_path(const canvas_path & path, double x, double
 
 bool canvas_context::is_point_in_stroke(const canvas_path & path, double x, double y) const {
     if (!std::isfinite(x) || !std::isfinite(y)) { return false; }
-    return contains(stroke_outline(path), x, y, fill_rule::nonzero);
+    // Only the dashes near the point are built: it is the whole area asked about.
+    return contains(stroke_outline(path, rect{static_cast<float>(x), static_cast<float>(y), 0, 0}),
+                    x, y, fill_rule::nonzero);
 }
 
 } // namespace ctbrowser::shell

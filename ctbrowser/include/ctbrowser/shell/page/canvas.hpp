@@ -327,6 +327,9 @@ public:
 
     void save();
     void restore();
+    // How many states save() has pushed and restore() not yet popped - the
+    // level a binding keeps its per-state script objects at.
+    [[nodiscard]] std::size_t depth() const noexcept { return stack_.size(); }
     void translate(float x, float y) { concat(transform::translation(x, y)); }
     void scale(float x, float y) { concat(transform::scaling(x, y)); }
     void rotate(float radians) { concat(transform::rotation(radians)); }
@@ -395,8 +398,10 @@ public:
 private:
     void touch() { ++revision_; }
     void draw_text(std::string_view text, float x, float y, bool stroke);
+    // The glyphs as a coverage mask over the canvas rectangle (left, top, w,
+    // h), painted - or, for a stroke, traced `reach` either side and painted.
     void paint_glyphs(const std::string & text, point origin, float ascent, float advance,
-                      double reach, int left, int top, int w, int h, bool stroke);
+                      double reach, int pad, int left, int top, int w, int h, bool stroke);
     void concat(const transform & t) { state_.matrix = t.then(state_.matrix); }
 
     // Walk a path a scanline at a time and hand each inside-span, as the
@@ -413,8 +418,10 @@ private:
 
     // The outline a stroke of `path` covers, in device space: every segment,
     // join, cap and dash, each piece wound the same way so that a nonzero fill
-    // of the lot is their union.
-    [[nodiscard]] canvas_path stroke_outline(const canvas_path & path) const;
+    // of the lot is their union. `cull` is the device area the caller looks
+    // at - the canvas, or the one point a hit test asks about - and a DASH
+    // that cannot reach it is not built.
+    [[nodiscard]] canvas_path stroke_outline(const canvas_path & path, const rect & cull) const;
 
     // The colours of one row of pixels under a gradient or a pattern.
     void sample_row(const canvas_paint & paint, int y, int x0, int x1,
