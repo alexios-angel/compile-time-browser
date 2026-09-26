@@ -322,6 +322,8 @@ constexpr property_syntax modules[] = {
     {"text-emphasis-color", k::color, "", "currentcolor", true, false},
     {"text-emphasis-position", k::freeform, "", "auto", true, false},
     {"initial-letters", k::freeform, "", "normal", false, false},
+    // CSS Inline 3's current name for it, the one engines ship.
+    {"initial-letter", k::freeform, "", "normal", false, false},
     {"initial-letters-align", k::freeform, "", "alphabetic", true, false},
     {"initial-letters-wrap", k::freeform, "", "none", true, false},
     {"alignment-baseline", k::keyword_only,
