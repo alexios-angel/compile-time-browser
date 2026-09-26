@@ -28,6 +28,7 @@ void dom_bindings::install_window(context & cx) {
                              *window); // scrollX/scrollY, scroll/scrollTo/scrollBy (scrolling.cpp)
     install_window_listeners(cx, *window);
     install_post_message(cx, *window);
+    install_window_open(cx, *window); // window.open(), bindings/frames.cpp
     // `localStorage`, IN MEMORY AND FOR THIS PAGE ONLY. 38 uses in p5.js, which
     // reads it before it draws anything.
     //

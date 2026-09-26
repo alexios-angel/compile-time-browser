@@ -479,6 +479,66 @@ void test_a_form_submits_into_a_named_frame() {
     if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"|?a=x+y&b=2|inner|true|false"}); }
 }
 
+// window.open(), HTML 7.2.2.1: a URL that does not parse is a SyntaxError
+// before anything else; `_blank` is a popup, which this user agent blocks
+// (null); a name an <iframe> has navigates it and answers its window.
+void test_window_open_follows_the_window_open_steps() {
+    is("<iframe id=f name=f></iframe>",
+       "(function () { var threw = ''; try { window.open('http://[') } catch (e) {"
+       " threw = e.name + (e instanceof DOMException); }"
+       " return [threw, window.open(), window.open('inner.html', '_blank'),"
+       " window.open('inner.html', 'f') === document.getElementById('f').contentWindow,"
+       " window.open('inner.html', 'f', 'noopener')].join('|'); })()",
+       "SyntaxErrortrue|||true|");
+    // ...and the navigation it started has happened a tick later.
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///pages/the-page.html");
+    page.assets().add("inner.html", bytes_of(inner_html));
+    page.load_html("<!DOCTYPE html><html><body><iframe id=f name=f></iframe><script>"
+                   "addEventListener('load', function () {"
+                   " var f = document.getElementById('f');"
+                   " window.open('inner.html?x=1', 'f');"
+                   " f.onload = function () {"
+                   "  console.log(f.contentDocument.title + f.contentWindow.location.search); };"
+                   "});</script></body></html>");
+    for (int i = 0; i < 4; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"inner?x=1"}); }
+}
+
+// THE LOCATION OBJECT, HTML 7.2.4: getters over the document's URL, and
+// setters that navigate - `window.location = url` forwards to `href`
+// ([PutForwards]), a URL that does not parse is a SyntaxError, and a new
+// fragment is a fragment navigation whose `hashchange` comes a task later.
+void test_the_location_object_navigates() {
+    is(one_frame,
+       "(function () { var w = document.getElementById('f').contentWindow, threw = '';"
+       " try { w.location = 'http://[' } catch (e) { threw = e.name; }"
+       " var heard = []; w.addEventListener('hashchange', function (e) {"
+       "  heard.push(e.newURL); });"
+       " w.location.hash = 'there'; var now = w.location.href + ',' + heard.length;"
+       " var own = Object.getOwnPropertyDescriptor(w.location, 'href');"
+       " return [threw, now, typeof own.get, own.configurable, w.location.hash,"
+       "  String(w.location) === w.location.href].join('|'); })()",
+       "SyntaxError|file:///pages/inner.html#there,0|function|false|#there|true");
+    // A frame's `location.href =` navigates the frame, a tick later.
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///pages/the-page.html");
+    page.assets().add("inner.html", bytes_of(inner_html));
+    page.load_html("<!DOCTYPE html><html><body><iframe id=f></iframe><script>"
+                   "addEventListener('load', function () {"
+                   " var f = document.getElementById('f');"
+                   " f.contentWindow.location.href = 'inner.html?y=2';"
+                   " f.onload = function () {"
+                   "  console.log(f.contentDocument.title + f.contentWindow.location.search); };"
+                   "});</script></body></html>");
+    for (int i = 0; i < 4; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"inner?y=2"}); }
+}
+
 int main() {
     test_a_frame_document_is_laid_out_at_the_size_of_its_box();
     test_the_frames_are_indexed_on_the_window();
@@ -501,5 +561,7 @@ int main() {
     test_a_frame_window_scrolls_its_own_viewport();
     test_a_frames_function_and_eval_are_the_frames();
     test_a_form_submits_into_a_named_frame();
+    test_window_open_follows_the_window_open_steps();
+    test_the_location_object_navigates();
     REPORT("frames");
 }

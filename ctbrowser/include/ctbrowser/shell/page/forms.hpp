@@ -449,8 +449,9 @@ struct form_navigation {
 };
 
 // ...PLANNED, once a navigable is chosen (bindings/frames.cpp): the form's
-// document and the form - whose one planned navigation a later one replaces
-// - and the <iframe> it navigates, by the bindings of the document it is in.
+// document and the form - whose one planned navigation a later one replaces;
+// both empty for a script's navigation (a Location setter, window.open) - and
+// the <iframe> it navigates, by the bindings of the document it is in.
 struct planned_navigation {
     dom_bindings * form_document = nullptr;
     node_id form;

@@ -206,7 +206,7 @@ private:
     [[nodiscard]] node_id viable_sibling(node_id self, std::span<value> args, bool forward);
     [[nodiscard]] std::string namespace_of(node_id id) const;
     [[nodiscard]] std::string text_content(node_id target) const;
-    void write_location_parts(context & cx, script::object_object & loc);
+    void define_location_property(context & cx, script::object_object & holder);
     void install_element_views(context & cx, script::object_object & obj, node_id id);
     void install_element_child_views(context & cx, script::object_object & obj, node_id id);
 
@@ -718,7 +718,10 @@ private:
     std::vector<frame_entry> frames_;
     bool frames_dirty_ = true;
     std::vector<planned_navigation> planned_navigations_; // the primary's
-    const request_handler * request_handler_ = nullptr;   // the primary's
+    [[nodiscard]] std::pair<dom_bindings *, node_id> choose_navigable(std::string_view target);
+    void navigate_frame(dom_bindings & navigable, node_id element, form_navigation navigation);
+    void install_window_open(context & cx, script::object_object & window);
+    const request_handler * request_handler_ = nullptr; // the primary's
     [[nodiscard]] std::optional<resource_reply> ask_request_handler(resource_request request);
     // Returns the bindings over the frame's document (null when no wrapper).
     dom_bindings * load_frame(context & cx, node_id id, const std::string & src,

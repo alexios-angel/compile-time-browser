@@ -53,6 +53,7 @@
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/net/url.hpp>
 
+#include "element/internal.hpp"
 #include "events/internal.hpp"
 
 #include <algorithm>
@@ -438,32 +439,21 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     return &made;
 }
 
-// HTML 4.10.21.3 "submit", steps 20-24, and "plan to navigate": the navigable
-// a submission goes to, and the navigation PLANNED there rather than run.
-// build_submission made `navigation` - the URL, a GET's query already the
-// entry list, and the request that loads it; this chooses where it goes.
-//
-// THE RULES FOR CHOOSING A NAVIGABLE (7.3.1.7), for the navigables this
-// engine has - a frame document's own and each <iframe>'s: "" and `_self`
-// are the form document's own; `_parent` the one its frame is in, or its own
-// when it has none; a NAME the navigable of that name - the form document's
-// own frame, then an <iframe> in the form's document, then anywhere in the
-// page. A TOP-LEVEL navigable is the embedder's page, which no submission
-// replaces here: `_top`, `_blank`, `_self` in the page itself and `_parent`
-// out of a frame the page holds all answer false, and the browser records the
-// entry list instead (browser::submit's last_submission).
-//
-// PLANNED, one per form: "if the form has a non-null planned navigation,
-// remove it from its task queue" - a later submission of the same form,
-// from whatever and at whatever target, replaces the earlier one before it
-// ran (form-double-submit*.html). The plan runs at the start of the next tick
-// (run_planned_navigations), a task after the one that submitted.
-bool dom_bindings::navigate_form_target(node_id form, form_navigation navigation) {
-    if (cx_ == nullptr || !form) { return false; }
+// THE RULES FOR CHOOSING A NAVIGABLE (HTML 7.3.1.7), for the navigables this
+// engine has - a frame document's own and each <iframe>'s - from this
+// document's: "" and `_self` its own; `_parent` the one its frame is in, or
+// its own when it has none; `_top` the top-level one; any other name but
+// `_blank` the navigable of that name - this document's own frame, then an
+// <iframe> in this document, then anywhere in the page. Answered as the
+// <iframe> - its document's bindings and the element - or nothing for the
+// TOP-LEVEL navigable, which is the embedder's page, and for a name nothing
+// has (a new top-level traversable, which this user agent never opens: its
+// popup blocker is always on).
+std::pair<dom_bindings *, node_id> dom_bindings::choose_navigable(std::string_view target) {
     dom_bindings & top = primary_ == nullptr ? *this : *primary_;
     // The <iframe> whose content document `doc` is - its document's bindings
     // and the element - or nothing for the page itself. Over SNAPSHOTS of each
-    // frame list: nothing below runs script, but a list is never walked live.
+    // frame list: a list is never walked live (below).
     const auto holding = [&top](const dom_bindings * doc) {
         const auto walk = [doc](const auto & self,
                                 dom_bindings & at) -> std::pair<dom_bindings *, node_id> {
@@ -479,68 +469,98 @@ bool dom_bindings::navigate_form_target(node_id form, form_navigation navigation
         };
         return walk(walk, top);
     };
-    std::pair<dom_bindings *, node_id> chosen{nullptr, node_id{}};
-    const std::string keyword = ascii_lower_copy(navigation.target);
+    const std::string keyword = ascii_lower_copy(target);
     const std::pair<dom_bindings *, node_id> own = holding(this);
-    if (keyword.empty() || keyword == "_self") {
-        chosen = own;
-    } else if (keyword == "_parent") {
-        chosen = own.first == nullptr ? own : holding(own.first);
-    } else if (keyword != "_top" && keyword != "_blank") {
-        const atom name = atoms_->intern("name");
-        // The first <iframe> of `doc` whose name is the target. RECONCILED
-        // first, which can build a frame and run its scripts - so the searches
-        // below walk copies of each frame list, never the live one: a script
-        // there that reads an ancestor's `contentWindow` reconciles that
-        // ancestor's list, and swapping a vector under a range-for is a
-        // use-after-free. A dom_bindings is never freed while the page lives
-        // (secondary_documents_), so a copied pointer stays good.
-        const auto named = [&](dom_bindings & doc) -> node_id {
-            doc.reconcile_frames();
-            const std::vector<node_id> frames = doc.all_html_elements("iframe");
-            const auto txn = doc.doc_->read();
-            for (const node_id id : frames) {
-                if (txn.attribute_value(id, name) == navigation.target) { return id; }
-            }
-            return node_id{};
-        };
-        const auto search = [&](const auto & self, dom_bindings & doc) -> void {
-            if (chosen.first != nullptr) { return; }
-            if (const node_id found = named(doc)) {
-                chosen = {&doc, found};
-                return;
-            }
-            const std::vector<frame_entry> children = doc.frames_;
-            for (const frame_entry & entry : children) {
-                if (entry.bindings != nullptr) { self(self, *entry.bindings); }
-            }
-        };
-        bool own_name = false;
-        if (own.first != nullptr) {
-            const auto txn = own.first->doc_->read();
-            own_name = txn.attribute_value(own.second, name) == navigation.target;
-        }
-        if (own_name) {
-            chosen = own;
-        } else if (const node_id found = named(*this)) {
-            chosen = {this, found};
-        } else {
-            search(search, top);
-        }
+    if (keyword.empty() || keyword == "_self") { return own; }
+    if (keyword == "_parent") { return own.first == nullptr ? own : holding(own.first); }
+    if (keyword == "_top" || keyword == "_blank") { return {nullptr, node_id{}}; }
+    const atom name = atoms_->intern("name");
+    if (own.first != nullptr) {
+        const auto txn = own.first->doc_->read();
+        if (txn.attribute_value(own.second, name) == target) { return own; }
     }
-    if (chosen.first == nullptr) { return false; }
+    // The first <iframe> of `doc` whose name is the target. RECONCILED first,
+    // which can build a frame and run its scripts - so the search walks copies
+    // of each frame list, never the live one: a script there that reads an
+    // ancestor's `contentWindow` reconciles that ancestor's list, and swapping
+    // a vector under a range-for is a use-after-free. A dom_bindings is never
+    // freed while the page lives (secondary_documents_), so a copied pointer
+    // stays good.
+    const auto named = [&](dom_bindings & doc) -> node_id {
+        doc.reconcile_frames();
+        const std::vector<node_id> frames = doc.all_html_elements("iframe");
+        const auto txn = doc.doc_->read();
+        for (const node_id id : frames) {
+            if (txn.attribute_value(id, name) == target) { return id; }
+        }
+        return node_id{};
+    };
+    if (const node_id found = named(*this)) { return {this, found}; }
+    std::pair<dom_bindings *, node_id> chosen{nullptr, node_id{}};
+    const auto search = [&](const auto & self, dom_bindings & doc) -> void {
+        if (chosen.first != nullptr) { return; }
+        if (const node_id found = named(doc)) {
+            chosen = {&doc, found};
+            return;
+        }
+        const std::vector<frame_entry> children = doc.frames_;
+        for (const frame_entry & entry : children) {
+            if (entry.bindings != nullptr) { self(self, *entry.bindings); }
+        }
+    };
+    search(search, top);
+    return chosen;
+}
+
+// HTML 4.10.21.3 "submit", steps 20-24, and "plan to navigate": the navigable
+// a submission goes to, and the navigation PLANNED there rather than run.
+// build_submission made `navigation` - the URL, a GET's query already the
+// entry list, and the request that loads it; the rules for choosing a
+// navigable decide where it goes. A TOP-LEVEL navigable is the embedder's
+// page, which no submission replaces here: `_top`, `_blank`, `_self` in the
+// page itself and `_parent` out of a frame the page holds all answer false,
+// and the browser records the entry list instead (browser::submit's
+// last_submission).
+//
+// PLANNED, one per form: "if the form has a non-null planned navigation,
+// remove it from its task queue" - a later submission of the same form, from
+// whatever and at whatever target, replaces the earlier one before it ran
+// (form-double-submit*.html). The plan runs at the start of the next tick
+// (run_planned_navigations), a task after the one that submitted.
+bool dom_bindings::navigate_form_target(node_id form, form_navigation navigation) {
+    if (cx_ == nullptr || !form) { return false; }
+    const auto [navigable, element] = choose_navigable(navigation.target);
+    if (navigable == nullptr) { return false; }
+    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
     std::erase_if(top.planned_navigations_, [&](const planned_navigation & plan) {
         return plan.form_document == this && plan.form == form;
     });
     top.planned_navigations_.push_back(
-        planned_navigation{this, form, chosen.first, chosen.second, std::move(navigation)});
+        planned_navigation{this, form, navigable, element, std::move(navigation)});
     return true;
+}
+
+// "Navigate" an <iframe> from script - a Location's setters and window.open():
+// the navigation joins the planned ones and runs at the start of the next tick,
+// and it CANCELS whatever was still waiting there for the same navigable - the
+// navigate algorithm's "cancel any existing but not yet mature navigation", a
+// planned form submission included (form-submit-iframe-then-location-navigate
+// .html, whose behaviour browsers agree on and HTML leaves implicit).
+void dom_bindings::navigate_frame(dom_bindings & navigable, node_id element,
+                                  form_navigation navigation) {
+    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+    std::erase_if(top.planned_navigations_, [&](const planned_navigation & plan) {
+        return plan.navigable == &navigable && plan.element == element;
+    });
+    top.planned_navigations_.push_back(
+        planned_navigation{nullptr, node_id{}, &navigable, element, std::move(navigation)});
 }
 
 // The planned navigations, run: each <iframe> loads what its plan asked for -
 // a new document under the same element - unless the plan's form's document
 // is no longer active in the page, or the navigable's: a planned navigation
 // is an element task, and a navigated frame's document runs no more tasks.
+// A script's navigation (navigate_frame) has no form document to ask about.
 void dom_bindings::run_planned_navigations() {
     if (cx_ == nullptr || planned_navigations_.empty()) { return; }
     std::vector<planned_navigation> due;
@@ -560,7 +580,10 @@ void dom_bindings::run_planned_navigations() {
         return walk(walk, *this);
     };
     for (planned_navigation & plan : due) {
-        if (!active(plan.form_document) || !active(plan.navigable)) { continue; }
+        if ((plan.form_document != nullptr && !active(plan.form_document)) ||
+            !active(plan.navigable)) {
+            continue;
+        }
         dom_bindings & owner = *plan.navigable;
         if (!owner.is_connected(plan.element)) { continue; }
         owner.reconcile_frames();
@@ -581,6 +604,122 @@ void dom_bindings::run_planned_navigations() {
             owner.frames_.push_back(frame_entry{plan.element, std::move(src), made});
         }
     }
+}
+
+namespace {
+
+// "Tokenize the features argument" (HTML 7.2.2.1): name/value pairs split on
+// the feature separators - ASCII whitespace, `=` and `,` - both lowercased.
+[[nodiscard]] std::vector<std::pair<std::string, std::string>> tokenize_features(
+    std::string_view features) {
+    const auto separator = [](char c) {
+        return c == '=' || c == ',' || c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
+    };
+    std::vector<std::pair<std::string, std::string>> out;
+    std::size_t at = 0;
+    const auto collect = [&](bool separators) {
+        const std::size_t from = at;
+        while (at < features.size() && separator(features[at]) == separators) { ++at; }
+        return ascii_lower_copy(features.substr(from, at - from));
+    };
+    while (at < features.size()) {
+        (void)collect(true);
+        std::string name = collect(false);
+        std::string value;
+        while (at < features.size() && features[at] != '=') {
+            if (features[at] == ',' || !separator(features[at])) { break; }
+            ++at;
+        }
+        if (at < features.size() && separator(features[at])) {
+            while (at < features.size() && separator(features[at])) {
+                if (features[at] == ',') { break; }
+                ++at;
+            }
+            value = collect(false);
+        }
+        if (!name.empty()) { out.emplace_back(std::move(name), std::move(value)); }
+    }
+    return out;
+}
+
+// "Check if a window feature is set" as a boolean: "" `yes` and `true` are
+// true, and otherwise the value's integer is - 0 when it does not parse.
+[[nodiscard]] bool boolean_feature(const std::vector<std::pair<std::string, std::string>> & list,
+                                   std::string_view name) {
+    for (const auto & [key, value] : list) {
+        if (key != name) { continue; }
+        if (value.empty() || value == "yes" || value == "true") { return true; }
+        long long parsed = 0;
+        return detail::parse_html_integer(value, parsed) && parsed != 0;
+    }
+    return false;
+}
+
+} // namespace
+
+// `window.open()`, HTML 7.2.2.1 "the window open steps", on the window of
+// THIS document: the URL encoding-parsed against the entry document's base
+// URL, a failure a SyntaxError; the target chosen by the rules for choosing a
+// navigable; an existing <iframe> navigated (navigate_frame) and its
+// WindowProxy returned unless `noopener`. A NEW top-level traversable - the
+// `_blank` default, or a name no navigable has - is a popup, and this user
+// agent's popup blocker is always on: null, as a blocked popup is.
+// ponytail: `_self`, `_parent` or `_top` reaching the embedder's page answers
+// its WindowProxy without navigating it - top-level navigation is the
+// embedder's (browser::set_navigate_hook) and a script cannot ask for it yet.
+void dom_bindings::install_window_open(context & cx, script::object_object & window) {
+    const value open = native(cx, "open", [this](context & c, std::span<value> a) -> value {
+        const std::string url =
+            a.empty() || a[0].is_undefined() ? std::string{} : to_usv_string(c.to_string(a[0]));
+        std::string target =
+            a.size() < 2 || a[1].is_undefined() ? std::string{"_blank"} : c.to_string(a[1]);
+        const std::string features =
+            a.size() < 3 || a[2].is_undefined() ? std::string{} : c.to_string(a[2]);
+        if (c.throw_pending()) { return value::undefined(); }
+        // The ENTRY document: the realm the calling script runs in.
+        dom_bindings & entry = bindings_of(c.global("window"));
+        form_navigation navigation;
+        if (!url.empty()) {
+            const std::string base =
+                detail::document_base_url(entry.doc_->read(), *entry.atoms_, entry.location_href_);
+            const std::optional<url_record> parsed =
+                base.empty() ? parse_url(url) : parse_url(url, base);
+            if (!parsed) {
+                throw_dom_exception(c, "SyntaxError",
+                                    "Failed to execute 'open' on 'Window': Unable to open a "
+                                    "window with invalid URL '" +
+                                        url + "'.");
+                return value::undefined();
+            }
+            navigation.request.url = parsed->serialize();
+            navigation.src = navigation.request.url;
+        }
+        if (target.empty()) { target = "_blank"; }
+        const auto tokens = tokenize_features(features);
+        const bool noopener =
+            boolean_feature(tokens, "noopener") || boolean_feature(tokens, "noreferrer");
+        const auto [navigable, element] = choose_navigable(target);
+        if (navigable == nullptr) {
+            const std::string keyword = ascii_lower_copy(target);
+            if (noopener || (!keyword.empty() && keyword != "_self" && keyword != "_parent" &&
+                             keyword != "_top")) {
+                return value::null();
+            }
+            const dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+            return top.window_view_.is_heap() ? top.window_view_ : c.global("window");
+        }
+        if (!navigation.request.url.empty()) {
+            navigation.target = target;
+            navigate_frame(*navigable, element, std::move(navigation));
+        }
+        if (noopener) { return value::null(); }
+        return c.lookup_property(navigable->wrap(c, element), "contentWindow");
+    });
+    auto * made = static_cast<script::native_object *>(open.as_heap());
+    made->define("length", value::number(0), script::attr_configurable);
+    window.set("open", open);
+    // The window is the global object, so the bare name is the same method.
+    cx.define_global("open", open);
 }
 
 // `load` at the frame, or `error` when the src resolved to no bytes. It does
@@ -658,7 +797,7 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     const value element_view = owner.wrap(cx, element);
 
     frame_window->set("document", document_);
-    frame_window->set("location", location_);
+    define_location_property(cx, *frame_window); // [PutForwards=href], entry.cpp
     frame_window->set("customElements", custom_elements_registry(cx)); // custom_elements.cpp
     install_window_scrolling(cx, *frame_window); // scrollX/scrollY, scrollTo on a frame's window
     // The frame's own `matchMedia`: a list that reads the frame's viewport.
@@ -695,7 +834,7 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
             })),
         value::undefined());
     if (auto * doc = document_object()) {
-        doc->set("location", location_);
+        define_location_property(cx, *doc);
         // AND THE DOCUMENT KNOWS ITS WINDOW. install_document set
         // `defaultView` null for a secondary, which is right for
         // createHTMLDocument and wrong for a frame: `root.ownerDocument
@@ -730,6 +869,7 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     // hears the frame's load, not the page's.
     install_window_listeners(cx, *frame_window);
     install_post_message(cx, *frame_window);
+    install_window_open(cx, *frame_window);
     install_window_handlers(cx, *frame_window);
     // scrollX/scrollY and scroll()/scrollTo()/scrollBy() over THIS document's
     // viewport: a frame script reading `scrollY` threw a ReferenceError, and a
