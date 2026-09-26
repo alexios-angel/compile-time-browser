@@ -3825,13 +3825,381 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
     }
 }
 
+static void testNumberAttributeOrigins(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    const std::string source = R"js(function guarded(element) {
+        const saved = Number(element.getAttribute('data-number'));
+        try { element.setAttribute('data-written', saved); throw element; }
+        catch (error) { return error === element; }
+    })js";
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 18; ++control) {
+            auto text = source;
+            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
+                text.replace(text.find(from.str()), from.size(), to.str());
+            };
+            if (control == 1) {
+                replace("try {", "try { element.setAttribute('data-number', '99');");
+            }
+            if (control == 2 || control == 16) {
+                replace("Number(element.getAttribute('data-number'))",
+                        control == 2 ? "element.hasAttribute('flag') ? "
+                                       "Number(element.getAttribute('data-number')) : 7.5"
+                                     : "element.hasAttribute('flag') ? "
+                                       "Number(element.getAttribute('data-number')) : element");
+            }
+            if (control == 10) {
+                replace("try {", "");
+                replace("const saved", "try { const saved");
+            }
+            if (control == 11) { replace("const saved", "unknown(); const saved"); }
+            if (control == 12) { replace("data-written", "bad name"); }
+            if (control == 17) { replace("saved); throw", "saved + 1); throw"); }
+            auto candidate = import(context, text, true);
+            if (!candidate) { continue; }
+            ctjs::LoadGlobalOp number;
+            ctjs::CallOp conversion;
+            candidate->walk([&](ctjs::LoadGlobalOp load) {
+                if (load.getName() == "Number") { number = load; }
+            });
+            candidate->walk([&](ctjs::CallOp call) {
+                if (number && call.getCallee() == number.getResult()) { conversion = call; }
+            });
+            // Inside try, status edges forward the callee through block arguments.
+            if (!check(number && (conversion || control == 10),
+                       "saved Number source retains its original call")) {
+                continue;
+            }
+            auto element = guarded(*candidate).getBody().front().getArgument(3);
+            mlir::Builder builder(&context);
+            if (control == 4) { number.setName("Other"); }
+            if (control == 5) { conversion.getReceiverMutable().assign(element); }
+            if (control == 6) { conversion.getArgsMutable().append(element); }
+            if (control == 7) { conversion.getArgsMutable().clear(); }
+            if (control == 8) { conversion.getArgsMutable().assign(element); }
+            if (control == 9) {
+                mlir::OpBuilder at(number);
+                ctjs::StoreGlobalOp::create(at, number.getLoc(), "Number", element);
+            }
+            number->setAttr("ctnative.host_intrinsic", builder.getStringAttr("Number"));
+            if (conversion) {
+                conversion->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+            }
+            HostContract request;
+            request.provider = provider;
+            request.entry = guarded(*candidate).getSymName().str();
+            request.elementParameters = {0};
+            if (control != 3) { request.initialIntrinsics = {"Number"}; }
+            request.moduleSha256 = hostContractFingerprint(*candidate);
+            const auto originalContract = request;
+            if (control == 15) { number.setName("Other"); }
+            const auto original = printed(*candidate);
+            auto error = prepareDOMEntry(*candidate, request,
+                                         control == 13   ? 0
+                                         : control == 14 ? 500
+                                                         : 100000);
+            if (control >= 3 && control != 10 && control != 17) {
+                check(static_cast<bool>(error) && printed(*candidate) == original &&
+                          request.moduleSha256 == originalContract.moduleSha256 &&
+                          request.initialIntrinsics == originalContract.initialIntrinsics &&
+                          request.elementParameters == originalContract.elementParameters &&
+                          request.provider == originalContract.provider &&
+                          request.entry == originalContract.entry,
+                      "Number origin grants no binding, coercion, effect or budget authority");
+                if (error) { llvm::consumeError(std::move(error)); }
+                continue;
+            }
+            if (!check(!error, "saved Number origin completes the original protected write")) {
+                llvm::errs() << llvm::toString(std::move(error)) << '\n';
+                continue;
+            }
+            DOMEntryAnalysis proof(*candidate, request);
+            check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                  "saved Number origin requires fresh complete DOM proof");
+            llvm::SmallVector<ctjs::CallOp> calls;
+            candidate->walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            if (control == 17 && check(calls.size() == 3, "saved arithmetic keeps three calls")) {
+                auto add = calls.back().getArgs()[1].getDefiningOp<ctjs::BinaryOp>();
+                check(add && add.getKind() == ctjs::BinaryKind::Add &&
+                          add.getLhs() == calls[1].getResult() && calls[1]->isBeforeInBlock(add) &&
+                          add->isBeforeInBlock(calls.back()),
+                      "protected arithmetic consumes the saved Number before writing");
+            }
+            if (control < 2 && check(calls.size() == (control == 1 ? 4u : 3u),
+                                     "saved read and Number conversion execute exactly once")) {
+                const auto * read = proof.call(calls[0]);
+                const auto * numeric = proof.call(calls[1]);
+                const auto * write = proof.call(calls.back());
+                check(read && read->kind == HostDOMMethod::getAttribute && numeric &&
+                          numeric->kind == HostDOMMethod::number && write &&
+                          write->kind == HostDOMMethod::setAttribute &&
+                          calls[1].getArgs()[0] == calls[0].getResult() &&
+                          calls.back().getArgs()[1] == calls[1].getResult() &&
+                          calls[0]->isBeforeInBlock(calls[1]) &&
+                          calls[1]->isBeforeInBlock(calls[2]) &&
+                          (control != 1 || calls[2]->isBeforeInBlock(calls[3])),
+                      "write uses the pre-mutation Number snapshot after the ordered read");
+            }
+        }
+    }
+}
+
+static void testProtectedNumberReads(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    const std::string source = R"js(function guarded(element) {
+        try {
+            const saved = Number(element.getAttribute('data-number'));
+            element.setAttribute('data-written', saved);
+            throw element;
+        } catch (error) { return error === element; }
+    })js";
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 24; ++control) {
+            auto text = source;
+            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
+                text.replace(text.find(from.str()), from.size(), to.str());
+            };
+            if (control == 1) {
+                replace("element.setAttribute('data-written'",
+                        "element.setAttribute('data-number', '99'); "
+                        "element.setAttribute('data-written'");
+            }
+            if (control == 2) { replace("throw element;", "return true;"); }
+            if (control == 3 || control == 4) {
+                replace("element.getAttribute('data-number')", control == 3 ? "'7.5'" : "null");
+            }
+            if (control == 5 || control == 23) {
+                replace("element.getAttribute('data-number')",
+                        control == 5 ? "element.hasAttribute('flag') ? "
+                                       "element.getAttribute('data-number') : null"
+                                     : "element.hasAttribute('flag') ? "
+                                       "element.getAttribute('data-number') : element");
+            }
+            if (control == 12) { replace("getAttribute", "unknown"); }
+            if (control == 13) { replace("data-written", "bad name"); }
+            if (control == 17) { replace("'data-written', saved", "'data-written', element"); }
+            if (control == 18) { replace("try {", "Number = element; try {"); }
+            if (control == 19) { replace("const saved", "unknown(); const saved"); }
+            auto candidate = import(context, text, true);
+            if (!candidate) { continue; }
+            auto function = guarded(*candidate);
+            llvm::SmallVector<ctjs::CallOp> originalCalls;
+            ctjs::LoadGlobalOp number;
+            function.walk([&](ctjs::CallOp call) { originalCalls.push_back(call); });
+            function.walk([&](ctjs::LoadGlobalOp load) {
+                if (load.getName() == "Number") { number = load; }
+            });
+            if (!check(number && originalCalls.size() >= 2,
+                       "protected Number source retains original calls and binding")) {
+                continue;
+            }
+            // Imported status edges forward the callee through block arguments;
+            // source order identifies these calls without assuming direct SSA.
+            auto conversion = originalCalls[1];
+            auto read = originalCalls.front();
+            auto element = function.getBody().front().getArgument(3);
+            if (control == 7) { number.setName("Other"); }
+            if (control == 8) { conversion.getReceiverMutable().assign(element); }
+            if (control == 9) { conversion.getArgsMutable().append(element); }
+            if (control == 10) { conversion.getArgsMutable().clear(); }
+            if (control == 11) { conversion.getArgsMutable().assign(element); }
+            if (control == 20) { read.getReceiverMutable().assign(read.getCallee()); }
+            if (control == 21) { read.getArgsMutable().append(element); }
+            if (control == 22) { read.getArgsMutable().assign(element); }
+            mlir::Builder builder(&context);
+            number->setAttr("ctnative.host_intrinsic", builder.getStringAttr("Number"));
+            for (auto call : originalCalls) {
+                call->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+            }
+            HostContract request;
+            request.provider = provider;
+            request.entry = function.getSymName().str();
+            request.elementParameters = {0};
+            if (control != 6) { request.initialIntrinsics = {"Number"}; }
+            request.moduleSha256 = hostContractFingerprint(*candidate);
+            const auto originalContract = request;
+            if (control == 16) { number.setName("Other"); }
+            const auto original = printed(*candidate);
+            auto error = prepareDOMEntry(*candidate, request,
+                                         control == 14   ? 0
+                                         : control == 15 ? 500
+                                                         : 100000);
+            // Control 5 also transports the Number callee through the If result.
+            // Its independent callable-origin proof remains a measured boundary.
+            if (control >= 5) {
+                check(static_cast<bool>(error) && printed(*candidate) == original &&
+                          request.moduleSha256 == originalContract.moduleSha256 &&
+                          request.initialIntrinsics == originalContract.initialIntrinsics &&
+                          request.elementParameters == originalContract.elementParameters &&
+                          request.provider == originalContract.provider &&
+                          request.entry == originalContract.entry,
+                      "protected conversion refuses incomplete identity, input, effect or budget");
+                if (error) { llvm::consumeError(std::move(error)); }
+                continue;
+            }
+            if (!check(!error, "protected read and conversion preserve original completion")) {
+                llvm::errs() << "control " << control << ": " << llvm::toString(std::move(error))
+                             << '\n';
+                continue;
+            }
+            DOMEntryAnalysis proof(*candidate, request);
+            check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                  "protected read and conversion require fresh complete DOM proof");
+            if (control > 2) { continue; }
+            llvm::SmallVector<ctjs::CallOp> calls;
+            candidate->walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            if (!check(calls.size() == (control == 1 ? 4u : 3u),
+                       "protected read, conversion and writes execute exactly once")) {
+                continue;
+            }
+            const auto * getter = proof.call(calls[0]);
+            const auto * numeric = proof.call(calls[1]);
+            const auto * setter = proof.call(calls.back());
+            check(getter && getter->kind == HostDOMMethod::getAttribute && numeric &&
+                      numeric->kind == HostDOMMethod::number && setter &&
+                      setter->kind == HostDOMMethod::setAttribute &&
+                      calls[1].getArgs()[0] == calls[0].getResult() &&
+                      calls.back().getArgs()[1] == calls[1].getResult() &&
+                      calls[0]->isBeforeInBlock(calls[1]) && calls[1]->isBeforeInBlock(calls[2]) &&
+                      (control != 1 || calls[2]->isBeforeInBlock(calls[3])),
+                  "protected write consumes the exact read-time Number snapshot in source order");
+        }
+    }
+}
+
+static void testProtectedNumberArithmetic(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    const std::array expressions = {"converted + 1",
+                                    "converted - 1",
+                                    "converted * 2",
+                                    "converted / 0",
+                                    "converted % 3",
+                                    "converted ** 2",
+                                    "converted << 1",
+                                    "converted >> 1",
+                                    "converted >>> 1",
+                                    "converted & 3",
+                                    "converted | 3",
+                                    "converted ^ 3",
+                                    "-converted",
+                                    "+converted",
+                                    "~converted",
+                                    "element.hasAttribute('flag') ? converted + 1 : converted - 1",
+                                    "converted + element",
+                                    "element + converted",
+                                    "converted + '1'",
+                                    "converted + true",
+                                    "converted + null",
+                                    "converted + 1n",
+                                    "converted + unknown()",
+                                    "element.hasAttribute('flag') ? converted : element"};
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 32; ++control) {
+            std::string source = R"js(function guarded(element) {
+                try {
+                    const converted = Number(element.getAttribute('data-number'));
+                    const saved = converted + 1;
+                    element.setAttribute('data-written', saved);
+                    throw element;
+                } catch (error) { return error === element; }
+            })js";
+            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
+                source.replace(source.find(from.str()), from.size(), to.str());
+            };
+            if (control < expressions.size()) { replace("converted + 1", expressions[control]); }
+            if (control == 29) { replace("const converted", "unknown(); const converted"); }
+            if (control == 30) { replace("throw element;", "return true;"); }
+            if (control == 31) {
+                replace("element.setAttribute('data-written'",
+                        "element.setAttribute('data-number', '99'); "
+                        "element.setAttribute('data-written'");
+            }
+            auto candidate = import(context, source, true);
+            if (!candidate) { continue; }
+            auto function = guarded(*candidate);
+            ctjs::LoadGlobalOp number;
+            ctjs::BinaryOp arithmetic;
+            function.walk([&](ctjs::LoadGlobalOp load) {
+                if (load.getName() == "Number") { number = load; }
+            });
+            function.walk([&](ctjs::BinaryOp binary) { arithmetic = binary; });
+            if (!check(static_cast<bool>(number), "protected arithmetic retains Number load")) {
+                continue;
+            }
+            mlir::Builder builder(&context);
+            number->setAttr("ctnative.host_intrinsic", builder.getStringAttr("Number"));
+            if (arithmetic) {
+                arithmetic->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+            }
+            if (control == 26) {
+                if (!check(static_cast<bool>(arithmetic), "arithmetic mutation has a producer")) {
+                    continue;
+                }
+                arithmetic.getRhsMutable().assign(function.getBody().front().getArgument(3));
+            }
+            HostContract request;
+            request.provider = provider;
+            request.entry = function.getSymName().str();
+            request.elementParameters = {0};
+            if (control != 24) { request.initialIntrinsics = {"Number"}; }
+            request.moduleSha256 = hostContractFingerprint(*candidate);
+            const auto originalContract = request;
+            if (control == 25) { number.setName("Other"); }
+            const auto original = printed(*candidate);
+            auto error = prepareDOMEntry(*candidate, request,
+                                         control == 27   ? 0
+                                         : control == 28 ? 500
+                                                         : 100000);
+            if (control >= 16 && control < 30) {
+                check(static_cast<bool>(error) && printed(*candidate) == original &&
+                          request.moduleSha256 == originalContract.moduleSha256 &&
+                          request.initialIntrinsics == originalContract.initialIntrinsics &&
+                          request.elementParameters == originalContract.elementParameters &&
+                          request.provider == originalContract.provider &&
+                          request.entry == originalContract.entry,
+                      "protected arithmetic refuses coercion, effects, stale proofs and budgets");
+                if (error) { llvm::consumeError(std::move(error)); }
+                continue;
+            }
+            if (!check(!error, "exact Number arithmetic completes its protected source")) {
+                llvm::errs() << "arithmetic control " << control << ": "
+                             << llvm::toString(std::move(error)) << '\n';
+                continue;
+            }
+            DOMEntryAnalysis proof(*candidate, request);
+            check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                  "protected arithmetic requires fresh complete DOM proof");
+            if (control != 0 && control < 30) { continue; }
+            llvm::SmallVector<ctjs::CallOp> calls;
+            candidate->walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            if (!check(calls.size() == (control == 31 ? 4u : 3u),
+                       "protected arithmetic keeps all read, conversion and write calls")) {
+                continue;
+            }
+            auto add = calls.back().getArgs()[1].getDefiningOp<ctjs::BinaryOp>();
+            check(add && add.getKind() == ctjs::BinaryKind::Add &&
+                      calls[1].getArgs()[0] == calls[0].getResult() &&
+                      add.getLhs() == calls[1].getResult() && calls[0]->isBeforeInBlock(calls[1]) &&
+                      calls[1]->isBeforeInBlock(add) && add->isBeforeInBlock(calls[2]) &&
+                      (control != 31 || calls[2]->isBeforeInBlock(calls[3])),
+                  "arithmetic and writes retain the original converted snapshot and order");
+        }
+    }
+}
+
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    testProtectedNumberArithmetic(context);
+    testProtectedNumberReads(context);
+    testNumberAttributeOrigins(context);
     testInvocationCallableReads(context);
     testInvocationCellReads(context);
     testObservedIteratorRecovery(context);
     testInertHelperCompletion(context);
     testHelperCatchSource(context);
-    for (unsigned control = 0; control < 50; ++control) {
+    for (unsigned control = 0; control < 57; ++control) {
         std::string source = "function guarded(element) { try { throw element; } "
                              "catch (error) { return error === element; } }";
         if (control == 1) {
@@ -3977,6 +4345,21 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                               "if (element.hasAttribute('flag')) element = false; ");
             }
         }
+        if (control >= 50) {
+            source = "function guarded(element) { "
+                     "const saved = element.hasAttribute('data-closed') ? 7.5 : -0; "
+                     "try { element.setAttribute('data-closed', 42); "
+                     "element.setAttribute('data-written', saved); throw element; "
+                     "} catch (error) { return error === element && saved === 7.5; } }";
+            if (control == 53) {
+                source.insert(source.find("try {"), "if (element) return false; ");
+            }
+            if (control == 54) { source.replace(source.find(" : -0"), 5, " : element"); }
+            if (control == 55) { source.insert(source.find("try {"), "element.unknown(); "); }
+            if (control == 56) {
+                source.insert(source.find("try {"), "if (saved) element = false; ");
+            }
+        }
         auto candidate = import(context, source, true);
         if (!candidate) { continue; }
         const auto original = printed(*candidate);
@@ -3987,15 +4370,17 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
         if (control == 32 || control == 38 || control == 47) { request.elementParameters.clear(); }
         request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
         const auto fingerprint = request.moduleSha256;
-        auto error = ctnative::prepareDOMEntry(
-            *candidate, request,
-            control == 6 || control == 19 || control == 26 || control == 39 || control == 48 ? 0
-            : control == 27 ? 500
-                            : 100000);
+        auto error =
+            ctnative::prepareDOMEntry(*candidate, request,
+                                      control == 6 || control == 19 || control == 26 ||
+                                              control == 39 || control == 48 || control == 51
+                                          ? 0
+                                      : control == 27 || control == 52 ? 500
+                                                                       : 100000);
         if (control >= 3 && control != 5 && control != 7 && control != 8 && control != 9 &&
             !(control >= 12 && control <= 15) && !(control >= 20 && control <= 23) &&
             control != 28 && !(control >= 33 && control <= 35) &&
-            !(control >= 40 && control <= 42)) {
+            !(control >= 40 && control <= 42) && control != 44 && control != 50) {
             check(static_cast<bool>(error), "confined catch needs complete effects and lifetime");
             llvm::consumeError(std::move(error));
             check(printed(*candidate) == original && request.moduleSha256 == fingerprint,

@@ -8,7 +8,30 @@
 
 #include "Attempt.h"
 
+#include <algorithm>
+
 namespace ctcompile::ctnative::lowering_detail {
+
+llvm::Error structureRecoveredPrefix(ctjs::FuncOp function, unsigned & remaining) {
+    if (function.getBody().hasOneBlock()) { return llvm::Error::success(); }
+    recovery normalization{function, remaining, ExceptionRecoveryMode::ExplicitThrows};
+    for (auto & block : function.getBody()) {
+        uint64_t cost = uint64_t(1) + block.getNumArguments();
+        for (auto & operation : block) {
+            cost += uint64_t(1) + operation.getNumOperands() + operation.getNumResults();
+        }
+        if (!normalization.spend(cost)) { break; }
+        normalization.width = std::max(normalization.width, block.getNumArguments());
+    }
+    const bool complete =
+        normalization.refusal.empty() && normalization.structure(function.getBody());
+    remaining = normalization.remaining;
+    if (!complete) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(), normalization.refusal);
+    }
+    function->removeAttr("ctjs.not_structured");
+    return llvm::Error::success();
+}
 
 llvm::Error normalizeStructuredExits(ctjs::FuncOp function, unsigned & remaining) {
     function.getContext()->getOrLoadDialect<mlir::arith::ArithDialect>();

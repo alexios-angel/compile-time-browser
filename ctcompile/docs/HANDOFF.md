@@ -22,6 +22,473 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected Number arithmetic and Boolean branch results, 2026-09-26 UTC
+
+Resumed **e729cd48** and its exact protected `Number(getAttribute) + 1`
+boundary. Iteration 45 was fully committed; the old WIP branch was already an
+ancestor. Saved candidates survived child service interruptions without replaying
+completed checks.
+
+**95d4a386** reuses the charged exact Number-origin proof in the protected
+effect visitor. Only supported Number unary/binary operations avoid coercion and
+implicit throws. Every producer and both branch arms still need independent
+effect proof, and publication still requires fresh complete DOM proof on a private
+candidate. No runtime or ownership mechanism was added. There are 64 new
+transaction controls across both providers; original saved-arithmetic control 17
+is promoted unchanged and now checks snapshot wiring and order.
+
+**1a071d74** follows strict Boolean literal tests through immediate If results
+only when both corresponding yields are exactly Boolean. Existing correspondence
+and polarity proof still checks finite retained values, guard dependencies,
+every effect and exit. Nineteen new retention rows and 15 live mutation states
+cover mutable snapshots, opaque/mixed tags, stale solvers, forged markers and
+incomplete budgets. No shorter lifetime or new ownership authority is claimed.
+
+**06379235** adds the exact complete HANDOFF witness, a protected arithmetic
+snapshot and a reciprocal normal return. The existing 13 Number-conversion inputs
+exercise signed zero, NaN, infinities and numeric spelling; explicit expected
+Strings are checked against ordered Node/interpreter observations. Fourteen new
+complete refusal bodies cover coercion, unknown producers, intrinsic/getter
+identity, BigInt, mixed tags and conditional callees. All 40 previous direct and
+two outer source bodies remain unchanged.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed, each 1/1
+(total elapsed): `ctcompile_exception_recovery` **19.32 s**,
+`ctcompile_host_contract` **2.80 s**, `ctcompile_escape_analysis_arrays`
+**5.53 s** and `ctcompile_escape_analysis_completion` **0.02 s**.
+
+The selected `native_dom_caught_node.py` gate passed **48 GCC/Clang native
+executions, 12 admitted provider/optimization combinations and 84 refusals**:
+18 selected refusal bodies times four plus 12 zero budgets. Both printers,
+providers and optimization modes, two documents, ordered writes and 16 lifetimes
+pass. All **24 generated C++ files** were retrieved; source and linked-symbol
+checks reject Script/AOT. Inspected explicit arithmetic-snapshot and deduced
+reciprocal/session entries retain typed Number locals, public DOM calls, borrowed
+element_ref and document RAII. All five final local/devbox hashes match. This is
+a selected harness pass, not a full caught-node lit run. All four CTests and the
+selected source gate passed on their first run.
+
+Repository formatting reports the same six existing diagnostics in untouched
+`select_and_options.cpp:602`, `node_methods.cpp:63` and
+`Style/css/properties/gaps.cpp:189`. All four changed C++ files and the Python
+source pass scoped formatting; source syntax, Node checks and diff checks pass.
+Independent native review found no correctness defect; source preservation and
+escape census/replay were reviewed.
+
+**Next measured boundary:** a conditional argument carries the initial Number
+callee through an If result, still refusing `native DOM source: DOM caught throw
+protected effect lacks a nonthrowing proof`:
+
+```javascript
+function customElements(anchor) {
+  try {
+    const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null);
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+```
+
+The existing conditional-call control 5 in `testProtectedNumberReads` remains unchanged.
+The next proof must preserve identical callable origins through both fully
+effect-checked arms, retain their order and then complete final DOM kind proof.
+Differing or mutable callees must not merge. The scratch diagnostic probe needed
+an argparse import and a correction for the refusal helper's String return;
+only that failed probe was retried. Its refusal is emitted on stderr, so there
+was no saved native MLIR to retrieve. Production, CTests and source gates were
+not rerun.
+
+Full CTest/compiler lit, other fixtures/outer catches, broad corpus/matrices,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance were skipped. The native application driver, full Bootstrap and
+broader escape work remain unfinished. No full-Bootstrap admission or raw
+escape-oracle improvement is claimed.
+
+Linux /proc checks found live Claude loop PID 2333739; Windows Get-CimInstance
+succeeded with 361 processes and no Claude identities. Concurrent rules applied;
+no browser/shared implementation edits, local builds, push or history rewrite.
+Evidence: `/tmp/ctcompile-iteration46/`.
+
+## Protected attribute conversions and Boolean literal predicates, 2026-09-26 UTC
+
+Resumed **c87d671c** and its exact protected `Number(getAttribute)` boundary.
+Iteration 44 was fully committed, the working tree was clean, and the old WIP
+branch was already an ancestor. Child service interruptions resumed saved work.
+
+**6a716af2** independently proves exact entry Element `getAttribute` calls
+and initial Number calls with proved String/null inputs before selecting normal
+completion. Normal payloads and both If yields carry separate nullable String and
+Number facts; unwind padding grants none. Read/conversion/write order and saved
+snapshots remain intact. Every path still completes fresh DOM proof on a private
+candidate before publication. Missing/rebound intrinsics, coercing input, wrong
+receivers/arity, effects, stale fingerprints and incomplete budgets remain refused.
+The old protected conversion source is promoted unchanged. There are 48 new
+transaction controls across both providers, including normal-return, literal
+String/null inputs and a refused conditional callee case. Independent production/test review found no correctness defect.
+
+**a0aef89d** correlates strict tests against Boolean literals only when the
+other operand is already exactly Boolean from StrictEq, ToBoolean or Not. False
+reverses the existing predicate polarity. Shared charged census/current replay
+still validate guards, finite retained values, every effect and exit. Opaque
+values and separate mutable reads gain no Boolean, ownership or lifetime authority.
+There are 23 added retention rows and 14 added live mutation states, including
+fresh/stale solvers, forged markers and incomplete budgets.
+
+**99c07ca2** preserves the exact complete HANDOFF witness and adds protected
+snapshot and normal-return witnesses. Each uses the existing 13 Number conversion
+inputs and ordered Node/interpreter/native observations. All 37 previous direct
+and two outer source bodies remain unchanged. Fourteen new complete refusal bodies
+cover intrinsic/getter identity, receiver/arity, coercion, names and mixed joins.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Final exact CTests passed, each 1/1
+(total elapsed): `ctcompile_exception_recovery` **19.22 s**,
+`ctcompile_host_contract` **2.76 s**, `ctcompile_escape_analysis_arrays`
+**5.50 s** and `ctcompile_escape_analysis_completion` **0.02 s**.
+
+The selected `native_dom_caught_node.py` gate passed **48 GCC/Clang native
+executions, 12 admitted provider/optimization combinations and 108 refusals**:
+24 selected refusal bodies times four plus 12 zero budgets. Both printers,
+providers and optimization modes, two documents, ordered writes and 16 lifetimes
+pass. All **24 generated C++ files** were retrieved; source and linked-symbol
+checks reject Script/AOT. Inspected explicit and deduced session entries retain
+typed Number snapshots, public DOM calls, borrowed element_ref and document RAII.
+All six final local/devbox hashes match. This is a selected harness pass, not a
+full caught-node lit run.
+
+The first exception CTest rejected only the new exploratory conditional argument
+control 5. That source also transports the Number callee through an If result;
+it needs independent callable-origin and final DOM kind proofs. Its original
+body remains as a measured refusal. The initial test correction matched an older
+numbered block by mistake; that block was restored byte-for-byte and the new
+expectation corrected with exact context. The first retry retained the same
+failure; the final retry rebuilt/reran only exception recovery. No production,
+source checks or passing CTests were replayed. Failed logs are retained.
+
+Final repository formatting still reports six existing diagnostics in untouched
+`select_and_options.cpp:602`, `node_methods.cpp:63` and
+`Style/css/properties/gaps.cpp:189`; all five changed C++ files and the Python
+source pass scoped formatting, syntax and diff checks.
+
+**Next measured boundary:** protected arithmetic after the conversion still
+refuses `native DOM source: DOM caught throw protected effect lacks a nonthrowing
+proof` with the initial Number declared:
+
+```javascript
+function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number')) + 1;
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+```
+
+Prove those exact Number operations independently before suppressing their status
+edges. Conditional Number callees remain refused too: control 5 in
+`testProtectedNumberReads` preserves `Number(hasAttribute(...) ? getAttribute(...)
+: null)`. A possible next step is to forward identical If yields only after both
+arms' complete effect proof, retaining both arms and their order, then trim unused
+results before final DOM proof. No mutable/differing callee identity may be merged.
+
+Full CTest/compiler lit, other source fixtures/outer catches, broad corpus/matrices,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance were skipped. The native application driver, full Bootstrap and
+broader escape work remain unfinished. No full-Bootstrap admission, new raw
+escape-oracle result or shortened lifetime is claimed.
+
+Linux /proc identity checks found live Claude loop PID 2333739; Windows
+Get-CimInstance succeeded with 364 processes and no Claude identities. Concurrent
+rules applied; no browser/shared implementation edits, local builds, push or
+history rewrite. Evidence: `/tmp/ctcompile-iteration45/`.
+
+## Saved Number read origins and exact primitive predicates, 2026-09-26 UTC
+
+Resumed **e1547d2c** and its saved `Number(getAttribute)` boundary. Iteration
+43 was fully committed; the old WIP branch was already an ancestor. Interrupted
+child turns resumed from their saved candidates; no passing gate was restarted.
+
+**08d42942** follows an original Number CallOp in the protected-write origin
+query. The direct Number load, undefined receiver and single argument supply only
+conditional result-tag evidence. Fresh complete DOM proof still validates the
+initial intrinsic, input, every effect and source fingerprint. The read and
+conversion stay before the try and any intervening mutation. The protected-effect
+whitelist is unchanged; this adds no permission to discard producer failures.
+There are 36 new transaction controls across both providers, including conditional
+origins, exact snapshot wiring, invalid identity/arity/coercion, forged markers,
+stale fingerprints and zero/insufficient budgets. Independent review found no
+production defect; its two test robustness suggestions were applied.
+
+**b6a0fe8b** extends strict-comparison operand keys from exact Number bits to
+exact supported primitive attributes. Tags, String bytes and BigInt spelling stay
+distinct; there is no coercion, parsed-value equivalence or mutable-snapshot
+equivalence. Shared charged census/current replay still proves guards, finite
+retained values, every effect and exit. Two original String/Boolean refusal bodies
+are promoted unchanged, with ten new retention rows and 30 new live mutation
+states. No ownership or shorter-lifetime authority is added.
+
+**61d77b61** preserves the complete saved-read witness and adds an intervening
+attribute mutation. Each runs 13 missing/String/Number-conversion inputs, including
+signed zero, NaN, infinities, radix/exponent spelling and Unicode whitespace.
+All 35 prior direct and two outer source bodies remain unchanged. Six new refusals
+cover absent/rebound Number, coercing input, unknown getter, invalid name and mixed
+object join. Node and interpreter ordered traces agree.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Final exact CTests passed, each 1/1
+(total elapsed): `ctcompile_exception_recovery` **19.26 s**,
+`ctcompile_host_contract` **2.77 s**, `ctcompile_escape_analysis_arrays` **5.53 s**
+and `ctcompile_escape_analysis_completion` **0.02 s**.
+
+The selected `native_dom_caught_node.py` gate passed both new complete sources,
+all 34 direct refusal bodies and the new sources' zero budgets: **32 GCC/Clang
+native executions, eight admitted provider/optimization combinations and 144
+refusals**. Both printers/providers/optimization modes, two documents, ordered
+writes and 16 lifetimes pass. All **16 generated C++ files** were retrieved;
+source and linked-symbol checks reject Script/AOT. Inspected entries retain typed
+Number snapshots, borrowed element_ref values, public DOM calls and document RAII.
+All five final local/devbox hashes match. This is a selected harness pass, not a
+full caught-node lit run.
+
+The first exception CTest caught two new fixture-discovery assertions: the
+conversion inside try forwards its callee through status-edge block arguments,
+rather than direct SSA. The fixture now accepts that original shape; its source
+and expected refusal are unchanged. Only that test target and failed exact CTest
+were repeated. Production, source checks and the three passing CTests were not
+replayed. Final repository formatting still reports the same six diagnostics in
+untouched `select_and_options.cpp:602`, `node_methods.cpp:63` and
+`Style/css/properties/gaps.cpp:189`; scoped formatting, syntax and diff checks pass.
+
+**Next measured boundary:** moving the read and conversion inside the original
+try still refuses `native DOM source: DOM caught throw protected effect lacks a
+nonthrowing proof`, with initial Number declared:
+
+```javascript
+function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number'));
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+```
+
+That needs independent protected getAttribute/Number effect proofs, retaining
+callee identity, input conversion, ordered reads and complete saved unwind state.
+Result typing alone is insufficient. Broader protected arithmetic, differing
+mutable snapshots, repeated allocations, escaping owners, the native application
+driver and full Bootstrap remain unfinished. No full-Bootstrap admission or raw
+escape-oracle gain is claimed.
+
+Full CTest/compiler lit, other source fixtures and outer catches, broad
+corpus/matrices, raw escape oracle, full Bootstrap, WPT/test262, sanitizers,
+Windows/macOS and performance were skipped. Linux Claude executable PID 2606398
+and loop PID 2333739 were running; Windows inspection succeeded with 362 processes
+and no Claude identities. Concurrent rules applied; no browser/shared implementation
+edits, local builds, push or history rewrite. Evidence: `/tmp/ctcompile-iteration44/`.
+
+
+## Protected Number attributes and recovered DOM prefixes, 2026-09-26 UTC
+
+Resumed **ddf06584** and its protected numeric `setAttribute` boundary. Iteration
+42 was complete; the old WIP branch was already an ancestor. Saved candidates
+from service cutoffs were retained, reviewed and finished with focused checks.
+
+**847718fb** admits exact Number attribute values. The runtime overload delegates
+to the existing public Core Number formatter and DOM setter. Ordinary DOM scalar
+arithmetic requires exact Number operands; every String-index consumer retains its
+own bounds proof. Protected completion separately proves Number origins through
+literals, arithmetic and both If yields. That tag proof never discharges producer
+effects. Receiver identity, valid literal names, complete continuations and saved
+exceptions remain required. Direct controls cover both providers, special Number
+bits, arithmetic, supplied Number conversion, joins, stale fingerprints, forged
+markers and every incomplete proof budget.
+
+**9d806c3b** fixes the complete conditional snapshot witness without changing its
+source. Recovery intentionally left its pre-try CFG intact, but DOM completion
+required one block before lifting that prefix. A DOM-only helper now reuses the
+existing charged CFG structurer after recovery. Generic recovery still preserves
+its prefix verbatim. Fresh DOM proof follows the lift; seven transaction controls
+cover the snapshot, zero/insufficient budgets, early exits, mixed Number/object
+values, unknown prefix calls and changed receivers. Independent review passes.
+
+**b073feaf** lets strict-comparison keys match separate Number constants only when
+their exact IEEE-754 bits match. The two original same/reversed-literal refusal
+bodies are promoted unchanged. Different bits/tags, signed-zero equivalence and
+separate mutable snapshots gain no authority. Shared charged census/current replay
+still proves finite retained values, guards, every effect and exit. Thirteen new
+retention rows and 23 new live mutation states cover stale solvers, forged markers
+and incomplete budgets; no ownership or shorter-lifetime authority is added.
+
+**79e711e3** adds three complete Number-write sources: normal return,
+-0/NaN/infinities/exponent spelling, and a saved conditional Number across mutation
+and a caught node throw. All 32 previous direct and two outer source bodies remain
+unchanged. Four new refusal bodies cover invalid names, mixed object joins,
+coercing inputs and throwing producers. Node and interpreter oracles agree on the
+ordered observations. Native checks use both documents, both snapshot outcomes,
+write ordering and 16 lifetimes through the existing harness.
+
+Seven explicit targets initially built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. The prefix fix rebuilt only exception
+recovery, host contract and ctjs-opt. Final relevant exact CTests passed, each 1/1
+(total elapsed): `ctcompile_exception_recovery` **19.23 s**,
+`ctcompile_host_contract` **2.79 s**, `ctcompile_escape_analysis_arrays` **5.45 s**,
+and `ctcompile_escape_analysis_completion` **0.05 s**.
+
+A focused selector over `native_dom_caught_node.py` ran `write-number-return`,
+`write-number-corners`, `write-number-snapshot`, `write-throw` and
+`write-boolean-snapshot`, all 28 direct refusal bodies and the three Number cases'
+zero budgets. Across the two source runs: **80 GCC/Clang native executions,
+20 admitted provider/optimization combinations and 124 refusals**. This is a
+selected harness pass, not the full caught-node lit case. The first four sources'
+64 binaries were retained; only the failed snapshot and unrun refusals continued.
+All **40 generated C++ files** were retrieved, with Script/AOT source and linked
+symbol checks passing. Representative explicit/deduced entries show ordinary
+Number locals, borrowed element_ref values, ordered public DOM calls and document
+RAII. The snapshot keeps its Number before either write. All **11** final
+source/code hashes match the devbox.
+
+The first exception CTest caught unchanged numeric control 44 still expecting
+refusal; its expectation was promoted. The first host CTest caught a malformed
+two-call Invoke fixture passed to a valid-IR helper; the same input now explicitly
+asserts verifier rejection. Both test-only corrections were independently reviewed.
+The source gate then exposed the prefix gap fixed above. Passing checks were
+repeated only where that production change affected them; escape checks and the
+four earlier source cases were not replayed.
+
+Repository formatting was run after the final code change and still reports six
+diagnostics in three untouched browser files: `select_and_options.cpp:602`,
+`node_methods.cpp:63` and `Style/css/properties/gaps.cpp:189`. Scoped formatting and
+diff checks pass. Active Claude claims were respected; no browser file was edited.
+
+**Next measured boundary:** with the initial Number intrinsic declared, this
+complete source still refuses with `native DOM source: DOM caught throw protected
+effect lacks a nonthrowing proof`:
+
+```javascript
+function customElements(anchor) {
+  const saved = Number(anchor.getAttribute('data-number'));
+  try {
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+```
+
+Ordinary DOM proof already accepts that conversion. The recovery Number-origin
+query does not follow its original CallOp. Extend that bounded origin proof while
+preserving the pre-try read/conversion, their order and snapshot, intrinsic identity
+and complete reproof. Number result typing must not authorize dropping producer
+effects or unwind state. Broader protected arithmetic and call origins, differing mutable snapshots,
+repeated allocations, escaping owners, the native application driver and full
+Bootstrap remain unfinished. No full-Bootstrap admission or raw escape-oracle gain
+is claimed.
+
+Full CTest/compiler lit, other source fixtures and outer catches, broad
+corpus/matrices, raw escape oracle, full Bootstrap, WPT/test262, sanitizers,
+Windows/macOS and performance were skipped. Linux actual Claude loop PID 2333739
+was running; Windows process inspection succeeded (363 processes, no Claude
+identities), so concurrent rules applied. No browser/shared implementation edits,
+local builds, push or history rewrite. Evidence: `/tmp/ctcompile-iteration43/`.
+
+## Checked Bootstrap document roots and sibling comparison predicates, 2026-09-26 UTC
+
+Resumed **45ef90b8** and its original `unguarded-default` boundary. Iteration 41
+was fully committed; the old WIP branch was already an ancestor. Claude merged
+**9ef86aa9** while the shared tree was clean, before these edits. Service limits
+interrupted agents; their saved candidates were retained and completed.
+
+**b4aa79b5** admits an exact nullable `document.documentElement` producer at an
+initial Element prototype selector call. Existing lowering constructs the checked
+`js_element_t` at that call: public DOM validation precedes selector parsing,
+while preceding source effects still execute. The proof adds no global presence,
+ownership or lifetime fact. Other nullable receivers, source mutations of
+document/root/prototypes, reentry and escaping roots remain refused. All four
+selectors, both providers and both current document parameter positions retain
+Style identity, source fingerprints and
+complete-budget rollback. The independent native review passes; the parent added
+its suggested explicit Style-origin assertion before validation.
+
+**59bbde8d** permits strict-equality predicates computed separately in two If
+arms to use that completed If result as their common key. Only identical SSA
+operands and matching Boolean polarity qualify. Subsequent comparisons may use
+this earlier dominating result; different snapshots, coercing comparisons and
+loop-crossing identity gain no authority. Shared charged census/current replay
+still prove finite Numbers, guards, every effect and exit. The original sibling
+comparison refusal is promoted with its input body unchanged; **14 added retention
+rows, 497 total, and 14 added live mutation states, 170 total,** cover invalidated
+solvers, forged markers, clearing, saved aliases, cycles and incomplete budgets.
+Escape received parent and independent review after the agent saved its candidate
+before a service limit.
+
+**c566bf1f** preserves and executes the original four complete root witnesses:
+`unguarded-default`, `unrelated-query-guard`, `wrong-arm` and
+`unguarded-after-branch`. The two earlier guarded sources and all 14 remaining
+refusal bodies are unchanged. An unguarded version of the existing effect source
+checks the preceding write, absent-root failure before invalid-selector parsing,
+and absence of the later write. Both documents, current-document scope restoration,
+root removal/replacement, owned sessions and 16 lifetimes use the existing harness.
+Source syntax and preservation checks pass.
+
+Five explicit devbox targets built: `ctcompile-test-host-contract`, `ctjs-opt`,
+`ctjs-translate`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Three exact CTests passed, each 1/1
+(total elapsed): `ctcompile_host_contract` **2.75 s**,
+`ctcompile_escape_analysis_arrays` **5.39 s**, and
+`ctcompile_escape_analysis_completion` **0.02 s**.
+
+The exact `CTNative/Browser/native-dom-document-default.test` lit case passed
+**1/1 in 305.41 s**, with **112 GCC/Clang native executions and 104 refusals**
+across both printers, providers and optimization modes. All **56 generated C++
+files** were retrieved; source and linked-symbol checks reject Script/AOT.
+Representative unguarded, effect-order and owned-session entries were inspected:
+checked borrowed element values, public DOM calls, ordinary vectors and document
+RAII. All six final source/code hashes match the devbox.
+
+The initial build caught a test-only const MLIR operation wrapper conversion;
+removing const fixed it. The first arrays CTest then caught a test generator
+searching for `%flag` after it had become `%firstFlag`; both templates were
+corrected. No production code changed for either correction. The passing host
+CTest was not repeated; failed or not-yet-run checks continued separately.
+
+Repository formatting was run and failed with six diagnostics in three untouched
+browser files inherited through the merge: `select_and_options.cpp:602`,
+`node_methods.cpp:63` and `Style/css/properties/gaps.cpp:189`. All four changed C++
+files and the changed Python file pass scoped formatting; diff checks pass.
+Active Claude claims were respected and the diagnostics were journaled.
+
+**Oracle limitation:** read-only source tracing finds no null-receiver brand check
+in the browser's Element prototype selector binding. Its empty node_id reaches
+Style's whole-document selection. Native checked construction instead throws
+`std::bad_expected_access<dom_error>`; invalid selectors throw
+`std::invalid_argument`. This is a recorded static discrepancy, not a measured
+VM differential pass. No browser behavior was changed to match native.
+
+**Next:** protected numeric `setAttribute`, using the existing Number-to-String
+semantics while retaining receiver, attribute-name, saved exception and effect
+ordering proofs. The current ordinary write proof admits String/Boolean/nullable
+String values; protected write suppression admits String/Boolean only. Preserve
+coercing-value and invalid-name refusals in `native_dom_caught_node.py`. Different
+predicate snapshots, repeated allocations, mutable exceptional state, escaping
+owners, the native application driver and full Bootstrap remain unfinished.
+No full-Bootstrap admission, raw escape-oracle gain or shortened lifetime is claimed.
+
+Full CTest/compiler lit, other browser fixtures, broad corpus/matrices, raw escape
+oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and performance were
+skipped. Linux actual Claude loop PID 2333739 was running; Windows identity
+inspection succeeded (363 processes, no matches), so concurrent rules applied.
+No browser/runtime/shared implementation edits, local builds, push or history
+rewrite. Evidence: `/tmp/ctcompile-iteration42/`.
+
 ## Exact primitive tag helpers and Boolean selection predicates, 2026-09-26 UTC
 
 Continued **37e5b728** and its recorded `TypeOf`/`Void` boundary. Iteration 40

@@ -47,7 +47,8 @@ module {
         });
         return empty;
     };
-    const auto query = [&](const std::string & text, bool expected, bool rootGuard = false) {
+    const auto query = [&](const std::string & text, bool expected, bool rootGuard = false,
+                           bool checkedRoot = false) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(input), "independent prototype selector fixture parses");
         if (!input) { return; }
@@ -82,6 +83,14 @@ module {
             const auto * edge = proof.call(call);
             if (!edge) { return; }
             ++calls;
+            if (checkedRoot) {
+                check(edge->explicitReceiver && edge->element == call.getArgs().front() &&
+                          proof.isDocumentElement(
+                              edge->element.getDefiningOp<ctjs::GetPropertyOp>()) &&
+                          edge->styleParameter == proof.documentParameter() && edge->usesStyle(),
+                      "a checked root retains its exact snapshot at the prototype call");
+                return;
+            }
             if (rootGuard) {
                 check(!edge->explicitReceiver && edge->element == call.getReceiver() &&
                           edge->kind == HostDOMMethod::matches && edge->usesStyle(),
@@ -100,13 +109,17 @@ module {
                       (text == collection ? edge->returnsElementVector() : edge->returnsElement()),
                   "prototype call binds its explicit element, Style and result carrier");
         });
-        check(document ? documents == (rootGuard ? 2u : 1u) && intrinsics == 0 && prototypes == 0 &&
-                             methods == 1 && calls == 1 && lengths == (rootGuard ? 0u : 1u) &&
-                             roots == (rootGuard ? 2u : 0u) &&
-                             proof.documentParameter() ==
-                                 proof.parameters()[*request.currentDocumentParameter]
-                       : documents == 0 && intrinsics == 1 && prototypes == 1 && methods == 2 &&
-                             calls == 1,
+        check(checkedRoot ? documents == 1 && roots == 1 && intrinsics == 1 && prototypes == 1 &&
+                                methods == 2 && calls == 1 &&
+                                proof.documentParameter() ==
+                                    proof.parameters()[*request.currentDocumentParameter]
+              : document ? documents == (rootGuard ? 2u : 1u) && intrinsics == 0 &&
+                               prototypes == 0 && methods == 1 && calls == 1 &&
+                               lengths == (rootGuard ? 0u : 1u) && roots == (rootGuard ? 2u : 0u) &&
+                               proof.documentParameter() ==
+                                   proof.parameters()[*request.currentDocumentParameter]
+                         : documents == 0 && intrinsics == 1 && prototypes == 1 && methods == 2 &&
+                               calls == 1,
               "only the original browser binding, method and call chain receive evidence");
         check(DOMEntryAnalysis(*input, request, proof.steps()).proved(),
               "prototype proof reproduces its exact completion budget");
@@ -299,6 +312,75 @@ module {
     contract.moduleSha256 = hostContractFingerprint(*input);
     check(DOMEntryAnalysis(*input, contract).proved(),
           "restoring the original root guard restores its live presence proof");
+
+    const auto checkedRoot =
+        replaced(replaced(collection, "    %found =",
+                          "    %document = ctjs.load_global \"document\"\n"
+                          "    %rootName = ctjs.constant #ctjs.string<\"documentElement\">\n"
+                          "    %root = ctjs.get_property %document[%rootName]\n    %found ="),
+                 "%invoke(%method, %element, %selector)", "%invoke(%method, %root, %selector)");
+    contract.initialIntrinsics = {"Element", "Function"};
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        contract.provider = provider;
+        contract.currentDocumentParameter.reset();
+        query(checkedRoot, false);
+        for (unsigned anchor : {0u, 1u}) {
+            contract.currentDocumentParameter = anchor;
+            query(checkedRoot, true, false, true);
+            for (const auto * selector : {"querySelector", "closest", "matches"}) {
+                const auto scalar =
+                    replaced(replaced(checkedRoot, "#ctjs.string<\"querySelectorAll\">",
+                                      std::string("#ctjs.string<\"") + selector + "\">"),
+                             "%answer = ctjs.get_property %found[%lengthName]",
+                             "%answer = ctjs.compare strict_eq %found, %found");
+                query(scalar, true, false, true);
+            }
+        }
+    }
+    for (const auto & invalid : {
+             replaced(checkedRoot, "%root = ctjs.get_property %document[%rootName]",
+                      "%root = ctjs.constant #ctjs.null"),
+             replaced(checkedRoot, "%root = ctjs.get_property %document[%rootName]",
+                      "%root = ctjs.constant #ctjs.undefined"),
+             replaced(checkedRoot,
+                      "    %found =", "    ctjs.store_global \"document\", %element\n    %found ="),
+             replaced(checkedRoot, "    %found =",
+                      "    ctjs.set_property %document[%rootName], %element\n    %found ="),
+             replaced(checkedRoot, "    %found =",
+                      "    ctjs.set_property %prototype[%queryName], %element\n    %found ="),
+             replaced(checkedRoot, "%invoke(%method, %root, %selector)",
+                      "%invoke(%prototype, %root, %selector)"),
+             replaced(checkedRoot, "%invoke(%method, %root, %selector)",
+                      "%invoke(%method, %root, %expected)"),
+             replaced(checkedRoot, "ctjs.return %answer", "ctjs.return %root"),
+             replaced(checkedRoot, "    ctjs.return %answer",
+                      "    %ordinary = ctjs.get_property %root[%queryName]\n"
+                      "    %again = ctjs.call %ordinary(%root, %selector)\n"
+                      "    ctjs.return %answer"),
+         }) {
+        query(invalid, false);
+    }
+    input = mlir::parseSourceString<mlir::ModuleOp>(checkedRoot, &context);
+    check(static_cast<bool>(input), "mutable checked root fixture parses");
+    if (!input) { return; }
+    input->walk([&](ctjs::CallOp found) { call = found; });
+    const auto root = call.getArgs().front();
+    mlir::OpBuilder before(call);
+    auto absent = ctjs::ConstantOp::create(before, call.getLoc(), ctjs::NullAttr::get(&context));
+    call->setAttr("ctnative.document_root_present", builder.getBoolAttr(true));
+    contract.moduleSha256 = hostContractFingerprint(*input);
+    check(DOMEntryAnalysis(*input, contract).proved(), "checked root ignores printed reports");
+    call->setOperand(2, absent);
+    check(noEvidence(*input, DOMEntryAnalysis(*input, contract)),
+          "changed checked root invalidates a stale source contract");
+    contract.moduleSha256 = hostContractFingerprint(*input);
+    check(noEvidence(*input, DOMEntryAnalysis(*input, contract)),
+          "fresh fingerprint and forged report cannot turn null into a document root");
+    call->setOperand(2, root);
+    contract.moduleSha256 = hostContractFingerprint(*input);
+    check(DOMEntryAnalysis(*input, contract).proved(),
+          "restoring the exact checked root restores its live proof");
 }
 
 } // namespace ctcompile::test::host_contract

@@ -2,6 +2,7 @@
 """Confined node catches preserve identity and reads without a native throw."""
 
 import argparse
+import json
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -41,6 +42,98 @@ SOURCES = {
     "write-boolean-read-return": "function customElements(anchor) { try { const saved = anchor.hasAttribute('data-closed'); anchor.setAttribute('data-written', saved); return saved; } catch (error) { return false; } }\n",
     "write-boolean-snapshot": "function customElements(anchor) { let saved = false; try { saved = anchor.hasAttribute('data-closed'); anchor.setAttribute('data-closed', true); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor && saved; } }\n",
     "write-boolean-conditional": "function customElements(anchor) { let saved = false; try { if (anchor.hasAttribute('data-closed')) { saved = anchor.hasAttribute('data-closed'); } anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor && saved; } }\n",
+    "write-number-return": "function customElements(anchor) { try { anchor.setAttribute('data-written', 42); return true; } catch (error) { return false; } }\n",
+    "write-number-corners": """function customElements(anchor) {
+  const zero = -0, nan = 0 / 0, infinity = 1 / 0, negativeInfinity = -1 / 0;
+  try {
+    anchor.setAttribute('data-zero', zero);
+    anchor.setAttribute('data-nan', nan);
+    anchor.setAttribute('data-infinity', infinity);
+    anchor.setAttribute('data-negative-infinity', negativeInfinity);
+    anchor.setAttribute('data-small-exponent', 1e-7);
+    anchor.setAttribute('data-small-decimal', 1e-6);
+    anchor.setAttribute('data-large-decimal', 1e20);
+    anchor.setAttribute('data-written', 1e21);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-snapshot": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('data-closed') ? 7.5 : -0;
+  try {
+    anchor.setAttribute('data-closed', 42);
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor && saved === 7.5; }
+}
+""",
+    "write-number-read": """function customElements(anchor) {
+  const saved = Number(anchor.getAttribute('data-number'));
+  try {
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-snapshot": """function customElements(anchor) {
+  const saved = Number(anchor.getAttribute('data-number'));
+  try {
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-protected": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number'));
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-protected-snapshot": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number'));
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-protected-return": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number'));
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-protected-add": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number')) + 1;
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-protected-arithmetic-snapshot": """function customElements(anchor) {
+  try {
+    const saved = -(+((Number(anchor.getAttribute('data-number')) * 2 - 1) / 2)) % 3;
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-protected-divide-return": """function customElements(anchor) {
+  try {
+    const saved = 1 / Number(anchor.getAttribute('data-number'));
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -57,6 +150,72 @@ SOURCES = {
 }
 
 
+NUMBER_READ_INPUTS = (
+    (None, "0"),
+    ("", "0"),
+    (" -0 ", "0"),
+    ("NaN", "NaN"),
+    ("+Infinity", "Infinity"),
+    ("-Infinity", "-Infinity"),
+    ("0x10", "16"),
+    ("0b11", "3"),
+    ("7.5", "7.5"),
+    ("1e-7", "1e-7"),
+    ("1e21", "1e+21"),
+    ("invalid", "NaN"),
+    ("\u00a042\ufeff", "42"),
+)
+
+
+NUMBER_ARITHMETIC_RESULTS = {
+    "write-number-read-protected-add": (
+        "1",
+        "1",
+        "1",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "17",
+        "4",
+        "8.5",
+        "1.0000001",
+        "1e+21",
+        "NaN",
+        "43",
+    ),
+    "write-number-read-protected-arithmetic-snapshot": (
+        "0.5",
+        "0.5",
+        "0.5",
+        "NaN",
+        "NaN",
+        "NaN",
+        "-0.5",
+        "-2.5",
+        "-1",
+        "0.4999999",
+        "-1",
+        "NaN",
+        "-2.5",
+    ),
+    "write-number-read-protected-divide-return": (
+        "Infinity",
+        "Infinity",
+        "-Infinity",
+        "NaN",
+        "0",
+        "0",
+        "0.0625",
+        "0.3333333333333333",
+        "0.13333333333333333",
+        "10000000",
+        "1e-21",
+        "NaN",
+        "0.023809523809523808",
+    ),
+}
+
+
 WRITE_EXPECTED = {
     "write-throw": 'result0="true1:yes:1"\nresult1="true1:yes:1"\n',
     "write-return": 'result0="true0:yes:1"\nresult1="true0:yes:1"\n',
@@ -66,6 +225,21 @@ WRITE_EXPECTED = {
     "write-boolean-read-return": 'result0="false1:false:1"\nresult1="true1:true:1"\n',
     "write-boolean-snapshot": 'result0="false1:false:2"\nresult1="true1:true:2"\n',
     "write-boolean-conditional": 'result0="false1:false:1"\nresult1="true2:true:1"\n',
+    "write-number-return": 'result0="true:write:data-written=42;"\nresult1="true:write:data-written=42;"\n',
+    "write-number-corners": (
+        'result0="true:write:data-zero=0;write:data-nan=NaN;write:data-infinity=Infinity;'
+        "write:data-negative-infinity=-Infinity;write:data-small-exponent=1e-7;"
+        "write:data-small-decimal=0.000001;write:data-large-decimal=100000000000000000000;"
+        'write:data-written=1e+21;"\n'
+        'result1="true:write:data-zero=0;write:data-nan=NaN;write:data-infinity=Infinity;'
+        "write:data-negative-infinity=-Infinity;write:data-small-exponent=1e-7;"
+        "write:data-small-decimal=0.000001;write:data-large-decimal=100000000000000000000;"
+        'write:data-written=1e+21;"\n'
+    ),
+    "write-number-snapshot": (
+        'result0="false:read:data-closed=false;write:data-closed=42;write:data-written=0;"\n'
+        'result1="true:read:data-closed=true;write:data-closed=42;write:data-written=7.5;"\n'
+    ),
 }
 
 WRITE_OBSERVER = """function observe(closed) {
@@ -105,6 +279,32 @@ HELPER_OBSERVER = """function observe(repeat) {
 var result0 = observe(false), result1 = observe(true);
 """
 
+NUMBER_WRITE_OBSERVER = """function observe(closed, number) {
+  const saved = {};
+  if (closed) saved['data-closed'] = 'yes';
+  if (number !== undefined && number !== null) saved['data-number'] = number;
+  let trace = '';
+  const anchor = {
+    getAttribute(name) {
+      const value = name in saved ? saved[name] : null;
+      trace += 'get:' + name + '=' + value + ';';
+      return value;
+    },
+    hasAttribute(name) {
+      const value = name in saved;
+      trace += 'read:' + name + '=' + value + ';';
+      return value;
+    },
+    setAttribute(name, value) {
+      saved[name] = '' + value;
+      trace += 'write:' + name + '=' + saved[name] + ';';
+    }
+  };
+  return customElements(anchor) + ':' + trace;
+}
+var result0 = observe(false), result1 = observe(true);
+"""
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -119,6 +319,17 @@ def main():
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
     for name, source in SOURCES.items():
+        number_inputs = (
+            tuple(
+                zip(
+                    (value for value, _ in NUMBER_READ_INPUTS),
+                    NUMBER_ARITHMETIC_RESULTS[name],
+                    strict=True,
+                )
+            )
+            if name in NUMBER_ARITHMETIC_RESULTS
+            else NUMBER_READ_INPUTS
+        )
         script = (
             source
             + "function observe(closed) { let reads = 0; "
@@ -128,6 +339,21 @@ def main():
         )
         if name.startswith("write-"):
             script = source + WRITE_OBSERVER
+        if name.startswith("write-number-"):
+            script = source + NUMBER_WRITE_OBSERVER
+        number_read = name.startswith("write-number-read")
+        if number_read:
+            script = script.replace(
+                "var result0 = observe(false), result1 = observe(true);",
+                "\n".join(
+                    f"var result{index} = ["
+                    + ", ".join(
+                        f"observe({closed}, {json.dumps(value)})" for value, _ in NUMBER_READ_INPUTS
+                    )
+                    + "].join('|');"
+                    for index, closed in enumerate(("false", "true"))
+                ),
+            )
         if name == "helper-next-record":
             script = source + HELPER_OBSERVER
         nested = name.startswith("mixed-node-nested-") or name == "nested-protected-normal-read"
@@ -189,6 +415,20 @@ def main():
                 )
         if name in WRITE_EXPECTED:
             expected = WRITE_EXPECTED[name]
+        if number_read:
+            trace = "|".join(
+                "true:get:data-number="
+                + ("null" if value is None else value)
+                + ";"
+                + ("write:data-number=99;" if name.endswith("-snapshot") else "")
+                + "write:data-written="
+                + result
+                + ";"
+                for value, result in number_inputs
+            )
+            expected = "".join(
+                f"result{index}={json.dumps(trace, ensure_ascii=False)}\n" for index in (0, 1)
+            )
         if name == "helper-next-record":
             expected = (
                 'result0="false:read:data-yielded=false;write:data-next=false;write:data-yielded=yes;"\n'
@@ -200,6 +440,8 @@ def main():
             if output != expected:
                 raise RuntimeError(f"{name}: catch oracle differs: {result}")
         ir, contract = dom.prepare(args, name, source, 1, entry_name="customElements")
+        if number_read:
+            contract["initial_intrinsics"] = ["Number"]
         checks = (
             "assert(@ENTRY@(element)); assert(@ENTRY@(alias)); assert(@ENTRY@(foreign));"
             if name in ("identity", "conditional-node-identity", "conditional", "protected-read")
@@ -295,6 +537,94 @@ def main():
                 exercise(doc, button, [&] { return @ENTRY@(alias); });
                 exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
             """
+        if name.startswith("write-number-") and not number_read:
+            expected_writes = {
+                "write-number-return": [("data-written", '"42"')],
+                "write-number-corners": [
+                    ("data-zero", '"0"'),
+                    ("data-nan", '"NaN"'),
+                    ("data-infinity", '"Infinity"'),
+                    ("data-negative-infinity", '"-Infinity"'),
+                    ("data-small-exponent", '"1e-7"'),
+                    ("data-small-decimal", '"0.000001"'),
+                    ("data-large-decimal", '"100000000000000000000"'),
+                    ("data-written", '"1e+21"'),
+                ],
+                "write-number-snapshot": [
+                    ("data-closed", '"42"'),
+                    ("data-written", '(closed ? "7.5" : "0")'),
+                ],
+            }[name]
+            write_checks = "\n".join(
+                f'assert(writes[{index}].name == target.atoms().intern("{attribute}")); '
+                f'assert(target.read().attribute_value(id, target.atoms().intern("{attribute}")) == {value});'
+                for index, (attribute, value) in enumerate(expected_writes)
+            )
+            checks = (
+                r"""
+                const auto exercise = [&](ctbrowser::document & target, node_id id, auto && call) {
+                    const auto closed_name = target.atoms().intern("data-closed");
+                    target.log_writes(true);
+                    for (bool closed : {false, true}) {
+                        assert(target.remove_attribute(id, closed_name));
+                        if (closed) { assert(target.set_attribute(id, closed_name, "yes")); }
+                        (void)target.take_writes();
+                        assert(static_cast<bool>(call()) == @ANSWER@);
+                        const auto writes = target.take_writes();
+                        assert(writes.size() == @COUNT@);
+                        for (const auto & write : writes) { assert(write.node == id && !write.text); }
+                        @WRITES@
+                    }
+                };
+                exercise(doc, button, [&] { return @ENTRY@(alias); });
+                exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
+                """.replace("@ANSWER@", "closed" if name == "write-number-snapshot" else "true")
+                .replace("@COUNT@", str(len(expected_writes)))
+                .replace("@WRITES@", write_checks)
+            )
+        if number_read:
+            inputs = ",\n".join(
+                "{"
+                + ("nullptr" if value is None else json.dumps(value, ensure_ascii=False))
+                + ", "
+                + json.dumps(result)
+                + "}"
+                for value, result in number_inputs
+            )
+            checks = (
+                r"""
+                const auto exercise = [&](ctbrowser::document & target, node_id id, auto && call) {
+                    const auto number = target.atoms().intern("data-number");
+                    const auto written = target.atoms().intern("data-written");
+                    const char * cases[][2] = {@INPUTS@};
+                    target.log_writes(true);
+                    for (const auto & test : cases) {
+                        assert(target.remove_attribute(id, number));
+                        assert(target.remove_attribute(id, written));
+                        if (test[0]) { assert(target.set_attribute(id, number, test[0])); }
+                        (void)target.take_writes();
+                        assert(call());
+                        const auto writes = target.take_writes();
+                        assert(writes.size() == @COUNT@);
+                        for (const auto & write : writes) { assert(write.node == id && !write.text); }
+                        assert(writes.back().name == written);
+                        assert(target.read().attribute_value(id, written) == test[1]);
+                        @SNAPSHOT@
+                    }
+                };
+                exercise(doc, button, [&] { return @ENTRY@(alias); });
+                exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
+            """.replace("@INPUTS@", inputs)
+                .replace("@COUNT@", "2" if name.endswith("-snapshot") else "1")
+                .replace(
+                    "@SNAPSHOT@",
+                    (
+                        'assert(writes.front().name == number); assert(target.read().attribute_value(id, number) == "99");'
+                        if name.endswith("-snapshot")
+                        else "assert(target.read().has_attribute(id, number) == (test[0] != nullptr)); if (test[0]) { assert(target.read().attribute_value(id, number) == test[0]); }"
+                    ),
+                )
+            )
         checks += " (void)pressed; (void)alias;"
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
@@ -311,7 +641,7 @@ def main():
                 if "throw " in source_cpp or "catch (" in source_cpp:
                     raise RuntimeError("confined node escaped into a native exception")
                 dom.standalone(args, native, label, checks, compilers, includes, libraries)
-                if name == "helper-next-record":
+                if name == "helper-next-record" or name.startswith("write-number-"):
                     dom.lower(
                         args,
                         ir,
@@ -322,6 +652,10 @@ def main():
                         max_steps=0,
                     )
     refusals = {
+        "write-number-invalid-name": "try { anchor.setAttribute('bad name', 42); throw anchor; } catch (error) { return error === anchor; }",
+        "write-number-mixed-join": "const saved = anchor.hasAttribute('data-closed') ? 42 : anchor; try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+        "write-number-coercing-input": "const saved = +anchor; try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+        "write-number-throwing-producer": "try { const saved = JSON.parse('42'); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
         "write-boolean-unknown-value": "try { anchor.setAttribute('data-written', anchor.unknown); throw anchor; } catch (error) { return error === anchor; }",
         "write-boolean-forged-read": "try { const saved = ({hasAttribute() { return true; }}).hasAttribute('data-closed'); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
         "write-boolean-mixed-join": "let saved = anchor; try { if (anchor.hasAttribute('data-closed')) { saved = true; } anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
@@ -342,6 +676,40 @@ def main():
     }
     refusals.update(
         {
+            "write-number-read-without-intrinsic": "const saved = Number(anchor.getAttribute('data-number')); try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-rebound-intrinsic": "Number = anchor; const saved = Number(anchor.getAttribute('data-number')); try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-coercing-input": "const saved = Number(anchor); try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-unknown-getter": "const saved = Number(anchor.unknown); try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-invalid-name": "const saved = Number(anchor.getAttribute('data-number')); try { anchor.setAttribute('bad name', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-mixed-join": "const saved = anchor.hasAttribute('data-closed') ? Number(anchor.getAttribute('data-number')) : anchor; try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-without-intrinsic": "try { const saved = Number(anchor.getAttribute('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-rebound-intrinsic": "try { Number = anchor; const saved = Number(anchor.getAttribute('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-coercing-input": "try { const saved = Number(anchor); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-unknown-getter": "try { const saved = Number(anchor.unknown); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-unknown-producer": "try { const saved = Number(anchor.unknown()); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-rebound-getter": "try { anchor.getAttribute = anchor.setAttribute; const saved = Number(anchor.getAttribute('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-wrong-getter-receiver": "try { const get = anchor.getAttribute; const saved = Number(get('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-missing-getter-argument": "try { const saved = Number(anchor.getAttribute()); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-extra-getter-argument": "try { const saved = Number(anchor.getAttribute('data-number', 'extra')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-coercing-getter-name": "try { const saved = Number(anchor.getAttribute(anchor)); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-extra-number-argument": "try { const saved = Number(anchor.getAttribute('data-number'), 42); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-wrong-number-receiver": "try { const saved = Number.call(anchor, anchor.getAttribute('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-invalid-name": "try { const saved = Number(anchor.getAttribute('data-number')); anchor.setAttribute('bad name', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-mixed-join": "try { const saved = Number(anchor.hasAttribute('data-closed') ? anchor.getAttribute('data-number') : anchor); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-without-intrinsic": "try { const saved = Number(anchor.getAttribute('data-number')) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-rebound-intrinsic": "try { Number = anchor; const saved = Number(anchor.getAttribute('data-number')) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-rebound-getter": "try { anchor.getAttribute = anchor.setAttribute; const saved = Number(anchor.getAttribute('data-number')) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-coercing-input": "try { const saved = Number(anchor) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-coercing-add": "try { const saved = Number(anchor.getAttribute('data-number')) + anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-string-add": "try { const saved = Number(anchor.getAttribute('data-number')) + '1'; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-bigint-add": "try { const saved = Number(anchor.getAttribute('data-number')) + 1n; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-mixed-join": "try { const saved = (anchor.hasAttribute('data-closed') ? Number(anchor.getAttribute('data-number')) : '1') + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-unknown-getter": "try { const saved = Number(anchor.getAttribute('data-number')) + anchor.unknown; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-unknown-producer": "try { const saved = Number(anchor.getAttribute('data-number')) + anchor.unknown(); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-unary-coercion": "try { const saved = +anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-negate-coercion": "try { const saved = -anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-divide-coercion": "try { const saved = 1 / anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-arithmetic-conditional-callee": "try { const saved = Number(anchor.hasAttribute('data-closed') ? anchor.getAttribute('data-number') : null) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
             "mixed-protected-throw-call": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { decodeURIComponent('%'); throw anchor; } } catch (error) { return error === anchor; } return false;",
             "mixed-rethrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { throw error; } return false;",
             "mixed-return-borrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { return error; } return false;",
@@ -376,6 +744,10 @@ def main():
                 manifest = dict(
                     contract, provider=provider, initial_intrinsics=["decodeURIComponent"]
                 )
+                if name.startswith("write-number-read-") and not name.endswith(
+                    "-without-intrinsic"
+                ):
+                    manifest["initial_intrinsics"].append("Number")
                 if name == "invocation-without-contract":
                     manifest["element_parameters"] = []
                 dom.lower(

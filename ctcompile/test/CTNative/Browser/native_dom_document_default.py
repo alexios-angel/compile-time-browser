@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute original Bootstrap R.find defaults under a proved document-root guard."""
+"""Execute original Bootstrap R.find defaults with checked document-root receivers."""
 
 from pathlib import Path
 
@@ -172,11 +172,134 @@ OWNED_CHECKS = r"""
     }
 """
 
-REFUSALS = {
+CHECKED_CHECKS = r"""
+        (void)pressed;
+        style::engine selectors{atoms};
+        const auto invoke = [&](element_ref anchor, element_ref expected,
+                                style::engine & engine) {
+            return in_outer_document([&] { return @ENTRY@(anchor, expected, engine); });
+        };
+        const auto check_roots = [&](ctbrowser::document & tested, node_id anchor,
+                                     auto && call) {
+            tested.log_writes(true);
+            const auto absent = [&] {
+                bool rejected = false;
+                try { assert(call().value() == 0); }
+                catch (const std::bad_expected_access<dom_error> &) { rejected = true; }
+                assert(rejected == @THROWS@);
+                assert(tested.take_writes().empty());
+            };
+            (void)tested.take_writes();
+            absent();
+            const auto root = tested.create_element(tested.atoms().intern("section"));
+            const auto child = tested.create_element(tested.atoms().intern("button"));
+            const auto nested = tested.create_element(tested.atoms().intern("button"));
+            assert(tested.append_child(root, child));
+            assert(tested.append_child(child, nested));
+            const auto selected = tested.atoms().intern("class");
+            for (const auto id : {root, child, nested})
+                assert(tested.set_attribute(id, selected, "selected"));
+            tested.set_document_element(root);
+            (void)tested.take_writes();
+            assert(call().value() == @FIRST@); // Element selectors exclude the matching root.
+            auto writes = tested.take_writes();
+            @WRITES@
+            tested.remove_document_element();
+            (void)tested.take_writes();
+            absent();
+            const auto replacement = tested.create_element(tested.atoms().intern("section"));
+            const auto replacement_child = tested.create_element(tested.atoms().intern("button"));
+            assert(tested.append_child(replacement, replacement_child));
+            assert(tested.set_attribute(replacement, selected, "selected"));
+            assert(tested.set_attribute(replacement_child, selected, "selected"));
+            tested.set_document_element(replacement);
+            (void)tested.take_writes();
+            assert(call().value() == @SECOND@); // A detached anchor still binds the current document.
+            writes = tested.take_writes();
+            @WRITES@
+            (void)anchor;
+            @EFFECTS@
+        };
+        assert(doc.remove_child(button));
+        check_roots(doc, button, [&] { return invoke(alias, foreign, selectors); });
+        assert(foreign_doc.remove_child(other_button));
+        style::engine foreign_selectors{foreign_atoms};
+        check_roots(foreign_doc, other_button,
+                    [&] { return invoke(foreign, alias, foreign_selectors); });
+"""
+
+CHECKED_OWNED_CHECKS = r"""
+    {
+        @ENTRY@_session session;
+        auto & owned = session.document();
+        const auto parent = owned.create_element(owned.atoms().intern("button"));
+        const element_ref input{&owned, parent};
+        const auto invoke_owned = [&](element_ref first, element_ref second) {
+            return in_outer_document([&] { return session.invoke(first, second); });
+        };
+        check_roots(owned, parent, [&] { return invoke_owned(input, input); });
+        for (const bool foreign_anchor : {false, true}) {
+            bool rejected = false;
+            try { (void)invoke_owned(foreign_anchor ? foreign : input,
+                                     foreign_anchor ? input : foreign); }
+            catch (const std::invalid_argument &) { rejected = true; }
+            assert(rejected && owned.take_writes().empty());
+        }
+    }
+"""
+
+CHECKED_EFFECTS = r"""
+            assert(tested.set_attribute(anchor, tested.atoms().intern("data-invalid"), ""));
+            (void)tested.take_writes();
+            bool invalid = false;
+            try { (void)call(); }
+            catch (const std::invalid_argument &) { invalid = true; }
+            assert(invalid);
+            const auto before = tested.atoms().intern("data-before");
+            const auto after = tested.atoms().intern("data-after");
+            writes = tested.take_writes();
+            assert(writes.size() == 1 && writes[0].node == anchor && writes[0].name == before);
+            assert(tested.read().attribute_value(anchor, before) == "yes");
+            assert(!tested.read().has_attribute(anchor, after));
+            assert(tested.remove_attribute(anchor, before));
+            tested.remove_document_element();
+            (void)tested.take_writes();
+            bool missing = false;
+            try { (void)call(); }
+            catch (const std::bad_expected_access<dom_error> &) { missing = true; }
+            assert(missing); // Receiver validation precedes even an invalid selector.
+            writes = tested.take_writes();
+            assert(writes.size() == 1 && writes[0].node == anchor && writes[0].name == before);
+            assert(tested.read().attribute_value(anchor, before) == "yes");
+            assert(!tested.read().has_attribute(anchor, after));
+"""
+
+CHECKED_ROOTS = {
     "unguarded-default": "return R.find('*').length;",
     "unrelated-query-guard": "if(document.querySelector('*')) return R.find('*').length; return 0;",
     "wrong-arm": "if(!document.documentElement) return R.find('*').length; return 0;",
     "unguarded-after-branch": "if(document.documentElement) anchor.setAttribute('seen','yes'); return R.find('*').length;",
+}
+
+
+def checked_checks(name):
+    writes = "assert(writes.empty());"
+    if name == "unguarded-after-branch":
+        writes = """assert(writes.size() == 1 && writes[0].node == anchor &&
+                           writes[0].name == tested.atoms().intern("seen"));
+            assert(tested.read().attribute_value(anchor, tested.atoms().intern("seen")) == "yes");
+            assert(tested.remove_attribute(anchor, tested.atoms().intern("seen")));
+            (void)tested.take_writes();"""
+    return (
+        CHECKED_CHECKS.replace("@THROWS@", str(name != "unrelated-query-guard").lower())
+        .replace("@FIRST@", "0" if name == "wrong-arm" else "2")
+        .replace("@SECOND@", "0" if name == "wrong-arm" else "1")
+        .replace("@WRITES@", writes)
+        .replace("@EFFECTS@", CHECKED_EFFECTS if name == "checked-root-effects" else "")
+    )
+
+
+REFUSALS = {
     "root-escape": "if(document.documentElement) return document.documentElement; return false;",
     "snapshot-escape": "if(document.documentElement) return R.find('*'); return false;",
     "replace-document": "if(document.documentElement) { document=anchor; return R.find('*').length; } return 0;",
@@ -203,10 +326,26 @@ def main():
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args, selectors=True)
     refusals = 0
-    for anchor in (0, 1):
-        ir, contract = dom.prepare(
-            args, f"default-root-{anchor}", source(bool(anchor)), 2, entry_name="findDefault"
+    executions = 0
+    cases = [
+        (f"default-root-{anchor}", source(bool(anchor)), CHECKS, OWNED_CHECKS, anchor)
+        for anchor in (0, 1)
+    ]
+    for name, body in {
+        **CHECKED_ROOTS,
+        "checked-root-effects": BODY.replace("@DEFAULT@", ""),
+    }.items():
+        cases.append(
+            (
+                name,
+                f"function findDefault(anchor, expected) {{ const R={{{FIND}}}; {body} }}\n",
+                checked_checks(name),
+                CHECKED_OWNED_CHECKS,
+                0,
+            )
         )
+    for case, text, checks, owned_checks, anchor in cases:
+        ir, contract = dom.prepare(args, case, text, 2, entry_name="findDefault")
         contract.update(
             current_document_parameter=anchor, initial_intrinsics=["Array", "Element", "Function"]
         )
@@ -215,7 +354,7 @@ def main():
                 contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
             )
             for optimize in (False, True):
-                name = f"default-root-{anchor}-{owned}-{optimize}"
+                name = f"{case}-{owned}-{optimize}"
                 native = dom.lower(args, ir, manifest, name, optimize=optimize)
                 text = native.read_text()
                 if (
@@ -226,11 +365,24 @@ def main():
                     raise RuntimeError(f"{name}: original default root bypassed public DOM/Style")
                 client = (
                     CURRENT_DOCUMENT_CHECKS
-                    + CHECKS
+                    + checks
                     + INPUT_CHECKS
-                    + (OWNED_CHECKS if owned else "")
+                    + (owned_checks if owned else "")
                 ).replace("@ARGUMENTS@", "expected, anchor" if anchor else "anchor, expected")
                 dom.standalone(args, native, name, client, compilers, includes, libraries)
+                executions += 4
+                if not case.startswith("default-root-"):
+                    dom.lower(
+                        args,
+                        ir,
+                        manifest,
+                        f"{name}-budget",
+                        optimize=optimize,
+                        max_steps=0,
+                        success=False,
+                    )
+                    refusals += 1
+                    continue
                 missing = dict(manifest)
                 del missing["current_document_parameter"]
                 controls = [
@@ -277,7 +429,7 @@ def main():
             )
             refusals += 1
     print(
-        f"Bootstrap guarded default root: 32 native executions, {refusals} refusals; DOM/Core/Style only"
+        f"Bootstrap checked default root: {executions} native executions, {refusals} refusals; DOM/Core/Style only"
     )
 
 

@@ -386,6 +386,7 @@ struct DOMAttributeProof {
     unsigned & remaining;
     bool attributeMethod(ctjs::GetPropertyOp method) {
         if (!method || (ctjs::constantKey(method.getKey()) != "hasAttribute" &&
+                        ctjs::constantKey(method.getKey()) != "getAttribute" &&
                         ctjs::constantKey(method.getKey()) != "setAttribute")) {
             return false;
         }
@@ -426,10 +427,82 @@ struct DOMAttributeProof {
         return false;
     }
     llvm::DenseSet<mlir::Value> booleanReads;
+    llvm::DenseSet<mlir::Value> stringReads;
+    llvm::DenseSet<mlir::Value> numberReads;
     bool booleanValue(mlir::Value value) const {
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
         return booleanReads.contains(value) ||
                (constant && llvm::isa<ctjs::BooleanAttr>(constant.getValue()));
+    }
+    bool stringValue(mlir::Value value) const {
+        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+        return stringReads.contains(value) ||
+               (constant && llvm::isa<ctjs::StringAttr, ctjs::NullAttr>(constant.getValue()));
+    }
+    static bool numberCallee(ctjs::CallOp call) {
+        if (!call) { return false; }
+        auto callee = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+        auto receiver = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
+        return callee && callee.getName() == "Number" && receiver &&
+               llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) && call.getArgs().size() == 1;
+    }
+    bool numberValue(mlir::Value value, unsigned depth = 0) {
+        if (!remaining || depth == 64) { return false; }
+        --remaining;
+        if (numberReads.contains(value)) { return true; }
+        if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
+            return llvm::isa<ctjs::NumberAttr>(constant.getValue());
+        }
+        if (auto call = value.getDefiningOp<ctjs::CallOp>()) {
+            // A successful initial Number call produces a Number. Final DOM
+            // proof still validates its binding and input; this grants no
+            // effect authority to the call or its argument producers.
+            return numberCallee(call);
+        }
+        // Only immutable Number origins prove conversion cannot invoke user code.
+        // This does not discharge the producers' effects or protected status edges.
+        if (auto unary = value.getDefiningOp<ctjs::UnaryOp>()) {
+            return (unary.getKind() == ctjs::UnaryKind::Neg ||
+                    unary.getKind() == ctjs::UnaryKind::Plus ||
+                    unary.getKind() == ctjs::UnaryKind::BitNot) &&
+                   numberValue(unary.getOperand(), depth + 1);
+        }
+        const auto numericBinary = [&](auto binary) {
+            switch (binary.getKind()) {
+            case ctjs::BinaryKind::Add:
+            case ctjs::BinaryKind::Sub:
+            case ctjs::BinaryKind::Mul:
+            case ctjs::BinaryKind::Div:
+            case ctjs::BinaryKind::Mod:
+            case ctjs::BinaryKind::Pow:
+            case ctjs::BinaryKind::Shl:
+            case ctjs::BinaryKind::Shr:
+            case ctjs::BinaryKind::UShr:
+            case ctjs::BinaryKind::BitAnd:
+            case ctjs::BinaryKind::BitOr:
+            case ctjs::BinaryKind::BitXor:
+                return numberValue(binary.getLhs(), depth + 1) &&
+                       numberValue(binary.getRhs(), depth + 1);
+            default: return false;
+            }
+        };
+        if (auto binary = value.getDefiningOp<ctjs::BinaryOp>()) { return numericBinary(binary); }
+        if (auto binary = value.getDefiningOp<ctjs::BinaryStaticOp>()) {
+            return numericBinary(binary);
+        }
+        auto result = llvm::dyn_cast<mlir::OpResult>(value);
+        auto branch =
+            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+        if (!branch) { return false; }
+        for (auto & region : branch->getRegions()) {
+            if (!region.hasOneBlock()) { return false; }
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+            if (!yield || yield.getNumOperands() != branch.getNumResults() ||
+                !numberValue(yield.getOperand(result.getResultNumber()), depth + 1)) {
+                return false;
+            }
+        }
+        return true;
     }
     static bool attributeRead(ctjs::CallOp call) {
         auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -447,15 +520,35 @@ struct DOMAttributeProof {
         if (!writes) { return true; }
         auto value = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
         if ((!value || !llvm::isa<ctjs::StringAttr>(value.getValue())) &&
-            !booleanValue(call.getArgs()[1])) {
+            !booleanValue(call.getArgs()[1]) && !numberValue(call.getArgs()[1])) {
             return false;
         }
         if (name.getValue().size() > remaining) { return false; }
         // setAttribute validates before mutation. Charge and call the same public
-        // validator as the VM binding; Strings and proved Booleans cannot reenter.
+        // validator as the VM binding; proved primitive conversion cannot reenter.
         remaining -= static_cast<unsigned>(name.getValue().size());
         return ctbrowser::is_valid_attribute_name(
             std::string_view{name.getValue().data(), name.getValue().size()});
+    }
+    bool nonthrowingCall(ctjs::CallOp call) {
+        // Unlike result-tag evidence, suppressing an exception requires an
+        // input that cannot invoke ToPrimitive or throw during Number conversion.
+        // The initial global binding is checked by the complete final DOM proof.
+        return attributeCall(call) || (numberCallee(call) && stringValue(call.getArgs().front()));
+    }
+    void callResult(ctjs::CallOp call, mlir::Value result) {
+        // Called only after the independent nonthrowing proof succeeds.
+        if (attributeRead(call)) { booleanReads.insert(result); }
+        auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        if (method && ctjs::constantKey(method.getKey()) == "getAttribute") {
+            stringReads.insert(result);
+        }
+        if (numberCallee(call)) { numberReads.insert(result); }
+    }
+    void join(mlir::Value result, mlir::Value left, mlir::Value right) {
+        if (booleanValue(left) && booleanValue(right)) { booleanReads.insert(result); }
+        if (stringValue(left) && stringValue(right)) { stringReads.insert(result); }
+        if (numberValue(left) && numberValue(right)) { numberReads.insert(result); }
     }
 };
 
@@ -491,6 +584,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
         return mlir::WalkResult::advance();
     });
     if (rewritten.wasInterrupted()) { return refuse("DOM caught throw work budget exhausted"); }
+    if (auto error = structureRecoveredPrefix(function, remaining)) { return std::move(error); }
     if (!function.getBody().hasOneBlock()) {
         return refuse("DOM caught throw requires a structured local prefix");
     }
@@ -528,8 +622,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
         return refuse("DOM caught throw lost its local completion correspondence");
     }
     const bool unconditional = alwaysThrows(alwaysThrows, exit.getIsThrow(), 0);
-    DOMAttributeProof attributes{function, elementParameters, remaining, {}};
-    auto & booleanReads = attributes.booleanReads;
+    DOMAttributeProof attributes{function, elementParameters, remaining, {}, {}, {}};
     llvm::SmallVector<ctjs::InvokeOp> nonthrowingCalls;
     const auto effects = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
         if (depth == 64) { return false; }
@@ -555,8 +648,19 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 unary && unary.getKind() == ctjs::UnaryKind::Not) {
                 continue;
             }
+            // Only exact Number arithmetic avoids coercion and implicit throws.
+            // Reuse the charged origin proof, but keep checking every producer
+            // independently; a Number result alone never discharges its effects.
+            if (llvm::isa<ctjs::UnaryOp, ctjs::BinaryOp, ctjs::BinaryStaticOp>(operation) &&
+                attributes.numberValue(operation.getResult(0))) {
+                continue;
+            }
+            if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
+                load && load.getName() == "Number") {
+                continue; // Kept in order; the final proof requires the initial intrinsic.
+            }
             // The original entry contract fixes this Element and its initial
-            // method identity. Literal Strings and proved Booleans cannot invoke
+            // method identity. Literal Strings and proved Booleans/Numbers cannot invoke
             // user coercion; valid-name writes cannot throw or reenter. Keep
             // every mutation in order and reprove the complete DOM body below.
             // ponytail: entry parameters and identical branch forwarding only;
@@ -566,8 +670,8 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 continue;
             }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
-                attributes.attributeCall(call)) {
-                if (attributes.attributeRead(call)) { booleanReads.insert(call.getResult()); }
+                attributes.nonthrowingCall(call)) {
+                attributes.callResult(call, call.getResult());
                 continue;
             }
             if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
@@ -575,7 +679,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 auto call = llvm::dyn_cast<ctjs::CallOp>(invoked.front());
                 auto dispatch = llvm::dyn_cast<ctjs::InvokeExitOp>(invoked.back());
                 auto & normal = invocation.getNormalBody().front();
-                if (invoked.getNumArguments() || !attributes.attributeCall(call) || !dispatch ||
+                if (invoked.getNumArguments() || !attributes.nonthrowingCall(call) || !dispatch ||
                     call->getNextNode() != dispatch ||
                     dispatch.getNormalResult() != call.getResult() ||
                     normal.getNumArguments() != 1 ||
@@ -592,19 +696,17 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                         return false;
                     }
                 }
-                // Only the independently nonthrowing read gives its normal
-                // payload Boolean authority. Saved values retain their own
+                // Only the independently nonthrowing call gives its normal
+                // payload primitive authority. Saved values retain their own
                 // evidence; neither unwind padding nor a later read substitutes
                 // for this invocation's snapshot.
+                attributes.callResult(call, normal.getArgument(0));
                 auto incoming = llvm::cast<ctjs::InvokeYieldOp>(normal.getTerminator());
                 for (auto [result, value] :
                      llvm::zip(invocation.getResults(), incoming.getValues())) {
                     if (!remaining) { return false; }
                     --remaining;
-                    if (attributes.booleanValue(value) ||
-                        (attributes.attributeRead(call) && value == normal.getArgument(0))) {
-                        booleanReads.insert(result);
-                    }
+                    attributes.join(result, value, value);
                 }
                 nonthrowingCalls.push_back(invocation);
                 continue;
@@ -623,9 +725,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                      llvm::zip(branch.getResults(), yes.getOperands(), no.getOperands())) {
                     if (!remaining) { return false; }
                     --remaining;
-                    if (attributes.booleanValue(left) && attributes.booleanValue(right)) {
-                        booleanReads.insert(result);
-                    }
+                    attributes.join(result, left, right);
                 }
                 continue;
             }
@@ -857,7 +957,7 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
         mlir::failed(mlir::verify(function))) {
         return refuse();
     }
-    DOMAttributeProof attributes{function, elementParameters, remaining, {}};
+    DOMAttributeProof attributes{function, elementParameters, remaining, {}, {}, {}};
     const auto normalize = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
         if (depth == 64) { return false; }
         for (auto & operation : llvm::make_early_inc_range(block)) {
@@ -885,9 +985,7 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
                      llvm::zip(branch.getResults(), yes.getOperands(), no.getOperands())) {
                     if (!remaining) { return false; }
                     --remaining;
-                    if (attributes.booleanValue(left) && attributes.booleanValue(right)) {
-                        attributes.booleanReads.insert(result);
-                    }
+                    attributes.join(result, left, right);
                 }
                 continue;
             }
@@ -900,8 +998,8 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
                 continue;
             }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
-                call && attributes.attributeCall(call) && attributes.attributeRead(call)) {
-                attributes.booleanReads.insert(call.getResult());
+                attributes.nonthrowingCall(call)) {
+                attributes.callResult(call, call.getResult());
             }
             auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation);
             if (!invocation || !invocation.getNumResults()) { continue; }
@@ -909,7 +1007,7 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
             auto call = llvm::dyn_cast<ctjs::CallOp>(called.front());
             auto exit = llvm::cast<ctjs::InvokeExitOp>(called.back());
             if (!call || call->getNextNode() != exit ||
-                exit.getNormalResult() != call.getResult() || !attributes.attributeCall(call)) {
+                exit.getNormalResult() != call.getResult() || !attributes.nonthrowingCall(call)) {
                 continue;
             }
             // Verification covered both complete continuations. Only the call's
@@ -917,9 +1015,7 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
             // registers. The normal continuation is outside this protection;
             // preserve its operations, including later throws, after the call.
             call->moveBefore(invocation);
-            if (attributes.attributeRead(call)) {
-                attributes.booleanReads.insert(call.getResult());
-            }
+            attributes.callResult(call, call.getResult());
             auto & normal = invocation.getNormalBody().front();
             normal.getArgument(0).replaceAllUsesWith(call.getResult());
             if (!self(self, normal, depth + 1)) { return false; }

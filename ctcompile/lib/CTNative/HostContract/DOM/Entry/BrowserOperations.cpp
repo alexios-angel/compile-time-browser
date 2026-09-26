@@ -108,6 +108,21 @@ std::optional<double> stringIndex(mlir::Value value, unsigned arithmeticDepth = 
 std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
     auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation);
+    // Exact Number operands cannot coerce or reenter. Their scalar arithmetic
+    // also supplies attribute text; String-index consumers retain their own bounds proof.
+    const auto numericBinary = [&](auto op) {
+        return op && op.getKind() != ctjs::BinaryKind::Concat &&
+               hasKind(op.getLhs(), Kind::number) && hasKind(op.getRhs(), Kind::number);
+    };
+    if ((unary &&
+         (unary.getKind() == ctjs::UnaryKind::Neg || unary.getKind() == ctjs::UnaryKind::Plus ||
+          unary.getKind() == ctjs::UnaryKind::BitNot) &&
+         hasKind(unary.getOperand(), Kind::number)) ||
+        numericBinary(binary) || numericBinary(llvm::dyn_cast<ctjs::BinaryStaticOp>(operation))) {
+        if (!spend()) { return false; }
+        values[operation.getResult(0)] = Kind::number;
+        return true;
+    }
     if ((unary && unary.getKind() == ctjs::UnaryKind::Neg) ||
         (binary &&
          (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
@@ -562,9 +577,16 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             return true;
         }
         if (hasKind(invoke.getCallee(), Kind::selectorCall)) {
-            if (arguments.size() != 2 || !hasKind(arguments[0], Kind::element) ||
+            // The selector's checked js_element_t construction stays at this
+            // call. A root read may be absent; it grants no presence fact to
+            // other uses, and preceding source effects must still run.
+            const bool checkedRoot =
+                arguments.size() == 2 && hasKind(arguments[0], Kind::nullableElement) &&
+                provedDocumentRoots.contains(arguments[0].getDefiningOp<ctjs::GetPropertyOp>());
+            if (arguments.size() != 2 || (!hasKind(arguments[0], Kind::element) && !checkedRoot) ||
                 !hasKind(arguments[1], Kind::string)) {
-                refusal = "DOM prototype selector call requires an explicit Element and String";
+                refusal = "DOM prototype selector call requires an explicit Element or checked "
+                          "document root and String";
                 return false;
             }
             const auto kind = provedMethods.find(method)->second;
@@ -804,6 +826,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         const bool sets = hasKind(invoke.getCallee(), Kind::attribute);
         if ((sets && arguments.size() == 2 && hasKind(arguments[0], Kind::string) &&
              (hasKind(arguments[1], Kind::string) || hasKind(arguments[1], Kind::boolean) ||
+              hasKind(arguments[1], Kind::number) ||
               hasKind(arguments[1], Kind::optionalString))) ||
             (hasKind(invoke.getCallee(), Kind::removeAttribute) && arguments.size() == 1 &&
              hasKind(arguments[0], Kind::string))) {
