@@ -160,6 +160,50 @@ struct path_segment {
     return out;
 }
 
+// Every command as its absolute twin: a relative one's points are offsets
+// from the current point, and a closepath returns the current point to the
+// start of its subpath.
+void absolutize(std::vector<path_segment> & data) {
+    double x = 0, y = 0, start_x = 0, start_y = 0;
+    for (path_segment & s : data) {
+        const char verb = static_cast<char>(s.command | 0x20);
+        std::vector<double> & n = s.numbers;
+        if (s.command == verb && verb != 'z') {
+            switch (verb) {
+            case 'h': n[0] += x; break;
+            case 'v': n[0] += y; break;
+            case 'a':
+                n[5] += x;
+                n[6] += y;
+                break;
+            default:
+                for (std::size_t k = 0; k + 1 < n.size(); k += 2) {
+                    n[k] += x;
+                    n[k + 1] += y;
+                }
+                break;
+            }
+            s.command = static_cast<char>(verb - 0x20);
+        }
+        switch (verb) {
+        case 'z':
+            x = start_x;
+            y = start_y;
+            break;
+        case 'h': x = n[0]; break;
+        case 'v': y = n[0]; break;
+        default:
+            x = n[n.size() - 2];
+            y = n[n.size() - 1];
+            break;
+        }
+        if (verb == 'm') {
+            start_x = x;
+            start_y = y;
+        }
+    }
+}
+
 [[nodiscard]] std::string path_text(std::span<const path_segment> data) {
     std::string out;
     for (const path_segment & s : data) {
@@ -1004,11 +1048,18 @@ std::optional<std::string> blend_basic_shapes(std::string_view property, std::st
         mix_all(x->radii, y->radii, true);
     }
     if (x->function == "path") {
-        // SVG 2 §9.3.9's path interpolation: the same commands in the same
-        // order, their numbers blended - an arc's two flags as booleans.
+        // SVG 2 §9.3.9's path interpolation: both paths in ABSOLUTE commands -
+        // `m 20 70` and `M 100 30` are one command, and the result is written
+        // absolute as every engine writes it (offset-path-interpolation-001 to
+        // -004) - the same commands in the same order, their numbers blended.
+        // An arc's two flags are booleans: the nearer end's outside the
+        // interval, and set in between wherever either end sets one.
         std::optional<std::vector<path_segment>> p = parse_path_data(x->path);
         std::optional<std::vector<path_segment>> q = parse_path_data(y->path);
         if (!p || !q || p->size() != q->size()) { return std::nullopt; }
+        absolutize(*p);
+        absolutize(*q);
+        const bool interpolating = std::abs(wa + wb - 1) < 1e-9; // not an addition
         for (std::size_t i = 0; i < p->size(); ++i) {
             path_segment & s = (*p)[i];
             const path_segment & t = (*q)[i];
@@ -1016,11 +1067,13 @@ std::optional<std::string> blend_basic_shapes(std::string_view property, std::st
                 return std::nullopt;
             }
             for (std::size_t k = 0; k < s.numbers.size(); ++k) {
-                const bool flag = (s.command | 0x20) == 'a' && (k == 3 || k == 4);
+                const bool flag = s.command == 'A' && (k == 3 || k == 4);
                 if (!flag) {
                     s.numbers[k] = wa * s.numbers[k] + wb * t.numbers[k];
-                } else if (wa + wb == 1) {
-                    s.numbers[k] = wb < 0.5 ? s.numbers[k] : t.numbers[k];
+                } else if (interpolating && wb <= 0) {
+                    continue;
+                } else if (interpolating && wb >= 1) {
+                    s.numbers[k] = t.numbers[k];
                 } else {
                     s.numbers[k] = s.numbers[k] != 0 || t.numbers[k] != 0 ? 1 : 0;
                 }

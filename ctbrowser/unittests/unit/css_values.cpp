@@ -694,6 +694,11 @@ void test_the_shape_function() {
                  .value_or(""),
              std::string{"shape(from 10px 10px, arc by 20px -10px of 25px 25px cw large rotate "
                          "15deg)"});
+    // Two paths blend in absolute commands, and come out absolute.
+    CHECK_EQ(blend_basic_shapes("offset-path", "path(\"m 10 20 h 30\")",
+                                "path(\"M 130 140 H 120\")", 0.5, 0.5)
+                 .value_or(""),
+             std::string{"path(\"M 70 80 H 80\")"});
     CHECK(!blend_basic_shapes("clip-path", "shape(from 0px 0px, move to 1px 1px)",
                               "shape(from 0px 0px, move by 1px 1px)", 0.5, 0.5));
     CHECK(!blend_basic_shapes("clip-path", "shape(from 0px 0px, smooth to 1px 1px with 1px 1px)",
