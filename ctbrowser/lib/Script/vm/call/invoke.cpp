@@ -529,7 +529,9 @@ value context::get_iterator(value v) {
     }
     const value iterator = call(method, {}, v);
     if (throw_pending()) { return value::undefined(); }
-    if (!iterator.is_object()) {
+    // ANY OBJECT - a proxy, a function, an array - not only an ordinary one
+    // (7.4.2 GetIteratorFromMethod step 3: "is not an Object").
+    if (!iterator.is_object_like()) {
         throw_error("TypeError", "Result of the Symbol.iterator method is not an object");
         return value::undefined();
     }
@@ -544,7 +546,7 @@ value context::iterator_step(value iterator, value next, bool & done) {
     }
     const value result = call(next, {}, iterator);
     if (throw_pending()) { return value::undefined(); }
-    if (!result.is_object()) {
+    if (!result.is_object_like()) {
         throw_error("TypeError", "Iterator result is not an object");
         return value::undefined();
     }
