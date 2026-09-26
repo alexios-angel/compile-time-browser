@@ -908,11 +908,25 @@ constexpr std::string_view geometry_boxes =
 namespace detail {
 
 bool match_basic_shape(std::string_view property, std::string_view text, std::string & out) {
+    const std::vector<std::string_view> parts = words_of(text);
+    // `object-view-box: none | <basic-shape-rect>` (CSS Images 4 §5.7): an
+    // inset(), rect() or xywh() and nothing beside it.
+    if (ascii_iequals(property, "object-view-box")) {
+        std::optional<shape_parts> shape;
+        if (parts.size() == 1 && ascii_iequals(parts[0], "none")) {
+            out = "none";
+        } else if (parts.size() == 1 && (shape = parse_shape_value(text, "border-box")) &&
+                   ascii_iequals_any(shape->function, {"inset", "rect", "xywh"})) {
+            out = serialize(*shape);
+        } else {
+            out.clear();
+        }
+        return true;
+    }
     if (!ascii_iequals_any(property, {"clip-path", "shape-outside", "offset-path"})) {
         return false;
     }
     // A box alone is a value too, written as itself.
-    const std::vector<std::string_view> parts = words_of(text);
     bool any_function = false;
     for (const std::string_view part : parts) {
         any_function = any_function || part.find('(') != std::string_view::npos;

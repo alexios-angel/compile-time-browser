@@ -380,7 +380,8 @@ struct gap_shape {
     // Two basic shapes of one function blend (CSS Shapes 1 §3.3); anything
     // else in clip-path or shape-outside - a url(), `none`, two functions -
     // is discrete.
-    if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
+    if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
+        property == "object-view-box") {
         if (std::optional<std::string> s = css::blend_basic_shapes(property, from, to, 1 - p, p)) {
             return *s;
         }
@@ -523,7 +524,8 @@ struct gap_shape {
     underlying = trim(underlying, html_whitespace);
     value = trim(value, html_whitespace);
     if (underlying.empty()) { return std::string{value}; }
-    if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
+    if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
+        property == "object-view-box") {
         return css::blend_basic_shapes(property, underlying, value, 1, 1)
             .value_or(std::string{value});
     }

@@ -291,7 +291,8 @@ namespace ctbrowser::style::easing_detail {
         return std::string{parts[0]} + ' ' + std::string{parts[1]} + ' ' + std::string{parts[2]} +
                ' ' + std::string{parts[3]} + (fill ? " fill" : "");
     }
-    if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
+    if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
+        property == "object-view-box") {
         std::string computed = css::computed_basic_shape(property, text, ctx);
         return computed.empty() ? std::string{text} : computed;
     }

@@ -391,7 +391,8 @@ constexpr property_syntax table[] = {
     {"resize", k::keyword_only, "none both horizontal vertical block inline", "none", false, false},
     {"object-fit", k::freeform, "", "fill", false, false}, // keywords.cpp's grammar
     {"object-position", k::position, "", "50% 50%", false, false},
-    {"rotate", k::freeform, "", "none", false, false}, // transforms.cpp's grammar
+    {"object-view-box", k::freeform, "", "none", false, false}, // shapes.cpp's grammar
+    {"rotate", k::freeform, "", "none", false, false},          // transforms.cpp's grammar
     {"scale", k::freeform, "", "none", false, false},
     {"translate", k::freeform, "", "none", false, false},
 };

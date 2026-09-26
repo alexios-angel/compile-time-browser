@@ -700,6 +700,10 @@ void test_the_shape_function() {
     bad("clip-path", "shape(from 0px 0px)");
     bad("clip-path", "shape(nonzero, from 0px 0px, close)");
     bad("clip-path", "shape(from 0px 0px, close,)");
+    ok("object-view-box", "INSET(10px)", "inset(10px)");
+    ok("object-view-box", "none", "none");
+    bad("object-view-box", "circle(10px)");
+    bad("object-view-box", "inset(1px) border-box");
     bad("clip-path", "shape(from 0px 0px, hline to top)");
     bad("clip-path", "shape(from 0px 0px, arc cw to 5px 5px of 1px)");
     bad("clip-path", "shape(from 0px 0px, arc to 5px 5px of 1px small large)");

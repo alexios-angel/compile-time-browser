@@ -709,7 +709,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
         }
         // 4b'. A BASIC SHAPE (lib/Style/css/properties/shapes.cpp).
-        if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
+        if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
+            property == "object-view-box") {
             style::css::length_context bases;
             bases.font_size = at.font_size;
             bases.root_font_size = at.root_font_size;
