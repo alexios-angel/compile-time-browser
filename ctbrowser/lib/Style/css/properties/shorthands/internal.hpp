@@ -221,6 +221,9 @@ inline constexpr shorthand_syntax table[] = {
      ""},
     {"text-emphasis", shape::bar, "text-emphasis-style text-emphasis-color", "none"},
     {"text-wrap", shape::bar, "text-wrap-mode text-wrap-style", "wrap"},
+    // CSS Rhythmic Sizing 1 §2.5: size || insert || align || round.
+    {"block-step", shape::bar,
+     "block-step-size block-step-insert block-step-align block-step-round", "none"},
     {"white-space", shape::white_space, "white-space-collapse text-wrap-mode white-space-trim",
      "normal"},
     {"grid-row", shape::grid_lines, "grid-row-start grid-row-end", ""},

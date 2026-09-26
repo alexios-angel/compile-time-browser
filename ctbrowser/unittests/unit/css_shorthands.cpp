@@ -45,6 +45,9 @@ void test_white_space_is_a_shorthand() {
     CHECK_EQ(declaration_value(block, "white-space-collapse"), std::string{"preserve"});
     CHECK_EQ(declaration_value(block, "text-wrap-mode"), std::string{"wrap"});
     CHECK_EQ(declaration_value(block, "white-space-trim"), std::string{"none"});
+    // block-step-valid: `size || insert || align || round`, written in that order.
+    CHECK_EQ(set_and_read("block-step", "content-box 100px up"), std::string{"100px content-box"});
+    CHECK_EQ(set_and_read("block-step", "none auto up margin-box"), std::string{"none"});
 }
 
 // animation-shorthand, animation-valid, animation-name-valid/invalid.
