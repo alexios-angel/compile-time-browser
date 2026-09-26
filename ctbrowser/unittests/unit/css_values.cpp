@@ -114,6 +114,11 @@ void test_the_things_that_must_survive() {
     ok("list-style-type", "symbols(cyclic 'a')", "symbols(cyclic \"a\")");
     bad("list-style-type", "symbols(fixed url(\"x.svg\"))");
     bad("list-style-type", "\"marker\" none");
+    ok("cursor", "url(\"a.png\") 1 2, pointer", "url(\"a.png\") 1 2, pointer");
+    bad("cursor", "en-resize");
+    bad("cursor", "url(\"a.png\") alias");
+    bad("cursor", "url(\"a.png\") 1px 2px, copy");
+    bad("cursor", "light-dark(linear-gradient(red), none), pointer");
     ok("text-fit", "GROW consistent 300%", "grow consistent 300%");
     bad("text-fit", "grow 150% consistent");
     bad("text-fit", "consistent 100%");

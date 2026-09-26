@@ -896,6 +896,82 @@ constexpr pair_grammar pair_grammars[] = {
     return symbols_valid(ts, std::span{at}.subspan(1, at.size() - 2));
 }
 
+// `[ <cursor-image> [ <x> <y> ]? , ]* <cursor-predefined>` (CSS UI 4 §4.1),
+// a <cursor-image> being a url(), an image-set(), or a light-dark() of two -
+// no gradient - and <x> <y> two numbers. Only the grammar: the freeform path
+// writes the value.
+[[nodiscard]] bool cursor_valid(const token_stream & ts, const scan & found) {
+    static constexpr std::string_view predefined =
+        "auto default none context-menu help pointer progress wait cell crosshair text "
+        "vertical-text alias copy move no-drop not-allowed grab grabbing e-resize n-resize "
+        "ne-resize nw-resize s-resize se-resize sw-resize w-resize ew-resize ns-resize "
+        "nesw-resize nwse-resize col-resize row-resize all-scroll zoom-in zoom-out";
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return false; }
+    const auto name_of = [&](std::size_t i) {
+        std::string name = ascii_lower_copy(ts.text_of(ts.tokens[i]));
+        if (!name.empty() && name.back() == '(') { name.pop_back(); }
+        return name;
+    };
+    // The index in `item` past the image starting at `k`, or 0 when none is.
+    const auto image_end = [&](const std::vector<std::size_t> & item, std::size_t k) {
+        const css_token & t = ts.tokens[item[k]];
+        if (t.type == token_type::url) { return k + 1; }
+        if (t.type != token_type::function) { return std::size_t{0}; }
+        const std::string name = name_of(item[k]);
+        int depth = 0;
+        std::size_t close = k;
+        for (; close < item.size(); ++close) {
+            const token_type type = ts.tokens[item[close]].type;
+            if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+            if (type == token_type::close_paren && --depth == 0) { break; }
+        }
+        if (close >= item.size()) { return std::size_t{0}; }
+        if (ascii_iequals_any(name, {"url", "image-set", "-webkit-image-set"})) {
+            return close + 1;
+        }
+        if (name != "light-dark") { return std::size_t{0}; }
+        // Each of its two arguments a url() or an image-set() alone.
+        std::size_t at = k + 1, args = 0;
+        while (at < close) {
+            const css_token & a = ts.tokens[item[at]];
+            if (a.type == token_type::url) {
+                ++at;
+            } else if (a.type == token_type::function &&
+                       ascii_iequals_any(name_of(item[at]), {"url", "image-set"})) {
+                int inner = 0;
+                for (; at < close; ++at) {
+                    const token_type type = ts.tokens[item[at]].type;
+                    if (type == token_type::function || type == token_type::open_paren) { ++inner; }
+                    if (type == token_type::close_paren && --inner == 0) { break; }
+                }
+                ++at;
+            } else {
+                return std::size_t{0};
+            }
+            ++args;
+            if (at < close && ts.tokens[item[at]].type == token_type::comma) { ++at; }
+        }
+        return args == 2 ? close + 1 : std::size_t{0};
+    };
+    for (std::size_t n = 0; n < items->size(); ++n) {
+        const std::vector<std::size_t> & item = (*items)[n];
+        if (n + 1 == items->size()) {
+            if (item.size() != 1 || ts.tokens[item[0]].type != token_type::ident) { return false; }
+            const std::string word = ascii_lower_copy(ts.text_of(ts.tokens[item[0]]));
+            return has_keyword(predefined, word) || word.starts_with("-webkit-");
+        }
+        const std::size_t past = image_end(item, 0);
+        if (past == 0) { return false; }
+        const std::size_t rest = item.size() - past;
+        if (rest != 0 && rest != 2) { return false; }
+        for (std::size_t k = past; k < item.size(); ++k) {
+            if (ts.tokens[item[k]].type != token_type::number) { return false; }
+        }
+    }
+    return false;
+}
+
 // `none | [ grow | shrink ] [ consistent | per-line | per-line-all ]?
 // <percentage>?` (CSS Text 4 §10.1).
 [[nodiscard]] std::optional<std::string> text_fit(const token_stream & ts, const scan & found) {
@@ -1480,6 +1556,9 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
     if (!handled && ascii_iequals(property, "font-palette")) {
         handled = true;
         answer = font_palette(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "cursor") && !cursor_valid(ts, found)) {
+        handled = true;
     }
     if (!handled && ascii_iequals(property, "text-fit")) {
         handled = true;
