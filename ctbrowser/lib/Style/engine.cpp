@@ -59,6 +59,26 @@ element_facts engine::facts_of(const read_txn & txn, node_id id) const {
     // moved it out - `#head :link` in ParentNode-querySelector-All.html asserts the miss.
     f.is_link =
         (tag_text == "a" || tag_text == "area") && txn.has_attribute(id, atoms_->intern("href"));
+    // A text control showing its placeholder: one it has, and nothing typed
+    // over it - the live value once edited, the `value` attribute or a
+    // <textarea>'s text until then (Selectors 4 §13.3.2).
+    if ((tag_text == "input" || tag_text == "textarea") && txn.element_ns(id) == node_ns::html &&
+        txn.has_attribute(id, atoms_->intern("placeholder"))) {
+        std::optional<std::string> live = control_value_ ? control_value_(id) : std::nullopt;
+        if (live) {
+            f.is_placeholder_shown = live->empty();
+        } else if (tag_text == "input") {
+            f.is_placeholder_shown = txn.attribute_value(id, atoms_->intern("value")).empty();
+        } else {
+            f.is_placeholder_shown = true;
+            for (const node_id child : txn.children(id)) {
+                if (is_text_kind(txn.kind(child).value_or(node_kind::comment)) &&
+                    !txn.text(child).empty()) {
+                    f.is_placeholder_shown = false;
+                }
+            }
+        }
+    }
     // `:empty` - no element children and no text. WHITESPACE COUNTS as content per
     // the spec, so `<p> </p>` is not empty; a comment does not.
     f.is_empty = true;
@@ -285,12 +305,41 @@ bool engine::direction_is_rtl(const read_txn & txn, node_id node) const {
         if (ascii_iequals(value, "auto") || bdi) {
             // Nothing strong anywhere in the subtree leaves `rtl` false, which
             // is the spec's answer too: `dir=auto` over digits alone is ltr.
+            // A text control reads its value instead (dir-auto-form-associated),
+            // and so does the dirname its form submits.
             bool rtl = false;
-            (void)first_strong(txn, at, rtl);
+            if (const std::optional<std::string> text = auto_direction_value(txn, at)) {
+                (void)first_strong_in(*text, rtl);
+            } else {
+                (void)first_strong(txn, at, rtl);
+            }
             return rtl;
         }
     }
     return false;
+}
+
+std::optional<std::string> engine::auto_direction_value(const read_txn & txn, node_id node) const {
+    if (txn.element_ns(node) != node_ns::html) { return std::nullopt; }
+    const std::string_view tag = atoms_->text(txn.tag(node).value_or(atom{}));
+    if (tag == "input") {
+        // Every type state but the eleven whose value is not text; an
+        // unknown `type` is the Text state.
+        const std::string_view type = txn.attribute_value(node, atoms_->intern("type"));
+        if (ascii_iequals_any(type, {"date", "month", "week", "time", "datetime-local", "number",
+                                     "range", "color", "checkbox", "radio", "file", "image"})) {
+            return std::nullopt;
+        }
+    } else if (tag != "textarea") {
+        return std::nullopt;
+    }
+    if (control_value_) {
+        if (std::optional<std::string> live = control_value_(node)) { return live; }
+    }
+    // Untouched: an <input>'s value is its attribute, and a <textarea>'s its
+    // text, which the descendant walk reads.
+    if (tag == "textarea") { return std::nullopt; }
+    return std::string{txn.attribute_value(node, atoms_->intern("value"))};
 }
 
 bool engine::first_strong(const read_txn & txn, node_id node, bool & rtl) const {
@@ -308,8 +357,11 @@ bool engine::first_strong(const read_txn & txn, node_id node, bool & rtl) const 
                 ascii_iequals(dir, "auto")) {
                 continue;
             }
+            // ...an HTML one: an SVG <style> or <script> is text like any
+            // other (dir-assorted).
             const std::string_view tag = atoms_->text(txn.tag(child).value_or(atom{}));
-            if (tag == "bdi" || tag == "script" || tag == "style" || tag == "textarea") {
+            if ((tag == "bdi" || tag == "script" || tag == "style" || tag == "textarea") &&
+                txn.element_ns(child) == node_ns::html) {
                 continue;
             }
         }

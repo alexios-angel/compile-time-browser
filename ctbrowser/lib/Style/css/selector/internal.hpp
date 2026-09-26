@@ -953,7 +953,9 @@ private:
                     // The CSSOM serialiser has no name for `structural_defined`, so
                     // a selector holding it serialises from the author's bytes -
                     // exactly `dropped`'s job - rather than losing the `:defined`.
-                    if (bit == structural_defined) { b.part.dropped = true; }
+                    if (bit == structural_defined || bit == structural_placeholder_shown) {
+                        b.part.dropped = true;
+                    }
                     continue;
                 }
                 // `:heading` - every h1-h6 (Selectors 5).

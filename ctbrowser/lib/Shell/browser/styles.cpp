@@ -63,6 +63,14 @@ void browser::load_author_styles() {
     // A QUERY CONTAINER'S SIZE is its content box as last laid out (CSS
     // Conditional 5 §3.1) - asked by the cascade, answered from the fragments,
     // and nothing before the first layout, when every size query is unknown.
+    // A CONTROL'S LIVE VALUE, for `dir=auto` (HTML §3.2.6.4): the store's
+    // once it was edited, and the `value` attribute - the engine's own
+    // reading - until then.
+    styles_->set_control_value([this](node_id id) -> std::optional<std::string> {
+        const ctbrowser::shell::control_state * state = forms_.find(id);
+        if (state == nullptr || !state->value_edited) { return std::nullopt; }
+        return state->value;
+    });
     styles_->set_container_size(
         [this](node_id id) -> std::optional<ctbrowser::style::engine::container_size> {
             const ctbrowser::layout::fragment * f = fragments_.find(id);
