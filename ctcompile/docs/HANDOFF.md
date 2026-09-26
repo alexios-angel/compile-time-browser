@@ -22,6 +22,103 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Boolean Number inputs and exact comparison operands, 2026-09-26 UTC
+
+Resumed the interrupted iteration 49 at **eb492403**, identified by the seven
+uncommitted files and the 05:12:19 UTC synchronization journal. The previous
+session's local and remote temporary evidence was gone after the outage; no
+completed build or execution pass could be recovered. The old WIP branch was
+already an ancestor. Native, source and escape agents reviewed the saved work
+in parallel; the parent finished the source checks after an agent interruption.
+All seven candidate files landed without further implementation changes.
+
+**e4bbad1a** admits exact Boolean inputs to the initial Number intrinsic through
+protected-effect proof, final DOM admission and existing typed scalar lowering.
+Strict equality and logical Not supply Boolean result evidence; their producers
+still require independent effect proof. Initial bindings, receiver/arity,
+fingerprints, both branch arms and work budgets remain checked. The emitted
+conversion consumes the live Boolean operand through the existing `to_number`.
+The 64 transaction controls cover 24 admissions and 40 refusals across both
+providers, including read-before-mutation snapshots and unchanged refusal state.
+
+**25eeb5a4** reuses charged same-SSA If forwarding for strict-comparison operands.
+Exact tags and saved read identity remain significant; ToBoolean and Not are
+not stripped from comparison operands. Census and replay keep all arm effects,
+guard dependencies and holder retention checks. Seventeen retention rows and
+eight live mutation states were added, with fresh/stale solvers, forged reports
+and budget controls. No raw escape-oracle or native lifetime gain is claimed.
+
+**69c50bd5** executes the exact Boolean Number normal-return witness, a saved
+Boolean converted after an intervening DOM write, and a conditional reciprocal.
+All 49 prior direct sources, two outer sources and 134 literal entries remain
+unchanged. Twelve new complete refusal controls retain the trust boundary.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Four exact CTests each passed 1/1
+(total elapsed): `ctcompile_escape_analysis_arrays` **6.42 s**,
+`ctcompile_escape_analysis_completion` **0.02 s**,
+`ctcompile_exception_recovery` **20.04 s** and `ctcompile_host_contract` **2.77 s**.
+
+The three selected source cases passed **24 generated C++ files, 48 GCC/Clang
+executions, 12 admitted configurations and 76 refusals** (16 selected bodies
+across four configurations, plus 12 zero budgets). Both providers, printers and
+optimization settings, both flag states, ordered Node/interpreter observations,
+two documents and 16 lifetimes pass. Source and linked-symbol checks reject
+Script/AOT. All generated C++ files were retrieved; inspected explicit snapshot
+output reads the Boolean before mutation and converts that saved value later.
+Deduced reciprocal/session output retains typed values, public DOM helpers,
+borrowed element_ref and document RAII. This is selected harness validation,
+not a full caught-node lit run.
+
+The first source launch lacked Node on the noninteractive SSH PATH and stopped
+before native execution. The corrected launch uses the absolute Node path from
+the generated lit configuration. No passing build, CTest or source execution was
+repeated. Independent native/escape reviews and parent source review pass.
+Local checks include three ordered Node oracles, 19 JavaScript syntax checks,
+Python syntax/Black, scoped C++ formatting and diff checks. The completed
+repository formatter exits 1 with the same six existing diagnostics in untouched
+`select_and_options.cpp:602`, `node_methods.cpp:63` and
+`Style/css/properties/gaps.cpp:189`.
+
+**Next measured boundary:** passing an already proved Number into Number still
+refuses through the fallback DOM URI provider-binding diagnostic:
+
+```javascript
+function customElements(anchor) {
+  try {
+    const saved = Number(Number(anchor.hasAttribute('flag')));
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+```
+
+The complete source was imported and refused with `ctbrowser-dom-v1`, Number
+in the initial-intrinsic contract and optimization disabled. No native execution
+is claimed for this probe. Continue exact Number-input proof through protected
+effects, final DOM admission and typed lowering; current Number-call input
+checks accept String/null/Boolean. Do not add URI intrinsics or remove the
+handler to bypass the diagnostic.
+
+Full CTest/compiler lit, other fixtures/outer catches, broad corpus/matrices,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance were skipped. The native application driver, full Bootstrap and
+broader escape work remain unfinished.
+
+Linux process identity checks found the live Claude loop; Windows
+Get-CimInstance succeeded with 306 processes and no Claude identities.
+Concurrent rules applied. Claude's recovered UTF-16/GC/global-descriptor work
+was still on `ctbrowser-wpt`; it is not part of these measurements.
+The reboot left the SSH agent unavailable. Existing Azure authorization supplied
+a temporary restricted build key; it was removed after validation. The normal
+agent is now loaded and ordinary SSH succeeds. All seven final candidate hashes
+match locally and on the devbox.
+No browser/shared implementation edits, local builds, push or history rewrite.
+Durable evidence, including all 24 generated C++ files:
+`../ctcompile-plan/evidence/2026-09-26-boolean-number/` from the monorepo root.
+
 ## Conditional Number normal returns and identical branch carriers, 2026-09-26 UTC
 
 Resumed **82bba491** and its exact normal-return witness. The checkout was clean,
