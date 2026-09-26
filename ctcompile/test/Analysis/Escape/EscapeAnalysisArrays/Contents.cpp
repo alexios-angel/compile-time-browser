@@ -932,6 +932,25 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                          carrierReads.find("    %secondKey =") -
                              carrierReads.find("    %booleanLiteral ="),
                          strictCarrier(forwardedFlag("%boolean", "%boolean")));
+    const auto nestedCarrier = [&](std::string forwarding, const std::string & value = "%forwarded",
+                                   const std::string & literal = "#ctjs.boolean<true>",
+                                   bool reversed = false) {
+        forwarding.erase(forwarding.find("    %secondFlag ="));
+        return strictBooleanFlag("%again", literal,
+                                 forwarding + selectedInput(value, value, "", "", "%again"),
+                                 reversed);
+    };
+    const auto nestedCarrierFlag = nestedCarrier(booleanYields);
+    const auto nestedCarrierKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", nestedCarrierFlag));
+    const auto nestedCarrierGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", nestedCarrierFlag));
+    auto nestedCarrierReads = strictBooleanReads;
+    nestedCarrierReads.replace(nestedCarrierReads.find("    %booleanLiteral ="),
+                               nestedCarrierReads.find("    %secondKey =") -
+                                   nestedCarrierReads.find("    %booleanLiteral ="),
+                               nestedCarrier(forwardedFlag("%boolean", "%boolean")));
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -3139,6 +3158,80 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(carrierKeys) + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "strict Boolean tests follow nested exact carrier yields",
+         .body = loopValues + allocationLoop(nestedCarrierKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "nested strict false tests preserve reversed Boolean polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     nestedCarrier(booleanYields, "%forwarded", "#ctjs.boolean<false>"), true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested Boolean tuple forwarding preserves a left literal test",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(siblingInput(
+                 "%zero", "%one", "%secondFlag",
+                 nestedCarrier(booleanYieldTuple, "%forwarded#1", "#ctjs.boolean<true>", true)))) +
+             done,
+         .confinedNested = "fresh"},
+        {.what = "nested Boolean carriers preserve an independent guard read gap",
+         .body = loopValues +
+                 allocationLoop(nestedCarrierGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "a nested opaque yield cannot borrow Boolean tags from other leaves",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     nestedCarrier(forwardedFlag("%thenBoolean", "%p", thenBoolean))))) +
+                 done,
+         .complete = false},
+        {.what = "nested forwarding cannot lend a Boolean tuple tag to a Number result",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  nestedCarrier(booleanYieldTuple, "%forwarded#0")))) +
+                 done,
+         .complete = false},
+        {.what = "nested exact Boolean tags do not establish input correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  nestedCarrier(forwardedFlag(
+                                      "%thenBoolean", "%elseBoolean", thenBoolean,
+                                      "      %elseBoolean = ctjs.convert to_boolean %q\n"))))) +
+                 done,
+         .complete = false},
+        {.what = "nested Boolean carriers retain separate mutable read snapshots",
+         .body = loopValues + allocationLoop(nestedCarrierReads) + done,
+         .complete = false},
+        {.what = "nested Boolean forwarding cannot hide an inner arm effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     nestedCarrier(forwardedFlag("%thenBoolean", "%elseEven",
+                                                 "      %called = ctjs.call %p(%q)\n" + thenBoolean,
+                                                 elseBoolean))))) +
+                 done,
+         .complete = false},
+        {.what = "nested Boolean carriers cannot overwrite their guard dependency",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(
+                     "      %read = ctjs.get_property %guard[%zero]\n" +
+                     siblingInput("%read", "%two", "%secondFlag", nestedCarrierFlag))) +
+                 done,
+         .complete = false},
+        {.what = "a returned nested Boolean carrier holder retains its child",
+         .body = loopValues + allocationLoop(nestedCarrierKeys) + "  ctjs.return %guard\n"},
+        {.what = "clearing a nested Boolean carrier holder releases its child",
+         .body =
+             loopValues + allocationLoop(nestedCarrierKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved nested Boolean carrier child survives clearing its holder",
+         .body = loopValues + allocationLoop(nestedCarrierKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
         {.what = "ToBoolean preserves the exact input truthiness choice",
          .body = loopValues + allocationLoop(booleanKeys) + done,
          .confinedNested = "fresh"},
@@ -4666,6 +4759,84 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = carrierMutation.what, .body = carrierMutation.body, .expected = ""},
              "the Boolean carrier mutation fixture did not parse");
     }
+    retention_row nestedCarrierMutation{
+        .what = "nested Boolean carriers reprove every live leaf and forwarding yield",
+        .body = loopValues +
+                allocationLoop(nestedCarrierGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto nestedCarrierModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + nestedCarrierMutation.body + "}\n", &context);
+    if (nestedCarrierModule) {
+        ctjs::FuncOp function = *nestedCarrierModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto compare = second.getCondition()
+                           .getDefiningOp<ctjs::TruthyOp>()
+                           .getValue()
+                           .getDefiningOp<ctjs::CompareOp>();
+        auto outer = compare.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto * outerThen = outer.getThenRegion().front().getTerminator();
+        auto * outerElse = outer.getElseRegion().front().getTerminator();
+        auto inner = outerThen->getOperand(0).getDefiningOp<mlir::scf::IfOp>();
+        auto * innerThen = inner.getThenRegion().front().getTerminator();
+        auto * innerElse = inner.getElseRegion().front().getTerminator();
+        auto conversion = innerThen->getOperand(0).getDefiningOp<ctjs::ConvertOp>();
+        auto even = innerElse->getOperand(0).getDefiningOp<ctjs::UnaryOp>();
+        auto literal = compare.getRhs().getDefiningOp<ctjs::ConstantOp>();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = conversion.getOperand();
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*nestedCarrierModule))) {
+            fail(row{.what = nestedCarrierMutation.what,
+                     .body = nestedCarrierMutation.body,
+                     .expected = ""},
+                 "the nested Boolean carrier stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 10; ++state) {
+            innerThen->setOperand(0, state == 1   ? originalInput
+                                     : state == 2 ? zero
+                                                  : conversion.getResult());
+            innerElse->setOperand(0, state == 3 ? even.getOperand() : even.getResult());
+            outerElse->setOperand(0, state == 4 ? originalInput : inner.getResult(0));
+            outerThen->setOperand(0, state == 5 ? zero : inner.getResult(0));
+            conversion->setOperand(0, state == 6 ? function.getBody().front().getArgument(4)
+                                                 : originalInput);
+            load->setOperand(1, state == 7 ? zero : originalPosition);
+            literal.setValueAttr(
+                state == 8
+                    ? mlir::Attribute(ctjs::NumberAttr::get(&context, 4607182418800017408ULL))
+                    : mlir::Attribute(ctjs::BooleanAttr::get(&context, true)));
+            nestedCarrierMutation.complete = state == 0 || state == 9;
+            nestedCarrierMutation.confinedNested = nestedCarrierMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*nestedCarrierModule, nestedCarrierMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                nestedCarrierMutation.complete) {
+                fail(row{.what = nestedCarrierMutation.what,
+                         .body = nestedCarrierMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied nested Boolean tags");
+            }
+        }
+    } else {
+        fail(row{.what = nestedCarrierMutation.what,
+                 .body = nestedCarrierMutation.body,
+                 .expected = ""},
+             "the nested Boolean carrier mutation fixture did not parse");
+    }
     retention_row booleanMutation{
         .what =
             "ToBoolean correspondence reproves live conversion inputs, kinds, yields and guards",
@@ -5182,7 +5353,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         }
     }
     std::printf(
-        "array retention: %zu rows, two hundred fifty-two live states, %zu budget cutoffs\n",
+        "array retention: %zu rows, two hundred sixty-two live states, %zu budget cutoffs\n",
         rows.size(), budgets);
 }
 

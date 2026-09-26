@@ -102,11 +102,18 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                     auto boolean = literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
                                            : ctjs::BooleanAttr{};
                     if (!boolean) { continue; }
-                    bool exactBoolean = directBoolean(input);
-                    if (auto selected = input.getDefiningOp<mlir::scf::IfOp>();
-                        selected && !exactBoolean) {
-                        const auto position = llvm::cast<mlir::OpResult>(input).getResultNumber();
-                        exactBoolean = true;
+                    bool exactBoolean = true;
+                    llvm::SmallVector<mlir::Value, 4> pending{input};
+                    while (!pending.empty() && exactBoolean) {
+                        if (!spend(1)) { return {}; }
+                        auto current = pending.pop_back_val();
+                        if (directBoolean(current)) { continue; }
+                        auto selected = current.getDefiningOp<mlir::scf::IfOp>();
+                        if (!selected) {
+                            exactBoolean = false;
+                            break;
+                        }
+                        const auto position = llvm::cast<mlir::OpResult>(current).getResultNumber();
                         for (mlir::Region & region : selected->getRegions()) {
                             if (!spend(1)) { return {}; }
                             if (!llvm::hasSingleElement(region) || region.front().empty() ||
@@ -116,17 +123,17 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                             }
                             auto yield =
                                 llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                            if (!yield || yield.getNumOperands() != selected.getNumResults() ||
-                                !directBoolean(yield.getOperand(position))) {
+                            if (!yield || yield.getNumOperands() != selected.getNumResults()) {
                                 exactBoolean = false;
                                 break;
                             }
+                            pending.push_back(yield.getOperand(position));
                         }
                     }
                     // Equality with a Boolean preserves or reverses truthiness
                     // only when the other operand is already exactly Boolean.
                     // An opaque value, Number or read cannot borrow that tag.
-                    // Only immediate Boolean yields prove a carrier's tag;
+                    // Every nested carrier leaf must prove its Boolean tag;
                     // correspondence and all arm effects are checked separately.
                     if (exactBoolean) {
                         value = input;
