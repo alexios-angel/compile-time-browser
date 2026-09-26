@@ -89,6 +89,13 @@ SPARSE_PATHS=(
   /css/*/resources/
   /css/*/support/
   /web-animations/testcommon.js
+  # THE WEBIDL idlharness READS. Seven idlharness tests - url, selection,
+  # css-cascade, css-conditional (two), cssom, cssom-view - were HARNESS_ERROR
+  # "no such resource: /interfaces/<spec>.idl" on 2026-09-25: a missing
+  # fixture, the css/support/ finding again. Only .idl files live here; run-wpt
+  # never collects them. And atob's vectors, which base64.any.js fetches.
+  /interfaces/
+  /fetch/data-urls/resources/
   # WHOLE MODULES THAT ARE MOSTLY testharness AND MOSTLY IMPLEMENTED.
   /css/css-syntax/         # the tokenizer and grammar (style/css/)
   /css/css-variables/      # custom properties and var()
