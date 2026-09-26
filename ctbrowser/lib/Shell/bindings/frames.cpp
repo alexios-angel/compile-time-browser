@@ -41,9 +41,11 @@
 //     page's constructors, so `frame.contentWindow.Element === window.Element`
 //     where a browser has two. Every test that turns on cross-realm identity
 //     of a prototype still fails.
-//   * NO NAVIGATION AND NO HISTORY. A frame is loaded once per `src`; there is
-//     no `location` on `contentWindow` to assign to, no `about:blank` document
-//     replaced by a real one, and no `srcdoc`.
+//   * NO HISTORY. A frame is loaded once per source - its `srcdoc`, else its
+//     `src` - and NAVIGATED by a form submission, its Location's setters or
+//     window.open() (the planned navigations below); there is no session
+//     history to go back through, and a navigation makes a new window where a
+//     browser keeps one WindowProxy per navigable.
 //   * NO PARSER-TIME SCRIPTS. The frame's document is parsed whole and its
 //     classic scripts run afterwards in tree order, as an XHTML page's do; a
 //     `document.write` from one of them writes into a finished document.
@@ -101,7 +103,33 @@ namespace {
     return path.substr(dot + 1);
 }
 
+// An <iframe srcdoc>'s source, as the frame tables key it: the markup behind a
+// prefix no URL can spell, so a changed srcdoc re-navigates as a changed src
+// does (frame_source).
+constexpr std::string_view srcdoc_key{"\0srcdoc:", 8};
+
 } // namespace
+
+// WHAT A FRAME NAVIGATES TO - HTML 4.8.5, "process the iframe attributes":
+// its `srcdoc` when it has one (the attribute wins over `src`), else its
+// `src`; empty is about:blank.
+std::string dom_bindings::frame_source(const read_txn & txn, node_id id) const {
+    if (const atom srcdoc = atoms_->intern("srcdoc"); txn.has_attribute(id, srcdoc)) {
+        return std::string{srcdoc_key} + std::string{txn.attribute_value(id, srcdoc)};
+    }
+    return std::string{txn.attribute_value(id, atoms_->intern("src"))};
+}
+
+// HTML 4.2.3's FALLBACK BASE URL: an iframe srcdoc document's is the document
+// base URL of the document its <iframe> is in; anything else's is its own
+// address. What a relative reference in a srcdoc resolves against.
+std::string dom_bindings::fallback_base_url() {
+    if (frame_owner_ != nullptr && location_href_ == "about:srcdoc") {
+        const std::string fallback = frame_owner_->fallback_base_url();
+        return detail::document_base_url(frame_owner_->doc_->read(), *atoms_, fallback);
+    }
+    return location_href_;
+}
 
 // THE CONTENT TYPE COMES FROM THE NAME, because there is no server to send one.
 //
@@ -176,7 +204,7 @@ void dom_bindings::reconcile_frames() {
         std::string src;
         {
             const auto txn = doc_->read();
-            src = std::string{txn.attribute_value(id, atoms_->intern("src"))};
+            src = frame_source(txn, id);
         }
         const auto seen =
             std::ranges::find_if(frames_, [&](const auto & entry) { return entry.element == id; });
@@ -238,11 +266,9 @@ void dom_bindings::connect_inserted_frames(const std::vector<document::write_not
     {
         const auto txn = doc_->read();
         const atom iframe_tag = atoms_->intern_lower("iframe");
-        const atom src = atoms_->intern("src");
         const auto walk = [&](const auto & self, node_id at) -> void {
             if (txn.tag(at).value_or(atom{}) == iframe_tag && txn.element_ns(at) == node_ns::html &&
-                txn.attribute_value(at, src).empty() &&
-                std::ranges::find(blank, at) == blank.end()) {
+                frame_source(txn, at).empty() && std::ranges::find(blank, at) == blank.end()) {
                 blank.push_back(at);
             }
             for (const node_id child : txn.children(at)) { self(self, child); }
@@ -335,7 +361,15 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     // THE DOCUMENT'S ADDRESS, fragment and all: the navigation's, else the
     // src resolved against this document's.
     std::string href;
-    if (request != nullptr && !request->url.empty()) {
+    // AN iframe srcdoc DOCUMENT (4.8.5): the attribute's markup is the
+    // resource - text/html, UTF-8 - and about:srcdoc its address.
+    const bool srcdoc = src.starts_with(srcdoc_key);
+    if (srcdoc) {
+        href = "about:srcdoc";
+        bytes = src.substr(srcdoc_key.size());
+        type = "text/html";
+        charset = "UTF-8";
+    } else if (request != nullptr && !request->url.empty()) {
         href = request->url;
     } else if (!src.empty()) {
         href = location_href_.empty() ? src : resolve(location_href_, src);
@@ -352,8 +386,8 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     }
     // THE EMBEDDER FIRST, for anything asked for by URL - a data: or a blob:
     // URL's bytes are already here.
-    bool answered = false;
-    if (!src.empty() && !src.starts_with("blob:") && !is_data_url(src)) {
+    bool answered = srcdoc;
+    if (!answered && !src.empty() && !src.starts_with("blob:") && !is_data_url(src)) {
         resource_request asked = request != nullptr ? *request : resource_request{};
         asked.url = href;
         if (std::optional<resource_reply> reply = ask_request_handler(std::move(asked))) {
@@ -672,7 +706,7 @@ void dom_bindings::run_planned_navigations() {
             std::string src;
             {
                 const auto txn = owner.doc_->read();
-                src = std::string{txn.attribute_value(plan.element, atoms_->intern("src"))};
+                src = owner.frame_source(txn, plan.element);
             }
             owner.frames_.push_back(frame_entry{plan.element, std::move(src), made});
         }
@@ -753,8 +787,9 @@ void dom_bindings::install_window_open(context & cx, script::object_object & win
         dom_bindings & entry = bindings_of(c.global("window"));
         form_navigation navigation;
         if (!url.empty()) {
+            const std::string fallback = entry.fallback_base_url();
             const std::string base =
-                detail::document_base_url(entry.doc_->read(), *entry.atoms_, entry.location_href_);
+                detail::document_base_url(entry.doc_->read(), *entry.atoms_, fallback);
             const std::optional<url_record> parsed =
                 base.empty() ? parse_url(url) : parse_url(url, base);
             if (!parsed) {
@@ -1036,6 +1071,9 @@ std::optional<context::realm_scope> dom_bindings::enter_realm(context & cx) {
 // handed over as its path. A data: or blob: URL, and a document with no
 // address, keep what the page wrote.
 std::string dom_bindings::subresource_name(std::string_view src) const {
+    if (frame_owner_ != nullptr && location_href_ == "about:srcdoc") {
+        return frame_owner_->subresource_name(src);
+    }
     if (realm_ == nullptr || location_href_.empty() || is_data_url(src) ||
         src.starts_with("blob:")) {
         return std::string{src};

@@ -618,7 +618,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                 target.find('<') != std::string::npos) {
                 target = "_blank";
             }
-            base = document_base_url(txn, *b->atoms_, b->location_href_);
+            base = document_base_url(txn, *b->atoms_, b->fallback_base_url());
         }
         // ponytail: a dialog submission closes no <dialog> - "close the
         // dialog" with the submitter's value is the upgrade.

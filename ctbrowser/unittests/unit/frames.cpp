@@ -565,6 +565,18 @@ void test_a_blank_frame_loads_during_its_insertion() {
     if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"before,appended,inner"}); }
 }
 
+// HTML 4.8.5: an <iframe srcdoc> is its markup - text/html in UTF-8 at
+// about:srcdoc, over any `src`, its scripts run in the frame - and a
+// relative reference in it resolves against the page (the fallback base URL).
+void test_a_srcdoc_frame_is_its_markup() {
+    is("<iframe id=f src=inner.html srcdoc='<title>doc</title><a id=a href=x/y.html></a>"
+       "<script>parent.__ran = document.URL</script>'></iframe>",
+       "(function () { var d = document.getElementById('f').contentDocument;"
+       " return [d.title, d.URL, window.__ran, d.contentType, d.characterSet,"
+       " d.getElementById('a').href].join('|'); })()",
+       "doc|about:srcdoc|about:srcdoc|text/html|UTF-8|file:///pages/x/y.html");
+}
+
 int main() {
     test_a_frame_document_is_laid_out_at_the_size_of_its_box();
     test_the_frames_are_indexed_on_the_window();
@@ -590,5 +602,6 @@ int main() {
     test_window_open_follows_the_window_open_steps();
     test_the_location_object_navigates();
     test_a_blank_frame_loads_during_its_insertion();
+    test_a_srcdoc_frame_is_its_markup();
     REPORT("frames");
 }

@@ -478,7 +478,6 @@ void dom_bindings::execute_script_element(context & cx, node_id id, const std::s
     // IN THIS DOCUMENT'S REALM - a frame's script declares into the frame's
     // globals and reads the frame's `document` (frames.cpp).
     const auto in_realm = enter_realm(cx);
-    const atom src_name = atoms_->intern("src");
     {
         // `document.currentScript` is this element while it runs - and while
         // its parse error is reported - and what it was, the outer script when
@@ -514,10 +513,7 @@ void dom_bindings::execute_script_element(context & cx, node_id id, const std::s
                         txn.element_ns(at) == node_ns::html) {
                         const bool loaded = std::ranges::any_of(
                             frames_, [at](const auto & entry) { return entry.element == at; });
-                        if (!loaded) {
-                            preceding.emplace_back(at,
-                                                   std::string{txn.attribute_value(at, src_name)});
-                        }
+                        if (!loaded) { preceding.emplace_back(at, frame_source(txn, at)); }
                     }
                     for (const node_id child : txn.children(at)) { self(self, child); }
                 };
@@ -684,7 +680,7 @@ value dom_bindings::make_location(context & cx) {
         if (c.throw_pending()) { return std::nullopt; }
         dom_bindings & entry = bindings_of(c.global("window"));
         const std::string base =
-            document_base_url(entry.doc_->read(), *entry.atoms_, entry.location_href_);
+            document_base_url(entry.doc_->read(), *entry.atoms_, entry.fallback_base_url());
         const std::optional<url_record> parsed =
             base.empty() ? parse_url(text) : parse_url(text, base);
         if (!parsed) {
