@@ -1457,12 +1457,17 @@ struct rx_match {
 	std::vector<std::pair<std::ptrdiff_t, std::ptrdiff_t>> caps;
 };
 
-inline bool rx_search(const rx_prog & p, const std::string & s, std::size_t from, rx_match & out) {
+// `anchored` tries `from` alone: a sticky pattern fails where it is not at
+// lastIndex (22.2.7.2 step 13.a), so searching on to discard a later hit made
+// every failed sticky exec walk the rest of the input - a tokenizer fails one
+// per token, and WebIDL2's over html.idl took 21 seconds.
+inline bool rx_search(const rx_prog & p, const std::string & s, std::size_t from, rx_match & out, bool anchored = false) {
 	for (std::size_t start = from; start <= s.size(); ++start) {
 		// A MATCH STARTS ON A CODE POINT, never inside one: a continuation
 		// byte is not a character, and `[^x]` at such a position would
 		// "match" the tail of the very character the class excludes.
 		if (start < s.size() && (static_cast<unsigned char>(s[start]) & 0xC0u) == 0x80u) {
+			if (anchored) { return false; }
 			continue;
 		}
 		rx_state st;
@@ -1482,6 +1487,7 @@ inline bool rx_search(const rx_prog & p, const std::string & s, std::size_t from
 			out.caps = std::move(st.caps);
 			return true;
 		}
+		if (anchored) { return false; }
 	}
 	return false;
 }

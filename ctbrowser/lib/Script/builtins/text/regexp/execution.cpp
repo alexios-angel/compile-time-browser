@@ -282,8 +282,10 @@ value regexp_exec(context & cx, value rx, value subject) {
         const utf16::position at = str.locate(static_cast<std::size_t>(last));
         std::size_t start = at.byte;
         if (at.low_half && !full_unicode) { (void)decode_utf8(str.text, start); }
-        hit = rx::rx_search(*program, str.text, start, m) &&
-              (!program->sticky || (m.begin == start && (full_unicode || !at.low_half)));
+        // A sticky match is at `start` or nowhere - and never after a lone
+        // half the matcher had to step over.
+        hit = !(program->sticky && at.low_half && !full_unicode) &&
+              rx::rx_search(*program, str.text, start, m, program->sticky);
     }
     if (!hit) {
         if (stateful && !set_last_index(cx, rx, 0)) { return value::undefined(); }
