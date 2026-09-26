@@ -623,6 +623,235 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     auto mutatedNot = reloadedNot;
     mutatedNot.insert(mutatedNot.find("    %secondRead ="),
                       "    ctjs.set_property %guard[%zero], %one\n");
+    const auto notChain = [](unsigned length, std::string input = "%p") {
+        std::string body;
+        for (unsigned i = 0; i < length; ++i) {
+            const std::string result = "%not" + std::to_string(i);
+            body += "    " + result + " = ctjs.unary not " + input + "\n";
+            input = result;
+        }
+        return body + "    %secondFlag = ctjs.truthy " + input + "\n";
+    };
+    const std::string chainKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", notChain(3), true));
+    const std::string chainGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", notChain(3), true));
+    auto firstChain = siblingInput("%zero", "%one", "%flag", "", true);
+    firstChain.replace(firstChain.find("%flag"), 5, "%secondFlag");
+    auto reloadedChain = reloadedConditions("", true);
+    reloadedChain.replace(reloadedChain.find("    %secondFlag = ctjs.truthy %secondRead\n"),
+                          std::string{"    %secondFlag = ctjs.truthy %secondRead\n"}.size(),
+                          notChain(3, "%secondRead"));
+    auto mutatedChain = reloadedChain;
+    mutatedChain.insert(mutatedChain.find("    %secondRead ="),
+                        "    ctjs.set_property %guard[%zero], %one\n");
+    auto unsupportedChain = notChain(3);
+    unsupportedChain.replace(unsupportedChain.find("not %p"), 6, "void %p");
+    const std::string firstComparison = "    %firstCompare = ctjs.compare strict_eq %p, %zero\n"
+                                        "    %firstFlag = ctjs.truthy %firstCompare\n";
+    const auto comparedInput = [&](const std::string & left = "%zero",
+                                   const std::string & right = "%one",
+                                   const std::string & comparison = "strict_eq %p, %zero",
+                                   const std::string & between = "", unsigned negations = 0) {
+        auto input = siblingInput(left, right, "%secondFlag",
+                                  between + "    %secondCompare = ctjs.compare " + comparison +
+                                      "\n" + notChain(negations, "%secondCompare"),
+                                  negations % 2 != 0);
+        input.replace(input.find("%flag"), 5, "%firstFlag");
+        return firstComparison + input;
+    };
+    const std::string comparedKeys = selectedStore(comparedInput());
+    const std::string comparedGap = nestedSiblingStore(
+        "      %read = ctjs.get_property %guard[%one]\n" + comparedInput("%read", "%two"));
+    const auto reversedInput = [&](const std::string & left = "%zero",
+                                   const std::string & right = "%one", unsigned negations = 0) {
+        return comparedInput(left, right, "strict_eq %zero, %p", "", negations);
+    };
+    const std::string reversedKeys = selectedStore(reversedInput());
+    const std::string reversedGap = nestedSiblingStore(
+        "      %read = ctjs.get_property %guard[%one]\n" + reversedInput("%read", "%two"));
+    auto firstReversed = comparedInput();
+    firstReversed.replace(firstReversed.find("strict_eq %p, %zero"),
+                          std::string{"strict_eq %p, %zero"}.size(), "strict_eq %zero, %p");
+    auto eagerComparisons = comparedInput();
+    const std::string secondComparison = "    %secondCompare = ctjs.compare strict_eq %p, %zero\n"
+                                         "    %secondFlag = ctjs.truthy %secondCompare\n";
+    eagerComparisons.erase(eagerComparisons.find(secondComparison), secondComparison.size());
+    eagerComparisons.insert(eagerComparisons.find("    %firstKey"), secondComparison);
+    auto crossBlockComparisons = comparedInput();
+    crossBlockComparisons.insert(crossBlockComparisons.find("    %secondCompare"),
+                                 "    scf.if %flag {\n");
+    const auto crossBlockStore = [&](std::string input, const std::string & after = "") {
+        input.insert(input.find("    %secondCompare"), "    scf.if %flag {\n");
+        return selectedStore(input) + after + "    }\n";
+    };
+    const std::string crossBlockKeys = crossBlockStore(comparedInput());
+    const std::string crossBlockGap = crossBlockStore(
+        "    %read = ctjs.get_property %guard[%one]\n" + comparedInput("%read", "%two"));
+    const std::string outerRepresentative =
+        "    %outerCompare = ctjs.compare strict_eq %zero, %p\n" +
+        nestedSiblingStore(crossBlockComparisons) + "    }\n";
+    const auto comparedReads = [&](const std::string & between = "", bool reversed = false) {
+        auto input = comparedInput("%zero", "%one",
+                                   reversed ? "strict_eq %zero, %secondRead"
+                                            : "strict_eq %secondRead, %zero",
+                                   between + "    %secondRead = ctjs.get_property %guard[%zero]\n");
+        input.replace(input.find("strict_eq %p, %zero"), std::string{"strict_eq %p, %zero"}.size(),
+                      "strict_eq %firstRead, %zero");
+        return selectedStore("    %firstRead = ctjs.get_property %guard[%zero]\n" + input);
+    };
+    auto crossBlockReads = comparedReads("    ctjs.set_property %guard[%zero], %one\n", true);
+    crossBlockReads.insert(crossBlockReads.find("    %secondRead"), "    scf.if %flag {\n");
+    crossBlockReads += "    }\n";
+    const std::string booleanFlag = "    %boolean = ctjs.convert to_boolean %p\n"
+                                    "    %secondFlag = ctjs.truthy %boolean\n";
+    const std::string booleanKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", booleanFlag));
+    const std::string booleanGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", booleanFlag));
+    const std::string booleanNot = "    %boolean = ctjs.convert to_boolean %p\n"
+                                   "    %negated = ctjs.unary not %boolean\n"
+                                   "    %boxed = ctjs.convert to_boolean %negated\n"
+                                   "    %secondFlag = ctjs.truthy %boxed\n";
+    auto booleanComparison = comparedInput();
+    booleanComparison.replace(booleanComparison.find("    %secondFlag ="),
+                              std::string{"    %secondFlag = ctjs.truthy %secondCompare\n"}.size(),
+                              "    %boolean = ctjs.convert to_boolean %secondCompare\n"
+                              "    %secondFlag = ctjs.truthy %boolean\n");
+    auto unrelatedBoolean = booleanFlag;
+    unrelatedBoolean.replace(unrelatedBoolean.find("%p"), 2, "%q");
+    auto numericCondition = booleanFlag;
+    numericCondition.replace(numericCondition.find("to_boolean"), 10, "to_number");
+    const auto forwardedFlag =
+        [&](const std::string & thenValue = "%p", const std::string & elseValue = "%p",
+            const std::string & thenBody = "", const std::string & elseBody = "") {
+            auto input = selectedInput(thenValue, elseValue, thenBody, elseBody, "%forwarded");
+            input.replace(input.find("%flag"), 5, "%transportFlag");
+            return "    %transportFlag = ctjs.truthy %q\n" + input +
+                   "    %secondFlag = ctjs.truthy %forwarded\n";
+        };
+    const std::string forwardedKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", forwardedFlag()));
+    const std::string forwardedGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", forwardedFlag()));
+    const std::string forwardedTuple =
+        "    %transportFlag = ctjs.truthy %q\n"
+        "    %forwarded:2 = scf.if %transportFlag -> (!ctjs.value, !ctjs.value) {\n"
+        "      scf.yield %zero, %p : !ctjs.value, !ctjs.value\n"
+        "    } else {\n"
+        "      scf.yield %one, %p : !ctjs.value, !ctjs.value\n"
+        "    }\n"
+        "    %secondFlag = ctjs.truthy %forwarded#1\n";
+    auto forwardedNot = forwardedFlag("%negated", "%negated");
+    forwardedNot.insert(0, "    %boolean = ctjs.convert to_boolean %p\n"
+                           "    %negated = ctjs.unary not %boolean\n");
+    forwardedNot.replace(forwardedNot.find("    %secondFlag ="),
+                         std::string{"    %secondFlag = ctjs.truthy %forwarded\n"}.size(),
+                         selectedInput("%forwarded", "%forwarded", "", "", "%again") +
+                             "    %secondFlag = ctjs.truthy %again\n");
+    auto forwardedComparison = comparedInput();
+    forwardedComparison.replace(
+        forwardedComparison.find("    %secondFlag ="),
+        std::string{"    %secondFlag = ctjs.truthy %secondCompare\n"}.size(),
+        forwardedFlag("%secondCompare", "%secondCompare"));
+    const std::string thenBoolean = "      %thenBoolean = ctjs.convert to_boolean %p\n";
+    const std::string elseBoolean = "      %elseNot = ctjs.unary not %p\n"
+                                    "      %elseEven = ctjs.unary not %elseNot\n";
+    const std::string booleanYields =
+        forwardedFlag("%thenBoolean", "%elseEven", thenBoolean, elseBoolean);
+    const std::string booleanYieldKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", booleanYields));
+    const std::string booleanYieldGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", booleanYields));
+    const std::string booleanYieldTuple =
+        "    %transportFlag = ctjs.truthy %q\n"
+        "    %forwarded:2 = scf.if %transportFlag -> (!ctjs.value, !ctjs.value) {\n" +
+        thenBoolean +
+        "      scf.yield %zero, %thenBoolean : !ctjs.value, !ctjs.value\n"
+        "    } else {\n" +
+        elseBoolean +
+        "      scf.yield %one, %elseEven : !ctjs.value, !ctjs.value\n"
+        "    }\n"
+        "    %secondFlag = ctjs.truthy %forwarded#1\n";
+    const std::string negatedYields =
+        forwardedFlag("%thenNot", "%elseNot", "      %thenNot = ctjs.unary not %p\n",
+                      "      %elseBoolean = ctjs.convert to_boolean %p\n"
+                      "      %elseNot = ctjs.unary not %elseBoolean\n");
+    auto booleanYieldComparison = comparedInput();
+    booleanYieldComparison.replace(
+        booleanYieldComparison.find("    %secondFlag ="),
+        std::string{"    %secondFlag = ctjs.truthy %secondCompare\n"}.size(),
+        forwardedFlag("%thenBoolean", "%elseEven",
+                      "      %thenBoolean = ctjs.convert to_boolean %secondCompare\n",
+                      "      %elseNot = ctjs.unary not %secondCompare\n"
+                      "      %elseEven = ctjs.unary not %elseNot\n"));
+    const auto comparisonYields = [&](const std::string & thenComparison = "strict_eq %p, %zero",
+                                      const std::string & elseComparison = "strict_eq %p, %zero",
+                                      const std::string & thenBody = "",
+                                      const std::string & elseBody = "") {
+        return forwardedFlag(
+            "%thenBoolean", "%elseEven",
+            "      %thenCompare = ctjs.compare " + thenComparison + "\n" + thenBody +
+                "      %thenBoolean = ctjs.convert to_boolean %thenCompare\n",
+            "      %elseCompare = ctjs.compare " + elseComparison + "\n" + elseBody +
+                "      %elseNot = ctjs.unary not %elseCompare\n"
+                "      %elseEven = ctjs.unary not %elseNot\n");
+    };
+    const auto representativeInput = [&](const std::string & forwarding,
+                                         const std::string & left = "%zero",
+                                         const std::string & right = "%one") {
+        auto input = comparedInput(left, right);
+        input.replace(input.find(secondComparison), secondComparison.size(), forwarding);
+        return input;
+    };
+    const std::string representativeComparisons = representativeInput(comparisonYields());
+    const std::string representativeKeys = selectedStore(representativeComparisons);
+    const std::string representativeGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           representativeInput(comparisonYields(), "%read", "%two"));
+    auto oppositeComparisonYield = comparisonYields();
+    oppositeComparisonYield.replace(oppositeComparisonYield.find("scf.yield %elseEven"),
+                                    std::string{"scf.yield %elseEven"}.size(),
+                                    "scf.yield %elseNot");
+    auto siblingOnlyComparisons = representativeComparisons;
+    siblingOnlyComparisons.replace(
+        siblingOnlyComparisons.find(firstComparison), firstComparison.size(),
+        selectedInput("%localThen", "%localElse",
+                      "      %localThen = ctjs.compare strict_eq %p, %zero\n",
+                      "      %localElse = ctjs.compare strict_eq %p, %zero\n", "%local") +
+            "    %firstFlag = ctjs.truthy %local\n");
+    const auto literalSelection =
+        [&](const std::string & thenValue = "%yes", const std::string & elseValue = "%no",
+            const std::string & thenBody = "", const std::string & elseBody = "",
+            const std::string & conditionInput = "%p") {
+            auto input = forwardedFlag(thenValue, elseValue, thenBody, elseBody);
+            input.replace(input.find("ctjs.truthy %q"), std::string{"ctjs.truthy %q"}.size(),
+                          "ctjs.truthy " + conditionInput);
+            return "    %yes = ctjs.constant #ctjs.boolean<true>\n"
+                   "    %no = ctjs.constant #ctjs.boolean<false>\n" +
+                   input;
+        };
+    const std::string literalKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", literalSelection()));
+    const std::string literalGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", literalSelection()));
+    auto literalTuple = literalSelection();
+    literalTuple.replace(literalTuple.find("%forwarded ="),
+                         std::string{"%forwarded = scf.if %transportFlag -> (!ctjs.value)"}.size(),
+                         "%forwarded:2 = scf.if %transportFlag -> (!ctjs.value, !ctjs.value)");
+    literalTuple.replace(literalTuple.find("scf.yield %yes : !ctjs.value"),
+                         std::string{"scf.yield %yes : !ctjs.value"}.size(),
+                         "scf.yield %zero, %yes : !ctjs.value, !ctjs.value");
+    literalTuple.replace(literalTuple.find("scf.yield %no : !ctjs.value"),
+                         std::string{"scf.yield %no : !ctjs.value"}.size(),
+                         "scf.yield %one, %no : !ctjs.value, !ctjs.value");
+    literalTuple.replace(literalTuple.find("ctjs.truthy %forwarded"),
+                         std::string{"ctjs.truthy %forwarded"}.size(), "ctjs.truthy %forwarded#1");
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -2097,6 +2326,843 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(oppositeKeys) + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "two logical Not links preserve the input's branch orientation",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%one", "%secondFlag", notChain(2)))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "three logical Not links reverse the corresponding finite Number arms",
+         .body = loopValues + allocationLoop(chainKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "an even long Not chain uses the shared work budget",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%one", "%secondFlag", notChain(64)))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "an odd Not chain beyond sixty-four links retains its exact polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", notChain(65), true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "a first Not chain snapshots the correctly oriented input choice",
+         .body = loopValues + allocationLoop(selectedStore(notChain(3) + firstChain)) + done,
+         .confinedNested = "fresh"},
+        {.what = "a preheader Not chain shares the exact input snapshot",
+         .body = loopValues + notChain(3) + allocationLoop(selectedStore(firstChain)) + done,
+         .confinedNested = "fresh"},
+        {.what = "nested Not-chain correspondence preserves the independent guard read gap",
+         .body =
+             loopValues + allocationLoop(chainGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "an even Not chain cannot reverse unswapped operand correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", notChain(2), true))) +
+                 done,
+         .complete = false},
+        {.what = "an odd Not chain cannot keep same-arm operand correspondence",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%one", "%secondFlag", notChain(3)))) +
+                 done,
+         .complete = false},
+        {.what = "a Not chain cannot correlate a distinct SSA input",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", notChain(3, "%q"), true))) +
+                 done,
+         .complete = false},
+        {.what = "a Not chain stops at a different unary producer",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", unsupportedChain, true))) +
+                 done,
+         .complete = false},
+        {.what = "a Not chain over a separate read retains its own predicate snapshot",
+         .body = loopValues + allocationLoop(reloadedChain) + done,
+         .complete = false},
+        {.what = "mutation between reads cannot provide Not-chain correspondence",
+         .body = loopValues + allocationLoop(mutatedChain) + done,
+         .complete = false},
+        {.what = "Not-chain correspondence cannot overwrite its current guard dependency",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(
+                     "      %read = ctjs.get_property %guard[%zero]\n" +
+                     siblingInput("%read", "%one", "%secondFlag", notChain(3), true))) +
+                 done,
+         .complete = false},
+        {.what = "Not-chain correspondence still proves both Number operands independently",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%p", "%secondFlag", notChain(3), true))) +
+                 done,
+         .complete = false},
+        {.what = "Not-chain correspondence cannot cancel a nonfinite Number",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%nan", "%secondFlag", notChain(3), true))) +
+                 done,
+         .complete = false},
+        {.what = "every retaining exit preserves a child stored through a Not chain",
+         .body = loopValues + allocationLoop(chainKeys) +
+                 "  cf.cond_br %flag, ^plain, ^retain\n^plain:\n  ctjs.return %zero\n"
+                 "^retain:\n  ctjs.return %guard\n"},
+        {.what = "clearing a Not-chain zero key releases its child",
+         .body = loopValues + allocationLoop(chainKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved Not-chain alias survives clearing its holder",
+         .body = loopValues + allocationLoop(chainKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "Not-chain correspondence cannot hide a no-result transient cycle",
+         .body =
+             loopValues +
+             allocationLoop(chainKeys + "    scf.if %secondFlag {\n"
+                                        "      ctjs.set_property %fresh[%zero], %guard\n"
+                                        "      ctjs.set_property %fresh[%zero], %zero\n    }\n") +
+             clearGuard + done,
+         .complete = false},
+        {.what = "a Not chain cannot hide an unsupported producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  notChain(3) + "    %called = ctjs.call %p(%q)\n", true))) +
+                 done,
+         .complete = false},
+        {.what = "Not-chain correspondence cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(chainKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "zero visits cannot authorize Not-chain allocation identities",
+         .body = loopValues + allocationLoop(chainKeys, "%one") + done,
+         .complete = false},
+        {.what = "Not-chain correspondence still requires current initialized solver inputs",
+         .body = loopValues + allocationLoop(chainKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "repeated strict comparisons share exact ordered SSA operands",
+         .body = loopValues + allocationLoop(comparedKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "nested same-block strict comparisons preserve Number correspondence",
+         .body = loopValues + allocationLoop(nestedSiblingStore(comparedInput())) + done,
+         .confinedNested = "fresh"},
+        {.what = "strict comparison correspondence composes with odd Not parity",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(comparedInput("%zero", "%one", "strict_eq %p, %zero", "", 3))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "strict comparison producers may both precede their selecting branches",
+         .body = loopValues + allocationLoop(selectedStore(eagerComparisons)) + done,
+         .confinedNested = "fresh"},
+        {.what = "strict comparison choices retain signed finite Number cancellation",
+         .body =
+             loopValues + allocationLoop(selectedStore(comparedInput("%negative", "%one"))) + done,
+         .confinedNested = "fresh"},
+        {.what = "strict comparison correspondence preserves the guard dependency gap",
+         .body =
+             loopValues + allocationLoop(comparedGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "strict comparison correspondence cannot overwrite its guard dependency",
+         .body =
+             loopValues +
+             allocationLoop(nestedSiblingStore("      %read = ctjs.get_property %guard[%zero]\n" +
+                                               comparedInput("%read", "%one"))) +
+             done,
+         .complete = false},
+        {.what = "a different strict comparison left operand keeps an independent choice",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(comparedInput("%zero", "%one", "strict_eq %q, %zero"))) +
+             done,
+         .complete = false},
+        {.what = "a different strict comparison right operand keeps an independent choice",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(comparedInput("%zero", "%one", "strict_eq %p, %one"))) +
+             done,
+         .complete = false},
+        {.what = "reversed strict comparison operands share exact SSA correspondence",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(comparedInput("%zero", "%one", "strict_eq %zero, %p"))) +
+             done,
+         .confinedNested = "fresh"},
+        {.what = "a coercing comparison cannot borrow strict equality correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput("%zero", "%one", "eq %p, %zero"))) +
+                 done,
+         .complete = false},
+        {.what = "equal literal attributes do not replace strict comparison SSA identity",
+         .body = loopValues + "  %otherZero = ctjs.constant #ctjs.number<0>\n" +
+                 allocationLoop(
+                     selectedStore(comparedInput("%zero", "%one", "strict_eq %p, %otherZero"))) +
+                 done,
+         .complete = false},
+        {.what = "separate strict comparison reads retain their own snapshots",
+         .body = loopValues + allocationLoop(comparedReads()) + done,
+         .complete = false},
+        {.what = "mutating between strict comparison reads cannot reuse the first choice",
+         .body = loopValues +
+                 allocationLoop(comparedReads("    ctjs.set_property %guard[%zero], %one\n")) +
+                 done,
+         .complete = false},
+        {.what = "dominating cross-block strict comparisons share exact SSA choices",
+         .body =
+             loopValues + allocationLoop(selectedStore(crossBlockComparisons) + "    }\n") + done,
+         .confinedNested = "fresh"},
+        {.what = "strict comparison choices still need independent finite Number operands",
+         .body = loopValues + allocationLoop(selectedStore(comparedInput("%zero", "%p"))) + done,
+         .complete = false},
+        {.what = "strict comparison correspondence cannot cancel a nonfinite Number",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(selectedStore(comparedInput("%zero", "%nan"))) + done,
+         .complete = false},
+        {.what = "a returned strict comparison holder retains its child",
+         .body = loopValues + allocationLoop(comparedKeys) + "  ctjs.return %guard\n"},
+        {.what = "clearing a strict comparison zero key releases its stored child",
+         .body = loopValues + allocationLoop(comparedKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved strict comparison alias survives clearing its holder",
+         .body = loopValues + allocationLoop(comparedKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "every retaining exit preserves a child stored through strict comparisons",
+         .body = loopValues + allocationLoop(comparedKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "strict comparison correlation preserves no-result transient cycle checks",
+         .body = loopValues +
+                 allocationLoop(comparedKeys + "    scf.if %secondFlag {\n"
+                                               "      ctjs.set_property %fresh[%zero], %guard\n"
+                                               "      ctjs.set_property %fresh[%zero], %zero\n"
+                                               "    }\n") +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "strict comparison correspondence cannot hide a producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput("%zero", "%one", "strict_eq %p, %zero",
+                                                            "    %called = ctjs.call %p(%q)\n"))) +
+                 done,
+         .complete = false},
+        {.what = "strict comparisons cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(comparedKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "zero visits cannot authorize strict comparison allocation identities",
+         .body = loopValues + allocationLoop(comparedKeys, "%one") + done,
+         .complete = false},
+        {.what = "strict comparison choices still require initialized solver inputs",
+         .body = loopValues + allocationLoop(comparedKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "a reversed first strict comparison remains the shared representative",
+         .body = loopValues + allocationLoop(selectedStore(firstReversed)) + done,
+         .confinedNested = "fresh"},
+        {.what = "nested reversed strict comparisons preserve Number correspondence",
+         .body = loopValues + allocationLoop(nestedSiblingStore(reversedInput())) + done,
+         .confinedNested = "fresh"},
+        {.what = "reversed strict comparisons compose with odd logical Not parity",
+         .body =
+             loopValues + allocationLoop(selectedStore(reversedInput("%zero", "%one", 3))) + done,
+         .confinedNested = "fresh"},
+        {.what = "reversed strict comparisons compose with even logical Not parity",
+         .body =
+             loopValues + allocationLoop(selectedStore(reversedInput("%zero", "%one", 2))) + done,
+         .confinedNested = "fresh"},
+        {.what = "reversed strict comparisons retain signed finite Number cancellation",
+         .body =
+             loopValues + allocationLoop(selectedStore(reversedInput("%negative", "%one"))) + done,
+         .confinedNested = "fresh"},
+        {.what = "reversed strict comparisons preserve the guard dependency gap",
+         .body =
+             loopValues + allocationLoop(reversedGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "reversed strict comparisons cannot overwrite their guard dependency",
+         .body =
+             loopValues +
+             allocationLoop(nestedSiblingStore("      %read = ctjs.get_property %guard[%zero]\n" +
+                                               reversedInput("%read", "%one"))) +
+             done,
+         .complete = false},
+        {.what = "a changed reversed operand cannot reuse a strict comparison choice",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(comparedInput("%zero", "%one", "strict_eq %zero, %q"))) +
+             done,
+         .complete = false},
+        {.what = "reversed equal literal attributes do not replace SSA identity",
+         .body = loopValues + "  %otherZero = ctjs.constant #ctjs.number<0>\n" +
+                 allocationLoop(
+                     selectedStore(comparedInput("%zero", "%one", "strict_eq %otherZero, %p"))) +
+                 done,
+         .complete = false},
+        {.what = "a reversed coercing comparison cannot borrow strict equality correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput("%zero", "%one", "eq %zero, %p"))) +
+                 done,
+         .complete = false},
+        {.what = "reversed strict comparisons keep separate read snapshots distinct",
+         .body = loopValues + allocationLoop(comparedReads("", true)) + done,
+         .complete = false},
+        {.what = "mutation between reversed strict comparison reads cannot reuse a choice",
+         .body =
+             loopValues +
+             allocationLoop(comparedReads("    ctjs.set_property %guard[%zero], %one\n", true)) +
+             done,
+         .complete = false},
+        {.what = "reversed strict comparisons still need independent finite Number operands",
+         .body = loopValues + allocationLoop(selectedStore(reversedInput("%zero", "%p"))) + done,
+         .complete = false},
+        {.what = "reversed strict comparisons cannot cancel NaN Numbers",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(selectedStore(reversedInput("%zero", "%nan"))) + done,
+         .complete = false},
+        {.what = "a returned reversed-comparison holder retains its stored child",
+         .body = loopValues + allocationLoop(reversedKeys) + "  ctjs.return %guard\n"},
+        {.what = "clearing a reversed-comparison key releases its stored child",
+         .body = loopValues + allocationLoop(reversedKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved reversed-comparison alias survives clearing its holder",
+         .body = loopValues + allocationLoop(reversedKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "every retaining exit preserves a child stored through reversed comparisons",
+         .body = loopValues + allocationLoop(reversedKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "reversed strict comparisons preserve no-result transient cycle checks",
+         .body = loopValues +
+                 allocationLoop(reversedKeys + "    scf.if %secondFlag {\n"
+                                               "      ctjs.set_property %fresh[%zero], %guard\n"
+                                               "      ctjs.set_property %fresh[%zero], %zero\n"
+                                               "    }\n") +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "reversed strict comparisons cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(reversedKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "reversed strict comparisons still require current initialized solver inputs",
+         .body = loopValues + allocationLoop(reversedKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "nested comparison duplicates retain the outermost dominating representative",
+         .body = loopValues + allocationLoop(outerRepresentative) + done,
+         .confinedNested = "fresh"},
+        {.what = "cross-block reversed comparisons compose with logical Not parity",
+         .body =
+             loopValues + allocationLoop(crossBlockStore(reversedInput("%zero", "%one", 3))) + done,
+         .confinedNested = "fresh"},
+        {.what = "cross-block correspondence preserves independent guard read gaps",
+         .body = loopValues + allocationLoop(crossBlockGap, "%two", "%one", "%zero, %zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "cross-block correspondence cannot overwrite its guard dependency",
+         .body = loopValues +
+                 allocationLoop(crossBlockStore("    %read = ctjs.get_property %guard[%zero]\n" +
+                                                comparedInput("%read", "%one"))) +
+                 done,
+         .complete = false},
+        {.what = "cross-block correspondence still needs independently finite Numbers",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(crossBlockStore(comparedInput("%zero", "%nan"))) + done,
+         .complete = false},
+        {.what = "cross-block comparison reads preserve distinct snapshots after mutation",
+         .body = loopValues + allocationLoop(crossBlockReads) + done,
+         .complete = false},
+        {.what = "comparison correspondence stops at the counted loop boundary",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput().substr(firstComparison.size())),
+                                "%zero", "%one", "%zero", "", firstComparison) +
+                 done,
+         .complete = false},
+        {.what = "a returned cross-block holder retains its child on every structural path",
+         .body = loopValues + allocationLoop(crossBlockKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "clearing a cross-block holder releases its stored child",
+         .body =
+             loopValues + allocationLoop(crossBlockKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved cross-block alias survives clearing its holder",
+         .body = loopValues + allocationLoop(crossBlockKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "cross-block correlation preserves no-result transient cycle checks",
+         .body = loopValues +
+                 allocationLoop(crossBlockStore(comparedInput(),
+                                                "    scf.if %secondFlag {\n"
+                                                "      ctjs.set_property %fresh[%zero], %guard\n"
+                                                "      ctjs.set_property %fresh[%zero], %zero\n"
+                                                "    }\n")) +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "a dominating comparison cannot hide a nested producer effect",
+         .body = loopValues +
+                 allocationLoop(crossBlockStore(comparedInput(
+                     "%zero", "%one", "strict_eq %p, %zero", "    %called = ctjs.call %p(%q)\n"))) +
+                 done,
+         .complete = false},
+        {.what = "cross-block comparisons cannot authorize repeated allocation identities",
+         .body =
+             loopValues + allocationLoop(crossBlockKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "cross-block comparisons cannot supply missing solver inputs",
+         .body = loopValues + allocationLoop(crossBlockKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "ToBoolean preserves the exact input truthiness choice",
+         .body = loopValues + allocationLoop(booleanKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "ToBoolean before and after Not preserves opposite branch choices",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", booleanNot, true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "ToBoolean composes with dominating strict comparison correspondence",
+         .body = loopValues + allocationLoop(crossBlockStore(booleanComparison)) + done,
+         .confinedNested = "fresh"},
+        {.what = "ToBoolean correspondence preserves the independent guard read gap",
+         .body =
+             loopValues + allocationLoop(booleanGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "ToBoolean on another input cannot reuse a truthiness choice",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", unrelatedBoolean))) +
+                 done,
+         .complete = false},
+        {.what = "numeric conversion cannot borrow ToBoolean correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", numericCondition))) +
+                 done,
+         .complete = false},
+        {.what = "ToBoolean correspondence cannot cancel nonfinite selected Numbers",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%nan", "%secondFlag", booleanFlag))) +
+                 done,
+         .complete = false},
+        {.what = "every retaining exit preserves the child selected through ToBoolean",
+         .body = loopValues + allocationLoop(booleanKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "clearing a ToBoolean-selected holder releases its stored child",
+         .body = loopValues + allocationLoop(booleanKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a ToBoolean-selected saved alias survives clearing its holder",
+         .body = loopValues + allocationLoop(booleanKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "ToBoolean correspondence preserves transient no-result cycle checks",
+         .body = loopValues +
+                 allocationLoop(booleanKeys + "    scf.if %secondFlag {\n"
+                                              "      ctjs.set_property %fresh[%zero], %guard\n"
+                                              "      ctjs.set_property %fresh[%zero], %zero\n"
+                                              "    }\n") +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "ToBoolean correspondence cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(booleanKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "ToBoolean correspondence still requires current initialized solver inputs",
+         .body = loopValues + allocationLoop(booleanKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "equal If yields retain the exact input truthiness choice",
+         .body = loopValues + allocationLoop(forwardedKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "equal If yields use the selected tuple slot despite a differing sibling slot",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%one", "%secondFlag", forwardedTuple))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested equal If yields compose with ToBoolean and Not polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", forwardedNot, true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "equal If yields preserve dominating strict comparison correspondence",
+         .body = loopValues + allocationLoop(crossBlockStore(forwardedComparison)) + done,
+         .confinedNested = "fresh"},
+        {.what = "equal If yields preserve the independent guard read gap",
+         .body = loopValues + allocationLoop(forwardedGap, "%two", "%one", "%zero, %zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "a changed then yield cannot borrow same-input truthiness correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", forwardedFlag("%q", "%p")))) +
+                 done,
+         .complete = false},
+        {.what = "a changed else yield cannot borrow same-input truthiness correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", forwardedFlag("%p", "%q")))) +
+                 done,
+         .complete = false},
+        {.what = "equal If yields of another input keep their own truthiness choice",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", forwardedFlag("%q", "%q")))) +
+                 done,
+         .complete = false},
+        {.what = "equal If yields cannot hide a then-arm producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     forwardedFlag("%p", "%p", "      %called = ctjs.call %p(%q)\n")))) +
+                 done,
+         .complete = false},
+        {.what = "equal If yields cannot hide an else-arm producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     forwardedFlag("%p", "%p", "", "      %called = ctjs.call %p(%q)\n")))) +
+                 done,
+         .complete = false},
+        {.what = "equal If yields still require independently finite selected Numbers",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%nan", "%secondFlag", forwardedFlag()))) +
+                 done,
+         .complete = false},
+        {.what = "equal If yields cannot overwrite the guard dependency",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore("    %read = ctjs.get_property %guard[%zero]\n" +
+                                   siblingInput("%read", "%one", "%secondFlag", forwardedFlag()))) +
+                 done,
+         .complete = false},
+        {.what = "every retaining exit preserves a child selected through equal If yields",
+         .body = loopValues + allocationLoop(forwardedKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "clearing an equal-yield holder releases its stored child",
+         .body = loopValues + allocationLoop(forwardedKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved equal-yield alias survives clearing its holder",
+         .body = loopValues + allocationLoop(forwardedKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "equal If yields retain no-result transient cycle checks",
+         .body = loopValues +
+                 allocationLoop(forwardedKeys + "    scf.if %secondFlag {\n"
+                                                "      ctjs.set_property %fresh[%zero], %guard\n"
+                                                "      ctjs.set_property %fresh[%zero], %zero\n"
+                                                "    }\n") +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "equal If yields cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(forwardedKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "equal If yields still require current initialized solver inputs",
+         .body = loopValues + allocationLoop(forwardedKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "distinct Boolean yield chains preserve the exact input truthiness choice",
+         .body = loopValues + allocationLoop(booleanYieldKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "distinct odd Boolean yield chains reverse the selected Number arms",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", negatedYields, true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "Boolean yield chains use only their corresponding tuple result slot",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", booleanYieldTuple))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "Boolean yield chains preserve dominating strict comparison correspondence",
+         .body = loopValues + allocationLoop(crossBlockStore(booleanYieldComparison)) + done,
+         .confinedNested = "fresh"},
+        {.what = "Boolean yield chains preserve the independently proved guard read gap",
+         .body = loopValues +
+                 allocationLoop(booleanYieldGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "different yield input snapshots cannot acquire Boolean correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  forwardedFlag("%thenBoolean", "%elseEven",
+                                                "      %thenBoolean = ctjs.convert to_boolean %q\n",
+                                                elseBoolean)))) +
+                 done,
+         .complete = false},
+        {.what = "opposite yield polarities cannot acquire Boolean correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     forwardedFlag("%thenBoolean", "%elseNot", thenBoolean, elseBoolean)))) +
+                 done,
+         .complete = false},
+        {.what = "odd Boolean yield chains cannot retain unswapped Number arms",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%one", "%secondFlag", negatedYields))) +
+                 done,
+         .complete = false},
+        {.what = "numeric conversion in a yield cannot borrow Boolean correspondence",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(siblingInput(
+                 "%zero", "%one", "%secondFlag",
+                 forwardedFlag("%thenBoolean", "%elseEven",
+                               "      %thenBoolean = ctjs.convert to_number %p\n", elseBoolean)))) +
+             done,
+         .complete = false},
+        {.what = "Boolean yield chains cannot hide a then-arm producer effect",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(siblingInput(
+                 "%zero", "%one", "%secondFlag",
+                 forwardedFlag("%thenBoolean", "%elseEven",
+                               thenBoolean + "      %called = ctjs.call %p(%q)\n", elseBoolean)))) +
+             done,
+         .complete = false},
+        {.what = "Boolean yield chains cannot hide an else-arm producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     forwardedFlag("%thenBoolean", "%elseEven", thenBoolean,
+                                   elseBoolean + "      %called = ctjs.call %p(%q)\n")))) +
+                 done,
+         .complete = false},
+        {.what = "Boolean yield chains still require independently finite selected Numbers",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%nan", "%secondFlag", booleanYields))) +
+                 done,
+         .complete = false},
+        {.what = "Boolean yield chains cannot overwrite their current guard dependency",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore("    %read = ctjs.get_property %guard[%zero]\n" +
+                                   siblingInput("%read", "%one", "%secondFlag", booleanYields))) +
+                 done,
+         .complete = false},
+        {.what = "every retaining exit preserves a child selected through Boolean yields",
+         .body = loopValues + allocationLoop(booleanYieldKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "clearing a Boolean-yield holder releases its stored child",
+         .body =
+             loopValues + allocationLoop(booleanYieldKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved Boolean-yield alias survives clearing its holder",
+         .body = loopValues + allocationLoop(booleanYieldKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "Boolean yield chains retain every no-result transient cycle check",
+         .body = loopValues +
+                 allocationLoop(booleanYieldKeys + "    scf.if %secondFlag {\n"
+                                                   "      ctjs.set_property %fresh[%zero], %guard\n"
+                                                   "      ctjs.set_property %fresh[%zero], %zero\n"
+                                                   "    }\n") +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "Boolean yield chains cannot authorize repeated allocation identities",
+         .body =
+             loopValues + allocationLoop(booleanYieldKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "zero visits cannot authorize Boolean-yield allocation identities",
+         .body =
+             loopValues + allocationLoop(booleanYieldKeys, "%two", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "Boolean yield chains require initialized solver inputs",
+         .body = loopValues + allocationLoop(booleanYieldKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "distinct comparison yields share one dominating StrictEq representative",
+         .body = loopValues + allocationLoop(representativeKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "reversed comparison yield operands preserve the dominating representative",
+         .body = loopValues +
+                 allocationLoop(selectedStore(representativeInput(
+                     comparisonYields("strict_eq %zero, %p", "strict_eq %p, %zero")))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "comparison yields retain their representative across enclosing If prefixes",
+         .body = loopValues +
+                 allocationLoop(localArray +
+                                nestedArm(representativeComparisons +
+                                          "    ctjs.set_property %guard[%key], %fresh\n")) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "comparison yields preserve independently proved guard read gaps",
+         .body = loopValues +
+                 allocationLoop(representativeGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "sibling comparison producers cannot supply a dominating representative",
+         .body = loopValues + allocationLoop(selectedStore(siblingOnlyComparisons)) + done,
+         .complete = false},
+        {.what = "different then comparison operands cannot share the representative",
+         .body = loopValues +
+                 allocationLoop(selectedStore(representativeInput(
+                     comparisonYields("strict_eq %q, %zero", "strict_eq %p, %zero")))) +
+                 done,
+         .complete = false},
+        {.what = "different else comparison operands cannot share the representative",
+         .body = loopValues +
+                 allocationLoop(selectedStore(representativeInput(
+                     comparisonYields("strict_eq %p, %zero", "strict_eq %p, %one")))) +
+                 done,
+         .complete = false},
+        {.what = "comparison yields require matching Boolean polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(representativeInput(oppositeComparisonYield))) + done,
+         .complete = false},
+        {.what = "coercing comparison yields cannot borrow strict correspondence",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(representativeInput(comparisonYields("eq %p, %zero")))) +
+             done,
+         .complete = false},
+        {.what = "a common comparison representative cannot hide a then-arm effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(representativeInput(
+                     comparisonYields("strict_eq %p, %zero", "strict_eq %p, %zero",
+                                      "      %called = ctjs.call %p(%q)\n")))) +
+                 done,
+         .complete = false},
+        {.what = "a common comparison representative cannot hide an else-arm effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(representativeInput(
+                     comparisonYields("strict_eq %p, %zero", "strict_eq %p, %zero", "",
+                                      "      %called = ctjs.call %p(%q)\n")))) +
+                 done,
+         .complete = false},
+        {.what = "comparison yields still require independently finite Number arms",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(
+                     selectedStore(representativeInput(comparisonYields(), "%zero", "%nan"))) +
+                 done,
+         .complete = false},
+        {.what = "every retaining exit keeps children selected through comparison yields",
+         .body = loopValues + allocationLoop(representativeKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "clearing a comparison-yield holder releases its selected child",
+         .body = loopValues + allocationLoop(representativeKeys) + clearGuard +
+                 "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved comparison-yield child alias survives clearing its holder",
+         .body = loopValues + allocationLoop(representativeKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "comparison yields cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(representativeKeys, "%zero", "%one", "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "comparison yields require initialized solver inputs",
+         .body = loopValues + allocationLoop(representativeKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "complementary Boolean yields preserve exact condition correspondence",
+         .body = loopValues + allocationLoop(literalKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "opposite Boolean yields reverse the selected Number arms",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag", literalSelection("%no", "%yes"), true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "complementary Boolean yields respect their own tuple result slot",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%one", "%secondFlag", literalTuple))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "complementary Boolean yields compose with total Boolean chains",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     literalSelection("%thenNot", "%elseBoolean",
+                                      "      %thenNot = ctjs.unary not %no\n",
+                                      "      %elseBoolean = ctjs.convert to_boolean %no\n")))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "complementary Boolean yields preserve strict comparison representatives",
+         .body = loopValues +
+                 allocationLoop(selectedStore(representativeInput(
+                     literalSelection("%yes", "%no", "", "", "%firstCompare")))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "complementary Boolean yields preserve independent guard read gaps",
+         .body =
+             loopValues + allocationLoop(literalGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "equal Boolean yields cannot borrow their condition correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput("%zero", "%one", "%secondFlag",
+                                                           literalSelection("%yes", "%yes")))) +
+                 done,
+         .complete = false},
+        {.what = "opposite Boolean yields cannot retain unswapped Number arms",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput("%zero", "%one", "%secondFlag",
+                                                           literalSelection("%no", "%yes")))) +
+                 done,
+         .complete = false},
+        {.what = "numeric yields cannot borrow literal Boolean correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput("%zero", "%one", "%secondFlag",
+                                                           literalSelection("%one", "%zero")))) +
+                 done,
+         .complete = false},
+        {.what = "complementary Boolean yields retain their own condition snapshot",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(siblingInput(
+                 "%zero", "%one", "%secondFlag", literalSelection("%yes", "%no", "", "", "%q")))) +
+             done,
+         .complete = false},
+        {.what = "complementary Boolean yields cannot hide a then-arm producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     literalSelection("%yes", "%no", "      %called = ctjs.call %p(%q)\n")))) +
+                 done,
+         .complete = false},
+        {.what = "complementary Boolean yields cannot hide an else-arm producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     literalSelection("%yes", "%no", "", "      %called = ctjs.call %p(%q)\n")))) +
+                 done,
+         .complete = false},
+        {.what = "complementary Boolean yields still require finite selected Numbers",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%nan", "%secondFlag", literalSelection()))) +
+                 done,
+         .complete = false},
+        {.what = "complementary Boolean yields cannot overwrite their guard dependency",
+         .body =
+             loopValues +
+             allocationLoop(nestedSiblingStore(
+                                "      %read = ctjs.get_property %guard[%zero]\n" +
+                                siblingInput("%read", "%two", "%secondFlag", literalSelection())),
+                            "%two", "%one", "%zero, %zero, %zero") +
+             done,
+         .complete = false},
+        {.what = "every retaining exit keeps children selected through Boolean literals",
+         .body = loopValues + allocationLoop(literalKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "clearing a Boolean-literal holder releases its selected child",
+         .body = loopValues + allocationLoop(literalKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved Boolean-literal child survives clearing its holder",
+         .body = loopValues + allocationLoop(literalKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "complementary Boolean yields cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(literalKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "complementary Boolean yields require initialized solver inputs",
+         .body = loopValues + allocationLoop(literalKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "calls in an arithmetic key arm still refuse the complete census",
          .body = loopValues +
                  allocationLoop(
@@ -2833,8 +3899,527 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = oppositeMutation.what, .body = oppositeMutation.body, .expected = ""},
              "the opposite predicate mutation fixture did not parse");
     }
-    std::printf("array retention: %zu rows, fifty-eight live states, %zu budget cutoffs\n",
-                rows.size(), budgets);
+    retention_row chainMutation{
+        .what = "Not-chain correspondence reproves interior links, polarity, yields and guards",
+        .body = loopValues + allocationLoop(chainGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto chainModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + chainMutation.body + "}\n", &context);
+    if (chainModule) {
+        ctjs::FuncOp function = *chainModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto outer = second.getCondition()
+                         .getDefiningOp<ctjs::TruthyOp>()
+                         .getValue()
+                         .getDefiningOp<ctjs::UnaryOp>();
+        auto middle = outer.getOperand().getDefiningOp<ctjs::UnaryOp>();
+        auto inner = middle.getOperand().getDefiningOp<ctjs::UnaryOp>();
+        auto * firstYield = first.getThenRegion().front().getTerminator();
+        auto * secondYield = second.getThenRegion().front().getTerminator();
+        auto load = firstYield->getOperand(0).getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = inner.getOperand();
+        const mlir::Value originalYield = secondYield->getOperand(0);
+        const mlir::Value originalPosition = load->getOperand(1);
+        mlir::Value zero;
+        for (auto literal : function.getBody().front().getOps<ctjs::ConstantOp>()) {
+            if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue());
+                number && number.getBits() == 0) {
+                zero = literal;
+            }
+        }
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*chainModule))) {
+            fail(row{.what = chainMutation.what, .body = chainMutation.body, .expected = ""},
+                 "the Not-chain stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 7; ++state) {
+            inner->setOperand(0, state == 1 ? function.getBody().front().getArgument(4)
+                                            : originalInput);
+            middle.setKindAttr(ctjs::UnaryKindAttr::get(
+                &context, state == 2 ? ctjs::UnaryKind::Void : ctjs::UnaryKind::Not));
+            outer->setOperand(0, state == 3 ? inner.getResult() : middle.getResult());
+            secondYield->setOperand(0, state == 4 ? originalPosition : originalYield);
+            load->setOperand(1, state == 5 ? zero : originalPosition);
+            chainMutation.complete = state == 0 || state == 6;
+            chainMutation.confinedNested = chainMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*chainModule, chainMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete != chainMutation.complete) {
+                fail(row{.what = chainMutation.what, .body = chainMutation.body, .expected = ""},
+                     "a stale solver or forged marker supplied Not-chain correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = chainMutation.what, .body = chainMutation.body, .expected = ""},
+             "the Not-chain mutation fixture did not parse");
+    }
+    retention_row booleanMutation{
+        .what =
+            "ToBoolean correspondence reproves live conversion inputs, kinds, yields and guards",
+        .body =
+            loopValues + allocationLoop(booleanGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto booleanModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + booleanMutation.body + "}\n", &context);
+    if (booleanModule) {
+        ctjs::FuncOp function = *booleanModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        ctjs::ConvertOp conversion;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        function.walk([&](ctjs::ConvertOp op) { conversion = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto * secondYield = second.getThenRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = conversion.getOperand();
+        const mlir::Value originalYield = secondYield->getOperand(0);
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*booleanModule))) {
+            fail(row{.what = booleanMutation.what, .body = booleanMutation.body, .expected = ""},
+                 "the ToBoolean stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 6; ++state) {
+            conversion->setOperand(0, state == 1 ? function.getBody().front().getArgument(4)
+                                                 : originalInput);
+            conversion.setKindAttr(ctjs::ConvertKindAttr::get(
+                &context, state == 2 ? ctjs::ConvertKind::ToNumber : ctjs::ConvertKind::ToBoolean));
+            secondYield->setOperand(0, state == 3 ? originalPosition : originalYield);
+            load->setOperand(1, state == 4 ? zero : originalPosition);
+            booleanMutation.complete = state == 0 || state == 5;
+            booleanMutation.confinedNested = booleanMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*booleanModule, booleanMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                booleanMutation.complete) {
+                fail(
+                    row{.what = booleanMutation.what, .body = booleanMutation.body, .expected = ""},
+                    "a stale solver or forged marker supplied ToBoolean correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = booleanMutation.what, .body = booleanMutation.body, .expected = ""},
+             "the ToBoolean mutation fixture did not parse");
+    }
+    retention_row forwardedMutation{
+        .what = "equal-yield correspondence reproves both arms, result slots, choices and guards",
+        .body = loopValues +
+                allocationLoop(nestedSiblingStore(
+                                   "      %read = ctjs.get_property %guard[%one]\n" +
+                                   siblingInput("%read", "%two", "%secondFlag", forwardedTuple)),
+                               "%two", "%one", "%zero, %zero, %zero") +
+                done,
+        .confinedNested = "fresh"};
+    auto forwardedModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + forwardedMutation.body + "}\n", &context);
+    if (forwardedModule) {
+        ctjs::FuncOp function = *forwardedModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto truthy = second.getCondition().getDefiningOp<ctjs::TruthyOp>();
+        auto forwarding = truthy.getValue().getDefiningOp<mlir::scf::IfOp>();
+        auto * thenForward = forwarding.getThenRegion().front().getTerminator();
+        auto * elseForward = forwarding.getElseRegion().front().getTerminator();
+        auto * secondYield = second.getThenRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = thenForward->getOperand(1);
+        const mlir::Value originalCondition = forwarding.getCondition();
+        const mlir::Value originalYield = secondYield->getOperand(0);
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value independent = function.getBody().front().getArgument(4);
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*forwardedModule))) {
+            fail(
+                row{.what = forwardedMutation.what, .body = forwardedMutation.body, .expected = ""},
+                "the equal-yield stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 9; ++state) {
+            thenForward->setOperand(1, state == 1 || state == 3 ? independent : originalInput);
+            elseForward->setOperand(1, state == 2 || state == 3 ? independent : originalInput);
+            truthy->setOperand(0, forwarding.getResult(state == 4 ? 0 : 1));
+            secondYield->setOperand(0, state == 5 ? originalPosition : originalYield);
+            load->setOperand(1, state == 6 ? zero : originalPosition);
+            forwarding->setOperand(0, state == 7 ? first.getCondition() : originalCondition);
+            forwardedMutation.complete = state == 0 || state >= 7;
+            forwardedMutation.confinedNested = forwardedMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*forwardedModule, forwardedMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                forwardedMutation.complete) {
+                fail(row{.what = forwardedMutation.what,
+                         .body = forwardedMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied equal-yield correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = forwardedMutation.what, .body = forwardedMutation.body, .expected = ""},
+             "the equal-yield mutation fixture did not parse");
+    }
+    retention_row booleanYieldMutation{
+        .what = "Boolean yields reprove both chains, polarity, tuple slots, Number arms and guards",
+        .body = loopValues +
+                allocationLoop(nestedSiblingStore(
+                                   "      %read = ctjs.get_property %guard[%one]\n" +
+                                   siblingInput("%read", "%two", "%secondFlag", booleanYieldTuple)),
+                               "%two", "%one", "%zero, %zero, %zero") +
+                done,
+        .confinedNested = "fresh"};
+    auto booleanYieldModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + booleanYieldMutation.body + "}\n", &context);
+    if (booleanYieldModule) {
+        ctjs::FuncOp function = *booleanYieldModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto truthy = second.getCondition().getDefiningOp<ctjs::TruthyOp>();
+        auto forwarding = truthy.getValue().getDefiningOp<mlir::scf::IfOp>();
+        auto * thenForward = forwarding.getThenRegion().front().getTerminator();
+        auto conversion = thenForward->getOperand(1).getDefiningOp<ctjs::ConvertOp>();
+        auto outer = forwarding.getElseRegion()
+                         .front()
+                         .getTerminator()
+                         ->getOperand(1)
+                         .getDefiningOp<ctjs::UnaryOp>();
+        auto inner = outer.getOperand().getDefiningOp<ctjs::UnaryOp>();
+        auto * secondYield = second.getThenRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = conversion.getOperand();
+        const mlir::Value originalCondition = forwarding.getCondition();
+        const mlir::Value originalYield = secondYield->getOperand(0);
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value independent = function.getBody().front().getArgument(4);
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*booleanYieldModule))) {
+            fail(row{.what = booleanYieldMutation.what,
+                     .body = booleanYieldMutation.body,
+                     .expected = ""},
+                 "the Boolean-yield stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 12; ++state) {
+            conversion->setOperand(0, state == 1 ? independent : originalInput);
+            inner->setOperand(0, state == 2 ? independent : originalInput);
+            conversion.setKindAttr(ctjs::ConvertKindAttr::get(
+                &context, state == 3 ? ctjs::ConvertKind::ToNumber : ctjs::ConvertKind::ToBoolean));
+            outer.setKindAttr(ctjs::UnaryKindAttr::get(
+                &context, state == 4 ? ctjs::UnaryKind::Void : ctjs::UnaryKind::Not));
+            outer->setOperand(0, state == 5 ? originalInput : inner.getResult());
+            thenForward->setOperand(1, state == 6 ? originalInput : conversion.getResult());
+            truthy->setOperand(0, forwarding.getResult(state == 7 ? 0 : 1));
+            secondYield->setOperand(0, state == 8 ? originalPosition : originalYield);
+            load->setOperand(1, state == 9 ? zero : originalPosition);
+            forwarding->setOperand(0, state == 10 ? first.getCondition() : originalCondition);
+            booleanYieldMutation.complete = state == 0 || state == 6 || state >= 10;
+            booleanYieldMutation.confinedNested = booleanYieldMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*booleanYieldModule, booleanYieldMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                booleanYieldMutation.complete) {
+                fail(row{.what = booleanYieldMutation.what,
+                         .body = booleanYieldMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied Boolean-yield correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = booleanYieldMutation.what,
+                 .body = booleanYieldMutation.body,
+                 .expected = ""},
+             "the Boolean-yield mutation fixture did not parse");
+    }
+    retention_row representativeMutation{
+        .what = "comparison yields reprove both operands, dominating representative and guards",
+        .body = loopValues +
+                allocationLoop(representativeGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto representativeModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + representativeMutation.body + "}\n", &context);
+    if (representativeModule) {
+        ctjs::FuncOp function = *representativeModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto representative = first.getCondition()
+                                  .getDefiningOp<ctjs::TruthyOp>()
+                                  .getValue()
+                                  .getDefiningOp<ctjs::CompareOp>();
+        auto forwarding = second.getCondition()
+                              .getDefiningOp<ctjs::TruthyOp>()
+                              .getValue()
+                              .getDefiningOp<mlir::scf::IfOp>();
+        auto conversion = forwarding.getThenRegion()
+                              .front()
+                              .getTerminator()
+                              ->getOperand(0)
+                              .getDefiningOp<ctjs::ConvertOp>();
+        auto thenCompare = conversion.getOperand().getDefiningOp<ctjs::CompareOp>();
+        auto outer = forwarding.getElseRegion()
+                         .front()
+                         .getTerminator()
+                         ->getOperand(0)
+                         .getDefiningOp<ctjs::UnaryOp>();
+        auto inner = outer.getOperand().getDefiningOp<ctjs::UnaryOp>();
+        auto elseCompare = inner.getOperand().getDefiningOp<ctjs::CompareOp>();
+        auto * secondYield = second.getThenRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalLeft = representative.getLhs();
+        const mlir::Value originalRight = representative.getRhs();
+        const mlir::Value originalCondition = forwarding.getCondition();
+        const mlir::Value originalYield = secondYield->getOperand(0);
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value independent = function.getBody().front().getArgument(4);
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*representativeModule))) {
+            fail(row{.what = representativeMutation.what,
+                     .body = representativeMutation.body,
+                     .expected = ""},
+                 "the comparison-yield stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 14; ++state) {
+            const bool reversed = state == 11;
+            thenCompare->setOperand(0, state == 1 ? independent
+                                       : reversed ? originalRight
+                                                  : originalLeft);
+            thenCompare->setOperand(1, reversed ? originalLeft : originalRight);
+            elseCompare->setOperand(0, reversed ? originalRight : originalLeft);
+            elseCompare->setOperand(1, state == 2 ? originalPosition
+                                       : reversed ? originalLeft
+                                                  : originalRight);
+            thenCompare.setKindAttr(ctjs::CompareKindAttr::get(
+                &context, state == 3 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+            elseCompare.setKindAttr(ctjs::CompareKindAttr::get(
+                &context, state == 4 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+            representative.setKindAttr(ctjs::CompareKindAttr::get(
+                &context, state == 5 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+            representative->setOperand(0, state == 6 ? independent : originalLeft);
+            outer->setOperand(0, state == 7 ? elseCompare.getResult() : inner.getResult());
+            conversion.setKindAttr(ctjs::ConvertKindAttr::get(
+                &context, state == 8 ? ctjs::ConvertKind::ToNumber : ctjs::ConvertKind::ToBoolean));
+            secondYield->setOperand(0, state == 9 ? originalPosition : originalYield);
+            load->setOperand(1, state == 10 ? originalRight : originalPosition);
+            forwarding->setOperand(0, state == 12 ? first.getCondition() : originalCondition);
+            representativeMutation.complete = state == 0 || state >= 11;
+            representativeMutation.confinedNested = representativeMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*representativeModule, representativeMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                representativeMutation.complete) {
+                fail(row{.what = representativeMutation.what,
+                         .body = representativeMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied comparison-yield correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = representativeMutation.what,
+                 .body = representativeMutation.body,
+                 .expected = ""},
+             "the comparison-yield mutation fixture did not parse");
+    }
+    retention_row literalMutation{
+        .what =
+            "Boolean literal yields reprove values, slots, polarity, conditions and guard reads",
+        .body =
+            loopValues + allocationLoop(literalGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto literalModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + literalMutation.body + "}\n", &context);
+    if (literalModule) {
+        ctjs::FuncOp function = *literalModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto forwarding = second.getCondition()
+                              .getDefiningOp<ctjs::TruthyOp>()
+                              .getValue()
+                              .getDefiningOp<mlir::scf::IfOp>();
+        auto condition = forwarding.getCondition().getDefiningOp<ctjs::TruthyOp>();
+        auto * thenYield = forwarding.getThenRegion().front().getTerminator();
+        auto * elseYield = forwarding.getElseRegion().front().getTerminator();
+        auto yes = thenYield->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
+        auto no = elseYield->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
+        auto * firstYield = second.getThenRegion().front().getTerminator();
+        auto * secondYield = second.getElseRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalCondition = condition.getValue();
+        const mlir::Value originalFirst = firstYield->getOperand(0);
+        const mlir::Value originalSecond = secondYield->getOperand(0);
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value zero =
+            load.getObject().getDefiningOp<ctjs::CreateArrayOp>()->getOperand(0);
+        const mlir::Value independent = function.getBody().front().getArgument(4);
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*literalModule))) {
+            fail(row{.what = literalMutation.what, .body = literalMutation.body, .expected = ""},
+                 "the Boolean-literal stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 10; ++state) {
+            const bool reversed = state == 8;
+            yes.setValueAttr(ctjs::BooleanAttr::get(&context, state != 1 && !reversed));
+            no.setValueAttr(ctjs::BooleanAttr::get(&context, state == 2 || reversed));
+            thenYield->setOperand(0, state == 3 ? zero : yes.getResult());
+            elseYield->setOperand(0, state == 4 ? zero : no.getResult());
+            condition->setOperand(0, state == 5 ? independent : originalCondition);
+            firstYield->setOperand(0, state == 6 ? originalPosition
+                                      : reversed ? originalSecond
+                                                 : originalFirst);
+            secondYield->setOperand(0, reversed ? originalFirst : originalSecond);
+            load->setOperand(1, state == 7 ? zero : originalPosition);
+            literalMutation.complete = state == 0 || state >= 8;
+            literalMutation.confinedNested = literalMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*literalModule, literalMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                literalMutation.complete) {
+                fail(
+                    row{.what = literalMutation.what, .body = literalMutation.body, .expected = ""},
+                    "a stale solver or forged marker supplied Boolean-literal correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = literalMutation.what, .body = literalMutation.body, .expected = ""},
+             "the Boolean-literal mutation fixture did not parse");
+    }
+    for (const std::string & comparisons : {comparedGap, crossBlockGap}) {
+        retention_row comparisonMutation{
+            .what =
+                "strict comparison correspondence reproves both operations, operands and guards",
+            .body = loopValues +
+                    allocationLoop(comparisons, "%two", "%one", "%zero, %zero, %zero") + done,
+            .confinedNested = "fresh"};
+        auto comparisonModule = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + comparisonMutation.body + "}\n", &context);
+        if (comparisonModule) {
+            ctjs::FuncOp function = *comparisonModule->getOps<ctjs::FuncOp>().begin();
+            ctjs::SetPropertyOp store;
+            function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+            auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+            auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+            auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+            auto firstCompare = first.getCondition()
+                                    .getDefiningOp<ctjs::TruthyOp>()
+                                    .getValue()
+                                    .getDefiningOp<ctjs::CompareOp>();
+            auto secondCompare = second.getCondition()
+                                     .getDefiningOp<ctjs::TruthyOp>()
+                                     .getValue()
+                                     .getDefiningOp<ctjs::CompareOp>();
+            auto * firstYield = first.getThenRegion().front().getTerminator();
+            auto * secondYield = second.getThenRegion().front().getTerminator();
+            auto load = firstYield->getOperand(0).getDefiningOp<ctjs::GetPropertyOp>();
+            const mlir::Value originalLeft = firstCompare.getLhs();
+            const mlir::Value originalRight = firstCompare.getRhs();
+            const mlir::Value originalYield = secondYield->getOperand(0);
+            const mlir::Value originalPosition = load->getOperand(1);
+            const mlir::Value independent = function.getBody().front().getArgument(4);
+            mlir::DataFlowSolver stale;
+            stale.load<mlir::dataflow::DeadCodeAnalysis>();
+            stale.load<mlir::dataflow::SparseConstantPropagation>();
+            stale.load<EscapeAnalysis>();
+            if (failed(stale.initializeAndRun(*comparisonModule))) {
+                fail(row{.what = comparisonMutation.what,
+                         .body = comparisonMutation.body,
+                         .expected = ""},
+                     "the strict comparison stale solver did not converge");
+            }
+            function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+            for (unsigned state = 0; state < 20; ++state) {
+                const bool reversed = state >= 10;
+                const unsigned mutation = state % 10;
+                secondCompare->setOperand(0, mutation == 1 ? independent
+                                             : reversed    ? originalRight
+                                                           : originalLeft);
+                secondCompare->setOperand(1, mutation == 2 ? originalPosition
+                                             : reversed    ? originalLeft
+                                                           : originalRight);
+                secondCompare.setKindAttr(ctjs::CompareKindAttr::get(
+                    &context, mutation == 3 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+                firstCompare.setKindAttr(ctjs::CompareKindAttr::get(
+                    &context, mutation == 4 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+                firstCompare->setOperand(0, mutation == 5 ? independent : originalLeft);
+                firstCompare->setOperand(1, mutation == 6 ? originalPosition : originalRight);
+                secondYield->setOperand(0, mutation == 7 ? originalPosition : originalYield);
+                load->setOperand(1, mutation == 8 ? originalRight : originalPosition);
+                comparisonMutation.complete = mutation == 0 || mutation == 9;
+                comparisonMutation.confinedNested = comparisonMutation.complete ? "fresh" : "";
+                budgets += checkArrayRetention(*comparisonModule, comparisonMutation);
+                if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                    comparisonMutation.complete) {
+                    fail(row{.what = comparisonMutation.what,
+                             .body = comparisonMutation.body,
+                             .expected = ""},
+                         "a stale solver or forged marker supplied strict comparison "
+                         "correspondence");
+                }
+            }
+        } else {
+            fail(row{.what = comparisonMutation.what,
+                     .body = comparisonMutation.body,
+                     .expected = ""},
+                 "the strict comparison mutation fixture did not parse");
+        }
+    }
+    std::printf(
+        "array retention: %zu rows, one hundred fifty-six live states, %zu budget cutoffs\n",
+        rows.size(), budgets);
 }
 
 void checkObjectContents(mlir::MLIRContext & context) {

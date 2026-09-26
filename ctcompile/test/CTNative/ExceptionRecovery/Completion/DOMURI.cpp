@@ -1095,7 +1095,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::BinaryKind::UShr, std::bit_cast<uint64_t>(4294967296.0),
          std::bit_cast<uint64_t>(1.0), 0, false},
     }};
-    const std::array<mlir::Attribute, 16> equalityValues{{
+    const std::array<mlir::Attribute, 99> equalityValues{{
         ctjs::BooleanAttr::get(context, false),
         ctjs::BooleanAttr::get(context, true),
         ctjs::NullAttr::get(context),
@@ -1112,6 +1112,89 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         predicates[2].first,
         ctjs::StringAttr::get(context, "\xf0\x9f\x98\x80"),
         ctjs::StringAttr::get(context, "\xf0\x9f\x98\x81"),
+        predicates[1].first,
+        predicates[7].first,
+        predicates[4].first,
+        predicates[8].first,
+        ctjs::StringAttr::get(context, "\t\n\r \xc2\xa0\xe2\x80\xa8\xef\xbb\xbf"),
+        ctjs::StringAttr::get(context, "0x10"),
+        ctjs::StringAttr::get(context, "0O10"),
+        ctjs::StringAttr::get(context, "0B11"),
+        ctjs::StringAttr::get(context, "-0"),
+        ctjs::StringAttr::get(context, ".5"),
+        ctjs::StringAttr::get(context, "1e2"),
+        ctjs::StringAttr::get(context, "NaN"),
+        ctjs::StringAttr::get(context, "+Infinity"),
+        ctjs::StringAttr::get(context, "garbage"),
+        ctjs::StringAttr::get(context, "1"),
+        ctjs::StringAttr::get(context, "-Infinity"),
+        ctjs::StringAttr::get(context, "1e309"),
+        ctjs::StringAttr::get(context, "1e-400"),
+        ctjs::StringAttr::get(context, std::string(31, '0') + "1"),
+        ctjs::StringAttr::get(context, "1junk"),
+        ctjs::StringAttr::get(context, std::string(33, ' ')),
+        ctjs::StringAttr::get(context, "0x10000000000000000"),
+        ctjs::StringAttr::get(context, "nan"),
+        ctjs::StringAttr::get(context, "."),
+        ctjs::StringAttr::get(context, "+0x1"),
+        ctjs::StringAttr::get(context, "1e2147483647"),
+        ctjs::StringAttr::get(context, "1e-"),
+        ctjs::StringAttr::get(context, "10"),
+        ctjs::StringAttr::get(context, "2"),
+        ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(16.0)),
+        ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(8.0)),
+        ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(3.0)),
+        ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(0.5)),
+        ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(100.0)),
+        ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(17.0)),
+        ctjs::StringAttr::get(context, "\x7f"),
+        ctjs::StringAttr::get(context, "\xc2\x80"),
+        ctjs::StringAttr::get(context, "\xc3\xa8"),
+        ctjs::StringAttr::get(context, "\xef\xbf\xbf"),
+        ctjs::StringAttr::get(context, "\xe0\xa0\x80"),
+        ctjs::StringAttr::get(context, "\xef\xbf\xbd"),
+        ctjs::StringAttr::get(context, "\xed\xa0\x80"),
+        ctjs::StringAttr::get(context, "\xed\xb0\x80"),
+        ctjs::StringAttr::get(context, "\xf0\x90\x80\x80"),
+        ctjs::StringAttr::get(context, "ab"),
+        ctjs::StringAttr::get(context, std::string(64, 'a')),
+        ctjs::StringAttr::get(context, "b"),
+        ctjs::StringAttr::get(context, "\xc0\x80"),
+        ctjs::StringAttr::get(context, "\xc2"),
+        ctjs::StringAttr::get(context, "\x80"),
+        ctjs::StringAttr::get(context, "\xf4\x90\x80\x80"),
+        ctjs::StringAttr::get(context, "\xed\xa0\x80\xed\xb0\x80"),
+        ctjs::StringAttr::get(context, "\xe2\x28\xa1"),
+        ctjs::StringAttr::get(context, "\xf0\x9f\x98"),
+        ctjs::StringAttr::get(context, "\xe0\x80\x80"),
+        ctjs::StringAttr::get(context, "\xf0\x80\x80\x80"),
+        ctjs::StringAttr::get(context, "\xff"),
+        ctjs::StringAttr::get(context, "\xe2\x82"),
+        ctjs::StringAttr::get(context, "a\xf0\x90\x80\x80"),
+        ctjs::StringAttr::get(context, "a\xef\xbf\xbf"),
+        ctjs::StringAttr::get(context, std::string(64, '0') + "1"),
+        ctjs::StringAttr::get(context, "0x" + std::string(64, '0') + "10"),
+        ctjs::StringAttr::get(context, "\xc2\xa0" + std::string(64, ' ') + "+Infinity\xef\xbb\xbf"),
+        ctjs::StringAttr::get(context, std::string(64, ' ')),
+        ctjs::StringAttr::get(context, std::string(64, '0') + "1.e309"),
+        ctjs::StringAttr::get(context, "-0." + std::string(64, '0') + "1e-400"),
+        ctjs::StringAttr::get(context, "1" + std::string(64, '0') + "e-64"),
+        ctjs::StringAttr::get(context, "0." + std::string(64, '0') + "1e65"),
+        ctjs::StringAttr::get(context, "1" + std::string(64, '0') + "e2147483600"),
+        ctjs::StringAttr::get(context, "0x" + std::string(64, 'f')),
+        ctjs::StringAttr::get(context, std::string(64, '0') + "1junk"),
+        ctjs::StringAttr::get(context, std::string("1\0", 2) + std::string(64, '0')),
+        ctjs::StringAttr::get(context, "0b" + std::string(64, '0') + "1"),
+        ctjs::StringAttr::get(context, std::string(64, ' ') + "NaN"),
+        predicates[3].first,
+        predicates[5].first,
+        ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(1e-7)),
+        ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(1e-6)),
+        ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(1e20)),
+        ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(1e21)),
+        ctjs::NumberAttr::get(context, 0x7fefffffffffffffULL),
+        ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(9007199254740992.0)),
+        ctjs::NumberAttr::get(context, std::bit_cast<uint64_t>(-1.25)),
     }};
     const std::array<Comparison, 27> equalities{{
         {ctjs::CompareKind::StrictEq, 0, 0, true},    {ctjs::CompareKind::StrictEq, 1, 0, false},
@@ -1129,7 +1212,333 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::CompareKind::Eq, 7, 8, false},         {ctjs::CompareKind::Eq, 9, 9, true},
         {ctjs::CompareKind::Eq, 9, 10, false},
     }};
-    for (unsigned control = 0; control != 644; ++control) {
+    const std::array<Comparison, 28> looseEqualities{{
+        {ctjs::CompareKind::Eq, 1, 1, true},   // true == true
+        {ctjs::CompareKind::Eq, 1, 0, false},  // true == false
+        {ctjs::CompareKind::Eq, 2, 2, true},   // null == null
+        {ctjs::CompareKind::Eq, 3, 2, true},   // undefined == null
+        {ctjs::CompareKind::Eq, 11, 0, true},  // +0 == false
+        {ctjs::CompareKind::Eq, 1, 12, true},  // true == 1
+        {ctjs::CompareKind::Eq, 12, 1, true},  // 1 == true
+        {ctjs::CompareKind::Eq, 0, 16, true},  // false == -0
+        {ctjs::CompareKind::Eq, 16, 0, true},  // -0 == false
+        {ctjs::CompareKind::Eq, 1, 17, false}, // true == -1
+        {ctjs::CompareKind::Eq, 17, 1, false}, // -1 == true
+        {ctjs::CompareKind::Eq, 0, 13, false}, // false == NaN
+        {ctjs::CompareKind::Eq, 13, 0, false}, // NaN == false
+        {ctjs::CompareKind::Eq, 1, 18, false}, // true == Infinity
+        {ctjs::CompareKind::Eq, 18, 1, false}, // Infinity == true
+        {ctjs::CompareKind::Eq, 0, 19, false}, // false == minimum subnormal
+        {ctjs::CompareKind::Eq, 19, 0, false}, // minimum subnormal == false
+        {ctjs::CompareKind::Eq, 0, 2, false},  // false == null
+        {ctjs::CompareKind::Eq, 2, 0, false},  // null == false
+        {ctjs::CompareKind::Eq, 1, 3, false},  // true == undefined
+        {ctjs::CompareKind::Eq, 3, 1, false},  // undefined == true
+        {ctjs::CompareKind::Eq, 11, 2, false}, // +0 == null
+        {ctjs::CompareKind::Eq, 2, 11, false}, // null == +0
+        {ctjs::CompareKind::Eq, 11, 3, false}, // +0 == undefined
+        {ctjs::CompareKind::Eq, 3, 11, false}, // undefined == +0
+        {ctjs::CompareKind::Eq, 13, 2, false}, // NaN == null
+        {ctjs::CompareKind::Eq, 2, 13, false}, // null == NaN
+        {ctjs::CompareKind::Eq, 1, 11, false}, // true == +0
+    }};
+    const std::array<Comparison, 50> convertedComparisons{{
+        {ctjs::CompareKind::Eq, 4, 11, true},   // empty String == +0
+        {ctjs::CompareKind::Eq, 11, 4, true},   // +0 == empty String
+        {ctjs::CompareKind::Eq, 20, 0, true},   // JS whitespace == false
+        {ctjs::CompareKind::Eq, 0, 20, true},   // false == JS whitespace
+        {ctjs::CompareKind::Eq, 21, 45, true},  // 0x10 == 16
+        {ctjs::CompareKind::Eq, 45, 21, true},  // 16 == 0x10
+        {ctjs::CompareKind::Eq, 22, 46, true},  // 0O10 == 8
+        {ctjs::CompareKind::Eq, 47, 23, true},  // 3 == 0B11
+        {ctjs::CompareKind::Eq, 24, 16, true},  // -0 String == -0 Number
+        {ctjs::CompareKind::Eq, 16, 24, true},  // -0 Number == -0 String
+        {ctjs::CompareKind::Eq, 25, 48, true},  // .5 == 0.5
+        {ctjs::CompareKind::Eq, 49, 26, true},  // 100 == 1e2
+        {ctjs::CompareKind::Eq, 27, 13, false}, // NaN String == NaN Number
+        {ctjs::CompareKind::Eq, 13, 27, false}, // NaN Number == NaN String
+        {ctjs::CompareKind::Eq, 28, 18, true},  // +Infinity String == Infinity
+        {ctjs::CompareKind::Eq, 18, 28, true},  // Infinity == +Infinity String
+        {ctjs::CompareKind::Eq, 29, 2, false},  // invalid numeric String == null needs no parse
+        {ctjs::CompareKind::Eq, 3, 29, false},  // undefined == invalid numeric String
+        {ctjs::CompareKind::Lt, 21, 50, true},  // 0x10 < 17
+        {ctjs::CompareKind::Gt, 50, 21, true},  // 17 > 0x10
+        {ctjs::CompareKind::Le, 26, 49, true},  // 1e2 <= 100
+        {ctjs::CompareKind::Ge, 49, 26, true},  // 100 >= 1e2
+        {ctjs::CompareKind::Gt, 1, 25, true},   // true > .5
+        {ctjs::CompareKind::Lt, 25, 1, true},   // .5 < true
+        {ctjs::CompareKind::Lt, 2, 30, true},   // null < 1 String
+        {ctjs::CompareKind::Gt, 30, 2, true},   // 1 String > null
+        {ctjs::CompareKind::Lt, 3, 30, false},  // undefined < 1 String
+        {ctjs::CompareKind::Ge, 30, 3, false},  // 1 String >= undefined
+        {ctjs::CompareKind::Ge, 0, 2, true},    // false >= null
+        {ctjs::CompareKind::Le, 2, 0, true},    // null <= false
+        {ctjs::CompareKind::Gt, 1, 0, true},    // true > false
+        {ctjs::CompareKind::Lt, 0, 1, true},    // false < true
+        {ctjs::CompareKind::Le, 27, 12, false}, // NaN String <= 1
+        {ctjs::CompareKind::Ge, 12, 27, false}, // 1 >= NaN String
+        {ctjs::CompareKind::Lt, 31, 0, true},   // -Infinity String < false
+        {ctjs::CompareKind::Gt, 1, 31, true},   // true > -Infinity String
+        {ctjs::CompareKind::Eq, 32, 18, true},  // decimal overflow == Infinity
+        {ctjs::CompareKind::Eq, 33, 11, true},  // decimal underflow == +0
+        {ctjs::CompareKind::Eq, 34, 1, true},   // exactly 32 source bytes == true
+        {ctjs::CompareKind::Eq, 1, 34, true},   // true == exactly 32 source bytes
+        // Invalid conversions refuse even if JS would give NaN. The whitespace
+        // row deliberately selects the wrong result and must retain live effects.
+        {ctjs::CompareKind::Eq, 35, 11, false}, // trailing junk
+        {ctjs::CompareKind::Eq, 11, 36, false}, // 33 spaces convert to zero, contrary to this arm
+        {ctjs::CompareKind::Eq, 37, 18, false}, // Core radix overflow
+        {ctjs::CompareKind::Eq, 38, 13, false}, // noncanonical NaN spelling
+        {ctjs::CompareKind::Gt, 39, 11, false}, // no decimal digits
+        {ctjs::CompareKind::Lt, 11, 40, false}, // signed radix literal
+        {ctjs::CompareKind::Ge, 41, 11, false}, // exponent beyond safe parser bound
+        {ctjs::CompareKind::Le, 42, 11, false}, // incomplete exponent
+        {ctjs::CompareKind::Eq, 6, 11, false},  // embedded NUL
+        {ctjs::CompareKind::Eq, 9, 11, false},  // nonnumeric UTF-8
+    }};
+    const std::array<Comparison, 60> stringComparisons{{
+        {ctjs::CompareKind::Lt, 43, 44, true}, // "10" < "2", lexical rather than numeric
+        {ctjs::CompareKind::Le, 43, 44, true},
+        {ctjs::CompareKind::Gt, 43, 44, false},
+        {ctjs::CompareKind::Ge, 43, 44, false},
+        {ctjs::CompareKind::Lt, 44, 43, false},
+        {ctjs::CompareKind::Le, 44, 43, false},
+        {ctjs::CompareKind::Gt, 44, 43, true},
+        {ctjs::CompareKind::Ge, 44, 43, true},
+        {ctjs::CompareKind::Lt, 4, 4, false}, // empty Strings
+        {ctjs::CompareKind::Le, 4, 4, true},
+        {ctjs::CompareKind::Gt, 8, 8, false}, // equal nonempty Strings
+        {ctjs::CompareKind::Ge, 8, 8, true},
+        {ctjs::CompareKind::Lt, 4, 8, true}, // empty prefix
+        {ctjs::CompareKind::Gt, 8, 4, true},
+        {ctjs::CompareKind::Lt, 8, 60, true}, // "a" is a prefix of "ab"
+        {ctjs::CompareKind::Ge, 60, 8, true},
+        {ctjs::CompareKind::Lt, 8, 7, true}, // "a" is a prefix of "a\0b"
+        {ctjs::CompareKind::Gt, 7, 8, true},
+        {ctjs::CompareKind::Lt, 6, 4, false}, // NUL is not an empty String
+        {ctjs::CompareKind::Gt, 6, 4, true},
+        {ctjs::CompareKind::Lt, 7, 60, true},  // embedded NUL precedes 'b'
+        {ctjs::CompareKind::Lt, 51, 52, true}, // U+007F < U+0080, unsigned bytes
+        {ctjs::CompareKind::Gt, 52, 51, true},
+        {ctjs::CompareKind::Lt, 53, 9, true}, // U+00E8 < U+00E9
+        {ctjs::CompareKind::Gt, 9, 53, true},
+        {ctjs::CompareKind::Lt, 10, 9, true}, // no Unicode normalization
+        {ctjs::CompareKind::Ge, 9, 10, true},
+        {ctjs::CompareKind::Lt, 14, 15, true}, // supplementary code points agree
+        {ctjs::CompareKind::Gt, 15, 14, true},
+        {ctjs::CompareKind::Le, 14, 14, true},
+        {ctjs::CompareKind::Ge, 14, 14, true},
+        {ctjs::CompareKind::Lt, 55, 54, true}, // three-byte BMP code points
+        {ctjs::CompareKind::Lt, 57, 58, true}, // lone high surrogate < lone low surrogate
+        {ctjs::CompareKind::Ge, 58, 57, true},
+        {ctjs::CompareKind::Lt, 57, 59, true}, // lone high surrogate prefixes U+10000
+        {ctjs::CompareKind::Ge, 59, 57, true},
+        {ctjs::CompareKind::Lt, 61, 62, true}, // String ordering has no 32-byte numeric limit
+        {ctjs::CompareKind::Gt, 62, 61, true},
+        {ctjs::CompareKind::Lt, 56, 54, true}, // literal replacement character is canonical
+        {ctjs::CompareKind::Le, 7, 7, true},   // equality includes embedded NUL
+        // Canonical inputs whose UTF-16 ordering disagrees with the current VM
+        // byte ordering cannot authorize either selected branch.
+        {ctjs::CompareKind::Lt, 59, 54, true},
+        {ctjs::CompareKind::Le, 59, 54, true},
+        {ctjs::CompareKind::Gt, 59, 54, false},
+        {ctjs::CompareKind::Ge, 59, 54, false},
+        {ctjs::CompareKind::Lt, 54, 59, false},
+        {ctjs::CompareKind::Gt, 54, 59, true},
+        {ctjs::CompareKind::Lt, 58, 59, false},
+        {ctjs::CompareKind::Lt, 74, 75, true}, // disagreement after a common ASCII prefix
+        // The public decoder is total; a lossy/noncanonical roundtrip is refused.
+        {ctjs::CompareKind::Lt, 63, 4, false},  // overlong NUL
+        {ctjs::CompareKind::Ge, 8, 64, false},  // truncated two-byte rhs
+        {ctjs::CompareKind::Gt, 65, 8, false},  // orphan continuation
+        {ctjs::CompareKind::Le, 8, 66, false},  // code point above U+10FFFF
+        {ctjs::CompareKind::Lt, 67, 59, false}, // separately encoded adjacent surrogates
+        {ctjs::CompareKind::Le, 67, 67, true},  // even identical CESU-8 is noncanonical
+        {ctjs::CompareKind::Ge, 68, 8, false},  // invalid continuation inside a sequence
+        {ctjs::CompareKind::Lt, 69, 8, false},  // truncated four-byte sequence
+        {ctjs::CompareKind::Gt, 70, 8, false},  // overlong three-byte sequence
+        {ctjs::CompareKind::Le, 71, 8, false},  // overlong four-byte sequence
+        {ctjs::CompareKind::Gt, 72, 8, false},  // invalid leading byte
+        {ctjs::CompareKind::Lt, 8, 73, false},  // truncated three-byte rhs
+    }};
+    const std::array<Comparison, 16> wideComparisons{{
+        {ctjs::CompareKind::Eq, 76, 1, true},   // long decimal == true
+        {ctjs::CompareKind::Ge, 1, 76, true},   // reversed numeric conversion
+        {ctjs::CompareKind::Eq, 77, 45, true},  // long hexadecimal == 16
+        {ctjs::CompareKind::Eq, 78, 18, true},  // JS whitespace around Infinity
+        {ctjs::CompareKind::Eq, 79, 0, true},   // whitespace-only == false
+        {ctjs::CompareKind::Eq, 80, 18, true},  // trailing-point decimal overflow
+        {ctjs::CompareKind::Eq, 81, 16, true},  // negative decimal underflow
+        {ctjs::CompareKind::Eq, 82, 12, true},  // mantissa/exponent cancellation
+        {ctjs::CompareKind::Eq, 83, 12, true},  // fractional/exponent cancellation
+        {ctjs::CompareKind::Eq, 88, 1, true},   // long binary == true
+        {ctjs::CompareKind::Ge, 89, 12, false}, // canonical NaN stays unordered
+        {ctjs::CompareKind::Eq, 76, 2, false},  // absence needs no conversion
+        // Complete grammar and Core arithmetic safety remain required even
+        // when JavaScript's selected result happens to be predictable.
+        {ctjs::CompareKind::Eq, 84, 11, false}, // exponent exceeds size-dependent bound
+        {ctjs::CompareKind::Eq, 85, 11, false}, // Core radix overflow is not JS Number
+        {ctjs::CompareKind::Eq, 86, 11, false}, // trailing junk
+        {ctjs::CompareKind::Eq, 87, 11, false}, // embedded NUL
+    }};
+    struct CoercingUnary {
+        ctjs::UnaryKind kind;
+        unsigned operand;
+        uint64_t value;
+        bool truth;
+    };
+    const std::array<CoercingUnary, 26> coercingUnaries{{
+        {ctjs::UnaryKind::Plus, 24, 0x8000000000000000ULL, false}, // String -0
+        {ctjs::UnaryKind::Neg, 24, 0, false},
+        {ctjs::UnaryKind::Plus, 4, 0, false},                    // empty String
+        {ctjs::UnaryKind::Neg, 2, 0x8000000000000000ULL, false}, // null
+        {ctjs::UnaryKind::Plus, 1, std::bit_cast<uint64_t>(1.0), true},
+        {ctjs::UnaryKind::Neg, 1, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, 0, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::Plus, 3, 0x7ff8000000000000ULL, false}, // undefined
+        {ctjs::UnaryKind::Neg, 3, 0xfff8000000000000ULL, false},
+        {ctjs::UnaryKind::BitNot, 3, std::bit_cast<uint64_t>(-1.0), true},
+        {ctjs::UnaryKind::BitNot, 23, std::bit_cast<uint64_t>(-4.0), true}, // 0B11
+        {ctjs::UnaryKind::BitNot, 27, std::bit_cast<uint64_t>(-1.0), true}, // NaN
+        {ctjs::UnaryKind::BitNot, 32, std::bit_cast<uint64_t>(-1.0), true}, // overflow
+        {ctjs::UnaryKind::BitNot, 88, std::bit_cast<uint64_t>(-2.0), true}, // long binary
+        {ctjs::UnaryKind::Plus, 76, std::bit_cast<uint64_t>(1.0), true},    // long decimal
+        {ctjs::UnaryKind::Neg, 78, 0xfff0000000000000ULL, true},            // JS space/Infinity
+        {ctjs::UnaryKind::Plus, 81, 0x8000000000000000ULL, false},          // underflow
+        {ctjs::UnaryKind::Plus, 22, std::bit_cast<uint64_t>(8.0), true},    // octal
+        {ctjs::UnaryKind::BitNot, 25, std::bit_cast<uint64_t>(-1.0), true}, // fraction
+        {ctjs::UnaryKind::Plus, 20, 0, false},                              // JS whitespace
+        // Grammar and Core overflow refusals remain, even for predictable NaNs.
+        {ctjs::UnaryKind::Plus, 29, 0, false},   // garbage
+        {ctjs::UnaryKind::Neg, 35, 0, false},    // trailing junk
+        {ctjs::UnaryKind::BitNot, 40, 0, false}, // signed radix
+        {ctjs::UnaryKind::Plus, 85, 0, false},   // radix overflow
+        {ctjs::UnaryKind::Neg, 84, 0, false},    // unsafe exponent
+        {ctjs::UnaryKind::BitNot, 87, 0, false}, // embedded NUL
+    }};
+    struct CoercingBinary {
+        ctjs::BinaryKind kind;
+        unsigned lhs;
+        unsigned rhs;
+        uint64_t value;
+        bool truth;
+        bool staticForm = false;
+    };
+    const std::array<CoercingBinary, 27> coercingBinaries{{
+        {ctjs::BinaryKind::Sub, 77, 1, std::bit_cast<uint64_t>(15.0), true}, // long hex - true
+        {ctjs::BinaryKind::Sub, 2, 25, std::bit_cast<uint64_t>(-0.5), true}, // null - String .5
+        {ctjs::BinaryKind::Mul, 24, 1, 0x8000000000000000ULL, false},        // String -0 * true
+        {ctjs::BinaryKind::Mul, 1, 32, 0x7ff0000000000000ULL, true},         // true * overflow
+        {ctjs::BinaryKind::Div, 1, 24, 0xfff0000000000000ULL, true},         // true / String -0
+        {ctjs::BinaryKind::Div, 2, 0, 0x7ff8000000000000ULL, false},         // null / false
+        {ctjs::BinaryKind::Mod, 22, 23, std::bit_cast<uint64_t>(2.0), true}, // octal % binary
+        {ctjs::BinaryKind::Mod, 2, 1, 0, false},                             // null % true
+        {ctjs::BinaryKind::Pow, 44, 23, std::bit_cast<uint64_t>(8.0), true}, // String 2 ** binary 3
+        {ctjs::BinaryKind::Pow, 3, 0, std::bit_cast<uint64_t>(1.0), true},   // undefined ** false
+        {ctjs::BinaryKind::Pow, 1, 28, 0x7ff8000000000000ULL, false},        // true ** Infinity
+        {ctjs::BinaryKind::BitAnd, 23, 1, std::bit_cast<uint64_t>(1.0), true, true},
+        {ctjs::BinaryKind::BitOr, 3, 21, std::bit_cast<uint64_t>(16.0), true, true},
+        {ctjs::BinaryKind::BitXor, 23, 1, std::bit_cast<uint64_t>(2.0), true, true},
+        {ctjs::BinaryKind::Shl, 1, 22, std::bit_cast<uint64_t>(256.0), true, true},
+        {ctjs::BinaryKind::Shr, 31, 1, 0, false, true}, // String -Infinity >> true
+        {ctjs::BinaryKind::UShr, 17, 2, std::bit_cast<uint64_t>(4294967295.0), true, true},
+        {ctjs::BinaryKind::Add, 1, 2, std::bit_cast<uint64_t>(1.0), true}, // true + null
+        {ctjs::BinaryKind::Add, 3, 1, 0x7ff8000000000000ULL, false},       // undefined + true
+        {ctjs::BinaryKind::Add, 76, 1, std::bit_cast<uint64_t>(2.0), true,
+         true}, // static is numeric
+        {ctjs::BinaryKind::Shl, 30, 17, std::bit_cast<uint64_t>(-2147483648.0), true, true},
+        {ctjs::BinaryKind::UShr, 17, 28, std::bit_cast<uint64_t>(4294967295.0), true, true},
+        // Invalid grammar and unsafe exponents refuse on either operand. Generic
+        // Add concatenates Strings; generic BitAnd has no numeric VM semantics.
+        {ctjs::BinaryKind::Sub, 29, 1, 0, false},
+        {ctjs::BinaryKind::Mod, 1, 84, 0, false},
+        {ctjs::BinaryKind::Add, 76, 1, 0, false},
+        {ctjs::BinaryKind::Add, 1, 76, 0, false},
+        {ctjs::BinaryKind::BitAnd, 23, 1, 0, false},
+    }};
+    struct StringAdd {
+        unsigned lhs;
+        unsigned rhs;
+        llvm::StringRef value;
+        bool accepts = true;
+    };
+    const std::array<StringAdd, 38> stringAdds{{
+        {4, 4, ""},
+        {8, 62, "ab"},
+        {5, 12, "01"},
+        {12, 5, "10"},
+        {8, 1, "atrue"},
+        {0, 8, "falsea"},
+        {8, 2, "anull"},
+        {2, 8, "nulla"},
+        {8, 3, "aundefined"},
+        {3, 8, "undefineda"},
+        {4, 16, "0"}, // either signed zero formats as 0
+        {16, 4, "0"},
+        {4, 13, "NaN"},
+        {90, 4, "NaN"}, // negative signaling NaN loses sign and payload
+        {4, 18, "Infinity"},
+        {91, 4, "-Infinity"},
+        {4, 19, "5e-324"},
+        {92, 4, "1e-7"},
+        {4, 93, "0.000001"},
+        {94, 4, "100000000000000000000"},
+        {4, 95, "1e+21"},
+        {96, 4, "1.7976931348623157e+308"},
+        {97, 4, "9007199254740992"},
+        {4, 98, "-1.25"},
+        {6, 8, llvm::StringRef("\0a", 2)},
+        {7, 62, llvm::StringRef("a\0bb", 4)},
+        {9, 10,
+         "\xc3\xa9"
+         "e\xcc\x81"},
+        {57, 58, "\xf0\x90\x80\x80"}, // halves join only at the concatenation boundary
+        {58, 57, "\xed\xb0\x80\xed\xa0\x80"},
+        {8, 57, "a\xed\xa0\x80"},
+        {58, 4, "\xed\xb0\x80"},
+        {59, 14, "\xf0\x90\x80\x80\xf0\x9f\x98\x80"},
+        {63, 4, "", false}, // overlong NUL
+        {4, 64, "", false}, // truncated sequence
+        {65, 8, "", false}, // lone continuation byte
+        {8, 66, "", false}, // above U+10FFFF
+        {67, 4, "", false}, // noncanonical paired surrogates in one operand
+        {8, 68, "", false}, // invalid continuation
+    }};
+    const std::array<StringAdd, 18> concats{{
+        {4, 4, ""},
+        {8, 62, "ab"},
+        {12, 12, "11"}, // Concat converts both Numbers; Add would produce 2
+        {0, 1, "falsetrue"},
+        {2, 3, "nullundefined"},
+        {16, 11, "00"},
+        {13, 90, "NaNNaN"},
+        {18, 91, "Infinity-Infinity"},
+        {19, 92, "5e-3241e-7"},
+        {93, 95, "0.0000011e+21"},
+        {6, 8, llvm::StringRef("\0a", 2)},
+        {9, 10,
+         "\xc3\xa9"
+         "e\xcc\x81"},
+        {57, 58, "\xf0\x90\x80\x80"},
+        {58, 57, "\xed\xb0\x80\xed\xa0\x80"},
+        {29, 35, "garbage1junk"}, // String concatenation needs no numeric grammar
+        {63, 4, "", false},
+        {4, 64, "", false},
+        {67, 8, "", false},
+    }};
+    const std::array<std::pair<mlir::Attribute, llvm::StringRef>, 10> taggedUnaries{{
+        {predicates[0].first, "number"}, // +0
+        {predicates[1].first, "number"}, // -0
+        {predicates[2].first, "number"}, // quiet NaN
+        {predicates[3].first, "number"}, // negative signaling NaN
+        {ctjs::BooleanAttr::get(context, false), "boolean"},
+        {predicates[9].first, "string"},                        // empty String
+        {ctjs::StringAttr::get(context, "\xc0\x80"), "string"}, // no byte decoding
+        {ctjs::StringAttr::get(context, std::string(100002, 'a')), "string"},
+        {predicates[12].first, "object"}, // null
+        {predicates[13].first, "undefined"},
+    }};
+    for (unsigned control = 0; control != 1518; ++control) {
         auto expected = baseline;
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
@@ -1288,38 +1697,96 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             const auto payload = terminal->getOperand(0);
             const auto other = first.getArgument(ctjs::arg_receiver);
             const bool primitive = control < 104;
-            const bool power = control >= 560;
+            const bool taggedUnary = control >= 1426;
+            const unsigned taggedIndex = taggedUnary ? (control - 1426) / 4 : 0;
+            const bool stringAdd = control >= 1248 && !taggedUnary;
+            const bool concat = control >= 1358 && !taggedUnary;
+            const unsigned addStart = concat ? 1358 : 1248;
+            const auto strings = concat ? llvm::ArrayRef(concats) : llvm::ArrayRef(stringAdds);
+            const auto stringCount = static_cast<unsigned>(strings.size());
+            const unsigned addIndex = stringAdd ? (control - addStart) / 2 : 0;
+            const bool coercingBinary = control >= 1166 && control < 1248;
+            const unsigned binaryIndex = coercingBinary ? (control - 1166) / 2 : 0;
+            const bool coercingUnary = control >= 1096 && control < 1166;
+            const unsigned unaryIndex = coercingUnary ? (control - 1096) / 2 : 0;
+            const bool wideComparison = control >= 1048 && control < 1096;
+            const unsigned wideIndex = wideComparison ? (control - 1048) / 2 : 0;
+            const bool stringComparison = control >= 896 && control < 1048;
+            const unsigned stringIndex = stringComparison ? (control - 896) / 2 : 0;
+            const bool convertedComparison = control >= 748 && control < 896;
+            const unsigned convertedIndex = convertedComparison ? (control - 748) / 2 : 0;
+            const bool looseEquality = control >= 644 && control < 748;
+            const unsigned looseIndex = looseEquality ? (control - 644) / 2 : 0;
+            const bool power = control >= 560 && control < 644;
             const unsigned powerIndex = power ? (control - 560) / 2 : 0;
-            const bool equality = control >= 434 && control < 536;
+            const bool equality = (control >= 434 && control < 536) || looseEquality ||
+                                  convertedComparison || stringComparison || wideComparison;
             const bool bitwiseUnary = control >= 326 && control < 372;
-            const bool numericUnary = control >= 280 && control < 372;
-            const bool staticCalculated = control >= 372 && !equality && !power;
+            const bool numericUnary = (control >= 280 && control < 372) || coercingUnary;
+            const bool staticCalculated = control >= 372 && !equality && !power && !numericUnary &&
+                                          !coercingBinary && !stringAdd && !taggedUnary;
             const unsigned staticIndex = staticCalculated ? (control - 372) / 2 : 0;
-            const bool calculated = control >= 232 && !numericUnary && !equality;
+            const bool calculated = control >= 232 && !numericUnary && !equality && !taggedUnary;
             const bool compared = control >= 176 && control < 232;
             const bool computed = control >= 116 && control < 176;
-            const unsigned index = power      ? powerIndex < powers.size() ? 0 : powerIndex - 18
-                                   : equality ? (control - 434) / 2
-                                   : staticCalculated
-                                       ? staticIndex < staticArithmetic.size() ? 0 : staticIndex - 6
-                                   : bitwiseUnary ? (control - 326) / 2
-                                   : numericUnary ? (control - 280) / 2
-                                   : calculated   ? (control - 232) / 2
-                                   : compared     ? (control - 176) / 2
-                                   : computed     ? (control - 116) / 2
-                                                  : (control - 76) / 2;
-            const bool transported = (computed && control >= 156) ||
+            const unsigned index =
+                taggedUnary        ? 0
+                : stringAdd        ? addIndex < stringCount ? strings[addIndex].accepts ? 0 : 18
+                                                            : addIndex - stringCount + 12
+                : coercingBinary   ? binaryIndex < 22    ? 0
+                                     : binaryIndex < 27  ? 18
+                                     : binaryIndex < 32  ? binaryIndex - 15
+                                     : binaryIndex == 32 ? 17
+                                     : binaryIndex == 34 ? 19
+                                     : binaryIndex == 35 ? 20
+                                                         : 18
+                : coercingUnary    ? unaryIndex < 20    ? 0
+                                     : unaryIndex < 26  ? 18
+                                     : unaryIndex < 29  ? unaryIndex - 14
+                                     : unaryIndex == 29 ? 17
+                                     : unaryIndex < 32  ? unaryIndex - 11
+                                     : unaryIndex == 32 ? 18
+                                     : unaryIndex == 33 ? 15
+                                                        : 16
+                : wideComparison   ? wideIndex < wideComparisons.size() || wideIndex >= 23 ? 0
+                                     : wideIndex < 22 ? wideIndex + 11
+                                                      : 36
+                : stringComparison ? stringIndex < stringComparisons.size() ? 0
+                                     : stringIndex < 70                     ? stringIndex - 33
+                                                                            : stringIndex - 25
+                : convertedComparison
+                    ? convertedIndex < convertedComparisons.size() ? 0 : convertedIndex - 23
+                : looseEquality    ? looseIndex < looseEqualities.size() ? 0 : looseIndex - 1
+                : power            ? powerIndex < powers.size() ? 0 : powerIndex - 18
+                : equality         ? (control - 434) / 2
+                : staticCalculated ? staticIndex < staticArithmetic.size() ? 0 : staticIndex - 6
+                : bitwiseUnary     ? (control - 326) / 2
+                : numericUnary     ? (control - 280) / 2
+                : calculated       ? (control - 232) / 2
+                : compared         ? (control - 176) / 2
+                : computed         ? (control - 116) / 2
+                                   : (control - 76) / 2;
+            const bool transported = (taggedUnary && (taggedIndex == 10 || taggedIndex == 11 ||
+                                                      taggedIndex == 20 || taggedIndex == 21)) ||
+                                     (computed && control >= 156) ||
                                      (compared && (index == 14 || index == 15)) ||
                                      (calculated && (index == 12 || index == 13)) ||
                                      (numericUnary && (index == 12 || index == 13)) ||
                                      (equality && (index == 27 || index == 28));
-            const unsigned transport = equality       ? index == 28 ? 2 : 0
+            const unsigned transport = taggedUnary    ? taggedIndex == 11   ? 3
+                                                        : taggedIndex == 20 ? 6
+                                                        : taggedIndex == 21 ? 8
+                                                                            : 0
+                                       : equality     ? index == 28 ? 2 : 0
                                        : numericUnary ? index == 13 ? 2 : 0
                                        : calculated   ? index == 13 ? 2 : 0
                                        : compared     ? index == 15 ? 2 : 0
                                        : transported  ? index - 20
                                                       : 0;
-            const unsigned mutation = equality       ? index == 31   ? 0
+            const unsigned mutation = taggedUnary    ? taggedIndex == 13   ? 0
+                                                       : taggedIndex == 14 ? 1
+                                                                           : 6
+                                      : equality     ? index == 31   ? 0
                                                        : index == 32 ? 1
                                                                      : 6
                                       : numericUnary ? index == 15   ? 0
@@ -1340,13 +1807,168 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             at.setInsertionPoint(moved);
             mlir::Value input;
             llvm::SmallVector<std::pair<mlir::Operation *, mlir::Attribute>> evaluatedResults;
-            if (equality) {
-                auto row = equalities[index < equalities.size() ? index : 0];
-                if (index >= 37 && index <= 40) {
+            if (taggedUnary) {
+                const auto & row =
+                    taggedUnaries[taggedIndex < taggedUnaries.size() ? taggedIndex : 0];
+                const auto kind =
+                    (control - 1426) % 4 < 2 ? ctjs::UnaryKind::TypeOf : ctjs::UnaryKind::Void;
+                mlir::Value operand =
+                    taggedIndex == 15 ? mlir::Value(other)
+                    : taggedIndex == 16
+                        ? ctjs::CreateObjectOp::create(at, where, payload.getType()).getResult()
+                    : taggedIndex == 18
+                        ? ctjs::LoadGlobalOp::create(at, where, "tagged-unary-input-effect")
+                              .getResult()
+                        : ctjs::ConstantOp::create(
+                              at, where,
+                              taggedIndex == 17
+                                  ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
+                                  : row.first)
+                              .getResult();
+                auto operation = ctjs::UnaryOp::create(
+                    at, where, payload.getType(), ctjs::UnaryKindAttr::get(context, kind), operand);
+                if (control == 1514) { operation->eraseOperand(0); }
+                if (control == 1515) { operation->removeAttr("kind"); }
+                if (control == 1516) { operand.getDefiningOp()->removeAttr("value"); }
+                if (control == 1517) {
+                    mlir::OpBuilder invalid(operation);
+                    auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
+                    operation->setOperand(0, flag);
+                }
+                const mlir::Attribute value =
+                    kind == ctjs::UnaryKind::TypeOf
+                        ? mlir::Attribute(ctjs::StringAttr::get(context, row.second))
+                        : ctjs::UndefinedAttr::get(context);
+                evaluatedResults.emplace_back(operation.getOperation(), value);
+                input = operation;
+                selected = kind == ctjs::UnaryKind::TypeOf;
+                if (taggedIndex >= 10 && taggedIndex <= 12) {
+                    auto expectedValue = ctjs::ConstantOp::create(at, where, value);
+                    auto comparison =
+                        ctjs::CompareOp::create(at, where, payload.getType(),
+                                                ctjs::CompareKind::StrictEq, input, expectedValue);
+                    evaluatedResults.emplace_back(comparison.getOperation(),
+                                                  ctjs::BooleanAttr::get(context, true));
+                    auto negated = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), comparison);
+                    evaluatedResults.emplace_back(negated.getOperation(),
+                                                  ctjs::BooleanAttr::get(context, false));
+                    input = negated;
+                    selected = false;
+                    if (taggedIndex == 12) {
+                        llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(input);
+                    }
+                }
+                if (taggedIndex == 19) {
+                    ctjs::StoreGlobalOp::create(at, where, "tagged-unary-prefix-effect", other);
+                }
+            } else if (stringAdd) {
+                const auto & row = strings[addIndex < stringCount ? addIndex : 1];
+                const auto oversized = ctjs::StringAttr::get(context, std::string(100002, 'a'));
+                mlir::Value lhs =
+                    index == 17 ? mlir::Value(other)
+                    : index == 18 && addIndex >= stringCount
+                        ? ctjs::CreateObjectOp::create(at, where, payload.getType()).getResult()
+                    : index == 20
+                        ? ctjs::LoadGlobalOp::create(at, where, "string-add-input-effect")
+                              .getResult()
+                        : ctjs::ConstantOp::create(at, where,
+                                                   index == 23 ? mlir::Attribute(oversized)
+                                                               : equalityValues[row.lhs])
+                              .getResult();
+                auto rhs = ctjs::ConstantOp::create(
+                    at, where,
+                    index == 19   ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
+                    : index == 24 ? mlir::Attribute(oversized)
+                                  : equalityValues[row.rhs]);
+                const auto kind = ctjs::BinaryKindAttr::get(context, concat || index == 28
+                                                                         ? ctjs::BinaryKind::Concat
+                                                                         : ctjs::BinaryKind::Add);
+                auto * operation =
+                    concat && index == 22
+                        ? ctjs::BinaryStaticOp::create(at, where, payload.getType(), kind, lhs, rhs)
+                              .getOperation()
+                        : ctjs::BinaryOp::create(at, where, payload.getType(), kind, lhs, rhs)
+                              .getOperation();
+                const unsigned malformedIndex = control - (addStart + 2 * (stringCount + 13));
+                if (malformedIndex == 0) { operation->eraseOperand(1); }
+                if (malformedIndex == 1) { operation->removeAttr("kind"); }
+                if (malformedIndex == 2) { lhs.getDefiningOp()->removeAttr("value"); }
+                if (malformedIndex == 3) { rhs->removeAttr("value"); }
+                if (malformedIndex == 4 || malformedIndex == 5) {
+                    mlir::OpBuilder invalid(operation);
+                    auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
+                    operation->setOperand(malformedIndex - 4, flag);
+                }
+                selected = !concat && index == 22 ? row.value.empty() : !row.value.empty();
+                evaluatedResults.emplace_back(operation, ctjs::StringAttr::get(context, row.value));
+                input = operation->getResult(0);
+                if (index >= 12 && index <= 14) {
+                    auto sum = ctjs::BinaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::BinaryKindAttr::get(context, concat ? ctjs::BinaryKind::Concat
+                                                                  : ctjs::BinaryKind::Add),
+                        input, input);
+                    evaluatedResults.emplace_back(sum.getOperation(),
+                                                  ctjs::StringAttr::get(context, "abab"));
+                    auto comparison = ctjs::CompareOp::create(
+                        at, where, payload.getType(), ctjs::CompareKind::StrictEq, sum, sum);
+                    evaluatedResults.emplace_back(comparison.getOperation(),
+                                                  ctjs::BooleanAttr::get(context, true));
+                    input = comparison;
+                    if (index == 14) {
+                        llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(sum);
+                    } else {
+                        auto negated = ctjs::UnaryOp::create(
+                            at, where, payload.getType(),
+                            ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), input);
+                        selected = false;
+                        evaluatedResults.emplace_back(negated.getOperation(),
+                                                      ctjs::BooleanAttr::get(context, false));
+                        input = negated;
+                    }
+                }
+                if (index == 21) {
+                    ctjs::StoreGlobalOp::create(at, where, "string-add-prefix-effect", other);
+                }
+            } else if (equality) {
+                auto row =
+                    wideComparison
+                        ? wideComparisons[wideIndex < wideComparisons.size() ? wideIndex : 0]
+                    : stringComparison
+                        ? stringComparisons[stringIndex < stringComparisons.size() ? stringIndex
+                                                                                   : 36]
+                    : convertedComparison
+                        ? convertedComparisons[convertedIndex < convertedComparisons.size()
+                                                   ? convertedIndex
+                                                   : 4]
+                    : looseEquality
+                        ? looseEqualities[looseIndex < looseEqualities.size() ? looseIndex : 5]
+                        : equalities[index < equalities.size() ? index : 0];
+                if (convertedComparison && index >= 37 && index <= 40) {
+                    row = {index == 37   ? ctjs::CompareKind::Lt
+                           : index == 38 ? ctjs::CompareKind::Le
+                           : index == 39 ? ctjs::CompareKind::Gt
+                                         : ctjs::CompareKind::Ge,
+                           43, 44, true};
+                } else if (looseEquality && index >= 37 && index <= 40) {
+                    row = index == 37   ? Comparison{ctjs::CompareKind::Eq, 5, 11, true}
+                          : index == 38 ? Comparison{ctjs::CompareKind::Eq, 11, 5, true}
+                          : index == 39 ? Comparison{ctjs::CompareKind::Eq, 5, 0, true}
+                                        : Comparison{ctjs::CompareKind::Eq, 0, 5, true};
+                } else if (index >= 37 && index <= 40) {
                     row = index == 37   ? Comparison{ctjs::CompareKind::Lt, 4, 5, true}
                           : index == 38 ? Comparison{ctjs::CompareKind::Le, 0, 1, true}
                           : index == 39 ? Comparison{ctjs::CompareKind::Gt, 2, 2, false}
                                         : Comparison{ctjs::CompareKind::Ge, 3, 3, false};
+                } else if (convertedComparison && index >= 41 && index <= 44) {
+                    row = convertedComparisons[index - 1];
+                } else if (looseEquality && index >= 41 && index <= 44) {
+                    row = index == 41   ? Comparison{ctjs::CompareKind::Eq, 5, 2, false}
+                          : index == 42 ? Comparison{ctjs::CompareKind::Eq, 2, 5, false}
+                          : index == 43 ? Comparison{ctjs::CompareKind::Eq, 4, 3, false}
+                                        : Comparison{ctjs::CompareKind::Eq, 3, 4, false};
                 } else if (index >= 41 && index <= 44) {
                     row = index == 41   ? Comparison{ctjs::CompareKind::Eq, 0, 11, true}
                           : index == 42 ? Comparison{ctjs::CompareKind::Eq, 0, 0, true}
@@ -1366,8 +1988,10 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                         ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Plus), other);
                 } else {
                     const mlir::Attribute value =
-                        index == 45 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "0"))
-                                    : equalityValues[row.lhs];
+                        control >= 1094 ? mlir::Attribute(ctjs::StringAttr::get(
+                                              context, std::string(100001, '0') + "1"))
+                        : index == 45   ? mlir::Attribute(ctjs::BigIntAttr::get(context, "0"))
+                                        : equalityValues[row.lhs];
                     lhs = ctjs::ConstantOp::create(at, where, value);
                 }
                 const mlir::Attribute rhsValue =
@@ -1376,14 +2000,23 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 auto rhs = ctjs::ConstantOp::create(at, where, rhsValue);
                 auto operation =
                     ctjs::CompareOp::create(at, where, payload.getType(), row.kind, lhs, rhs);
-                if (control == 530) { operation->eraseOperand(1); }
-                if (control == 531) { operation->removeAttr("kind"); }
-                if (control == 532) { lhs.getDefiningOp()->removeAttr("value"); }
-                if (control == 533) { rhs->removeAttr("value"); }
-                if (control >= 534) {
+                if (control == 530 || control == 742 || control == 890 || control == 1042) {
+                    operation->eraseOperand(1);
+                }
+                if (control == 531 || control == 743 || control == 891 || control == 1043) {
+                    operation->removeAttr("kind");
+                }
+                if (control == 532 || control == 744 || control == 892 || control == 1044) {
+                    lhs.getDefiningOp()->removeAttr("value");
+                }
+                if (control == 533 || control == 745 || control == 893 || control == 1045) {
+                    rhs->removeAttr("value");
+                }
+                if (control == 534 || control == 535 || control == 746 || control == 747 ||
+                    control == 894 || control == 895 || (control >= 1046 && control < 1048)) {
                     mlir::OpBuilder invalid(operation);
                     auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
-                    operation->setOperand(control - 534, flag);
+                    operation->setOperand(control % 2, flag);
                 }
                 selected = row.value;
                 evaluatedResults.emplace_back(operation.getOperation(),
@@ -1407,15 +2040,24 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 }
             } else if (numericUnary) {
                 const auto & rows = bitwiseUnary ? bitwiseUnaries : numericUnaries;
+                const auto & converted =
+                    coercingUnaries[unaryIndex < coercingUnaries.size() ? unaryIndex : 4];
                 const auto row =
-                    index < rows.size() ? rows[index]
+                    coercingUnary
+                        ? NumericUnary{converted.kind, 0, converted.value, converted.truth}
+                    : index < rows.size() ? rows[index]
                     : bitwiseUnary
                         ? NumericUnary{ctjs::UnaryKind::BitNot, std::bit_cast<uint64_t>(-2.0),
                                        std::bit_cast<uint64_t>(1.0), true}
                         : NumericUnary{ctjs::UnaryKind::Plus, 0x3ff0000000000000ULL,
                                        0x3ff0000000000000ULL, true};
                 const mlir::Attribute value =
-                    index == 18   ? mlir::Attribute(ctjs::StringAttr::get(context, "1"))
+                    coercingUnary && unaryIndex == 32
+                        ? mlir::Attribute(
+                              ctjs::StringAttr::get(context, std::string(100001, '0') + "1"))
+                    : coercingUnary && (unaryIndex < 29 || unaryIndex > 32)
+                        ? equalityValues[converted.operand]
+                    : index == 18 ? mlir::Attribute(ctjs::StringAttr::get(context, "1"))
                     : index == 19 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
                                   : ctjs::NumberAttr::get(context, row.operand);
                 mlir::Value operand = index == 17
@@ -1443,8 +2085,11 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                     operation->setOperand(0, flag);
                 }
                 selected = row.truth;
-                evaluatedResults.emplace_back(operation.getOperation(),
-                                              ctjs::NumberAttr::get(context, row.value));
+                evaluatedResults.emplace_back(
+                    operation.getOperation(),
+                    ctjs::NumberAttr::get(context, bitwiseUnary && index == 18
+                                                       ? std::bit_cast<uint64_t>(-2.0)
+                                                       : row.value));
                 input = operation;
                 if (index == 12 || index == 13) {
                     auto negated = ctjs::UnaryOp::create(
@@ -1481,36 +2126,53 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                     }
                 }
             } else if (calculated) {
+                const auto & converted =
+                    coercingBinaries[binaryIndex < coercingBinaries.size() ? binaryIndex : 0];
                 const auto row =
-                    power ? powers[powerIndex < powers.size() ? powerIndex : 0]
+                    coercingBinary
+                        ? Arithmetic{converted.kind, 0, 0, converted.value, converted.truth}
+                    : power ? powers[powerIndex < powers.size() ? powerIndex : 0]
                     : staticCalculated
                         ? staticArithmetic[staticIndex < staticArithmetic.size() ? staticIndex : 1]
                         : arithmetic[index < arithmetic.size() ? index : 0];
                 const mlir::Attribute lhsValue =
-                    index == 18 ? mlir::Attribute(ctjs::StringAttr::get(context, "1"))
-                                : ctjs::NumberAttr::get(context, row.lhs);
+                    coercingBinary && binaryIndex == 37
+                        ? mlir::Attribute(
+                              ctjs::StringAttr::get(context, std::string(100001, '0') + "1"))
+                    : coercingBinary ? equalityValues[converted.lhs]
+                    : index == 18    ? mlir::Attribute(ctjs::StringAttr::get(context, "1"))
+                                     : ctjs::NumberAttr::get(context, row.lhs);
                 mlir::Value lhs = index == 17
                                       ? mlir::Value(other)
                                       : ctjs::ConstantOp::create(at, where, lhsValue).getResult();
                 if (power && index == 20) {
                     lhs = ctjs::LoadGlobalOp::create(at, where, "power-input-effect");
                 }
+                if (coercingBinary && binaryIndex == 33) {
+                    lhs = ctjs::CreateObjectOp::create(at, where, payload.getType());
+                }
+                if (coercingBinary && binaryIndex == 35) {
+                    lhs = ctjs::LoadGlobalOp::create(at, where, "binary-input-effect");
+                }
                 const mlir::Attribute rhsValue =
-                    index == 19 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
-                                : ctjs::NumberAttr::get(context, row.rhs);
+                    index == 19      ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
+                    : coercingBinary ? equalityValues[converted.rhs]
+                                     : ctjs::NumberAttr::get(context, row.rhs);
                 auto rhs = ctjs::ConstantOp::create(at, where, rhsValue);
                 const auto kind = ctjs::BinaryKindAttr::get(
-                    context, control == 432 ? ctjs::BinaryKind::Sub
-                             : control == 433 || (index == 20 && !staticCalculated)
-                                 ? ctjs::BinaryKind::Pow
-                                 : row.kind);
+                    context,
+                    control == 432 ? ctjs::BinaryKind::Sub
+                    : control == 433 || (index == 20 && !staticCalculated && !coercingBinary)
+                        ? ctjs::BinaryKind::Pow
+                        : row.kind);
                 auto * operation =
-                    staticCalculated && index != 20
+                    (coercingBinary ? converted.staticForm : staticCalculated && index != 20)
                         ? ctjs::BinaryStaticOp::create(at, where, payload.getType(), kind, lhs, rhs)
                               .getOperation()
                         : ctjs::BinaryOp::create(at, where, payload.getType(), kind, lhs, rhs)
                               .getOperation();
-                const unsigned binaryControl = power              ? control - 364
+                const unsigned binaryControl = coercingBinary     ? control - 968
+                                               : power            ? control - 364
                                                : staticCalculated ? control - 152
                                                                   : control;
                 if (binaryControl == 274) { operation->eraseOperand(1); }
@@ -1522,8 +2184,14 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                     auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
                     operation->setOperand(binaryControl - 278, flag);
                 }
-                selected = row.truth;
-                evaluatedResults.emplace_back(operation, ctjs::NumberAttr::get(context, row.value));
+                selected = coercingBinary && binaryIndex == 36 ? !row.truth : row.truth;
+                evaluatedResults.emplace_back(
+                    operation,
+                    control == 268 || control == 269
+                        ? mlir::Attribute(ctjs::StringAttr::get(context, "11.1102230246251565e-16"))
+                        : ctjs::NumberAttr::get(context, power && index == 18
+                                                             ? std::bit_cast<uint64_t>(1.0)
+                                                             : row.value));
                 input = operation->getResult(0);
                 if (index >= 12 && index <= 14) {
                     auto comparison = ctjs::CompareOp::create(
@@ -1533,7 +2201,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                                                   ctjs::BooleanAttr::get(context, selected));
                     input = comparison;
                     if (index == 14) {
-                        llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(input);
+                        llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(
+                            coercingBinary ? lhs : input);
                     } else {
                         auto negated = ctjs::UnaryOp::create(
                             at, where, payload.getType(),
@@ -1653,10 +2322,20 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                                     : predicates[6].first;
                 input = ctjs::ConstantOp::create(at, where, value);
             }
-            if (primitive || (computed && (index < 12 || (transported && transport < 5))) ||
-                (compared && index < 17) ||
-                (calculated && (index < 15 || (!power && !staticCalculated && index == 20))) ||
-                (numericUnary && index < 15) || (equality && index < 31)) {
+            if ((taggedUnary && taggedIndex < 13) || primitive ||
+                (computed && (index < 12 || (transported && transport < 5))) ||
+                (compared && (index < 17 || index == 21)) || control == 268 || control == 269 ||
+                control == 1356 || control == 1357 ||
+                (calculated &&
+                 (index < 15 ||
+                  (!power && !staticCalculated && !coercingBinary && !stringAdd && index == 20) ||
+                  (power && index == 18))) ||
+                (numericUnary && (index < 15 || (!coercingUnary && index == 18))) ||
+                (equality &&
+                 ((stringComparison ? stringIndex < 40 || (index >= 27 && index < 31)
+                                    : index < 31) ||
+                  (!stringComparison && (convertedComparison ? index == 37 || index == 38
+                                                             : index >= 37 && index <= 44))))) {
                 // The input still evaluates after projection. Compare against
                 // the same operands and known pure results without the edges.
                 mlir::IRMapping mapping;
@@ -2065,7 +2744,11 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             (control >= 226 && control < 232) || (control >= 274 && control < 280) ||
             (control >= 322 && control < 326) || (control >= 368 && control < 372) ||
             (control >= 426 && control < 434) || (control >= 530 && control < 536) ||
-            control == 552 || control == 553 || control >= 638;
+            control == 552 || control == 553 || (control >= 638 && control < 644) ||
+            (control >= 742 && control < 748) || (control >= 890 && control < 896) ||
+            (control >= 1042 && control < 1048) || (control >= 1242 && control < 1248) ||
+            (control >= 1350 && control < 1356) || control == 1414 || control == 1415 ||
+            (control >= 1420 && control < 1426) || control >= 1514;
         if (!check(mlir::succeeded(mlir::verify(*candidate)) != malformed,
                    "only intentionally malformed helper operations fail verification")) {
             continue;
@@ -2089,7 +2772,19 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             (control >= 280 && control < 310) || (control >= 326 && control < 356) ||
             (control >= 372 && control < 414) || (control >= 434 && control < 496) ||
             (control >= 536 && control < 542) || control == 272 || control == 273 ||
-            (control >= 560 && control < 626);
+            (control >= 560 && control < 626) || (control >= 516 && control < 524) ||
+            (control >= 644 && control < 708) || control == 218 || control == 219 ||
+            (control >= 508 && control < 516) || (control >= 720 && control < 736) ||
+            (control >= 748 && control < 828) || (control >= 848 && control < 856) ||
+            (control >= 868 && control < 872) || (control >= 896 && control < 976) ||
+            (control >= 1016 && control < 1024) || (control >= 1048 && control < 1072) ||
+            (control >= 1080 && control < 1088) || (control >= 1096 && control < 1136) ||
+            (control >= 1148 && control < 1154) || control == 316 || control == 317 ||
+            control == 362 || control == 363 || control == 632 || control == 633 ||
+            (control >= 1166 && control < 1210) || (control >= 1220 && control < 1226) ||
+            control == 268 || control == 269 || (control >= 1248 && control < 1312) ||
+            (control >= 1324 && control < 1330) || (control >= 1356 && control < 1388) ||
+            (control >= 1394 && control < 1400) || (control >= 1426 && control < 1478);
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
@@ -2101,7 +2796,9 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             if (control == 46 || control == 67 || control == 79 || control == 137 ||
                 control == 165 || control == 209 || control == 259 || control == 307 ||
                 control == 353 || control == 411 || control == 493 || control == 541 ||
-                control == 623) {
+                control == 623 || control == 703 || control == 851 || control == 1019 ||
+                control == 1083 || control == 1151 || control == 1223 || control == 1327 ||
+                control == 1397 || control == 1471 || control == 1473) {
                 const auto attempt = [&](unsigned budget) {
                     mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
                     auto limitedProof = proof;
@@ -2141,7 +2838,10 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             check(!reason.empty() && printed(*candidate) == before &&
                       proof.moduleSha256 == fingerprint,
                   "raw helper shape, effect and receiver refusals roll back the whole module");
-            if (control == 8 || control == 9 || control == 53 || control == 72) {
+            if (control == 8 || control == 9 || control == 53 || control == 72 ||
+                (control >= 1094 && control < 1096) || (control >= 1160 && control < 1162) ||
+                control == 1240 || control == 1241 || (control >= 1346 && control < 1350) ||
+                (control >= 1416 && control < 1420)) {
                 check(reason.find("budget") != std::string::npos,
                       "helper operations and successor edges consume the normalization budget");
             }

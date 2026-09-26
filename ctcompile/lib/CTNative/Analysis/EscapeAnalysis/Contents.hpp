@@ -15,6 +15,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
@@ -66,15 +67,114 @@ struct ContentsValue {
     bool string() const { return kind == ContentsKind::String; }
 };
 
-inline std::pair<mlir::Value, bool> conditionChoiceKey(mlir::Value condition) {
-    // Truthy and logical Not are total, without object conversion. The flag
+inline std::pair<mlir::Value, bool> conditionChoiceKey(
+    mlir::Value condition, llvm::function_ref<bool(std::size_t)> spend) {
+    // Truthy, ToBoolean and logical Not are total, without object conversion. The flag
     // records whether the branch reverses the exact input's truthiness.
     auto truthy = condition.getDefiningOp<ctjs::TruthyOp>();
     if (!truthy) { return {condition, false}; }
-    // ponytail: unwrap one Not; longer expressions need a bounded proof.
-    auto unary = truthy.getValue().getDefiningOp<ctjs::UnaryOp>();
-    if (unary && unary.getKind() == ctjs::UnaryKind::Not) { return {unary.getOperand(), true}; }
-    return {truthy.getValue(), false};
+    const auto booleanInput = [&](mlir::Value value) -> std::pair<mlir::Value, bool> {
+        bool negated = false;
+        while (true) {
+            // The shared budget bounds traversal; exhaustion supplies no partial key.
+            if (!spend(1)) { return {}; }
+            if (auto convert = value.getDefiningOp<ctjs::ConvertOp>();
+                convert && convert.getKind() == ctjs::ConvertKind::ToBoolean) {
+                value = convert.getOperand();
+                continue;
+            }
+            auto unary = value.getDefiningOp<ctjs::UnaryOp>();
+            if (!unary || unary.getKind() != ctjs::UnaryKind::Not) { break; }
+            value = unary.getOperand();
+            negated = !negated;
+        }
+        auto compare = value.getDefiningOp<ctjs::CompareOp>();
+        if (compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+            // Strict equality is total and noncoercing, including opaque objects.
+            // Prefixes before enclosing Ifs dominate this producer. Choose the
+            // outermost first match, so local duplicates share its replay snapshot.
+            // Never cross a loop or borrow a sibling/following producer's choice.
+            // ponytail: linear prefix scans; cache keys only if profiling warrants it.
+            mlir::Operation * boundary = compare;
+            while (true) {
+                for (mlir::Operation & operation : *boundary->getBlock()) {
+                    if (!spend(1)) { return {}; }
+                    if (&operation == boundary) { break; }
+                    auto previous = llvm::dyn_cast<ctjs::CompareOp>(operation);
+                    if (previous && previous.getKind() == ctjs::CompareKind::StrictEq &&
+                        ((previous.getLhs() == compare.getLhs() &&
+                          previous.getRhs() == compare.getRhs()) ||
+                         (previous.getLhs() == compare.getRhs() &&
+                          previous.getRhs() == compare.getLhs()))) {
+                        value = previous.getResult();
+                        break;
+                    }
+                }
+                auto enclosing = llvm::dyn_cast<mlir::scf::IfOp>(boundary->getParentOp());
+                if (!enclosing) { break; }
+                boundary = enclosing;
+            }
+        }
+        return {value, negated};
+    };
+    mlir::Value input = truthy.getValue();
+    bool negated = false;
+    while (true) {
+        const auto [value, reversed] = booleanInput(input);
+        if (!value) { return {}; }
+        input = value;
+        negated ^= reversed;
+        if (auto branch = input.getDefiningOp<mlir::scf::IfOp>()) {
+            // Both incoming chains must retain one SSA representative and polarity.
+            // This selects no arm: census and replay still check every effect.
+            const auto position = llvm::cast<mlir::OpResult>(input).getResultNumber();
+            std::pair<mlir::Value, bool> common;
+            for (mlir::Region & region : branch->getRegions()) {
+                if (!spend(1)) { return {}; }
+                if (!llvm::hasSingleElement(region) || region.front().empty() ||
+                    region.front().getNumArguments() != 0) {
+                    common = {};
+                    break;
+                }
+                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                if (!yield || yield.getNumOperands() != branch.getNumResults()) {
+                    common = {};
+                    break;
+                }
+                const auto incoming = booleanInput(yield.getOperand(position));
+                if (!incoming.first) { return {}; }
+                if (common.first && common != incoming) {
+                    auto first = common.first.getDefiningOp<ctjs::ConstantOp>();
+                    auto second = incoming.first.getDefiningOp<ctjs::ConstantOp>();
+                    auto thenValue = first ? llvm::dyn_cast<ctjs::BooleanAttr>(first.getValue())
+                                           : ctjs::BooleanAttr{};
+                    auto elseValue = second ? llvm::dyn_cast<ctjs::BooleanAttr>(second.getValue())
+                                            : ctjs::BooleanAttr{};
+                    // Complementary Boolean yields encode the condition itself.
+                    // Keep exact Boolean literals; numeric truthiness proves nothing here.
+                    if (thenValue && elseValue &&
+                        (thenValue.getValue() != common.second) !=
+                            (elseValue.getValue() != incoming.second)) {
+                        auto guard = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                        common = {guard ? mlir::Value(guard.getValue())
+                                        : mlir::Value(branch.getCondition()),
+                                  thenValue.getValue() == common.second};
+                    } else {
+                        common = {};
+                    }
+                    break;
+                }
+                common = incoming;
+            }
+            if (common.first) {
+                input = common.first;
+                negated ^= common.second;
+                continue;
+            }
+        }
+        break;
+    }
+    return {input, negated};
 }
 
 using HeldProperties = llvm::MapVector<mlir::StringAttr, ContentsValue>;

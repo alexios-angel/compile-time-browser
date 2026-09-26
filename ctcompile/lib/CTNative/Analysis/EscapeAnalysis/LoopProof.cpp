@@ -157,8 +157,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         auto branch = left.getDefiningOp<mlir::scf::IfOp>();
         auto other = right.getDefiningOp<mlir::scf::IfOp>();
         if (!branch || !other) { return false; }
-        const auto [firstCondition, firstNegated] = conditionChoiceKey(branch.getCondition());
-        const auto [secondCondition, secondNegated] = conditionChoiceKey(other.getCondition());
+        const auto [firstCondition, firstNegated] =
+            conditionChoiceKey(branch.getCondition(), spendWork);
+        const auto [secondCondition, secondNegated] =
+            conditionChoiceKey(other.getCondition(), spendWork);
+        if (!firstCondition || !secondCondition) {
+            invariantFailure = ArrayContentsFailure::WorkLimit;
+            return false;
+        }
         // Equal ranges and distinct input snapshots prove no correspondence.
         if (firstCondition != secondCondition) { return false; }
         // yieldedInputs accepts only producers reached by the single-visit
@@ -608,7 +614,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
               bitOr || bitXor)) {
             return std::nullopt;
         }
-        if (subtract && correspondingInputs(binary.getLhs(), binary.getRhs())) {
+        const bool corresponding =
+            subtract && correspondingInputs(binary.getLhs(), binary.getRhs());
+        if (invariantFailure == ArrayContentsFailure::WorkLimit) { return std::nullopt; }
+        if (corresponding) {
             // Corresponding slots select equal values on the same input choice.
             // Both original values must independently prove bounded Numbers.
             // Neither ranges nor conversions prove correspondence; recursive

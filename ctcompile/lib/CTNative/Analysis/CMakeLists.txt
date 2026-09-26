@@ -56,6 +56,7 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   OwnedGlobalRoots.h
   OwnedMethodTableSlots.h
   PrimitiveMapKey.h
+  StringNumber.h
 )
 
 add_subdirectory(BindingTime)
