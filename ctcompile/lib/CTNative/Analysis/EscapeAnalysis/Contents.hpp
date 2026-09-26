@@ -144,7 +144,24 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                 const auto incoming = booleanInput(yield.getOperand(position));
                 if (!incoming.first) { return {}; }
                 if (common.first && common != incoming) {
-                    common = {};
+                    auto first = common.first.getDefiningOp<ctjs::ConstantOp>();
+                    auto second = incoming.first.getDefiningOp<ctjs::ConstantOp>();
+                    auto thenValue = first ? llvm::dyn_cast<ctjs::BooleanAttr>(first.getValue())
+                                           : ctjs::BooleanAttr{};
+                    auto elseValue = second ? llvm::dyn_cast<ctjs::BooleanAttr>(second.getValue())
+                                            : ctjs::BooleanAttr{};
+                    // Complementary Boolean yields encode the condition itself.
+                    // Keep exact Boolean literals; numeric truthiness proves nothing here.
+                    if (thenValue && elseValue &&
+                        (thenValue.getValue() != common.second) !=
+                            (elseValue.getValue() != incoming.second)) {
+                        auto guard = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                        common = {guard ? mlir::Value(guard.getValue())
+                                        : mlir::Value(branch.getCondition()),
+                                  thenValue.getValue() == common.second};
+                    } else {
+                        common = {};
+                    }
                     break;
                 }
                 common = incoming;
