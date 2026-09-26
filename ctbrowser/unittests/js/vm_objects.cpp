@@ -82,6 +82,10 @@ void test_class_fields_are_per_instance() {
     expect_result("var eval = ''; try { eval(); } catch (e) { return e instanceof TypeError; }"
                   " return 'none';",
                   "true");
+    // a computed static accessor meets the non-configurable `prototype`
+    expect_result("try { class C { static get ['prototype']() {} } } catch (e) { return e.name; }"
+                  " return 'none';",
+                  "TypeError");
     // `static constructor() {}` is a static method, not the class's constructor
     expect_result("class C { static constructor() { return 's'; } constructor() { this.v = 1; } }"
                   " return C.constructor() + new C().v;",

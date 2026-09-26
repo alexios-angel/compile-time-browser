@@ -147,6 +147,16 @@ value context::own_keys(value source) {
 }
 
 void context::define_accessor(value target, const std::string & name, value getter, value setter) {
+    // DefinePropertyOrThrow (7.3.8) - a class's `static get prototype()`
+    // meets the constructor's non-configurable `prototype`, and
+    // ValidateAndApplyPropertyDescriptor refuses it: the TypeError.
+    if (target.is_kind(heap_kind::function)) {
+        property_descriptor held;
+        if (own_property(target, name, held) && held.has_configurable && !held.configurable) {
+            throw_error("TypeError", "Cannot redefine property: " + name);
+            return;
+        }
+    }
     if (target.is_object()) {
         static_cast<object_object *>(target.as_heap())->define_accessor(name, getter, setter);
     } else if (target.is_kind(heap_kind::function)) {
