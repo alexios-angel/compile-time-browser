@@ -80,6 +80,7 @@ public:
     // HTML 4.10.4: a label's labeled control, labelable custom elements and
     // all (element/control_methods/collections_and_labels.cpp).
     [[nodiscard]] node_id labeled_control(node_id label);
+    [[nodiscard]] std::optional<bool> control_validity(node_id id); // :valid/:invalid's answer
     // After ANY write to the document, the browser's own included (a
     // <summary>'s activation): the observers' records and the attribute change
     // steps (entry.cpp).
