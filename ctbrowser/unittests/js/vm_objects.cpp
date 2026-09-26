@@ -82,6 +82,13 @@ void test_class_fields_are_per_instance() {
     expect_result("var eval = ''; try { eval(); } catch (e) { return e instanceof TypeError; }"
                   " return 'none';",
                   "true");
+    // a method has no `prototype` (MakeMethod, never MakeConstructor); a
+    // generator method and the class itself do
+    expect_result(
+        "class C { m() {} get g() {} *gen() {} } const d = Object.getOwnPropertyDescriptor("
+        "C.prototype, 'g'); return ['prototype' in C.prototype.m, 'prototype' in d.get,"
+        " 'prototype' in C.prototype.gen, typeof C.prototype].join();",
+        "false,false,true,object");
     // a heritage that is no constructor is the TypeError, named without
     // running its code (a proxy's `get` trap would throw instead)
     expect_result("const p = new Proxy(() => {}, { get() { throw 'trap'; } });"

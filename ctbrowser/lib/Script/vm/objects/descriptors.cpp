@@ -386,6 +386,7 @@ bool context::own_property(value target, const std::string & name, property_desc
             return true;
         }
         if (name == "prototype") {
+            if (method_without_prototype(*closure)) { return false; }
             const value made = ensure_prototype(target);
             if (made.is_undefined()) { return false; } // an arrow has none
             out = property_descriptor::data(made, attr_writable);

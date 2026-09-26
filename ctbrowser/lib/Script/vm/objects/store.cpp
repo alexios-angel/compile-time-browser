@@ -659,7 +659,9 @@ void context::store_property(value target, const std::string & name, value v) {
         // = x` for a function whose [[Prototype]] is a class or a native
         // constructor found that one's read-only `prototype` and was refused -
         // Babel's `_inherits`, every `class A extends Array`.
-        if (name == "prototype") { (void)ensure_prototype(target); }
+        if (name == "prototype" && !method_without_prototype(*closure)) {
+            (void)ensure_prototype(target);
+        }
         if (accessor_entry * entry = closure->find_accessor(name)) {
             // An own accessor with no setter refuses the write; it is never
             // shadowed by a data property of the same name.

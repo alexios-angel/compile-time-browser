@@ -554,7 +554,10 @@ value context::lookup_property(value target, const std::string & name) {
         if (accessor_entry * entry = closure->find_accessor(name)) {
             return call_getter(*this, *entry, target);
         }
-        if (name == "prototype") { return ensure_prototype(target); }
+        if (name == "prototype") {
+            return method_without_prototype(*closure) ? value::undefined()
+                                                      : ensure_prototype(target);
+        }
         // `f.name` and `f.length`, read off the compiled function rather than
         // stored on every closure - most functions are never asked and an extra
         // two properties each is a real cost on a 4,754-function bundle.

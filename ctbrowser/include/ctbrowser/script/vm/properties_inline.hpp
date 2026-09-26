@@ -20,6 +20,18 @@ namespace ctbrowser::script {
     return ctbrowser::number_to_string(ctbrowser::string_to_number(key)) == key;
 }
 
+// A METHOD HAS NO `prototype` (15.4.4 DefineMethod makes it with MakeMethod
+// and never MakeConstructor; accessors likewise): a function carrying a
+// [[HomeObject]] - `__home`, the compiler's slot - that was not given a
+// `prototype` of its own, as a class constructor is at its definition. A
+// generator method keeps one (15.5.4 / 15.6.4 give it a prototype object).
+// An object literal's method has its home wired only when it says `super`
+// or `eval(`, so one that does neither still answers with a prototype.
+[[nodiscard]] inline bool method_without_prototype(closure_object & closure) {
+    return closure.find("__home") != nullptr &&
+           (closure.proto == nullptr || !closure.proto->is_generator);
+}
+
 // Is this Number an ARRAY INDEX (6.1.7: an integral 0 .. 2^32-2)? -0 is: its
 // ToString is "0". A Number key that is not one - 1.5, -1, NaN - is the
 // property named by its ToString, never an element a truncation reached.
