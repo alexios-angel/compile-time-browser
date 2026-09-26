@@ -421,19 +421,18 @@ void test_image_data_numeric_bounds() {
         view[0] = 10; view[1] = 20; view[2] = 30; view[3] = 255;
         ctx.putImageData(new ImageData(view, 1), 0, 0);
         console.log('view=' + ctx.getImageData(0, 0, 1, 1).data[2]);
-        // The binding accepts array-backed image objects too; channel coercion
-        // must use Uint8ClampedArray semantics even on that compatibility path.
-        ctx.putImageData({ width: 1, height: 1, data: [NaN, Infinity, 2.5, 255] }, 0, 0);
-        const clamped = ctx.getImageData(0, 0, 1, 1).data;
-        console.log('channels=' + clamped[0] + ',' + clamped[1] + ',' + clamped[2]);
+        // Something merely SHAPED like an ImageData is not one: WebIDL converts
+        // putImageData's argument to the interface (2d.imageData.put.wrongtype).
+        error(() => ctx.putImageData({ width: 1, height: 1, data: [NaN, Infinity, 2.5, 255] },
+                                     0, 0));
     </script>)");
     check(page.script_error().empty(), "image-data boundary calls ran: " + page.script_error());
     const std::vector<std::string> expected{
-        "TypeError",      "TypeError", "TypeError",       "IndexSizeError", "IndexSizeError",
-        "negative=2x1",   "copy=8,0",  "back=255,255",    "outside=0,0,0",  "unchanged=255",
-        "clipped=255",    "TypeError", "TypeError",       "coercion=xy",    "Error",
-        "stopped=xy",     "wrap=1",    "IndexSizeError",  "RangeError",     "IndexSizeError",
-        "IndexSizeError", "view=30",   "channels=0,255,2"};
+        "TypeError",      "TypeError", "TypeError",      "IndexSizeError", "IndexSizeError",
+        "negative=2x1",   "copy=8,0",  "back=255,255",   "outside=0,0,0",  "unchanged=255",
+        "clipped=255",    "TypeError", "TypeError",      "coercion=xy",    "Error",
+        "stopped=xy",     "wrap=1",    "IndexSizeError", "RangeError",     "IndexSizeError",
+        "IndexSizeError", "view=30",   "TypeError"};
     const auto & log = log_of(page);
     check(log == expected, "ImageData conversions, clipping, buffer shapes and errors agree");
     if (log != expected) {
@@ -620,9 +619,97 @@ void test_clip() {
     }
 }
 
+// THE CONTEXT THE WEBIDL WAY: attributes that refuse what they cannot hold and
+// read back their own serialisation, the paints a fill can use, and the path
+// verbs that were missing. Each line is one rule of HTML 4.12.5.1 that a page
+// can observe; html/canvas/element in WPT has the full set.
+void test_attributes_paints_and_verbs() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><canvas id=c width=100 height=60></canvas><script>
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+        console.log('same=' + (canvas.getContext('2d') === ctx));
+        ctx.lineWidth = 3; ctx.lineWidth = -1; ctx.lineWidth = NaN;
+        console.log('lineWidth=' + ctx.lineWidth);
+        ctx.fillStyle = '#fa0'; console.log('fill=' + ctx.fillStyle);
+        ctx.fillStyle = 'not a colour'; console.log('kept=' + ctx.fillStyle);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'; console.log('alpha=' + ctx.fillStyle);
+        ctx.lineCap = 'bogus'; console.log('cap=' + ctx.lineCap);
+        ctx.font = '20PX   SERIF'; console.log('font=' + ctx.font);
+        console.log('proto=' + (typeof CanvasRenderingContext2D.prototype.roundRect));
+        let threw = 'no';
+        try { ctx.scale(1); } catch (e) { threw = e.name; }
+        console.log('missing=' + threw);
+        // A gradient: red at the left edge, blue at the right.
+        const g = ctx.createLinearGradient(0, 0, 100, 0);
+        g.addColorStop(0, '#ff0000'); g.addColorStop(1, '#0000ff');
+        ctx.fillStyle = g;
+        console.log('gradient=' + (ctx.fillStyle === g));
+        ctx.fillRect(0, 0, 100, 20);
+        // A round rectangle, its corner cut away; and hit testing.
+        ctx.fillStyle = '#00ff00';
+        ctx.beginPath(); ctx.roundRect(0, 20, 40, 40, 15); ctx.fill();
+        console.log('inside=' + ctx.isPointInPath(20, 40) + ',' + ctx.isPointInPath(1, 21));
+        // A square cap reaches half the width past the end of the line.
+        ctx.strokeStyle = '#0000ff'; ctx.lineWidth = 10; ctx.lineCap = 'square';
+        ctx.beginPath(); ctx.moveTo(60, 40); ctx.lineTo(80, 40); ctx.stroke();
+        ctx.save(); ctx.fillStyle = '#123456'; ctx.reset();
+        console.log('reset=' + ctx.fillStyle + ',' + ctx.lineWidth + ',' +
+                    ctx.getImageData(5, 5, 1, 1).data[3]);
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const std::vector<std::string> expected{"same=true",
+                                            "lineWidth=3",
+                                            "fill=#ffaa00",
+                                            "kept=#ffaa00",
+                                            "alpha=rgba(255, 255, 255, 0.5)",
+                                            "cap=butt",
+                                            "font=20px serif",
+                                            "proto=function",
+                                            "missing=TypeError",
+                                            "gradient=true",
+                                            "inside=true,false",
+                                            "reset=#000000,1,0"};
+    const auto & log = log_of(page);
+    check(log == expected, "attributes, paints and verbs behave as the spec says");
+    if (log != expected) {
+        for (const auto & line : log) { std::fprintf(stderr, "canvas: %s\n", line.c_str()); }
+    }
+}
+
+// The pixels of the same calls, before reset() cleared them.
+void test_gradients_caps_and_round_corners() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><canvas id=c width=100 height=60></canvas><script>
+        const ctx = document.getElementById('c').getContext('2d');
+        const g = ctx.createLinearGradient(0, 0, 100, 0);
+        g.addColorStop(0, '#ff0000'); g.addColorStop(1, '#0000ff');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 100, 20);
+        ctx.fillStyle = '#00ff00';
+        ctx.beginPath(); ctx.roundRect(0, 20, 40, 40, 15); ctx.fill();
+        ctx.strokeStyle = '#0000ff'; ctx.lineWidth = 10; ctx.lineCap = 'square';
+        ctx.beginPath(); ctx.moveTo(60, 40); ctx.lineTo(80, 40); ctx.stroke();
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const auto pixels = page.canvases().pixels_of(find_id(page, "c"));
+    check(pixels != nullptr, "the canvas has pixels");
+    if (pixels == nullptr) { return; }
+    const auto at = [&](int x, int y) { return color{pixels->at(x, y)}; };
+    check(at(1, 10).red() > 240 && at(1, 10).blue() < 15, "the gradient starts red");
+    check(at(98, 10).blue() > 240 && at(98, 10).red() < 15, "and ends blue");
+    check(at(50, 10).red() > 110 && at(50, 10).red() < 145, "and is half way in the middle");
+    check(at(20, 40) == color::rgba(0, 255, 0), "the round rectangle filled");
+    check(at(1, 21).alpha() == 0, "with its corner cut away");
+    check(at(83, 40) == color::rgba(0, 0, 255), "a square cap reaches past the end");
+    check(at(87, 40).alpha() == 0, "by half the width and no further");
+}
+
 } // namespace
 
 int main() {
+    test_attributes_paints_and_verbs();
+    test_gradients_caps_and_round_corners();
     test_canvas_as_image_source();
     test_clip();
     test_webgl_is_constructible_and_refuses();
