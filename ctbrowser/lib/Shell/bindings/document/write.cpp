@@ -365,6 +365,14 @@ void dom_bindings::document_open(context & cx) {
     // Step 12: no-quirks mode - and the parser decides again from what is
     // written: a doctype keeps it, anything else first puts it in quirks.
     doc_->set_quirks(false);
+    if (auto * doc = document_object()) { doc->set("compatMode", cx.string("CSS1Compat")); }
+    // Step 11: the document takes the URL of the ENTRY document - the page
+    // whose script started this, which a frame's function called from the
+    // parent does not change (url-entry-document*.window.js).
+    if (const dom_bindings * entry = find_bindings_of(cx.entry_realm().global_this);
+        entry != nullptr && entry != this) {
+        take_url_of(cx, *entry);
+    }
     // Steps 13-16: "loading", and a new, script-created parser whose insertion
     // point is the end of its (empty) input stream.
     set_ready_state("loading");
@@ -444,11 +452,19 @@ void dom_bindings::document_close(context & cx) {
 void dom_bindings::install_dynamic_markup(context & cx, script::object_object & doc) {
     set_method(cx, doc, "open", [this](context & c, std::span<value> args) {
         // `open(url, name, features)` is window.open under another name (8.4.2,
-        // the three-argument overload) and this engine has no second window.
+        // the three-argument overload): the window open steps of this
+        // document's window, or an InvalidAccessError when it has none.
         if (args.size() >= 3) {
-            throw_dom_exception(c, "InvalidAccessError",
-                                "document.open(url, name, features) cannot open a window here");
-            return value::undefined();
+            script::object_object * window = window_object();
+            const value open = window == nullptr ? value::undefined()
+                                                 : c.lookup_property(value::object(window), "open");
+            if (!open.is_callable()) {
+                throw_dom_exception(c, "InvalidAccessError",
+                                    "document.open(url, name, features): no browsing context");
+                return value::undefined();
+            }
+            const value three[3] = {args[0], args[1], args[2]};
+            return c.call(open, three, window_view_.is_object() ? window_view_ : value::object(window));
         }
         document_open(c);
         return c.failed() ? value::undefined() : document_;

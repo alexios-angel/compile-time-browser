@@ -94,6 +94,10 @@ public:
     // undeclared-name hook) reads and writes the current realm's, so a page
     // with one realm behaves exactly as before.
     [[nodiscard]] realm_record & current_realm() const noexcept;
+    // HTML's ENTRY realm, as far as this VM keeps one: the realm of the
+    // outermost frame of the running script - the one a task started with,
+    // which a call into another realm's function does not change.
+    [[nodiscard]] realm_record & entry_realm() const noexcept;
     [[nodiscard]] realm_record & main_realm() const noexcept;
     // A NEW REALM whose binding table is a copy of the template - see
     // set_realm_template - and whose global object is the caller's to set.

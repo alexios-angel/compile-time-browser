@@ -199,6 +199,13 @@ inline auto context::set_global_this(value receiver) -> void {
     return *scope_realm_;
 }
 
+[[nodiscard]] inline auto context::entry_realm() const noexcept -> realm_record & {
+    if (frames_.size() > scope_depth_) {
+        if (realm_record * first = frames_[scope_depth_].realm; first != nullptr) { return *first; }
+    }
+    return current_realm();
+}
+
 [[nodiscard]] inline auto context::main_realm() const noexcept -> realm_record & {
     return *realms_.front();
 }
