@@ -431,6 +431,57 @@ struct DOMAttributeProof {
         return booleanReads.contains(value) ||
                (constant && llvm::isa<ctjs::BooleanAttr>(constant.getValue()));
     }
+    bool numberValue(mlir::Value value, unsigned depth = 0) {
+        if (!remaining || depth == 64) { return false; }
+        --remaining;
+        if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
+            return llvm::isa<ctjs::NumberAttr>(constant.getValue());
+        }
+        // Only immutable Number origins prove conversion cannot invoke user code.
+        // This does not discharge the producers' effects or protected status edges.
+        if (auto unary = value.getDefiningOp<ctjs::UnaryOp>()) {
+            return (unary.getKind() == ctjs::UnaryKind::Neg ||
+                    unary.getKind() == ctjs::UnaryKind::Plus ||
+                    unary.getKind() == ctjs::UnaryKind::BitNot) &&
+                   numberValue(unary.getOperand(), depth + 1);
+        }
+        const auto numericBinary = [&](auto binary) {
+            switch (binary.getKind()) {
+            case ctjs::BinaryKind::Add:
+            case ctjs::BinaryKind::Sub:
+            case ctjs::BinaryKind::Mul:
+            case ctjs::BinaryKind::Div:
+            case ctjs::BinaryKind::Mod:
+            case ctjs::BinaryKind::Pow:
+            case ctjs::BinaryKind::Shl:
+            case ctjs::BinaryKind::Shr:
+            case ctjs::BinaryKind::UShr:
+            case ctjs::BinaryKind::BitAnd:
+            case ctjs::BinaryKind::BitOr:
+            case ctjs::BinaryKind::BitXor:
+                return numberValue(binary.getLhs(), depth + 1) &&
+                       numberValue(binary.getRhs(), depth + 1);
+            default: return false;
+            }
+        };
+        if (auto binary = value.getDefiningOp<ctjs::BinaryOp>()) { return numericBinary(binary); }
+        if (auto binary = value.getDefiningOp<ctjs::BinaryStaticOp>()) {
+            return numericBinary(binary);
+        }
+        auto result = llvm::dyn_cast<mlir::OpResult>(value);
+        auto branch =
+            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+        if (!branch) { return false; }
+        for (auto & region : branch->getRegions()) {
+            if (!region.hasOneBlock()) { return false; }
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+            if (!yield || yield.getNumOperands() != branch.getNumResults() ||
+                !numberValue(yield.getOperand(result.getResultNumber()), depth + 1)) {
+                return false;
+            }
+        }
+        return true;
+    }
     static bool attributeRead(ctjs::CallOp call) {
         auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
         return method && ctjs::constantKey(method.getKey()) == "hasAttribute";
@@ -447,12 +498,12 @@ struct DOMAttributeProof {
         if (!writes) { return true; }
         auto value = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
         if ((!value || !llvm::isa<ctjs::StringAttr>(value.getValue())) &&
-            !booleanValue(call.getArgs()[1])) {
+            !booleanValue(call.getArgs()[1]) && !numberValue(call.getArgs()[1])) {
             return false;
         }
         if (name.getValue().size() > remaining) { return false; }
         // setAttribute validates before mutation. Charge and call the same public
-        // validator as the VM binding; Strings and proved Booleans cannot reenter.
+        // validator as the VM binding; proved primitive conversion cannot reenter.
         remaining -= static_cast<unsigned>(name.getValue().size());
         return ctbrowser::is_valid_attribute_name(
             std::string_view{name.getValue().data(), name.getValue().size()});
@@ -556,7 +607,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 continue;
             }
             // The original entry contract fixes this Element and its initial
-            // method identity. Literal Strings and proved Booleans cannot invoke
+            // method identity. Literal Strings and proved Booleans/Numbers cannot invoke
             // user coercion; valid-name writes cannot throw or reenter. Keep
             // every mutation in order and reprove the complete DOM body below.
             // ponytail: entry parameters and identical branch forwarding only;

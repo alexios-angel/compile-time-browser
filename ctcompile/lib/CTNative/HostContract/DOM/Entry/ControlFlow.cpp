@@ -411,7 +411,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 call.getArgs().size() != (matches ? 1u : 2u) ||
                 !hasKind(call.getArgs()[0], Kind::string) ||
                 (!matches && !hasKind(call.getArgs()[1], Kind::string) &&
-                 !hasKind(call.getArgs()[1], Kind::boolean))) {
+                 !hasKind(call.getArgs()[1], Kind::boolean) &&
+                 !hasKind(call.getArgs()[1], Kind::number))) {
                 refusal = "DOM suppression requires typed setAttribute or matches arguments";
                 return false;
             }

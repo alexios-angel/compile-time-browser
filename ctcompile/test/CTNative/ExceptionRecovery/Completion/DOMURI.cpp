@@ -3995,7 +3995,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
         if (control >= 3 && control != 5 && control != 7 && control != 8 && control != 9 &&
             !(control >= 12 && control <= 15) && !(control >= 20 && control <= 23) &&
             control != 28 && !(control >= 33 && control <= 35) &&
-            !(control >= 40 && control <= 42)) {
+            !(control >= 40 && control <= 42) && control != 44) {
             check(static_cast<bool>(error), "confined catch needs complete effects and lifetime");
             llvm::consumeError(std::move(error));
             check(printed(*candidate) == original && request.moduleSha256 == fingerprint,
