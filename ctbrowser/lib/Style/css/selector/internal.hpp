@@ -169,6 +169,37 @@ private:
         return !out.empty();
     }
 
+    // A view transition pseudo-element's argument (CSS View Transitions 2
+    // §3.2): `*` or a <custom-ident> - not a CSS-wide keyword, not `default` -
+    // then `.class`es, or the classes alone, with nothing between the parts:
+    // `(*.*)`, `(*. cls)`, `(foo bar)` and `(default)` are no selectors.
+    [[nodiscard]] bool view_transition_argument(const component_value & fn) const {
+        std::vector<const component_value *> parts;
+        for (const component_value & v : sheet_->children_of(fn)) { parts.push_back(&v); }
+        const auto space = [&](const component_value * v) {
+            return v->kind == cv_kind::token && token(*v).type == token_type::whitespace;
+        };
+        while (!parts.empty() && space(parts.front())) { parts.erase(parts.begin()); }
+        while (!parts.empty() && space(parts.back())) { parts.pop_back(); }
+        const auto ident = [&](std::size_t k) {
+            return k < parts.size() && parts[k]->kind == cv_kind::token &&
+                   token(*parts[k]).type == token_type::ident &&
+                   !ascii_iequals_any(text(*parts[k]), {"default", "initial", "inherit", "unset",
+                                                        "revert", "revert-layer"});
+        };
+        const auto delim = [&](std::size_t k, std::string_view d) {
+            return k < parts.size() && parts[k]->kind == cv_kind::token &&
+                   token(*parts[k]).type == token_type::delim && text(*parts[k]) == d;
+        };
+        std::size_t k = 0;
+        if (delim(0, "*") || ident(0)) { k = 1; }
+        while (k < parts.size()) {
+            if (!delim(k, ".") || !ident(k + 1)) { return false; }
+            k += 2;
+        }
+        return k > 0;
+    }
+
     [[nodiscard]] bool parse_functional(std::string_view name, const component_value & fn,
                                         building & into, bool & invalid) {
         pseudo_ref ref;
@@ -801,6 +832,11 @@ private:
                             continue;
                         }
                         button_pe = ascii_iequals(name, "scroll-button");
+                        if (ascii_istarts_with(name, "view-transition-") &&
+                            !view_transition_argument(next)) {
+                            dead = invalid_ = true;
+                            continue;
+                        }
                         if (ascii_iequals_any(name, functional_pseudo_elements_named) &&
                             single_ident_argument(next, argument)) {
                             b.part.pseudo_element =
@@ -847,7 +883,9 @@ private:
                     b.part.pseudo_element = atoms_->intern_lower(name);
                     ++b.tags; // a pseudo-element is type-level for specificity
                     after_pe = true;
-                    view_transition_pe = ascii_istarts_with(name, "view-transition");
+                    // ::view-transition itself is the tree's root: `:only-child`
+                    // follows its descendants, not it (pseudo-elements-invalid).
+                    view_transition_pe = ascii_istarts_with(name, "view-transition-");
                     part_pe = ascii_iequals(name, "details-content");
                     button_pe = false;
                     if (in_argument_) { dead = invalid_ = true; }
