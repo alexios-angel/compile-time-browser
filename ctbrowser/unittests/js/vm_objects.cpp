@@ -54,6 +54,10 @@ void test_class_fields_are_per_instance() {
                   " return e.constructor.name; } return 'none';",
                   "TypeError");
     expect_result("const k = Symbol('k'); class C { [k] = 7; } return new C()[k];", "7");
+    // `static constructor() {}` is a static method, not the class's constructor
+    expect_result("class C { static constructor() { return 's'; } constructor() { this.v = 1; } }"
+                  " return C.constructor() + new C().v;",
+                  "s1");
     // an instance field's home object is the prototype: `super` reads the parent
     expect_result("class A { get g() { return 'a'; } } class B extends A { v = super.g; }"
                   " return new B().v;",

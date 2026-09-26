@@ -273,7 +273,10 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     bool has_instance_elements = false;
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
-        if (m.c == 1 && m.text == "constructor") { constructor_body = m.b; }
+        // THE constructor is the one non-static, non-computed method of the
+        // name (15.7.3 ConstructorMethod); `static constructor() {}` is an
+        // ordinary static method.
+        if (m.c == 1 && m.text == "constructor" && (m.d & 3) == 0) { constructor_body = m.b; }
         // An instance field, or a private method/accessor (whose brand the
         // initialiser adds) - what `__fields` will hold, see below.
         if ((m.d & 1) == 0 &&
@@ -430,7 +433,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     const std::uint16_t slot = alloc_reg();
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
-        if (m.text == "constructor" && m.c == 1) { continue; }
+        if (m.text == "constructor" && m.c == 1 && (m.d & 3) == 0) { continue; }
         if (m.c == 0 && (m.d & 2) != 0 && m.a >= 0) {
             // A computed field name: evaluated and made a key HERE, in order
             // with the methods' - see field_key_name.
