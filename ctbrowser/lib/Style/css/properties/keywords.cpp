@@ -1039,7 +1039,14 @@ constexpr pair_grammar pair_grammars[] = {
                     if ((i == 0 || i == 2) && (n.number < 0 || n.number > 1)) {
                         return std::nullopt;
                     }
-                    numbers += (i == 0 ? "" : ", ") + serialize_number(n.number);
+                    // Every digit the author gave: the curve is evaluated
+                    // from this text, and `0.233333` for `0.2333333333` moves
+                    // an eased colour channel or a snapped width by one.
+                    std::array<char, 64> digits{};
+                    const double v = n.number == 0 ? 0.0 : n.number;
+                    const auto written = std::to_chars(digits.data(), digits.data() + digits.size(),
+                                                       v, std::chars_format::fixed);
+                    numbers += (i == 0 ? "" : ", ") + std::string(digits.data(), written.ptr);
                 }
                 one = "cubic-bezier(" + numbers + ")";
             } else if (name == "steps(") {

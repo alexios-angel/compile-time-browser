@@ -95,6 +95,9 @@ void test_the_things_that_must_survive() {
     ok("content", "counters(par-num, \".\", DECIMAL )", "counters(par-num, \".\")");
     ok("content", "counter(par-num, upper-roman)", "counter(par-num, upper-roman)");
     ok("content", "counter(par-num)", "counter(par-num)");
+    // A cubic-bezier() keeps every digit: the curve is evaluated from the text.
+    ok("transition-timing-function", "cubic-bezier(0, 0.23333333333333334, 1, 0.2333333333)",
+       "cubic-bezier(0, 0.23333333333333334, 1, 0.2333333333)");
     // `content`'s grammar: an alt text is strings, counters and attr() only.
     ok("content", "counter(n, symbols(symbolic 'a'))", "counter(n, symbols(\"a\"))");
     ok("content", "open-quote \"a\" / \"alt\" counter(n)", "open-quote \"a\" / \"alt\" counter(n)");
