@@ -109,6 +109,10 @@ public:
     [[nodiscard]] atom element_namespace(node_id) const noexcept;
     // A <template>'s contents fragment - see document::template_content.
     [[nodiscard]] node_id template_content(node_id) const noexcept;
+    // See document::null_custom_element_registry.
+    [[nodiscard]] bool null_custom_element_registry(node_id) const noexcept;
+    // See document::custom_element_defined - for `:defined`.
+    [[nodiscard]] std::optional<bool> custom_element_defined(node_id) const;
 
     [[nodiscard]] node_id root() const noexcept;
     [[nodiscard]] node_id document_node() const noexcept;
@@ -152,6 +156,13 @@ public:
     [[nodiscard]] node_id document_node() const noexcept { return document_node_; }
     [[nodiscard]] atom_table & atoms() const noexcept { return *atoms_; }
     [[nodiscard]] std::uint64_t version() const noexcept { return version_; }
+    // A CHANGE THE VERSION DID NOT SEE. The parse path bumps none (`builder`,
+    // below), which is right for a parse nothing watches - and wrong for one a
+    // script reads back in the same turn: a parser-blocking script,
+    // `document.write`. Nor does a custom element's upgrade, which can make an
+    // element a form control. Whoever made such a change says so, and a live
+    // collection cached by version sees it.
+    void note_unversioned_change() noexcept { bump_version(); }
     [[nodiscard]] std::size_t node_count() const noexcept { return nodes_.size(); }
 
     // --- creation: the new node is DETACHED until it is appended ----------
@@ -250,6 +261,21 @@ public:
     [[nodiscard]] atom element_namespace(node_id element) const;
     void set_element_namespace(node_id element, atom uri);
 
+    // AN ELEMENT THE PARSER CREATED WITH A NULL CUSTOM ELEMENT REGISTRY (DOM
+    // 4.9, HTML 13.2.6.1 "create an element for a token": the registry is the
+    // intended parent's). Two things make it null: a `customelementregistry`
+    // attribute on the element's own start tag, and an intended parent whose
+    // registry is null - a declarative shadow root written with
+    // `shadowrootcustomelementregistry`, or an element already in this set.
+    // Everything else the parser makes has the document's registry, which is
+    // the shell's to know; kept beside the namespaces for the same reason
+    // they are - a handful per page, and nothing on `node` is free.
+    void set_null_custom_element_registry(node_id element);
+    [[nodiscard]] bool null_custom_element_registry(node_id element) const;
+    [[nodiscard]] bool has_null_custom_element_registries() const noexcept {
+        return !null_registries_.empty();
+    }
+
     // Shadow roots are detached fragments with sparse host/mode metadata.
     // Closed mode affects exposure to script, not these native tree queries.
     struct shadow_tree {
@@ -269,6 +295,11 @@ public:
         // back emptied instead of refusing - exactly once, which is what
         // clearing the flag is for.
         bool declarative = false;
+        // `<template shadowrootcustomelementregistry>`: the root's custom
+        // element registry is null and KEPT null (DOM 4.8 "keep custom element
+        // registry null") - an adoption does not give it the new document's,
+        // only CustomElementRegistry.initialize() gives it one.
+        bool null_registry = false;
     };
     // `how.host` is ignored: the host is the argument.
     [[nodiscard]] std::expected<node_id, dom_error> attach_shadow(node_id host, shadow_tree how);
@@ -379,6 +410,17 @@ public:
     [[nodiscard]] bool shadow_disabled(node_id host) const {
         return shadow_disabled_ && shadow_disabled_(host);
     }
+    // ...and what `:defined` cannot know from the tree: an element's custom
+    // element state (HTML 4.13.1, "defined" is uncustomized or custom). The
+    // shell answers for an element it tracks - true once custom, false while
+    // an upgrade is pending or after one failed - and nothing for the rest,
+    // whose name and `is` decide as they always did.
+    void set_custom_state_hook(std::function<std::optional<bool>(node_id)> hook) {
+        custom_state_ = std::move(hook);
+    }
+    [[nodiscard]] std::optional<bool> custom_element_defined(node_id element) const {
+        return custom_state_ ? custom_state_(element) : std::nullopt;
+    }
 
     // THE NAME OF THE DECLARED ENCODING - `document.characterSet`. The bytes
     // are decoded as UTF-8 whatever it says (dom/encoding.hpp explains why
@@ -398,7 +440,8 @@ private:
     bool xml_ = false;
     bool scripting_ = true;
     bool declarative_shadow_roots_ = false;
-    std::function<bool(node_id)> shadow_disabled_; // see set_shadow_disabled_hook
+    std::function<bool(node_id)> shadow_disabled_;             // see set_shadow_disabled_hook
+    std::function<std::optional<bool>(node_id)> custom_state_; // see set_custom_state_hook
     std::string encoding_ = "UTF-8";
 
     [[nodiscard]] node * find(node_id id) const noexcept { return nodes_.get(id); }
@@ -475,6 +518,7 @@ private:
     // read.
     std::vector<std::pair<node_id, node_id>> template_contents_;
     flat_map<std::uint64_t, atom> element_namespaces_;
+    flat_map<std::uint64_t, bool> null_registries_;
     flat_map<std::uint64_t, node_id> shadow_roots_;
     flat_map<std::uint64_t, shadow_tree> shadow_hosts_;
     node_id root_{};

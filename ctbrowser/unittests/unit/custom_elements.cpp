@@ -316,6 +316,55 @@ void test_reactions_wait_for_custom_and_a_callback() {
         "ctor,attr:id=a,attr:title=t,connected;p:begin,q:begin,q:end,p:end;begin,end,connected");
 }
 
+// SCOPED REGISTRIES (DOM 4.9, HTML 4.13.3): a node HAS a registry, fixed at
+// creation - createElement's and attachShadow's option, the parser's intended
+// parent, initialize() for what had none - and a definition upgrades only
+// what has ITS registry. `new C()` for a class only a scoped registry holds is
+// a TypeError; createElement through that registry constructs it.
+void test_scoped_registries() {
+    CHECK_EQ(said("<html><body><script>"
+                  "var scoped = new CustomElementRegistry();"
+                  "class G extends HTMLElement {}; class S extends HTMLElement {};"
+                  "customElements.define('a-b', G); scoped.define('a-b', S);"
+                  "alert(document.createElement('a-b') instanceof G);"
+                  "var s = document.createElement('a-b', {customElementRegistry: scoped});"
+                  "alert(s instanceof S && s.customElementRegistry === scoped);"
+                  "alert(document.createElement('div', {customElementRegistry: null})"
+                  ".customElementRegistry);"
+                  "try { new S(); alert('constructed'); } catch (e) { alert(e.name); }"
+                  "var host = document.body.appendChild(document.createElement('div'));"
+                  "var root = host.attachShadow({mode: 'open', customElementRegistry: scoped});"
+                  "root.innerHTML = '<a-b><a-b></a-b></a-b>';"
+                  "alert(root.customElementRegistry === scoped);"
+                  "alert(root.firstChild instanceof S && root.firstChild.firstChild instanceof S);"
+                  "var bare = document.createElement('div', {customElementRegistry: null});"
+                  "bare.innerHTML = '<a-b></a-b>';"
+                  "var late = new CustomElementRegistry();"
+                  "class L extends HTMLElement {}; late.define('a-b', L);"
+                  "late.initialize(bare);"
+                  "alert(bare.firstChild.customElementRegistry === late);"
+                  "alert(bare.firstChild instanceof L);"
+                  "alert(document.customElementRegistry === customElements);"
+                  "</script></body></html>"),
+             "true;true;null;TypeError;true;true;true;true;true");
+}
+
+// THE PARSER CONSTRUCTS a defined custom element SYNCHRONOUSLY (HTML 13.2.6.1),
+// with the throw-on-dynamic-markup-insertion counter up: document.write from
+// its constructor throws, and its connectedCallback runs before the parser
+// reads its children.
+void test_the_parser_constructs_synchronously() {
+    CHECK_EQ(said("<html><body><script>"
+                  "var log = [];"
+                  "customElements.define('x-p', class extends HTMLElement {"
+                  "  constructor() { super(); log.push('ctor:' + this.attributes.length);"
+                  "    try { document.write('x'); } catch (e) { log.push(e.name); } }"
+                  "  connectedCallback() { log.push('connected:' + this.childNodes.length); } });"
+                  "</script><x-p a=1><i></i></x-p><script>alert(log.join(','));</script>"
+                  "</body></html>"),
+             "ctor:0,InvalidStateError,connected:0");
+}
+
 } // namespace
 
 int main() {
@@ -331,5 +380,7 @@ int main() {
     test_define_reads_the_constructor_in_spec_order();
     test_upgrade_failure_is_reported_and_final();
     test_reactions_wait_for_custom_and_a_callback();
+    test_scoped_registries();
+    test_the_parser_constructs_synchronously();
     REPORT("custom_elements");
 }

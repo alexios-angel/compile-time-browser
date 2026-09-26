@@ -221,6 +221,7 @@ bool tree_builder::declarative_shadow_root(const token & t) {
     const node_id element = create_element(t.name, t.attributes);
     open_.push_back(make_entry(element, t.name, node_ns::html, t.attributes));
     const token_attribute * slots = attribute("shadowrootslotassignment");
+    const bool null_registry = attribute("shadowrootcustomelementregistry") != nullptr;
     const auto root =
         doc_->shadow_disabled(host->id)
             ? std::expected<node_id, dom_error>{std::unexpected{dom_error::invalid_shadow_host}}
@@ -233,7 +234,8 @@ bool tree_builder::declarative_shadow_root(const token & t) {
                       .manual_slots = slots != nullptr && ascii_iequals(slots->value, "manual"),
                       .clonable = attribute("shadowrootclonable") != nullptr,
                       .serializable = attribute("shadowrootserializable") != nullptr,
-                      .declarative = true});
+                      .declarative = true,
+                      .null_registry = null_registry});
     if (root) {
         doc_->set_template_content(element, *root);
     } else {

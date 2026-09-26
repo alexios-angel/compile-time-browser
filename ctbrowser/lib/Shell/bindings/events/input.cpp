@@ -34,6 +34,7 @@ bool dom_bindings::refresh_wrappers() {
 void dom_bindings::observe_focus(node_id id) {
     focused_ = id;
     refresh_document();
+    place_caret_on_focus(id); // an editing host gets a caret - see selection.cpp
 }
 
 void dom_bindings::observe_viewport(int width, int height) {
@@ -156,7 +157,13 @@ bool dom_bindings::dispatch_error_value(std::string_view message, value error,
     object->set("lineno", value::number(0));
     object->set("colno", value::number(0));
     object->set("error", error);
-    return dispatch_event("error", node_id{}, event);
+    // "IN ERROR REPORTING MODE" for the length of the dispatch: an `error`
+    // listener of this window that throws is not reported here again (see
+    // listeners.cpp's report_fault).
+    const bool was = std::exchange(error_reporting_, true);
+    const bool handled = dispatch_event("error", node_id{}, event);
+    error_reporting_ = was;
+    return handled;
 }
 
 // `focus`/`blur` and `focusin`/`focusout` (UI Events 5.4.4): FocusEvents whose

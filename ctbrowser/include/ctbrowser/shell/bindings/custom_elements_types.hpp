@@ -20,6 +20,9 @@ struct custom_element_registry {
     value object;                      // the JS CustomElementRegistry
     flat_map<std::string, value> when_defined;
     bool running = false; // HTML 4.13.4's "element definition is running"
+    // A scoped registry's "scoped document set", in the order the documents
+    // came to hold a node of it - the order define() upgrades them in.
+    std::vector<dom_bindings *> documents;
 };
 
 struct custom_element_definition {

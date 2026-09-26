@@ -212,6 +212,24 @@ public:
     using script_hook = std::function<void(node_id)>;
     void set_script_hook(script_hook hook) { on_script_ = std::move(hook); }
 
+    // "CREATE AN ELEMENT FOR A TOKEN" FOR A CUSTOM ELEMENT (13.2.6.1 steps
+    // 7-11), which only the shell can do: it owns the registry and runs the
+    // constructor. The hook gets an HTML element's local name, the token's
+    // attributes and the intended parent, and answers the element it
+    // CONSTRUCTED - attributes appended, their reactions run - or nothing, for
+    // the tree builder to create an ordinary one. `inserted` is "insert an
+    // element at the adjusted insertion location"'s element queue for one the
+    // hook made: its connectedCallback runs before its children are parsed.
+    // The document's parser installs both; a fragment parser never does (a
+    // fragment case constructs nothing - willExecuteScript is false).
+    using element_hook = std::function<node_id(std::string_view local_name,
+                                               const std::vector<token_attribute> & attributes,
+                                               node_id intended_parent)>;
+    void set_custom_element_hooks(element_hook create, script_hook inserted) {
+        on_element_ = std::move(create);
+        on_inserted_ = std::move(inserted);
+    }
+
     // THE SCRIPTING FLAG (13.2.6.4.4), WHICH IS THE DOCUMENT'S, NOT THE
     // PARSER'S. It is on for a page - a `<noscript>`'s contents are then RAW
     // TEXT, because a scripted browser is not going to render them - and off
@@ -511,6 +529,9 @@ private:
     tokenizer lexer_{std::string_view{}};
     std::vector<std::size_t> insertion_points_;
     script_hook on_script_;
+    element_hook on_element_;
+    script_hook on_inserted_;
+    node_id constructed_; // the last element on_element_ made, until inserted
     bool open_stream_ = false;
     bool finished_ = false;
     bool aborted_ = false;

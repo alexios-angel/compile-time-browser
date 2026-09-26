@@ -185,7 +185,8 @@ private:
     [[nodiscard]] std::string inner_html(node_id target) const;
     node_id copy_subtree(const read_txn & from, node_id node, node_id parent);
     node_id clone_node(const read_txn & from, node_id source, bool deep,
-                       const dom_bindings * owner = nullptr);
+                       const dom_bindings * owner = nullptr,
+                       binding_detail::custom_element_registry * fallback = nullptr);
     bool insert_node(node_id parent, node_id child, node_id before);
 
     [[nodiscard]] bool pre_insert_valid(context & cx, node_id parent, node_id child, value node_arg,
@@ -408,9 +409,51 @@ private:
     // A new registry record on the primary, for `object`.
     custom_element_registry & make_registry(dom_bindings * document, value object);
     [[nodiscard]] value create_html_element(context & cx, const std::string & name,
-                                            value options = value::undefined());
-    [[nodiscard]] std::size_t custom_definition_for(const read_txn & txn, node_id id) const;
+                                            value options = value::undefined(), bool exact = false,
+                                            bool prefixed = false, node_ns ns = node_ns::html);
+    [[nodiscard]] value construct_custom_element(context & cx, std::size_t definition,
+                                                 custom_element_registry * registry, atom tag);
+    // The document parser's custom element hooks - see tree_builder::
+    // set_custom_element_hooks.
+    [[nodiscard]] node_id parser_create_custom_element(
+        std::string_view local_name, const std::vector<html::token_attribute> & attributes,
+        node_id intended_parent);
+    void parser_inserted_custom_element(node_id element);
+    std::uint32_t markup_insertion_counter_ = 0; // "throw-on-dynamic-markup-insertion counter"
+    [[nodiscard]] std::size_t custom_definition_for(const read_txn & txn, node_id id,
+                                                    bool connected = false) const;
     [[nodiscard]] std::size_t custom_definition_of(context & cx, value receiver);
+    // SCOPED REGISTRIES - a node's custom element registry (DOM 4.9); see
+    // custom_elements.cpp, "which registry a node has".
+    [[nodiscard]] custom_element_registry * document_registry() const noexcept;
+    [[nodiscard]] custom_element_registry * registry_of_node(const read_txn & txn, node_id id,
+                                                             bool connected = false) const;
+    void set_node_registry(const read_txn & txn, node_id id, custom_element_registry * registry);
+    [[nodiscard]] bool registry_option(context & cx, value dictionary,
+                                       custom_element_registry *& out, bool & given);
+    [[nodiscard]] bool shadow_registry_option(context & cx, node_id host, value init);
+    void assign_parsed_registries(const read_txn & txn, node_id at,
+                                  custom_element_registry * inherited);
+    void adopt_registries(const read_txn & txn, node_id at, custom_element_registry * parent,
+                          bool counted);
+    [[nodiscard]] bool may_upgrade() const noexcept;
+    void install_registry_accessors(context & cx);
+    // A write the snapshot diff cannot see - `setAttribute(n, sameValue)` - from
+    // mutated()'s write log (custom_element_reactions.cpp).
+    void note_attribute_writes(const std::vector<document::write_note> & writes);
+    flat_map<std::uint64_t, std::vector<atom>> written_attributes_;
+    // An element's "is value" (DOM 4.9), fixed at creation - not its `is`
+    // attribute, which a page may change afterwards.
+    flat_map<std::uint64_t, std::string> is_values_;
+    flat_map<std::uint64_t, custom_element_registry *> node_registries_;
+    flat_map<std::uint64_t, custom_element_registry *> shadow_registries_; // by host
+    flat_map<std::uint64_t, bool> inert_roots_;
+    custom_element_registry * scoped_document_registry_ = nullptr;
+    const custom_element_registry * upgrade_filter_ = nullptr;
+    // HTML's "active custom element constructor map", by the prototype a
+    // receiver carries: the registry, and the document creating the element.
+    std::vector<std::tuple<std::uint64_t, custom_element_registry *, dom_bindings *>>
+        active_constructors_; // the primary's
     [[nodiscard]] value construct_html_element(context & cx, value receiver,
                                                std::string_view interface_name);
     [[nodiscard]] static std::string_view interface_name_for_tag(std::string_view tag);
@@ -421,7 +464,10 @@ private:
     void watch_loose(std::uint64_t key, const custom_element_state & state);
     void flush_custom_element_reactions(std::size_t from);
     void run_upgrade(context & cx, std::size_t definition, node_id target, value wrapper);
-    void report_custom_element_exception(context & cx, value thrown, std::string_view where);
+    void report_custom_element_exception(context & cx, value thrown, std::string_view where,
+                                         value callback = value::undefined());
+    // The window of a callback's realm (a closure's [[Realm]]), or `otherwise`.
+    [[nodiscard]] dom_bindings & global_of(value callback, dom_bindings & otherwise);
     [[nodiscard]] value construct_fenced(context & cx, value constructor, bool & threw,
                                          value & thrown);
     void sync_custom_element_roots();
@@ -705,6 +751,7 @@ private:
     [[nodiscard]] bool default_passive_value(std::string_view type, const path_step & target);
     bool dispatch_error_value(std::string_view message, value error,
                               std::string_view script_src = {});
+    bool error_reporting_ = false; // HTML 8.1.3.3 "in error reporting mode"
     [[nodiscard]] value make_mouse_event(context & cx, std::string_view type, node_id target,
                                          const input_event & input, bool pointer);
     [[nodiscard]] bool has_activation_behavior(const read_txn & txn, node_id node) const;
@@ -957,7 +1004,9 @@ private:
     void move_live_boundary(const live_boundary & at, node_id node, double offset);
     std::vector<value> live_ranges_; // the primary's
     void install_selection(context & cx);
+    void place_caret_on_focus(node_id element); // selection.cpp
     flat_map<std::uint64_t, script::object_object *> adopted_away_;
+    bool adopting_ = false; // node_from's clone: every shadow root goes, clonable or not
     flat_map<std::string, value> named_collections_;
     std::vector<node_id> moved_by_mutation_;
     bool moving_ = false;
