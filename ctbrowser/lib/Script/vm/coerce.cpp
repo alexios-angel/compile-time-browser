@@ -175,21 +175,13 @@ value context::to_primitive(value v) {
     // BigInt.prototype carries those methods - which is exactly what made
     // `1n + 2n` evaluate to "12" once it did.
     //
-    // A SYMBOL IS DELIBERATELY NOT LISTED HERE, though it is a primitive too.
-    // It should REFUSE this conversion outright (a TypeError), and it cannot
-    // until ToPropertyKey is separated from ToString - `o[sym]` resolves
-    // through the same call. Until then the toString walk at least yields
-    // "Symbol(x)" rather than the internal key, which is the nearer wrong
-    // answer; unittests/js/symbol_basics.cpp pins that and says so.
-    if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::bigint)) { return v; }
-    if (v.is_kind(heap_kind::symbol)) {
-        for (const char * name : {"valueOf", "toString"}) {
-            const value fn = lookup_property(v, name);
-            if (!fn.is_callable()) { continue; }
-            const value produced = call(fn, std::span<const value>{}, v);
-            if (produced.is_heap() && !produced.is_string()) { continue; }
-            return produced;
-        }
+    // AND SO IS A SYMBOL (7.1.1 step 2 answers any primitive as itself). It
+    // was walked through its toString into "Symbol(x)" while nothing refused
+    // one; now the operators that take this answer refuse a symbol themselves
+    // (binary_op, compare_relational - 7.1.17 and 7.1.4 are the TypeError),
+    // so it passes through as what it is.
+    if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::bigint) ||
+        v.is_kind(heap_kind::symbol)) {
         return v;
     }
     value out = value::undefined();
@@ -546,9 +538,13 @@ std::partial_ordering context::compare_relational(value a, value b) {
     const auto threw = [this, unwound, pending] {
         return (!pending && throw_pending()) || unwinds() != unwound;
     };
-    const value pa = to_primitive(a);
+    // WITH THE NUMBER HINT (7.2.13 steps 1-2: ToPrimitive(x, NUMBER)), which
+    // is numeric_operand's: the default hint turned two Dates into their
+    // strings - a Date's @@toPrimitive answers "default" as "string" - so
+    // `d1 < d2` compared weekday names.
+    const value pa = numeric_operand(a);
     if (threw()) { return std::partial_ordering::unordered; }
-    const value pb = to_primitive(b);
+    const value pb = numeric_operand(b);
     if (threw()) { return std::partial_ordering::unordered; }
     // ToNumeric of a symbol (7.2.13 step 4 - two strings are the only pair
     // compared without it) is the TypeError, as in binary_op.
