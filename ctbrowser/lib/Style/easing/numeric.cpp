@@ -354,6 +354,26 @@ namespace ctbrowser::style::easing_detail {
         return parts[0] + ' ' + parts[1] + ' ' + parts[2];
     }
     if (property == "rotate" && ascii_iequals(text, "none")) { return "0deg"; }
+    // `normal` spacing is none at all (CSS Text 4 §7.1-7.2): `word-spacing:
+    // initial` pairs with `20px` (word-spacing-interpolation).
+    if ((property == "word-spacing" || property == "letter-spacing") &&
+        ascii_iequals(text, "normal")) {
+        return "0px";
+    }
+    // A <position>'s keywords are the percentages they name (CSS Values 5
+    // §position): `left top` pairs with `50% 50%`.
+    if (property == "object-position" || property == "offset-anchor" ||
+        property == "offset-position") {
+        if (std::string computed = css::computed_position(text, "", ""); !computed.empty()) {
+            return computed;
+        }
+    }
+    // `normal` is `oblique 0deg` and a bare `oblique` is `oblique 14deg` (CSS
+    // Fonts 4 §2.4), so either pairs with an oblique angle.
+    if (property == "font-style") {
+        if (ascii_iequals(text, "normal")) { return "oblique 0deg"; }
+        if (ascii_iequals(text, "oblique")) { return "oblique 14deg"; }
+    }
     // A line width keyword is its length (CSS Backgrounds 3 §4.2), so
     // `border-left-width: initial` - `medium` - pairs with `23px`.
     if (property.ends_with("-width")) {

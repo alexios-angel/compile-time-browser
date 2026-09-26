@@ -732,6 +732,22 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             return out.empty() ? collapse_keyword(text) : out;
         }
+        // 4g. A FONT STYLE'S ANGLE IS IN DEGREES, and `oblique 0deg` is
+        //     `normal` (CSS Fonts 4 §2.4, font-style-computed).
+        if (property == "font-style") {
+            const std::string words = collapse_keyword(text);
+            if (words.starts_with("oblique ")) {
+                const style::css::math_answer answer =
+                    style::css::evaluate_math(std::string_view{words}.substr(8), {});
+                if (answer.outcome == style::css::math_outcome::resolved &&
+                    !answer.value.is_number &&
+                    answer.value.type == style::css::numeric_type::angle) {
+                    if (answer.value.px == 0) { return "normal"; }
+                    return "oblique " + number_text(static_cast<float>(answer.value.px)) + "deg";
+                }
+            }
+            return words;
+        }
         // 4b''. A FONT WIDTH IS A PERCENTAGE (CSS Fonts 4 §2.3): a keyword is
         //     the one it names, and a calc() folds and stops at zero
         //     (font-width-computed).
