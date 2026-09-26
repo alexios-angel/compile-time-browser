@@ -724,6 +724,9 @@ private:
     std::vector<frame_entry> frames_;
     bool frames_dirty_ = true;
     std::vector<planned_navigation> planned_navigations_; // the primary's
+    // A frame document's <iframe>: the bindings it is in and the element (load_frame).
+    dom_bindings * frame_owner_ = nullptr;
+    node_id frame_element_;
     [[nodiscard]] std::pair<dom_bindings *, node_id> choose_navigable(std::string_view target);
     void navigate_frame(dom_bindings & navigable, node_id element, form_navigation navigation);
     void install_window_open(context & cx, script::object_object & window);

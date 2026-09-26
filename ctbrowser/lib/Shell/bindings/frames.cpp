@@ -345,6 +345,12 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     // unset, no click in a frame ever activated anything.
     made.mouse_event_prototype_ = top.mouse_event_prototype_;
     made.pointer_event_prototype_ = top.pointer_event_prototype_;
+    // ITS NAVIGABLE, known from the start: a form its own scripts submit to
+    // `_self` while it is still loading - before the reconcile has filed it
+    // under this document's frames - navigates the frame it is in
+    // (getactionurl.html).
+    made.frame_owner_ = this;
+    made.frame_element_ = id;
 
     const bool is_xml = type == "application/xhtml+xml" || type == "text/xml" ||
                         type == "application/xml" || type == "image/svg+xml";
@@ -458,22 +464,9 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
 std::pair<dom_bindings *, node_id> dom_bindings::choose_navigable(std::string_view target) {
     dom_bindings & top = primary_ == nullptr ? *this : *primary_;
     // The <iframe> whose content document `doc` is - its document's bindings
-    // and the element - or nothing for the page itself. Over SNAPSHOTS of each
-    // frame list: a list is never walked live (below).
-    const auto holding = [&top](const dom_bindings * doc) {
-        const auto walk = [doc](const auto & self,
-                                dom_bindings & at) -> std::pair<dom_bindings *, node_id> {
-            const std::vector<frame_entry> children = at.frames_;
-            for (const frame_entry & entry : children) {
-                if (entry.bindings == nullptr) { continue; }
-                if (entry.bindings == doc) { return {&at, entry.element}; }
-                if (const auto found = self(self, *entry.bindings); found.first != nullptr) {
-                    return found;
-                }
-            }
-            return {nullptr, node_id{}};
-        };
-        return walk(walk, top);
+    // and the element - or nothing for the page itself.
+    const auto holding = [](const dom_bindings * doc) {
+        return std::pair<dom_bindings *, node_id>{doc->frame_owner_, doc->frame_element_};
     };
     const std::string keyword = ascii_lower_copy(target);
     const std::pair<dom_bindings *, node_id> own = holding(this);

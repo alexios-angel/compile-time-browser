@@ -47,6 +47,10 @@ struct run {
     browser page{options};
     page.set_location("file:///pages/the-page.html");
     page.assets().add("blank.html", bytes_of("<!DOCTYPE html><title>blank</title>"));
+    page.assets().add("self.html",
+                      bytes_of("<!DOCTYPE html><form method=post action=echo.py enctype=text/plain>"
+                               "<input name=x value=y></form>"
+                               "<script>document.forms[0].submit();</script>"));
     page.load_html("<!DOCTYPE html><html><body>" + body + "</body></html>");
     for (int i = 0; i < 8; ++i) { (void)page.tick(16.0); }
     for (const std::string & line : page.bindings().console_output()) { out.logged += line + "|"; }
@@ -176,6 +180,19 @@ void test_a_disabled_fieldset_disables_a_frames_button() {
     if (!got.seen.empty()) { CHECK_EQ(got.seen[0].body, std::string{"a=b\r\n"}); }
 }
 
+void test_a_frame_submitting_while_it_loads_navigates_itself() {
+    // getactionurl.html: the frame's own script submits its form to `_self`
+    // before the page has filed the frame under its frames - the frame still
+    // knows the navigable it is in.
+    const run got = submit("<iframe id=t src=self.html></iframe><script>"
+                           "var t = document.getElementById('t'), n = 0;"
+                           "t.onload = function () {"
+                           " if (++n == 2) { console.log(t.contentDocument.body.textContent); } };"
+                           "</script>");
+    CHECK_EQ(got.seen.size(), std::size_t{1});
+    CHECK_EQ(got.logged, std::string{"POST text/plain\nx=y\n|"});
+}
+
 } // namespace
 
 int main() {
@@ -185,5 +202,6 @@ int main() {
     test_a_later_submission_replaces_the_planned_one();
     test_a_button_in_a_frame_submits_its_form();
     test_a_disabled_fieldset_disables_a_frames_button();
+    test_a_frame_submitting_while_it_loads_navigates_itself();
     REPORT("forms_submission");
 }
