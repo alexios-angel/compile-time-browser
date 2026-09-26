@@ -616,6 +616,18 @@ dom_bindings & dom_bindings::bindings_of(value window) {
     return found != nullptr ? *found : top;
 }
 
+dom_bindings * dom_bindings::bindings_owning(value wrapper) {
+    const auto find = [wrapper](const auto & self, dom_bindings & at) -> dom_bindings * {
+        if (at.handle_of(wrapper)) { return &at; }
+        for (const frame_entry & frame : at.frames_) {
+            if (frame.bindings == nullptr) { continue; }
+            if (dom_bindings * found = self(self, *frame.bindings)) { return found; }
+        }
+        return nullptr;
+    };
+    return wrapper.is_object() ? find(find, primary()) : nullptr;
+}
+
 std::optional<context::realm_scope> dom_bindings::enter_realm(context & cx) {
     if (realm_ == nullptr) { return std::nullopt; }
     return std::optional<context::realm_scope>{std::in_place, cx, *realm_};

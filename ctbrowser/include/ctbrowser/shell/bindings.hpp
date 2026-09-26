@@ -619,6 +619,12 @@ private:
     // depth, and the page's for anything else. "Report the exception" and
     // `reportError` fire at one particular global - frames.cpp.
     [[nodiscard]] dom_bindings & bindings_of(value window);
+    // The bindings that made the node wrapper `wrapper` - the page's or a
+    // frame's, at any depth - or null for anything else. A member installed on
+    // a SHARED interface prototype captures the bindings that installed it
+    // (the page's), and must route a frame's node to the frame's bindings
+    // through this - frames.cpp.
+    [[nodiscard]] dom_bindings * bindings_owning(value wrapper);
     // A subresource URL as the asset registry names it - frames.cpp.
     [[nodiscard]] std::string subresource_name(std::string_view src) const;
 
