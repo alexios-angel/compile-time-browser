@@ -339,6 +339,12 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     document & fresh = *top.owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
     dom_bindings & made = adopt_second_document(cx, fresh);
     made.content_type_ = type;
+    // A FRAME'S CLICKS ARE MOUSE EVENTS: dispatch picks a click's activation
+    // target only for an event on the MouseEvent prototype, and a frame
+    // document's `element.click()` builds its event from these two - left
+    // unset, no click in a frame ever activated anything.
+    made.mouse_event_prototype_ = top.mouse_event_prototype_;
+    made.pointer_event_prototype_ = top.pointer_event_prototype_;
 
     const bool is_xml = type == "application/xhtml+xml" || type == "text/xml" ||
                         type == "application/xml" || type == "image/svg+xml";

@@ -157,7 +157,9 @@ void test_a_button_in_a_frame_submits_its_form() {
 
 void test_a_disabled_fieldset_disables_a_frames_button() {
     // HTML 4.10.18.5: a button in a disabled <fieldset> is actually disabled,
-    // in a frame as in the page - and one in its first <legend> is not.
+    // in a frame as in the page - and one in its first <legend> is not. A
+    // DISPATCHED click, which reaches the activation behaviour whatever the
+    // element (click() itself refuses a disabled control first).
     const run got =
         submit("<iframe id=t src=blank.html></iframe>"
                "<script>addEventListener('load', function () {"
@@ -167,9 +169,9 @@ void test_a_disabled_fieldset_disables_a_frames_button() {
                "  enctype=text/plain><input name=a value=b><fieldset disabled>"
                "  <legend><button id=in>in</button></legend><button id=out>out</button>"
                "  </fieldset></form>';"
-               " var d = t.contentDocument;"
-               " d.getElementById('out').click();"
-               " d.getElementById('in').click(); });</script>");
+               " var d = t.contentDocument, click = function (id) {"
+               "  d.getElementById(id).dispatchEvent(new MouseEvent('click', {bubbles: true})); };"
+               " click('out'); click('in'); });</script>");
     CHECK_EQ(got.seen.size(), std::size_t{1});
     if (!got.seen.empty()) { CHECK_EQ(got.seen[0].body, std::string{"a=b\r\n"}); }
 }

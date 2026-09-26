@@ -490,10 +490,11 @@ void test_window_open_follows_the_window_open_steps() {
        " window.open('inner.html', 'f') === document.getElementById('f').contentWindow,"
        " window.open('inner.html', 'f', 'noopener')].join('|'); })()",
        "SyntaxErrortrue|||true|");
-    // ...and the navigation it started has happened a tick later.
+    // ...and the navigation it started has happened a tick later - to the
+    // ABSOLUTE URL, which a page from disk reads as that path.
     browser page{browser_options{400, 300}};
     page.set_location("file:///pages/the-page.html");
-    page.assets().add("inner.html", bytes_of(inner_html));
+    page.assets().add("/pages/inner.html", bytes_of(inner_html));
     page.load_html("<!DOCTYPE html><html><body><iframe id=f name=f></iframe><script>"
                    "addEventListener('load', function () {"
                    " var f = document.getElementById('f');"
@@ -525,7 +526,7 @@ void test_the_location_object_navigates() {
     // A frame's `location.href =` navigates the frame, a tick later.
     browser page{browser_options{400, 300}};
     page.set_location("file:///pages/the-page.html");
-    page.assets().add("inner.html", bytes_of(inner_html));
+    page.assets().add("/pages/inner.html", bytes_of(inner_html));
     page.load_html("<!DOCTYPE html><html><body><iframe id=f></iframe><script>"
                    "addEventListener('load', function () {"
                    " var f = document.getElementById('f');"
