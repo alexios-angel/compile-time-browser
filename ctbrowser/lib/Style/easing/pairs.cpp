@@ -353,6 +353,11 @@ struct gap_shape {
                 return auto_a ? "auto " + *r : *r;
             }
         }
+        // ...and a DEGENERATE ratio - `1 / 0`, `0 / 1` - is discrete too
+        // (CSS Sizing 4 §7.1), not the quotient the numeric path below folds
+        // it to (aspect-ratio-interpolation).
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
     }
     if (property == "rotate") {
         if (const std::optional<std::string> r = interpolate_rotate(from, to, p, ctx)) {
