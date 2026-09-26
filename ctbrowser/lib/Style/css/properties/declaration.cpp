@@ -457,6 +457,24 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(std::move(serialized));
     }
 
+    // `none | [ before | after ] [ links | tabs ]?`, CSS Overflow 5 §3.2: the
+    // group's side, then how its markers behave - in that order
+    // (scroll-markers-invalid.tentative).
+    if (ascii_iequals(property, "scroll-marker-group")) {
+        std::vector<std::string> words;
+        for (const std::string_view part : split_top_level(simplified, html_whitespace)) {
+            if (!trim(part, html_whitespace).empty()) {
+                words.push_back(ascii_lower_copy(trim(part, html_whitespace)));
+            }
+        }
+        if (words.size() == 1 && words[0] == "none") { return yes("none"); }
+        if (words.empty() || words.size() > 2 || (words[0] != "before" && words[0] != "after") ||
+            (words.size() == 2 && words[1] != "links" && words[1] != "tabs")) {
+            return {};
+        }
+        return yes(words.size() == 1 ? words[0] : words[0] + " " + words[1]);
+    }
+
     // `auto | spaces`, CSS Ruby 1 §4.2, `none` the legacy spelling of
     // `spaces` and parsed as it (ruby-overhang-valid).
     if (ascii_iequals(property, "ruby-overhang")) {

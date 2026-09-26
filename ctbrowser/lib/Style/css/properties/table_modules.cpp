@@ -192,7 +192,7 @@ constexpr property_syntax modules[] = {
     {"scrollbar-width", k::keyword_only, "auto thin none", "auto", false, false},
     {"scrollbar-color", k::freeform, "", "auto", true, false},
     {"scroll-behavior", k::keyword_only, "auto smooth", "auto", false, false},
-    {"scroll-marker-group", k::freeform, "", "none", false, false}, // keywords.cpp
+    {"scroll-marker-group", k::freeform, "", "none", false, false}, // declaration.cpp
     {"scroll-target-group", k::keyword_only, "none auto", "none", false, false},
     // --- CSS Scroll Snap --------------------------------------------------------
     {"scroll-snap-type", k::freeform, "", "none", false, false},

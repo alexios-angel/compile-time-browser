@@ -123,9 +123,6 @@ constexpr or_grammar or_grammars[] = {
      "under right",
      "under"},
     {"ruby-position", "inter-character", {"alternate", "over under"}, true},
-    // `none | [ before | after ] && [ links | tabs ]?`, CSS Overflow 5 §3.2:
-    // the group's side, and how its markers behave.
-    {"scroll-marker-group", "none", {"before after", "links tabs"}, true, {}, {}, {}, {}, true},
     {"text-autospace",
      "normal auto no-autospace",
      {"ideograph-alpha", "ideograph-numeric", "punctuation", "insert replace"},
@@ -1070,6 +1067,9 @@ constexpr pair_grammar pair_grammars[] = {
     for (const std::vector<std::size_t> & item : *items) {
         std::string name;
         std::vector<std::string> tactics, words;
+        // `<dashed-ident> || <try-tactic>`: the tactic's keywords are one
+        // component, so the name may not stand between two of them.
+        bool before_name = false, after_name = false;
         for (const std::size_t i : item) {
             if (ts.tokens[i].type != token_type::ident) { return std::nullopt; }
             const std::string_view word = ts.text_of(ts.tokens[i]);
@@ -1081,6 +1081,8 @@ constexpr pair_grammar pair_grammars[] = {
             const std::string lower = ascii_lower_copy(word);
             if (has_keyword("flip-block flip-inline flip-start flip-x flip-y", lower)) {
                 if (std::ranges::find(tactics, lower) != tactics.end()) { return std::nullopt; }
+                (name.empty() ? before_name : after_name) = true;
+                if (before_name && after_name) { return std::nullopt; }
                 tactics.push_back(lower);
             } else {
                 words.push_back(lower);
