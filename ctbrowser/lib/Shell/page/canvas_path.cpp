@@ -595,8 +595,10 @@ canvas_path canvas_context::stroke_outline(const canvas_path & path, const rect 
                 shown_length += length(pts[i + 1] - pts[i]) * (shown[i].second - shown[i].first);
             }
         }
-        intervals += (shown_length / dash_total + 1) * static_cast<double>(entries);
-        if (intervals > most_intervals) { return canvas_path{}; }
+        if (shown_length > 0) {
+            intervals += (shown_length / dash_total + 1) * static_cast<double>(entries);
+            if (intervals > most_intervals) { return canvas_path{}; }
+        }
 
         std::size_t index = 0;
         double into = std::fmod(state_.dash_offset, dash_total);
