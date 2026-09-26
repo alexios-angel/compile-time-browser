@@ -178,6 +178,31 @@ SOURCES = {
 }
 """,
     "write-number-read-arithmetic-conditional-callee": "function customElements(anchor) { try { const saved = Number(anchor.hasAttribute('data-closed') ? anchor.getAttribute('data-number') : null) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; } }\n",
+    "write-number-boolean-return": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.hasAttribute('flag'));
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-boolean-snapshot": """function customElements(anchor) {
+  try {
+    const saved = anchor.hasAttribute('flag');
+    anchor.setAttribute('flag', 'changed');
+    anchor.setAttribute('data-written', Number(saved));
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-boolean-conditional-divide-return": """function customElements(anchor) {
+  try {
+    const saved = 1 / Number(anchor.hasAttribute('flag') ? false : true);
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -300,6 +325,18 @@ WRITE_EXPECTED = {
         'result0="false:read:data-closed=false;write:data-closed=42;write:data-written=0;"\n'
         'result1="true:read:data-closed=true;write:data-closed=42;write:data-written=7.5;"\n'
     ),
+    "write-number-boolean-return": (
+        'result0="true:read:flag=false;write:data-written=0;"\n'
+        'result1="true:read:flag=true;write:data-written=1;"\n'
+    ),
+    "write-number-boolean-snapshot": (
+        'result0="true:read:flag=false;write:flag=changed;write:data-written=0;"\n'
+        'result1="true:read:flag=true;write:flag=changed;write:data-written=1;"\n'
+    ),
+    "write-number-boolean-conditional-divide-return": (
+        'result0="true:read:flag=false;write:data-written=1;"\n'
+        'result1="true:read:flag=true;write:data-written=Infinity;"\n'
+    ),
 }
 
 WRITE_OBSERVER = """function observe(closed) {
@@ -401,6 +438,9 @@ def main():
             script = source + WRITE_OBSERVER
         if name.startswith("write-number-"):
             script = source + NUMBER_WRITE_OBSERVER
+        number_boolean = name.startswith("write-number-boolean-")
+        if number_boolean:
+            script = script.replace("saved['data-closed'] = 'yes'", "saved['flag'] = 'yes'")
         condition = NUMBER_CONDITIONAL_READS.get(name)
         if condition:
             script = script.replace(
@@ -509,7 +549,7 @@ def main():
             if output != expected:
                 raise RuntimeError(f"{name}: catch oracle differs: {result}")
         ir, contract = dom.prepare(args, name, source, 1, entry_name="customElements")
-        if number_read:
+        if number_read or number_boolean:
             contract["initial_intrinsics"] = ["Number"]
         checks = (
             "assert(@ENTRY@(element)); assert(@ENTRY@(alias)); assert(@ENTRY@(foreign));"
@@ -623,6 +663,14 @@ def main():
                     ("data-closed", '"42"'),
                     ("data-written", '(closed ? "7.5" : "0")'),
                 ],
+                "write-number-boolean-return": [("data-written", '(closed ? "1" : "0")')],
+                "write-number-boolean-snapshot": [
+                    ("flag", '"changed"'),
+                    ("data-written", '(closed ? "1" : "0")'),
+                ],
+                "write-number-boolean-conditional-divide-return": [
+                    ("data-written", '(closed ? "Infinity" : "1")')
+                ],
             }[name]
             write_checks = "\n".join(
                 f'assert(writes[{index}].name == target.atoms().intern("{attribute}")); '
@@ -651,6 +699,8 @@ def main():
                 .replace("@COUNT@", str(len(expected_writes)))
                 .replace("@WRITES@", write_checks)
             )
+            if number_boolean:
+                checks = checks.replace('"data-closed"', '"flag"')
         if number_read:
             inputs = ",\n".join(
                 "{"
@@ -818,6 +868,46 @@ def main():
             if name.startswith("write-number-read-conditional-")
         }
     )
+    boolean_body = SOURCES["write-number-boolean-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    refusals.update(
+        {
+            "write-number-boolean-" + name: boolean_body.replace(before, after)
+            for name, before, after in (
+                ("without-intrinsic", "Number", "Number"),
+                ("rebound-intrinsic", "try {", "try { Number = anchor;"),
+                ("coercing-input", "anchor.hasAttribute('flag')", "anchor"),
+                ("unknown-getter", "anchor.hasAttribute('flag')", "anchor.unknown"),
+                ("unknown-producer", "anchor.hasAttribute('flag')", "anchor.unknown()"),
+                (
+                    "rebound-read",
+                    "try {",
+                    "try { anchor.hasAttribute = anchor.getAttribute;",
+                ),
+                (
+                    "wrong-read-receiver",
+                    "const saved = Number(anchor.hasAttribute('flag'))",
+                    "const read = anchor.hasAttribute; const saved = Number(read('flag'))",
+                ),
+                ("coercing-read-name", "hasAttribute('flag')", "hasAttribute(anchor)"),
+                (
+                    "different-callee",
+                    "Number(anchor.hasAttribute('flag'))",
+                    "(anchor.hasAttribute('flag') ? Number : anchor)(true)",
+                ),
+                (
+                    "coercing-branch",
+                    "anchor.hasAttribute('flag')",
+                    "anchor.hasAttribute('flag') ? true : anchor",
+                ),
+                (
+                    "effectful-branch",
+                    "anchor.hasAttribute('flag')",
+                    "anchor.hasAttribute('flag') ? (anchor.unknown(), true) : false",
+                ),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
     nested_body = SOURCES["mixed-node-nested-state"].split("{", 1)[1].rsplit("}", 1)[0]
     refusals["nested-protected-throw-call"] = nested_body.replace(
         "throw anchor;", "decodeURIComponent('%'); throw anchor;"
@@ -847,9 +937,9 @@ def main():
                 manifest = dict(
                     contract, provider=provider, initial_intrinsics=["decodeURIComponent"]
                 )
-                if name.startswith("write-number-read-") and not name.endswith(
-                    "-without-intrinsic"
-                ):
+                if name.startswith(
+                    ("write-number-read-", "write-number-boolean-")
+                ) and not name.endswith("-without-intrinsic"):
                     manifest["initial_intrinsics"].append("Number")
                 if name == "invocation-without-contract":
                     manifest["element_parameters"] = []
