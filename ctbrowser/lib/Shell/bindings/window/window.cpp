@@ -368,34 +368,6 @@ void dom_bindings::install_window(context & cx) {
         return wrapper;
     });
 
-    // `new DOMParser().parseFromString(text, type)`, HTML 8.6.2: a real SECOND
-    // document in the realm - this document's HTML parser for text/html, the
-    // XML parser for the four XML types (a `<parsererror>` element when the
-    // markup is not well-formed) - so `createElement`, `documentElement.tagName`
-    // and `contentType` answer as the type says. p5's loadXML and its SVG path
-    // are the callers that found DOMParser missing in the first place. Any
-    // other type is a TypeError (the WebIDL enumeration).
-    cx.define_native("DOMParser", [this](context & c, std::span<value>) {
-        auto * parser = c.allocate<script::object_object>();
-        parser->set("parseFromString",
-                    value::object(c.allocate<script::native_object>(
-                        "parseFromString", [this](context & inner, std::span<value> a) {
-                            const std::string markup = arg_string(inner, a, 0);
-                            const std::string type = a.size() > 1 ? arg_string(inner, a, 1) : "";
-                            for (const std::string_view known :
-                                 {"text/html", "text/xml", "application/xml",
-                                  "application/xhtml+xml", "image/svg+xml"}) {
-                                if (type == known) {
-                                    return parse_from_string(inner, markup, type);
-                                }
-                            }
-                            inner.throw_error("TypeError", "DOMParser.parseFromString: '" + type +
-                                                               "' is not a supported type");
-                            return value::undefined();
-                        })));
-        return value::object(parser);
-    });
-
     // `new Path2D()` - a path recorded now and drawn later.
     //
     // Every 2D shape p5.js draws goes through one: a visitor walks the shape
@@ -688,6 +660,7 @@ void dom_bindings::install_window(context & cx) {
     cx.define_global("self", window_view);
     cx.define_global("performance", value::object(performance));
     install_history(cx, *window); // `history`, window/history.cpp
+    install_dom_parser(cx);       // `DOMParser`, below
 
     // THE BROWSING-CONTEXT CHAIN, WHICH TERMINATES HERE. This document is
     // always the top one: there are no iframes and no `window.open`, so `parent`
@@ -1047,6 +1020,91 @@ void dom_bindings::install_window_listeners(context & cx, script::object_object 
     window.set("removeEventListener", remove_listener);
     cx.define_global("addEventListener", add_listener);
     cx.define_global("removeEventListener", remove_listener);
+}
+
+namespace {
+
+// The window a DOMParser was made for, and DOMParser.prototype on the page's
+// window for the frames' constructors.
+const std::string parser_window_slot = std::string{script::private_key_prefix} + "DOMParser:window";
+const std::string parser_prototype_slot = std::string{script::private_key_prefix} + "DOMParser";
+
+} // namespace
+
+// `DOMParser` (HTML 8.5.1): an interface - a constructor that wants `new`, and
+// parseFromString on its prototype - whose documents are "a new Document whose
+// URL is this's relevant global object's associated Document's URL". So a
+// parser remembers the window it was made for, each window's constructor makes
+// its own - `new frame.contentWindow.DOMParser()` is the frame's - and the
+// method, whichever realm's it is, parses as the PARSER's document
+// (DOMParser-parseFromString-url.html). The text/html document is this
+// document's HTML parser, the four XML types the XML parser (a
+// `<parsererror>` when the markup is not well-formed); any other type is a
+// TypeError, the WebIDL enumeration. p5's loadXML and its SVG path are the
+// callers that found DOMParser missing in the first place.
+//
+// For the realm current when it is called: the page's from install_window, a
+// frame's from install_frame_realm, each once window_view_ is its window.
+void dom_bindings::install_dom_parser(context & cx) {
+    dom_bindings * const top = &primary();
+    script::object_object * page_window = top->window_object();
+    const value * held_prototype =
+        page_window == nullptr ? nullptr : page_window->find(parser_prototype_slot);
+    script::native_object * ctor = nullptr;
+    if (held_prototype != nullptr && held_prototype->is_object()) {
+        ctor = cx.allocate<script::native_object>("DOMParser", script::native_fn{});
+        ctor->define("length", value::number(0), script::attr_configurable);
+        ctor->define("prototype", *held_prototype, script::attr_none);
+        cx.define_builtin_global("DOMParser", value::object(ctor));
+    } else {
+        const interface_pair made = make_interface(cx, "DOMParser");
+        ctor = made.ctor;
+        if (page_window != nullptr) {
+            page_window->define(parser_prototype_slot, value::object(made.proto),
+                                script::attr_none);
+        }
+        set_operation(
+            cx, *made.proto, "parseFromString", 2, [top](context & c, std::span<value> a) {
+                const value self = c.current_this();
+                const value * window =
+                    self.is_object()
+                        ? static_cast<script::object_object *>(self.as_heap())
+                              ->find(parser_window_slot)
+                        : nullptr;
+                if (window == nullptr) {
+                    c.throw_error("TypeError", "Illegal invocation");
+                    return value::undefined();
+                }
+                const std::string markup = c.to_string(a[0]);
+                if (c.throw_pending()) { return value::undefined(); }
+                const std::string type = c.to_string(a[1]);
+                if (c.throw_pending()) { return value::undefined(); }
+                for (const std::string_view known : {"text/html", "text/xml", "application/xml",
+                                                     "application/xhtml+xml", "image/svg+xml"}) {
+                    if (type != known) { continue; }
+                    // A parser whose window has gone - a removed frame's -
+                    // parses as the page's: that document is gone too.
+                    dom_bindings * owner = top->find_bindings_of(*window);
+                    return (owner == nullptr ? *top : *owner).parse_from_string(c, markup, type);
+                }
+                c.throw_error("TypeError",
+                              "DOMParser.parseFromString: '" + type + "' is not a supported type");
+                return value::undefined();
+            });
+    }
+    const value window = window_view_;
+    ctor->fn = [ctor, window](context & c, std::span<value>) {
+        const value self = c.current_this();
+        if (!self.is_object() || !c.instance_of(self, value::object(ctor))) {
+            c.throw_error("TypeError", "DOMParser constructor: 'new' is required");
+            return value::undefined();
+        }
+        static_cast<script::object_object *>(self.as_heap())
+            ->define(parser_window_slot, window, script::attr_none);
+        return self;
+    };
+    // THE WINDOW IS IN A C++ CAPTURE, which the collector cannot see.
+    ctor->retained.push_back(window);
 }
 
 } // namespace ctbrowser::shell

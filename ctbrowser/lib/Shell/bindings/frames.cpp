@@ -1068,6 +1068,7 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     cx.define_global("document", document_);
     cx.define_global("location", location_);
     install_history(cx, *frame_window); // the frame's own session history
+    install_dom_parser(cx);             // a DOMParser whose documents are the frame's
     cx.define_global("matchMedia", match);
     // THE NODE CONSTRUCTORS THAT NAME A DOCUMENT: `new frame.contentWindow
     // .Text()` - and a bare `new Text()` in the frame's own script - is a node
