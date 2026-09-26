@@ -22,6 +22,97 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional Number normal returns and identical branch carriers, 2026-09-26 UTC
+
+Resumed **82bba491** and its exact normal-return witness. The checkout was clean,
+the previous iteration was fully committed, and `codex-wip-20260907` was already
+an ancestor. Source, escape and independent review agents worked in parallel;
+saved candidates survived their service interruptions.
+
+**0d077eb2** projects an independently proved nonthrowing invocation immediately,
+before a later call needs its saved callee or receiver. Exact Boolean/integer
+completion dispatch folds in the same traversal. Both branch arms still require
+effect proof before a constant branch is removed; selected definitions move
+before their uses, and discarded SSA definitions leave the primitive proof cache.
+The complete private candidate still needs fresh DOM proof. No runtime carrier,
+poison-origin authority or ownership change was added. The original normal-return
+control 1 is promoted unchanged; 34 additional controls cover normal-return
+snapshots, nesting, changed callees, effects, coercion, bindings and budgets.
+
+**d703f006** forwards identical saved SSA values through inner If yields in the
+existing escape predicate correspondence. Census and replay share the charged
+proof; guard dependencies, mutable snapshots, every arm effect and all exits
+remain checked. Thirteen new retention rows and eight live mutation states cover
+fresh/stale solvers, forged markers and incomplete budgets. No raw escape-oracle
+or native lifetime improvement is claimed.
+
+**68b4dba7** executes the unchanged normal-return witness, a saved-local mutation
+snapshot and a reciprocal conditional conversion. Twelve return refusal controls
+reuse the existing source cases. All 47 prior direct and two outer source bodies,
+and all 132 prior literal dictionary entries, remain unchanged.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Final exact CTests each passed 1/1
+(total elapsed): `ctcompile_exception_recovery` **19.12 s**,
+`ctcompile_host_contract` **2.76 s**, `ctcompile_escape_analysis_arrays`
+**5.62 s**, and `ctcompile_escape_analysis_completion` **0.02 s**.
+
+The three selected source cases passed **48 GCC/Clang native executions,
+12 admitted configurations and 76 refusals** (16 selected bodies times four,
+plus 12 zero budgets). Both providers, printers and optimization settings,
+13 Number inputs, both flag states, ordered Node/interpreter observations,
+two documents and 16 lifetimes pass. Source and linked-symbol checks reject
+Script/AOT. All **24 generated C++ files** were retrieved; inspected explicit
+snapshot and deduced reciprocal/session output keeps typed Number locals before
+mutation, public DOM calls, borrowed element_ref and ordinary document ownership.
+All five final local/devbox hashes match. This is selected harness validation,
+not a full caught-node lit run.
+
+The diagnostic CTest first reproduced only the unchanged return witness's
+refusal (19.93 s); recovered IR confirmed delayed success projection. Two build
+errors were fixed: an unqualified function in temporary diagnostic code, then
+an ambiguous MLIR op/value overload in the new rewrite. All debug instrumentation
+was removed. No passing CTest/source execution was repeated. Independent native
+review and parent escape/source review pass. Local checks include three ordered
+Node oracles, 19 JavaScript syntax checks, Python syntax/Black and scoped C++
+formatting. Final repository formatting exits 1 with the same six existing
+diagnostics in untouched `select_and_options.cpp:602`, `node_methods.cpp:63`
+and `Style/css/properties/gaps.cpp:189`.
+
+**Next measured boundary:** exact Boolean input to the initial Number intrinsic
+still refuses through the fallback DOM URI provider-binding diagnostic:
+
+```javascript
+function customElements(anchor) {
+  try {
+    const saved = Number(anchor.hasAttribute('flag'));
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+```
+
+Continue the Number input proof through protected effects, final DOM admission
+and typed lowering. `DOMAttributeProof::nonthrowingCall` and the final Number
+call proof currently accept String/null inputs, not Boolean; the fallback
+message does not justify adding URI intrinsics or dropping the handler.
+The previously unrun pre-try conditional probe reaches native EmitC: its scratch
+refusal assertion failed because it was admitted. That probe was not compiled
+or executed as C++; it is not an additional native execution measurement.
+
+Full CTest/compiler lit, other fixtures/outer catches, broad corpus/matrices,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance were skipped. The native application driver, full Bootstrap and
+broader escape work remain unfinished.
+
+Linux executable/script checks found the live Claude loop; corrected Windows
+Get-CimInstance succeeded with 361 processes and no Claude identities. Concurrent
+rules applied, including waits for Claude's test262 and browser build gates.
+No browser/shared implementation edits, local builds, push or history rewrite.
+Evidence: `/tmp/ctcompile-iteration48/`.
+
 ## Conditional Number callees and nested Boolean carriers, 2026-09-26 UTC
 
 Resumed **56f9c702** and its exact conditional Number-argument
