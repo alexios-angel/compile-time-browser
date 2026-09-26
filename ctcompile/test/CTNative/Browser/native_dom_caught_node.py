@@ -134,6 +134,75 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-number-read-conditional": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null);
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-conditional-snapshot": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null);
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-conditional-return": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null);
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-conditional-return-snapshot": """function customElements(anchor) {
+  let saved = 0;
+  try {
+    saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null);
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-conditional-divide-return": """function customElements(anchor) {
+  try {
+    const saved = 1 / Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null);
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-arithmetic-conditional-callee": "function customElements(anchor) { try { const saved = Number(anchor.hasAttribute('data-closed') ? anchor.getAttribute('data-number') : null) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; } }\n",
+    "write-number-boolean-return": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.hasAttribute('flag'));
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-boolean-snapshot": """function customElements(anchor) {
+  try {
+    const saved = anchor.hasAttribute('flag');
+    anchor.setAttribute('flag', 'changed');
+    anchor.setAttribute('data-written', Number(saved));
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-boolean-conditional-divide-return": """function customElements(anchor) {
+  try {
+    const saved = 1 / Number(anchor.hasAttribute('flag') ? false : true);
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -216,6 +285,22 @@ NUMBER_ARITHMETIC_RESULTS = {
 }
 
 
+NUMBER_ARITHMETIC_RESULTS["write-number-read-arithmetic-conditional-callee"] = (
+    NUMBER_ARITHMETIC_RESULTS["write-number-read-protected-add"]
+)
+NUMBER_ARITHMETIC_RESULTS["write-number-read-conditional-divide-return"] = (
+    NUMBER_ARITHMETIC_RESULTS["write-number-read-protected-divide-return"]
+)
+NUMBER_CONDITIONAL_READS = {
+    "write-number-read-conditional": ("flag", "0"),
+    "write-number-read-conditional-snapshot": ("flag", "0"),
+    "write-number-read-conditional-return": ("flag", "0"),
+    "write-number-read-conditional-return-snapshot": ("flag", "0"),
+    "write-number-read-conditional-divide-return": ("flag", "Infinity"),
+    "write-number-read-arithmetic-conditional-callee": ("data-closed", "1"),
+}
+
+
 WRITE_EXPECTED = {
     "write-throw": 'result0="true1:yes:1"\nresult1="true1:yes:1"\n',
     "write-return": 'result0="true0:yes:1"\nresult1="true0:yes:1"\n',
@@ -239,6 +324,18 @@ WRITE_EXPECTED = {
     "write-number-snapshot": (
         'result0="false:read:data-closed=false;write:data-closed=42;write:data-written=0;"\n'
         'result1="true:read:data-closed=true;write:data-closed=42;write:data-written=7.5;"\n'
+    ),
+    "write-number-boolean-return": (
+        'result0="true:read:flag=false;write:data-written=0;"\n'
+        'result1="true:read:flag=true;write:data-written=1;"\n'
+    ),
+    "write-number-boolean-snapshot": (
+        'result0="true:read:flag=false;write:flag=changed;write:data-written=0;"\n'
+        'result1="true:read:flag=true;write:flag=changed;write:data-written=1;"\n'
+    ),
+    "write-number-boolean-conditional-divide-return": (
+        'result0="true:read:flag=false;write:data-written=1;"\n'
+        'result1="true:read:flag=true;write:data-written=Infinity;"\n'
     ),
 }
 
@@ -341,6 +438,14 @@ def main():
             script = source + WRITE_OBSERVER
         if name.startswith("write-number-"):
             script = source + NUMBER_WRITE_OBSERVER
+        number_boolean = name.startswith("write-number-boolean-")
+        if number_boolean:
+            script = script.replace("saved['data-closed'] = 'yes'", "saved['flag'] = 'yes'")
+        condition = NUMBER_CONDITIONAL_READS.get(name)
+        if condition:
+            script = script.replace(
+                "saved['data-closed'] = 'yes'", f"saved[{condition[0]!r}] = 'yes'"
+            )
         number_read = name.startswith("write-number-read")
         if number_read:
             script = script.replace(
@@ -416,19 +521,23 @@ def main():
         if name in WRITE_EXPECTED:
             expected = WRITE_EXPECTED[name]
         if number_read:
-            trace = "|".join(
-                "true:get:data-number="
-                + ("null" if value is None else value)
-                + ";"
-                + ("write:data-number=99;" if name.endswith("-snapshot") else "")
-                + "write:data-written="
-                + result
-                + ";"
-                for value, result in number_inputs
-            )
-            expected = "".join(
-                f"result{index}={json.dumps(trace, ensure_ascii=False)}\n" for index in (0, 1)
-            )
+            expected = ""
+            for index in (0, 1):
+                trace = "|".join(
+                    "true:"
+                    + (f"read:{condition[0]}={'true' if index else 'false'};" if condition else "")
+                    + (
+                        "get:data-number=" + ("null" if value is None else value) + ";"
+                        if not condition or index
+                        else ""
+                    )
+                    + ("write:data-number=99;" if name.endswith("-snapshot") else "")
+                    + "write:data-written="
+                    + (condition[1] if condition and not index else result)
+                    + ";"
+                    for value, result in number_inputs
+                )
+                expected += f"result{index}={json.dumps(trace, ensure_ascii=False)}\n"
         if name == "helper-next-record":
             expected = (
                 'result0="false:read:data-yielded=false;write:data-next=false;write:data-yielded=yes;"\n'
@@ -440,7 +549,7 @@ def main():
             if output != expected:
                 raise RuntimeError(f"{name}: catch oracle differs: {result}")
         ir, contract = dom.prepare(args, name, source, 1, entry_name="customElements")
-        if number_read:
+        if number_read or number_boolean:
             contract["initial_intrinsics"] = ["Number"]
         checks = (
             "assert(@ENTRY@(element)); assert(@ENTRY@(alias)); assert(@ENTRY@(foreign));"
@@ -554,6 +663,14 @@ def main():
                     ("data-closed", '"42"'),
                     ("data-written", '(closed ? "7.5" : "0")'),
                 ],
+                "write-number-boolean-return": [("data-written", '(closed ? "1" : "0")')],
+                "write-number-boolean-snapshot": [
+                    ("flag", '"changed"'),
+                    ("data-written", '(closed ? "1" : "0")'),
+                ],
+                "write-number-boolean-conditional-divide-return": [
+                    ("data-written", '(closed ? "Infinity" : "1")')
+                ],
             }[name]
             write_checks = "\n".join(
                 f'assert(writes[{index}].name == target.atoms().intern("{attribute}")); '
@@ -582,6 +699,8 @@ def main():
                 .replace("@COUNT@", str(len(expected_writes)))
                 .replace("@WRITES@", write_checks)
             )
+            if number_boolean:
+                checks = checks.replace('"data-closed"', '"flag"')
         if number_read:
             inputs = ",\n".join(
                 "{"
@@ -624,6 +743,19 @@ def main():
                         else "assert(target.read().has_attribute(id, number) == (test[0] != nullptr)); if (test[0]) { assert(target.read().attribute_value(id, number) == test[0]); }"
                     ),
                 )
+            )
+        if condition:
+            checks = (
+                checks.replace(
+                    "for (const auto & test : cases) {",
+                    "for (bool enabled : {false, true}) { "
+                    f'const auto flag = target.atoms().intern("{condition[0]}"); '
+                    "assert(target.remove_attribute(id, flag)); "
+                    'if (enabled) { assert(target.set_attribute(id, flag, "yes")); } '
+                    "for (const auto & test : cases) {",
+                )
+                .replace("== test[1]", f'== (enabled ? test[1] : "{condition[1]}")')
+                .replace("                };", "                } };", 1)
             )
         checks += " (void)pressed; (void)alias;"
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
@@ -709,10 +841,71 @@ def main():
             "write-number-read-arithmetic-unary-coercion": "try { const saved = +anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
             "write-number-read-arithmetic-negate-coercion": "try { const saved = -anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
             "write-number-read-arithmetic-divide-coercion": "try { const saved = 1 / anchor; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
-            "write-number-read-arithmetic-conditional-callee": "try { const saved = Number(anchor.hasAttribute('data-closed') ? anchor.getAttribute('data-number') : null) + 1; anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-without-intrinsic": "try { const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-rebound-intrinsic": "try { Number = anchor; const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-different-callee": "try { const saved = (anchor.hasAttribute('flag') ? Number : anchor)(anchor.getAttribute('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-mutable-callee": "try { let convert = Number; if (anchor.hasAttribute('flag')) convert = anchor; const saved = convert(anchor.getAttribute('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-then-effect": "try { const saved = Number(anchor.hasAttribute('flag') ? (anchor.unknown(), anchor.getAttribute('data-number')) : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-else-effect": "try { const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : (anchor.unknown(), null)); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-then-coercion": "try { const saved = Number(anchor.hasAttribute('flag') ? anchor : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-else-coercion": "try { const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : anchor); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-then-invalid-write": "try { const saved = Number(anchor.hasAttribute('flag') ? (anchor.setAttribute('bad name', 'yes'), anchor.getAttribute('data-number')) : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-else-invalid-write": "try { const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : (anchor.setAttribute('bad name', 'yes'), null)); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-arm-rebound-intrinsic": "try { const saved = Number(anchor.hasAttribute('flag') ? (Number = anchor, anchor.getAttribute('data-number')) : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-conditional-unknown-condition": "try { const saved = Number(anchor.unknown ? anchor.getAttribute('data-number') : null); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
             "mixed-protected-throw-call": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { decodeURIComponent('%'); throw anchor; } } catch (error) { return error === anchor; } return false;",
             "mixed-rethrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { throw error; } return false;",
             "mixed-return-borrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { return error; } return false;",
+        }
+    )
+    # The same effects and callable origins must refuse with a normal protected return.
+    refusals.update(
+        {
+            name.replace("conditional-", "conditional-return-", 1): body.replace(
+                "throw anchor;", "return true;"
+            )
+            for name, body in refusals.items()
+            if name.startswith("write-number-read-conditional-")
+        }
+    )
+    boolean_body = SOURCES["write-number-boolean-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    refusals.update(
+        {
+            "write-number-boolean-" + name: boolean_body.replace(before, after)
+            for name, before, after in (
+                ("without-intrinsic", "Number", "Number"),
+                ("rebound-intrinsic", "try {", "try { Number = anchor;"),
+                ("coercing-input", "anchor.hasAttribute('flag')", "anchor"),
+                ("unknown-getter", "anchor.hasAttribute('flag')", "anchor.unknown"),
+                ("unknown-producer", "anchor.hasAttribute('flag')", "anchor.unknown()"),
+                (
+                    "rebound-read",
+                    "try {",
+                    "try { anchor.hasAttribute = anchor.getAttribute;",
+                ),
+                (
+                    "wrong-read-receiver",
+                    "const saved = Number(anchor.hasAttribute('flag'))",
+                    "const read = anchor.hasAttribute; const saved = Number(read('flag'))",
+                ),
+                ("coercing-read-name", "hasAttribute('flag')", "hasAttribute(anchor)"),
+                (
+                    "different-callee",
+                    "Number(anchor.hasAttribute('flag'))",
+                    "(anchor.hasAttribute('flag') ? Number : anchor)(true)",
+                ),
+                (
+                    "coercing-branch",
+                    "anchor.hasAttribute('flag')",
+                    "anchor.hasAttribute('flag') ? true : anchor",
+                ),
+                (
+                    "effectful-branch",
+                    "anchor.hasAttribute('flag')",
+                    "anchor.hasAttribute('flag') ? (anchor.unknown(), true) : false",
+                ),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
         }
     )
     nested_body = SOURCES["mixed-node-nested-state"].split("{", 1)[1].rsplit("}", 1)[0]
@@ -744,9 +937,9 @@ def main():
                 manifest = dict(
                     contract, provider=provider, initial_intrinsics=["decodeURIComponent"]
                 )
-                if name.startswith("write-number-read-") and not name.endswith(
-                    "-without-intrinsic"
-                ):
+                if name.startswith(
+                    ("write-number-read-", "write-number-boolean-")
+                ) and not name.endswith("-without-intrinsic"):
                     manifest["initial_intrinsics"].append("Number")
                 if name == "invocation-without-contract":
                     manifest["element_parameters"] = []

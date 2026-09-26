@@ -932,6 +932,69 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                          carrierReads.find("    %secondKey =") -
                              carrierReads.find("    %booleanLiteral ="),
                          strictCarrier(forwardedFlag("%boolean", "%boolean")));
+    const auto nestedCarrier = [&](std::string forwarding, const std::string & value = "%forwarded",
+                                   const std::string & literal = "#ctjs.boolean<true>",
+                                   bool reversed = false) {
+        forwarding.erase(forwarding.find("    %secondFlag ="));
+        return strictBooleanFlag("%again", literal,
+                                 forwarding + selectedInput(value, value, "", "", "%again"),
+                                 reversed);
+    };
+    const auto nestedCarrierFlag = nestedCarrier(booleanYields);
+    const auto nestedCarrierKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", nestedCarrierFlag));
+    const auto nestedCarrierGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", nestedCarrierFlag));
+    auto nestedCarrierReads = strictBooleanReads;
+    nestedCarrierReads.replace(nestedCarrierReads.find("    %booleanLiteral ="),
+                               nestedCarrierReads.find("    %secondKey =") -
+                                   nestedCarrierReads.find("    %booleanLiteral ="),
+                               nestedCarrier(forwardedFlag("%boolean", "%boolean")));
+    const auto identityCarrier = [&](const std::string & inner,
+                                     const std::string & result = "%identity",
+                                     const std::string & other = "%boolean") {
+        return "    %boolean = ctjs.convert to_boolean %p\n" + forwardedFlag(result, other, inner);
+    };
+    const auto identityYield = selectedInput("%boolean", "%boolean", "", "", "%identity");
+    const auto identityFlag = identityCarrier(identityYield);
+    const auto identityKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", identityFlag));
+    const auto identityGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", identityFlag));
+    const std::string identityTuple =
+        "      %identity:2 = scf.if %flag -> (!ctjs.value, !ctjs.value) {\n"
+        "        scf.yield %zero, %boolean : !ctjs.value, !ctjs.value\n"
+        "      } else {\n"
+        "        scf.yield %one, %boolean : !ctjs.value, !ctjs.value\n"
+        "      }\n";
+    auto identityReads = strictBooleanReads;
+    auto readIdentity = strictCarrier(identityFlag);
+    readIdentity.replace(readIdentity.find("to_boolean %p"), std::string{"to_boolean %p"}.size(),
+                         "to_boolean %secondRead");
+    identityReads.replace(identityReads.find("    %boolean ="),
+                          identityReads.find("    %secondKey =") -
+                              identityReads.find("    %boolean ="),
+                          readIdentity);
+    const auto operandCarrier = selectedInput("%p", "%p", "", "", "%operand");
+    const auto operandKeys =
+        selectedStore(comparedInput("%zero", "%one", "strict_eq %operand, %zero", operandCarrier));
+    const auto operandGap = nestedSiblingStore(
+        "      %read = ctjs.get_property %guard[%one]\n" +
+        comparedInput("%read", "%two", "strict_eq %operand, %zero", operandCarrier));
+    const std::string operandTuple =
+        "    %operand:2 = scf.if %flag -> (!ctjs.value, !ctjs.value) {\n"
+        "      scf.yield %zero, %p : !ctjs.value, !ctjs.value\n"
+        "    } else {\n"
+        "      scf.yield %one, %p : !ctjs.value, !ctjs.value\n"
+        "    }\n";
+    auto operandReads = comparedReads();
+    operandReads.replace(operandReads.find("strict_eq %secondRead, %zero"),
+                         std::string{"strict_eq %secondRead, %zero"}.size(),
+                         "strict_eq %operand, %zero");
+    operandReads.insert(operandReads.find("    %secondCompare"),
+                        selectedInput("%secondRead", "%secondRead", "", "", "%operand"));
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -3139,6 +3202,251 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(carrierKeys) + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "strict Boolean tests follow nested exact carrier yields",
+         .body = loopValues + allocationLoop(nestedCarrierKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "nested strict false tests preserve reversed Boolean polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     nestedCarrier(booleanYields, "%forwarded", "#ctjs.boolean<false>"), true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested Boolean tuple forwarding preserves a left literal test",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(siblingInput(
+                 "%zero", "%one", "%secondFlag",
+                 nestedCarrier(booleanYieldTuple, "%forwarded#1", "#ctjs.boolean<true>", true)))) +
+             done,
+         .confinedNested = "fresh"},
+        {.what = "nested Boolean carriers preserve an independent guard read gap",
+         .body = loopValues +
+                 allocationLoop(nestedCarrierGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "a nested opaque yield cannot borrow Boolean tags from other leaves",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     nestedCarrier(forwardedFlag("%thenBoolean", "%p", thenBoolean))))) +
+                 done,
+         .complete = false},
+        {.what = "nested forwarding cannot lend a Boolean tuple tag to a Number result",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  nestedCarrier(booleanYieldTuple, "%forwarded#0")))) +
+                 done,
+         .complete = false},
+        {.what = "nested exact Boolean tags do not establish input correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  nestedCarrier(forwardedFlag(
+                                      "%thenBoolean", "%elseBoolean", thenBoolean,
+                                      "      %elseBoolean = ctjs.convert to_boolean %q\n"))))) +
+                 done,
+         .complete = false},
+        {.what = "nested Boolean carriers retain separate mutable read snapshots",
+         .body = loopValues + allocationLoop(nestedCarrierReads) + done,
+         .complete = false},
+        {.what = "nested Boolean forwarding cannot hide an inner arm effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     nestedCarrier(forwardedFlag("%thenBoolean", "%elseEven",
+                                                 "      %called = ctjs.call %p(%q)\n" + thenBoolean,
+                                                 elseBoolean))))) +
+                 done,
+         .complete = false},
+        {.what = "nested Boolean carriers cannot overwrite their guard dependency",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(
+                     "      %read = ctjs.get_property %guard[%zero]\n" +
+                     siblingInput("%read", "%two", "%secondFlag", nestedCarrierFlag))) +
+                 done,
+         .complete = false},
+        {.what = "a returned nested Boolean carrier holder retains its child",
+         .body = loopValues + allocationLoop(nestedCarrierKeys) + "  ctjs.return %guard\n"},
+        {.what = "clearing a nested Boolean carrier holder releases its child",
+         .body =
+             loopValues + allocationLoop(nestedCarrierKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved nested Boolean carrier child survives clearing its holder",
+         .body = loopValues + allocationLoop(nestedCarrierKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "an inner identical SSA yield composes with an outer Boolean carrier",
+         .body = loopValues + allocationLoop(identityKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "inner identity tuple forwarding preserves strict false test polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  strictCarrier(identityCarrier(identityTuple, "%identity#1"),
+                                                "%forwarded", "#ctjs.boolean<false>", true),
+                                  true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "inner identical forwarding preserves an independent guard read gap",
+         .body =
+             loopValues + allocationLoop(identityGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "a changed inner then yield loses exact identity forwarding",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     identityCarrier(selectedInput("%q", "%boolean", "", "", "%identity"))))) +
+                 done,
+         .complete = false},
+        {.what = "a changed inner else yield loses exact identity forwarding",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     identityCarrier(selectedInput("%boolean", "%q", "", "", "%identity"))))) +
+                 done,
+         .complete = false},
+        {.what = "inner identity forwarding cannot lend correspondence to another outer arm",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  identityCarrier(identityYield, "%identity", "%q")))) +
+                 done,
+         .complete = false},
+        {.what = "inner identity tuple forwarding cannot borrow a sibling Boolean slot",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(siblingInput(
+                 "%zero", "%one", "%secondFlag", identityCarrier(identityTuple, "%identity#0")))) +
+             done,
+         .complete = false},
+        {.what = "inner identity carriers preserve distinct mutable read snapshots",
+         .body = loopValues + allocationLoop(identityReads) + done,
+         .complete = false},
+        {.what = "inner identical yields do not erase arm effects",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     identityCarrier(selectedInput("%boolean", "%boolean", "",
+                                                   "      %called = ctjs.call %p(%q)\n",
+                                                   "%identity"))))) +
+                 done,
+         .complete = false},
+        {.what = "inner identical forwarding cannot overwrite its guard dependency",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(
+                     "      %read = ctjs.get_property %guard[%zero]\n" +
+                     siblingInput("%read", "%two", "%secondFlag", identityFlag))) +
+                 done,
+         .complete = false},
+        {.what = "a returned inner-identity carrier holder retains its child",
+         .body = loopValues + allocationLoop(identityKeys) + "  ctjs.return %guard\n"},
+        {.what = "clearing an inner-identity carrier holder releases its child",
+         .body = loopValues + allocationLoop(identityKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved inner-identity carrier child survives clearing its holder",
+         .body = loopValues + allocationLoop(identityKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "strict comparison operands forward an identical saved SSA value",
+         .body = loopValues + allocationLoop(operandKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "identity operands preserve the corresponding tuple slot and Not polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %zero, %operand#1", operandTuple, 3))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "strict comparison operands follow nested identical SSA forwarding",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     comparedInput("%zero", "%one", "strict_eq %outerOperand, %zero",
+                                   operandCarrier + selectedInput("%operand", "%operand", "", "",
+                                                                  "%outerOperand")))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "identity operands preserve exact immutable literal comparison inputs",
+         .body = loopValues + "  %otherZero = ctjs.constant #ctjs.number<0>\n" +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %p, %operand",
+                     selectedInput("%otherZero", "%otherZero", "", "", "%operand")))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "identity comparison operands preserve the independent guard read gap",
+         .body =
+             loopValues + allocationLoop(operandGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "a changed then comparison operand yield cannot borrow saved identity",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(comparedInput("%zero", "%one", "strict_eq %operand, %zero",
+                                                 selectedInput("%q", "%p", "", "", "%operand")))) +
+                 done,
+         .complete = false},
+        {.what = "a changed else comparison operand yield cannot borrow saved identity",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(comparedInput("%zero", "%one", "strict_eq %operand, %zero",
+                                                 selectedInput("%p", "%q", "", "", "%operand")))) +
+                 done,
+         .complete = false},
+        {.what = "identity comparison operands cannot borrow a sibling tuple slot",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     comparedInput("%zero", "%one", "strict_eq %operand#0, %zero", operandTuple))) +
+                 done,
+         .complete = false},
+        {.what = "ToBoolean changes the strict comparison operand value",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %operand, %zero",
+                     "    %converted = ctjs.convert to_boolean %p\n" +
+                         selectedInput("%converted", "%converted", "", "", "%operand")))) +
+                 done,
+         .complete = false},
+        {.what = "logical Not changes the strict comparison operand value",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %operand, %zero",
+                     "    %converted = ctjs.unary not %p\n" +
+                         selectedInput("%converted", "%converted", "", "", "%operand")))) +
+                 done,
+         .complete = false},
+        {.what = "identity comparison operands preserve distinct mutable read snapshots",
+         .body = loopValues + allocationLoop(operandReads) + done,
+         .complete = false},
+        {.what = "identical comparison operand yields preserve then arm effects",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     comparedInput("%zero", "%one", "strict_eq %operand, %zero",
+                                   selectedInput("%p", "%p", "      %called = ctjs.call %p(%q)\n",
+                                                 "", "%operand")))) +
+                 done,
+         .complete = false},
+        {.what = "identical comparison operand yields preserve else arm effects",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput(
+                     "%zero", "%one", "strict_eq %operand, %zero",
+                     selectedInput("%p", "%p", "", "      %called = ctjs.call %p(%q)\n",
+                                   "%operand")))) +
+                 done,
+         .complete = false},
+        {.what = "identity comparison operands cannot overwrite their guard dependency",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(
+                     "      %read = ctjs.get_property %guard[%zero]\n" +
+                     comparedInput("%read", "%two", "strict_eq %operand, %zero", operandCarrier))) +
+                 done,
+         .complete = false},
+        {.what = "a returned identity-operand holder retains its child",
+         .body = loopValues + allocationLoop(operandKeys) + "  ctjs.return %guard\n"},
+        {.what = "clearing an identity-operand holder releases its child",
+         .body = loopValues + allocationLoop(operandKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved identity-operand child survives clearing its holder",
+         .body = loopValues + allocationLoop(operandKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
         {.what = "ToBoolean preserves the exact input truthiness choice",
          .body = loopValues + allocationLoop(booleanKeys) + done,
          .confinedNested = "fresh"},
@@ -4666,6 +4974,215 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = carrierMutation.what, .body = carrierMutation.body, .expected = ""},
              "the Boolean carrier mutation fixture did not parse");
     }
+    retention_row nestedCarrierMutation{
+        .what = "nested Boolean carriers reprove every live leaf and forwarding yield",
+        .body = loopValues +
+                allocationLoop(nestedCarrierGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto nestedCarrierModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + nestedCarrierMutation.body + "}\n", &context);
+    if (nestedCarrierModule) {
+        ctjs::FuncOp function = *nestedCarrierModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto compare = second.getCondition()
+                           .getDefiningOp<ctjs::TruthyOp>()
+                           .getValue()
+                           .getDefiningOp<ctjs::CompareOp>();
+        auto outer = compare.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto * outerThen = outer.getThenRegion().front().getTerminator();
+        auto * outerElse = outer.getElseRegion().front().getTerminator();
+        auto inner = outerThen->getOperand(0).getDefiningOp<mlir::scf::IfOp>();
+        auto * innerThen = inner.getThenRegion().front().getTerminator();
+        auto * innerElse = inner.getElseRegion().front().getTerminator();
+        auto conversion = innerThen->getOperand(0).getDefiningOp<ctjs::ConvertOp>();
+        auto even = innerElse->getOperand(0).getDefiningOp<ctjs::UnaryOp>();
+        auto literal = compare.getRhs().getDefiningOp<ctjs::ConstantOp>();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = conversion.getOperand();
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*nestedCarrierModule))) {
+            fail(row{.what = nestedCarrierMutation.what,
+                     .body = nestedCarrierMutation.body,
+                     .expected = ""},
+                 "the nested Boolean carrier stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 10; ++state) {
+            innerThen->setOperand(0, state == 1   ? originalInput
+                                     : state == 2 ? zero
+                                                  : conversion.getResult());
+            innerElse->setOperand(0, state == 3 ? even.getOperand() : even.getResult());
+            outerElse->setOperand(0, state == 4 ? originalInput : inner.getResult(0));
+            outerThen->setOperand(0, state == 5 ? zero : inner.getResult(0));
+            conversion->setOperand(0, state == 6 ? function.getBody().front().getArgument(4)
+                                                 : originalInput);
+            load->setOperand(1, state == 7 ? zero : originalPosition);
+            literal.setValueAttr(
+                state == 8
+                    ? mlir::Attribute(ctjs::NumberAttr::get(&context, 4607182418800017408ULL))
+                    : mlir::Attribute(ctjs::BooleanAttr::get(&context, true)));
+            nestedCarrierMutation.complete = state == 0 || state == 9;
+            nestedCarrierMutation.confinedNested = nestedCarrierMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*nestedCarrierModule, nestedCarrierMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                nestedCarrierMutation.complete) {
+                fail(row{.what = nestedCarrierMutation.what,
+                         .body = nestedCarrierMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied nested Boolean tags");
+            }
+        }
+    } else {
+        fail(row{.what = nestedCarrierMutation.what,
+                 .body = nestedCarrierMutation.body,
+                 .expected = ""},
+             "the nested Boolean carrier mutation fixture did not parse");
+    }
+    retention_row identityMutation{
+        .what = "inner identity forwarding reproves both yields, outer arms and snapshots",
+        .body =
+            loopValues + allocationLoop(identityGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto identityModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + identityMutation.body + "}\n", &context);
+    if (identityModule) {
+        ctjs::FuncOp function = *identityModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto outer = second.getCondition()
+                         .getDefiningOp<ctjs::TruthyOp>()
+                         .getValue()
+                         .getDefiningOp<mlir::scf::IfOp>();
+        auto * outerElse = outer.getElseRegion().front().getTerminator();
+        auto inner = outer.getThenRegion()
+                         .front()
+                         .getTerminator()
+                         ->getOperand(0)
+                         .getDefiningOp<mlir::scf::IfOp>();
+        auto * innerThen = inner.getThenRegion().front().getTerminator();
+        auto * innerElse = inner.getElseRegion().front().getTerminator();
+        auto conversion = outerElse->getOperand(0).getDefiningOp<ctjs::ConvertOp>();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = conversion.getOperand();
+        const mlir::Value otherInput = function.getBody().front().getArgument(4);
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*identityModule))) {
+            fail(row{.what = identityMutation.what, .body = identityMutation.body, .expected = ""},
+                 "the inner-identity stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 8; ++state) {
+            innerThen->setOperand(0, state == 1 ? otherInput : conversion.getResult());
+            innerElse->setOperand(0, state == 2 ? otherInput : conversion.getResult());
+            outerElse->setOperand(0, state == 3 ? otherInput : conversion.getResult());
+            conversion->setOperand(0, state == 4 ? otherInput : originalInput);
+            conversion.setKindAttr(ctjs::ConvertKindAttr::get(
+                &context, state == 5 ? ctjs::ConvertKind::ToNumber : ctjs::ConvertKind::ToBoolean));
+            load->setOperand(1, state == 6 ? zero : originalPosition);
+            identityMutation.complete = state == 0 || state == 7;
+            identityMutation.confinedNested = identityMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*identityModule, identityMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                identityMutation.complete) {
+                fail(row{.what = identityMutation.what,
+                         .body = identityMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied inner identity forwarding");
+            }
+        }
+    } else {
+        fail(row{.what = identityMutation.what, .body = identityMutation.body, .expected = ""},
+             "the inner-identity mutation fixture did not parse");
+    }
+    retention_row operandMutation{
+        .what = "identity comparison operands reprove both yields, comparisons and guards",
+        .body =
+            loopValues + allocationLoop(operandGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto operandModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + operandMutation.body + "}\n", &context);
+    if (operandModule) {
+        ctjs::FuncOp function = *operandModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto compare = second.getCondition()
+                           .getDefiningOp<ctjs::TruthyOp>()
+                           .getValue()
+                           .getDefiningOp<ctjs::CompareOp>();
+        auto carrier = compare.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto * thenYield = carrier.getThenRegion().front().getTerminator();
+        auto * elseYield = carrier.getElseRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = thenYield->getOperand(0);
+        const mlir::Value otherInput = function.getBody().front().getArgument(4);
+        const mlir::Value originalRight = compare.getRhs();
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*operandModule))) {
+            fail(row{.what = operandMutation.what, .body = operandMutation.body, .expected = ""},
+                 "the identity operand stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 8; ++state) {
+            thenYield->setOperand(0, state == 1 || state == 3 ? otherInput : originalInput);
+            elseYield->setOperand(0, state == 2 || state == 3 ? otherInput : originalInput);
+            compare.setKindAttr(ctjs::CompareKindAttr::get(
+                &context, state == 4 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+            compare->setOperand(1, state == 5 ? originalPosition : originalRight);
+            load->setOperand(1, state == 6 ? zero : originalPosition);
+            operandMutation.complete = state == 0 || state == 7;
+            operandMutation.confinedNested = operandMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*operandModule, operandMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                operandMutation.complete) {
+                fail(
+                    row{.what = operandMutation.what, .body = operandMutation.body, .expected = ""},
+                    "a stale solver or forged marker supplied identity comparison operands");
+            }
+        }
+    } else {
+        fail(row{.what = operandMutation.what, .body = operandMutation.body, .expected = ""},
+             "the identity operand mutation fixture did not parse");
+    }
     retention_row booleanMutation{
         .what =
             "ToBoolean correspondence reproves live conversion inputs, kinds, yields and guards",
@@ -5182,7 +5699,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         }
     }
     std::printf(
-        "array retention: %zu rows, two hundred fifty-two live states, %zu budget cutoffs\n",
+        "array retention: %zu rows, two hundred seventy-eight live states, %zu budget cutoffs\n",
         rows.size(), budgets);
 }
 

@@ -430,6 +430,12 @@ struct DOMAttributeProof {
     llvm::DenseSet<mlir::Value> stringReads;
     llvm::DenseSet<mlir::Value> numberReads;
     bool booleanValue(mlir::Value value) const {
+        if (auto compare = value.getDefiningOp<ctjs::CompareOp>()) {
+            return compare.getKind() == ctjs::CompareKind::StrictEq;
+        }
+        if (auto unary = value.getDefiningOp<ctjs::UnaryOp>()) {
+            return unary.getKind() == ctjs::UnaryKind::Not;
+        }
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
         return booleanReads.contains(value) ||
                (constant && llvm::isa<ctjs::BooleanAttr>(constant.getValue()));
@@ -534,7 +540,9 @@ struct DOMAttributeProof {
         // Unlike result-tag evidence, suppressing an exception requires an
         // input that cannot invoke ToPrimitive or throw during Number conversion.
         // The initial global binding is checked by the complete final DOM proof.
-        return attributeCall(call) || (numberCallee(call) && stringValue(call.getArgs().front()));
+        return attributeCall(call) ||
+               (numberCallee(call) &&
+                (stringValue(call.getArgs().front()) || booleanValue(call.getArgs().front())));
     }
     void callResult(ctjs::CallOp call, mlir::Value result) {
         // Called only after the independent nonthrowing proof succeeds.
@@ -623,10 +631,9 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
     }
     const bool unconditional = alwaysThrows(alwaysThrows, exit.getIsThrow(), 0);
     DOMAttributeProof attributes{function, elementParameters, remaining, {}, {}, {}};
-    llvm::SmallVector<ctjs::InvokeOp> nonthrowingCalls;
     const auto effects = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
         if (depth == 64) { return false; }
-        for (mlir::Operation & operation : block.without_terminator()) {
+        for (mlir::Operation & operation : llvm::make_early_inc_range(block.without_terminator())) {
             if (!remaining) { return false; }
             --remaining;
             if (auto poison = llvm::dyn_cast<mlir::ub::PoisonOp>(operation);
@@ -636,8 +643,34 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
             }
             // Recovery removed protected checks. Prove their effects independently
             // of DOM result typing: even a typed URI/JSON call can throw implicitly.
-            if (llvm::isa<ctjs::RootOp, ctjs::ConstantOp, ctjs::TruthyOp, mlir::arith::ConstantOp,
-                          mlir::arith::IndexCastUIOp, mlir::arith::CmpIOp>(operation)) {
+            // Project exact completion dispatch before a later call needs its
+            // saved callee or receiver. Source truthiness still runs normally.
+            mlir::OpBuilder at(&operation);
+            if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
+                auto value = truth.getValue().getDefiningOp<ctjs::ConstantOp>();
+                auto flag = value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue())
+                                  : ctjs::BooleanAttr{};
+                if (flag) {
+                    truth.replaceAllUsesWith(
+                        mlir::arith::ConstantIntOp::create(at, truth.getLoc(), flag.getValue(), 1)
+                            .getResult());
+                    truth.erase();
+                }
+                continue;
+            }
+            if (auto cast = llvm::dyn_cast<mlir::arith::IndexCastUIOp>(operation)) {
+                cast.replaceAllUsesWith(at.createOrFold<mlir::arith::IndexCastUIOp>(
+                    cast.getLoc(), cast.getType(), cast.getIn()));
+                cast.erase();
+                continue;
+            }
+            if (auto compare = llvm::dyn_cast<mlir::arith::CmpIOp>(operation)) {
+                compare.replaceAllUsesWith(at.createOrFold<mlir::arith::CmpIOp>(
+                    compare.getLoc(), compare.getPredicate(), compare.getLhs(), compare.getRhs()));
+                compare.erase();
+                continue;
+            }
+            if (llvm::isa<ctjs::RootOp, ctjs::ConstantOp, mlir::arith::ConstantOp>(operation)) {
                 continue;
             }
             if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
@@ -696,36 +729,84 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                         return false;
                     }
                 }
-                // Only the independently nonthrowing call gives its normal
-                // payload primitive authority. Saved values retain their own
-                // evidence; neither unwind padding nor a later read substitutes
-                // for this invocation's snapshot.
-                attributes.callResult(call, normal.getArgument(0));
-                auto incoming = llvm::cast<ctjs::InvokeYieldOp>(normal.getTerminator());
-                for (auto [result, value] :
-                     llvm::zip(invocation.getResults(), incoming.getValues())) {
-                    if (!remaining) { return false; }
-                    --remaining;
-                    attributes.join(result, value, value);
-                }
-                nonthrowingCalls.push_back(invocation);
+                // Select normal only after the independent effect proof. Keep
+                // the complete tuple, including inactive padding, and record
+                // primitive evidence only for the surviving call result.
+                auto projected = host_detail::projectInvocationContinuation(
+                    invocation, false, call.getResult(), at, remaining);
+                if (mlir::failed(projected)) { return false; }
+                call->moveBefore(invocation);
+                attributes.callResult(call, call.getResult());
+                invocation.replaceAllUsesWith(*projected);
+                invocation.erase();
                 continue;
             }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
                 for (auto & region : branch->getRegions()) {
                     if (!region.hasOneBlock() || region.front().getNumArguments() ||
                         !llvm::isa<mlir::scf::YieldOp>(region.front().getTerminator()) ||
+                        region.front().getTerminator()->getNumOperands() !=
+                            branch.getNumResults() ||
                         !self(self, region.front(), depth + 1)) {
                         return false;
                     }
                 }
                 auto yes = llvm::cast<mlir::scf::YieldOp>(branch.getThenRegion().front().back());
                 auto no = llvm::cast<mlir::scf::YieldOp>(branch.getElseRegion().front().back());
+                auto condition = branch.getCondition().getDefiningOp<mlir::arith::ConstantOp>();
+                auto literal = condition ? llvm::dyn_cast<mlir::IntegerAttr>(condition.getValue())
+                                         : mlir::IntegerAttr{};
+                if (literal && branch.getCondition().getType().isInteger(1)) {
+                    // Both arms passed effects. Move the selected definitions
+                    // before forwarding their values, preserving dominance and
+                    // order without treating inactive poison as an origin.
+                    auto selected = literal.getValue().isZero() ? no : yes;
+                    for (auto & next :
+                         llvm::make_early_inc_range(selected->getBlock()->without_terminator())) {
+                        if (!remaining) { return false; }
+                        --remaining;
+                        next.moveBefore(branch);
+                    }
+                    for (auto [result, value] :
+                         llvm::zip(branch.getResults(), selected.getOperands())) {
+                        for (auto & use : llvm::make_early_inc_range(result.getUses())) {
+                            if (!remaining) { return false; }
+                            --remaining;
+                            use.set(value);
+                        }
+                    }
+                    // Discarded definitions must not survive as evidence when
+                    // subsequent projections allocate new SSA values.
+                    const auto forgotten = branch.walk([&](mlir::Operation * nested) {
+                        const auto cost = uint64_t(1) + nested->getNumResults();
+                        if (cost > remaining) { return mlir::WalkResult::interrupt(); }
+                        remaining -= static_cast<unsigned>(cost);
+                        for (auto result : nested->getResults()) {
+                            attributes.booleanReads.erase(result);
+                            attributes.stringReads.erase(result);
+                            attributes.numberReads.erase(result);
+                        }
+                        return mlir::WalkResult::advance();
+                    });
+                    if (forgotten.wasInterrupted()) { return false; }
+                    branch.erase();
+                    continue;
+                }
                 for (auto [result, left, right] :
                      llvm::zip(branch.getResults(), yes.getOperands(), no.getOperands())) {
                     if (!remaining) { return false; }
                     --remaining;
                     attributes.join(result, left, right);
+                    // Both arms have complete effect proofs. Forward only the
+                    // identical saved SSA value, retaining the branch and its
+                    // effects. Existing result trimming runs before final DOM
+                    // proof; equal callable kinds or names supply no identity.
+                    if (left != right) { continue; }
+                    for (auto & use : llvm::make_early_inc_range(result.getUses())) {
+                        if (!remaining) { return false; }
+                        --remaining;
+                        use.set(left);
+                    }
                 }
                 continue;
             }
@@ -735,23 +816,6 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
     };
     if (!effects(effects, body, 0)) {
         return refuse("DOM caught throw protected effect lacks a nonthrowing proof");
-    }
-    for (auto invocation : nonthrowingCalls) {
-        auto & invoked = invocation.getBody().front();
-        auto call = llvm::cast<ctjs::CallOp>(invoked.front());
-        // Only the independent nonthrowing call proof permits selecting normal.
-        // Preserve the complete normal tuple, including its inactive failure
-        // padding. Live success state already follows the original outer SSA;
-        // the saved unwind registers never replace that state or the result.
-        mlir::OpBuilder at(invocation);
-        auto projected = host_detail::projectInvocationContinuation(
-            invocation, false, call.getResult(), at, remaining);
-        if (mlir::failed(projected)) {
-            return refuse("DOM caught throw invocation projection failed or exhausted its budget");
-        }
-        call->moveBefore(invocation);
-        invocation.replaceAllUsesWith(*projected);
-        invocation.erase();
     }
     if (!unconditional) {
         const auto spend = [&](uint64_t cost) {

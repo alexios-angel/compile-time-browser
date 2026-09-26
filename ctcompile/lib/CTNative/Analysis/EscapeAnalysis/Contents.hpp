@@ -83,11 +83,43 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                (unary && unary.getKind() == ctjs::UnaryKind::Not) ||
                (literal && llvm::isa<ctjs::BooleanAttr>(literal.getValue()));
     };
-    const auto stripBoolean = [&](mlir::Value value) -> std::pair<mlir::Value, bool> {
-        bool negated = false;
+    const auto stripIdentity = [&](mlir::Value value) -> mlir::Value {
         while (true) {
             // The shared budget bounds traversal; exhaustion supplies no partial key.
             if (!spend(1)) { return {}; }
+            if (auto selected = value.getDefiningOp<mlir::scf::IfOp>()) {
+                const auto position = llvm::cast<mlir::OpResult>(value).getResultNumber();
+                mlir::Value common;
+                for (mlir::Region & region : selected->getRegions()) {
+                    if (!spend(1)) { return {}; }
+                    if (!llvm::hasSingleElement(region) || region.front().empty() ||
+                        region.front().getNumArguments() != 0) {
+                        common = {};
+                        break;
+                    }
+                    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                    if (!yield || yield.getNumOperands() != selected.getNumResults() ||
+                        (common && common != yield.getOperand(position))) {
+                        common = {};
+                        break;
+                    }
+                    common = yield.getOperand(position);
+                }
+                // An identical saved SSA value keeps its tag and snapshot.
+                // Every arm effect is checked separately.
+                if (common) {
+                    value = common;
+                    continue;
+                }
+            }
+            return value;
+        }
+    };
+    const auto stripBoolean = [&](mlir::Value value) -> std::pair<mlir::Value, bool> {
+        bool negated = false;
+        while (true) {
+            value = stripIdentity(value);
+            if (!value) { return {}; }
             if (auto convert = value.getDefiningOp<ctjs::ConvertOp>();
                 convert && convert.getKind() == ctjs::ConvertKind::ToBoolean) {
                 value = convert.getOperand();
@@ -102,11 +134,18 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                     auto boolean = literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
                                            : ctjs::BooleanAttr{};
                     if (!boolean) { continue; }
-                    bool exactBoolean = directBoolean(input);
-                    if (auto selected = input.getDefiningOp<mlir::scf::IfOp>();
-                        selected && !exactBoolean) {
-                        const auto position = llvm::cast<mlir::OpResult>(input).getResultNumber();
-                        exactBoolean = true;
+                    bool exactBoolean = true;
+                    llvm::SmallVector<mlir::Value, 4> pending{input};
+                    while (!pending.empty() && exactBoolean) {
+                        if (!spend(1)) { return {}; }
+                        auto current = pending.pop_back_val();
+                        if (directBoolean(current)) { continue; }
+                        auto selected = current.getDefiningOp<mlir::scf::IfOp>();
+                        if (!selected) {
+                            exactBoolean = false;
+                            break;
+                        }
+                        const auto position = llvm::cast<mlir::OpResult>(current).getResultNumber();
                         for (mlir::Region & region : selected->getRegions()) {
                             if (!spend(1)) { return {}; }
                             if (!llvm::hasSingleElement(region) || region.front().empty() ||
@@ -116,17 +155,17 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                             }
                             auto yield =
                                 llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                            if (!yield || yield.getNumOperands() != selected.getNumResults() ||
-                                !directBoolean(yield.getOperand(position))) {
+                            if (!yield || yield.getNumOperands() != selected.getNumResults()) {
                                 exactBoolean = false;
                                 break;
                             }
+                            pending.push_back(yield.getOperand(position));
                         }
                     }
                     // Equality with a Boolean preserves or reverses truthiness
                     // only when the other operand is already exactly Boolean.
                     // An opaque value, Number or read cannot borrow that tag.
-                    // Only immediate Boolean yields prove a carrier's tag;
+                    // Every nested carrier leaf must prove its Boolean tag;
                     // correspondence and all arm effects are checked separately.
                     if (exactBoolean) {
                         value = input;
@@ -145,6 +184,15 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
     };
     bool complete = true;
     const auto sameOperand = [&](mlir::Value left, mlir::Value right) {
+        if (left == right) { return true; }
+        left = stripIdentity(left);
+        right = stripIdentity(right);
+        if (!left || !right) {
+            complete = false;
+            return false;
+        }
+        // Strict comparison operands keep their exact value; Boolean conversion
+        // and logical Not cannot be stripped here.
         if (left == right) { return true; }
         if (!spend(2)) {
             complete = false;

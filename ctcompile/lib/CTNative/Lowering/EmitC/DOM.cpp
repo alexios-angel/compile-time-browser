@@ -697,6 +697,11 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         return true; // The enclosing invocation consumes its original call.
     }
     const auto & edge = found->second;
+    if (edge.kind == HostDOMMethod::number && (isBooleanCarrier(call.getArgs().front().getType()) ||
+                                               call.getArgs().front().getType().isInteger(1))) {
+        swap(number(at, where, call.getArgs().front()));
+        return true;
+    }
     if (edge.kind == HostDOMMethod::symbol) {
         llvm::SmallVector<mlir::Value, 1> description;
         if (!call.getArgs().empty() &&
