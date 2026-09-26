@@ -375,6 +375,14 @@ node_id document::create_element(atom tag, node_ns ns, bool prefixed) {
     return nodes_.insert(node_kind::element, tag, ns, prefixed);
 }
 
+void document::set_element_prefix(node_id element, atom qualified) {
+    node * n = find(element);
+    if (n == nullptr || n->kind != node_kind::element) { return; }
+    n->tag = qualified;
+    n->prefixed = true;
+    bump_version();
+}
+
 node_id document::create_text(std::string_view value) {
     const node_id id = nodes_.insert(node_kind::text);
     find(id)->text = value;

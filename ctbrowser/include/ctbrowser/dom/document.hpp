@@ -171,6 +171,10 @@ public:
     // `prefixed`: whether a colon in `tag` is a prefix - see node::prefixed.
     [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html,
                                          bool prefixed = false);
+    // DOM 4.9 "create an element" step 6.1.3.9: a custom element's namespace
+    // prefix is set AFTER its constructor returned, so `this.prefix` is null
+    // inside it. `qualified` is the prefixed tag the element takes on.
+    void set_element_prefix(node_id element, atom qualified);
     [[nodiscard]] node_id create_text(std::string_view value);
     [[nodiscard]] node_id create_comment(std::string_view value);
     // A DocumentFragment. Detached like everything else here, and it stays
