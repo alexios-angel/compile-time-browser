@@ -215,6 +215,21 @@ public:
     void drain_microtasks();
 
     [[nodiscard]] std::string current_stack(std::size_t skip = 0) const;
+    // WHERE THE INTERPRETER IS: the frame depth and the innermost frame's
+    // instruction. A throw that lands moves one of them - it pops frames, or
+    // moves the catching frame's ip to its handler - and a callee that threw
+    // and caught inside itself moves neither. What a native snapshots before
+    // running page code, to ask afterwards whether a throw landed
+    // (builtins_detail::detail::threw_since); current_stack answered the same
+    // question at the price of a string, twice per `charCodeAt`.
+    struct stack_mark {
+        std::size_t depth;
+        std::size_t ip;
+        bool operator==(const stack_mark &) const = default;
+    };
+    [[nodiscard]] stack_mark mark_stack() const noexcept {
+        return {frames_.size(), frames_.empty() ? 0 : static_cast<std::size_t>(frames_.back().ip)};
+    }
 
     [[nodiscard]] bool failed() const noexcept;
 

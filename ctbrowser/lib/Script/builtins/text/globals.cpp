@@ -177,7 +177,7 @@ void install_uri(context & cx) {
     // "%uD801%uDC01". Hence the round trip through wtf8_to_utf16: the WTF-8
     // bytes would have answered %F0%90%90%81, which is encodeURI's answer.
     detail::global_fn(cx, "escape", 1, [](context & c, std::span<value> a) {
-        const std::string before = c.current_stack();
+        const context::stack_mark before = c.mark_stack();
         const std::string in = string_arg(c, arg_at(a, 0));
         if (detail::threw_since(c, before)) { return value::undefined(); }
         static constexpr std::string_view kept =
@@ -201,7 +201,7 @@ void install_uri(context & cx) {
         return c.string(out);
     });
     detail::global_fn(cx, "unescape", 1, [](context & c, std::span<value> a) {
-        const std::string before = c.current_stack();
+        const context::stack_mark before = c.mark_stack();
         const std::string in = string_arg(c, arg_at(a, 0));
         if (detail::threw_since(c, before)) { return value::undefined(); }
         const std::u16string units = wtf8_to_utf16(in);

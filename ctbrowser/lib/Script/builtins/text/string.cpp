@@ -48,7 +48,7 @@ using text_body = std::function<value(context &, const string_object &, std::spa
     if (self.is_string()) {
         return body(c, *static_cast<const string_object *>(self.as_heap()), a);
     }
-    const std::string before = c.current_stack();
+    const context::stack_mark before = c.mark_stack();
     const string_object text{detail::this_string(c)};
     if (detail::threw_since(c, before)) { return value::undefined(); }
     return body(c, text, a);
@@ -232,7 +232,7 @@ namespace {
     bool regexp = false;
     if (!builtins_detail::is_regexp(cx, pattern, regexp)) { return true; }
     if (!regexp) { return false; }
-    const std::string before = cx.current_stack();
+    const context::stack_mark before = cx.mark_stack();
     const value flags = cx.lookup_property(pattern, "flags");
     if (detail::threw_since(cx, before)) { return true; }
     if (flags.is_nullish()) {
@@ -384,7 +384,7 @@ void install_string(context & cx) {
         method(cx, string_proto, name, arity,
                [owner, symbol, needs_global, body = std::move(body)](context & c,
                                                                      std::span<value> a) -> value {
-                   const std::string before = c.current_stack();
+                   const context::stack_mark before = c.mark_stack();
                    if (c.current_this().is_nullish()) {
                        c.throw_error("TypeError", owner + " called on null or undefined");
                        return value::undefined();
@@ -530,7 +530,7 @@ void install_string(context & cx) {
              return c.string(out);
          });
     text("normalize", 0, [](context & c, const string_object & s, std::span<value> a) -> value {
-        const std::string before = c.current_stack();
+        const context::stack_mark before = c.mark_stack();
         const std::string form = has_index(a, 0) ? string_arg(c, a[0]) : std::string{"NFC"};
         if (detail::threw_since(c, before)) { return value::undefined(); }
         if (form != "NFC" && form != "NFD" && form != "NFKC" && form != "NFKD") {
@@ -552,7 +552,7 @@ void install_string(context & cx) {
          });
     text("charCodeAt", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
         // Out of range - including NEGATIVE - is NaN, not the first character.
-        const std::string before = c.current_stack();
+        const context::stack_mark before = c.mark_stack();
         const double i = integer_arg(c, a, 0);
         if (detail::threw_since(c, before)) { return value::undefined(); }
         if (!(i >= 0 && i < static_cast<double>(s.length()))) {
@@ -580,7 +580,7 @@ void install_string(context & cx) {
     // which cannot run one at all, so `"abc".indexOf("c", {valueOf: () => 1})`
     // read NaN, became 0, and could not be told from `indexOf("c")`.
     text("indexOf", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
-        const std::string before = c.current_stack();
+        const context::stack_mark before = c.mark_stack();
         const std::string needle = string_arg(c, arg_at(a, 0));
         if (detail::threw_since(c, before)) { return value::undefined(); }
         const auto from = static_cast<std::size_t>(
@@ -589,7 +589,7 @@ void install_string(context & cx) {
         return value::number(found == std::string::npos ? -1 : static_cast<double>(found));
     });
     text("lastIndexOf", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
-        const std::string before = c.current_stack();
+        const context::stack_mark before = c.mark_stack();
         const std::string needle = string_arg(c, arg_at(a, 0));
         if (detail::threw_since(c, before)) { return value::undefined(); }
         // The position is the LAST index the match may START at, and it
@@ -604,7 +604,7 @@ void install_string(context & cx) {
         return value::number(found == std::string::npos ? -1 : static_cast<double>(found));
     });
     text("includes", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
-        const std::string before = c.current_stack();
+        const context::stack_mark before = c.mark_stack();
         if (is_regexp_value(c, arg_at(a, 0))) {
             c.throw_error("TypeError",
                           "First argument to String.prototype.includes must not be a regular "
@@ -619,7 +619,7 @@ void install_string(context & cx) {
         return value::boolean(index_of(s, needle, from) != std::string::npos);
     });
     text("startsWith", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
-        const std::string before = c.current_stack();
+        const context::stack_mark before = c.mark_stack();
         if (is_regexp_value(c, arg_at(a, 0))) {
             c.throw_error("TypeError",
                           "First argument to String.prototype.startsWith must not be a regular "
@@ -634,7 +634,7 @@ void install_string(context & cx) {
         return value::boolean(occurs_at(s, needle, from));
     });
     text("endsWith", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
-        const std::string before = c.current_stack();
+        const context::stack_mark before = c.mark_stack();
         if (is_regexp_value(c, arg_at(a, 0))) {
             c.throw_error("TypeError",
                           "First argument to String.prototype.endsWith must not be a regular "
@@ -711,7 +711,7 @@ void install_string(context & cx) {
     // form is here.
     text_after_dispatch("split", 2, "@@split", false,
                         [](context & c, const string_object & s, std::span<value> a) -> value {
-                            const std::string before = c.current_stack();
+                            const context::stack_mark before = c.mark_stack();
                             value out = c.make_array();
                             const context::rooted keep{c, out};
                             auto * result = static_cast<array_object *>(out.as_heap());
@@ -771,7 +771,7 @@ void install_string(context & cx) {
     // of the method - acorn builds its keyword tables with exactly that call.
     const auto replace_string = [](context & c, const string_object & self, std::span<value> a,
                                    bool all) -> value {
-        const std::string before = c.current_stack();
+        const context::stack_mark before = c.mark_stack();
         // Steps 3-8: ToString(searchValue), then IsCallable(replaceValue), then
         // ToString(replaceValue) - in that order, each observable.
         const std::string search = string_arg(c, arg_at(a, 0));
@@ -985,7 +985,7 @@ void install_string(context & cx) {
              [m, attribute](context & c, const string_object & s, std::span<value> a) -> value {
                  std::string out = std::string{"<"} + m.tag;
                  if (!attribute.empty()) {
-                     const std::string before = c.current_stack();
+                     const context::stack_mark before = c.mark_stack();
                      const std::string v = string_arg(c, arg_at(a, 0));
                      if (detail::threw_since(c, before)) { return value::undefined(); }
                      out += ' ';
@@ -1024,7 +1024,7 @@ void install_string(context & cx) {
              return c.string(unicode_case(s.text, false));
          });
     text("concat", 1, [](context & c, const string_object & s, std::span<value> a) -> value {
-        const std::string before = c.current_stack();
+        const context::stack_mark before = c.mark_stack();
         std::string out = s.text;
         for (std::size_t i = 0; i < a.size(); ++i) {
             out += string_arg(c, a[i]);

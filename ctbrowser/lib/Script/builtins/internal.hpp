@@ -342,17 +342,17 @@ inline void adopt_subclass_prototype(context & cx, value made, const object_obje
 // walk that carries on after its first refused write is doing work the
 // specification stopped.
 //
-// WHETHER A DIRECT throw_error HAPPENED is read off context::current_stack: a
+// WHETHER A DIRECT throw_error HAPPENED is read off context::mark_stack: a
 // throw the native raised itself is not parked (that is `call`'s doing, and
 // throw_pending sees only that) and the landing clears `thrown_`, but the
 // landing also moves the handler frame's `ip` to the catch block or pops
-// frames above it, and the trace prints both. An uncaught throw fails the
-// run, which throw_pending does see. (A compiled frame prints no offset, so
-// a catch in one is invisible here; the interpreted tier is what runs the
-// suites.) The snapshot costs a string, so the dense-array write below, which
-// no JavaScript can refuse or observe, skips it.
-[[nodiscard]] inline bool threw_since(context & cx, const std::string & before) {
-    return cx.throw_pending() || cx.current_stack() != before;
+// frames above it, and the mark holds both - a compiled frame's `ip` is its
+// landing pad, so a catch there shows too. An uncaught throw fails the run,
+// which throw_pending does see. It was the whole current_stack string until
+// 2026-09-26: two per `charCodeAt`, and p5's Friendly Error System walks its
+// 4.5 MB source through charCodeAt 5.7 million times.
+[[nodiscard]] inline bool threw_since(context & cx, const context::stack_mark & before) {
+    return cx.throw_pending() || cx.mark_stack() != before;
 }
 // The same question off context::unwinds(), which costs nothing: a native
 // that has read `length` off a revoked proxy has already thrown and landed,
@@ -384,7 +384,7 @@ struct unwind_watch {
             return true;
         }
     }
-    const std::string before = cx.current_stack();
+    const context::stack_mark before = cx.mark_stack();
     cx.clear_store_rejected();
     cx.store_index(self, value::number(i), v);
     if (cx.throw_pending()) { return false; }
@@ -447,7 +447,7 @@ struct unwind_watch {
     return false;
 }
 [[nodiscard]] inline bool put_length(context & cx, value self, double len) {
-    const std::string before = cx.current_stack();
+    const context::stack_mark before = cx.mark_stack();
     cx.clear_store_rejected();
     cx.store_property(self, "length", value::number(len));
     if (cx.throw_pending()) { return false; }

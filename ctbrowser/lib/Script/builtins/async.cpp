@@ -897,7 +897,7 @@ void install_promise(context & cx) {
         // code point above 0x7F becomes its encoding rather than one char,
         // which is what makes the round trip through String.prototype work.
         stat("fromCharCode", 1, [](context & c, std::span<value> a) {
-            const std::string before = c.current_stack();
+            const context::stack_mark before = c.mark_stack();
             std::string out;
             for (std::size_t i = 0; i < a.size(); ++i) {
                 // ToUint16 of ToNumber (22.1.2.1): an object's valueOf runs.
@@ -909,7 +909,7 @@ void install_promise(context & cx) {
             return c.string(out);
         });
         stat("fromCodePoint", 1, [](context & c, std::span<value> a) {
-            const std::string before = c.current_stack();
+            const context::stack_mark before = c.mark_stack();
             std::string out;
             for (std::size_t i = 0; i < a.size(); ++i) {
                 // 22.1.2.2 step 2c: a code point must be an INTEGER in
@@ -935,7 +935,7 @@ void install_promise(context & cx) {
         // is the whole surface. 25 of the 30 test262 files read "TypeError:
         // raw is undefined, not a function" before this.
         stat("raw", 1, [](context & c, std::span<value> a) {
-            const std::string before = c.current_stack();
+            const context::stack_mark before = c.mark_stack();
             const value cooked = arg_at(a, 0);
             const value literals = c.lookup_property(cooked, "raw");
             if (detail::threw_since(c, before)) { return value::undefined(); }
