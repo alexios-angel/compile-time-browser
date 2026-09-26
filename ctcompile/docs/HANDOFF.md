@@ -22,6 +22,104 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional Number callees and nested Boolean carriers, 2026-09-26 UTC
+
+Resumed **56f9c702** and its exact conditional Number-argument
+boundary. The prior iteration was committed and the old WIP branch was an
+ancestor. This continuation retained all five saved candidates through service
+interruptions; completed local checks were not discarded.
+
+**a28cb029** forwards a recovered If result only when both corresponding
+yields are the identical saved SSA value, after both arms pass independent effect
+proof. Every changed use consumes the work budget. Both arm bodies remain, and
+existing result trimming precedes fresh complete DOM proof. No callable kind join,
+runtime carrier or ownership mechanism was added. The original protected Number
+control 5 is promoted unchanged; 38 new transaction controls cover both providers.
+
+**2c1ed2f7** proves exact Boolean tags through nested If yields using a
+charged iterative traversal. Predicate correspondence, guard dependencies,
+read-time snapshots, effects and exit checks remain unchanged. Thirteen new
+retention rows and ten live mutation states include fresh/stale solvers, forged
+markers and incomplete budgets. No shorter lifetime or raw-oracle gain is claimed.
+
+**1fcfbe26** executes the exact complete HANDOFF source, an intervening-write
+snapshot and the prior arithmetic conditional-callee refusal, promoted unchanged.
+The added normal-return source remains intact as a measured native refusal.
+Thirteen Number-conversion inputs and both flag states check ordered
+Node/interpreter observations; twelve new complete refusals cover
+changed callees, either arm's effects/coercion, invalid writes and unknown guards.
+All 43 prior direct and two outer sources remain unchanged.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Final exact CTests passed, each 1/1
+(total elapsed): `ctcompile_exception_recovery` **19.41 s**,
+`ctcompile_host_contract` **2.85 s**, `ctcompile_escape_analysis_arrays`
+**5.68 s** and `ctcompile_escape_analysis_completion` **0.02 s**.
+
+Across the initial and remaining selected-source runs, **48 GCC/Clang native
+executions, 12 admitted provider/optimization combinations and 80 refusals** pass:
+16 selected refusal bodies times four, four normal-return refusals and 12 zero
+budgets. Both printers/providers/optimization modes, two documents, both flag
+states, ordered writes and 16 lifetimes pass for the three admitted sources.
+All **24 generated C++ files** were retrieved; source and linked-symbol checks
+reject Script/AOT. Inspected explicit snapshot/arithmetic and deduced session
+entries retain typed Number locals, conditional public DOM reads, borrowed
+element_ref and document RAII. All five final local/devbox hashes match.
+This is selected harness validation, not a full caught-node lit run.
+
+Full repository formatting exits 1 with the same six pre-existing diagnostics in
+untouched `select_and_options.cpp:602`, `node_methods.cpp:63` and
+`Style/css/properties/gaps.cpp:189`. All changed C++/Python files pass scoped
+formatting, syntax and diff checks. The four ordered Node oracles and 16 JavaScript
+syntax checks pass; all 103 prior literal bodies are preserved, including the
+unchanged body of the promoted refusal. Independent native review and parent
+escape/source review pass.
+
+The first exception CTest failed only the new normal-return control 1 across both
+providers. The initial selected source run likewise completed the exact witness
+and snapshot (16 C++ files, 32 native executions) before that new return variant
+refused. Its source remains byte-identical; only its unmeasured admission
+expectation changed. Only the exception target/CTest and remaining source checks
+were retried. Production, the three passing CTests and first two source executions
+were not replayed. Initial logs and hashes are retained.
+
+**Next measured boundary:** the same conditional Number argument with an ordinary
+return from the protected region still refuses
+`native DOM source: DOM URI requires its fingerprinted initial provider binding`:
+
+```javascript
+function customElements(anchor) {
+  try {
+    const saved = Number(anchor.hasAttribute('flag') ? anchor.getAttribute('data-number') : null);
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+```
+
+Continue the checked-invocation recovery path and its complete saved-state/callee
+effect proof. `testConditionalNumberCallee` control 1 and
+`write-number-read-conditional-return` retain the complete source. The public
+refusal comes from fallback DOM URI preparation; it is not permission to add URI
+intrinsics or drop the handler. Distinct or mutable callable origins remain refused.
+The pre-try conditional probe was prepared but not run after this nearer boundary
+was measured.
+
+Full CTest/compiler lit, other source fixtures/outer catches, broad corpus/matrices,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance were skipped. The native application driver, full Bootstrap and broader
+escape work remain incomplete. No full-Bootstrap admission is claimed.
+
+Linux /proc checks found live Claude loop PID 2333739 and its wrapper; Windows
+Get-CimInstance succeeded with 362 processes and no Claude identities. Concurrent
+rules applied. The devbox gates waited for Claude's build/CSS locks. Its journal
+reports `ctbrowser-wpt` **8ed8dfa6** awaiting integration; that browser work is not part
+of these measurements. No browser/shared implementation edits, local builds,
+push or history rewrite.
+Evidence: `/tmp/ctcompile-iteration47/`.
+
 ## Protected Number arithmetic and Boolean branch results, 2026-09-26 UTC
 
 Resumed **e729cd48** and its exact protected `Number(getAttribute) + 1`
