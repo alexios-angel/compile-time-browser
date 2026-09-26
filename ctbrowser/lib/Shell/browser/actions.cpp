@@ -5,6 +5,28 @@
 
 namespace ctbrowser::shell {
 
+namespace {
+
+// HTML 3.2.5.2.7 "interactive content" - what a <label> leaves alone: a click
+// aimed at one, or at anything inside one, is that element's own.
+[[nodiscard]] bool is_interactive_content(const read_txn & txn, atom_table & atoms, node_id id) {
+    if (txn.element_ns(id) != node_ns::html) { return false; }
+    const std::string_view local = txn.local_name(id);
+    const auto has = [&](std::string_view name) {
+        return txn.has_attribute(id, atoms.intern(name));
+    };
+    if (local == "a") { return has("href"); }
+    if (local == "audio" || local == "video") { return has("controls"); }
+    if (local == "img") { return has("usemap"); }
+    if (local == "input") {
+        return !ascii_iequals(txn.attribute_value(id, atoms.intern("type")), "hidden");
+    }
+    return local == "button" || local == "details" || local == "embed" || local == "iframe" ||
+           local == "label" || local == "select" || local == "textarea";
+}
+
+} // namespace
+
 // THE ACTIVATION BEHAVIOUR of one element, run by the bindings' dispatch after
 // a `click`'s listeners and only if none of them cancelled it - `target` IS the
 // activation target, the first node on the event's path that has any, so this
@@ -14,11 +36,28 @@ namespace ctbrowser::shell {
 void browser::activate(node_id target) {
     std::string_view tag;
     node_id labelled;
+    // The node the click was dispatched at, read before anything below
+    // dispatches another.
+    const node_id clicked = bindings_->activation_event_target;
     {
         const auto txn = doc_->read();
         tag = atoms_.text(txn.tag(target).value_or(atom{}));
-        if (tag == "label") { labelled = labelled_control(txn, target); }
+        if (tag == "label") {
+            // "...for events targeted at interactive content descendants of a
+            // label element, and any descendants of those, must be to do
+            // nothing" (4.10.4): a <textarea> or an <audio controls> in the
+            // label has no activation behaviour of its own, so the label is
+            // its click's activation target - and must not then click the
+            // control it labels.
+            bool interactive = false;
+            node_id at = clicked;
+            for (; at && at != target; at = txn.parent(at)) {
+                interactive = interactive || is_interactive_content(txn, atoms_, at);
+            }
+            if (interactive && at == target) { return; }
+        }
     }
+    if (tag == "label") { labelled = bindings_->labeled_control(target); }
     if (tag == "a" || tag == "area") {
         (void)follow_link(target);
         return;
@@ -54,9 +93,7 @@ void browser::activate(node_id target) {
     // toggle, submit, focus or fire an event. Without this the attribute
     // was purely decorative, and it was not even that.
     if (is_disabled(target)) { return; }
-    node_id form;
-    bool submits = false;
-    bool resets = false;
+    form_store::form_action action;
     {
         const auto txn = doc_->read();
         const control_kind kind = kind_of(txn, target);
@@ -70,20 +107,35 @@ void browser::activate(node_id target) {
             mark(dirty::paint);
             return;
         }
+        // THE PICKER TYPES' input activation behaviour (HTML 4.10.5.1): "show
+        // the picker, if applicable" - with transient activation, and on a
+        // mutable control, it CONSUMES the activation first (there is no
+        // picker here to show; showPicker() is the same steps).
+        if (txn.local_name(target) == "input" && txn.element_ns(target) == node_ns::html) {
+            const std::string type =
+                input_types::type_state_of(txn.attribute_value(target, atoms_.intern("type")));
+            if (ascii_iequals_any(
+                    type, {"color", "date", "datetime-local", "file", "month", "time", "week"})) {
+                const bool read_only = type != "color" && type != "file" &&
+                                       txn.has_attribute(target, atoms_.intern("readonly"));
+                if (!read_only && bindings_->has_transient_activation()) {
+                    bindings_->consume_activation();
+                }
+                return;
+            }
+        }
         // The kind is read NOW, after the click's listeners: one that made a
         // text field `type=submit` made a submit button, and this click is its.
         // `<input type=image>` is one, with a picture on it (4.10.5.1.20),
         // though control_kind_of files it with the text controls because that
         // is how it is laid out; so is a <button> with no type, which is the
-        // default people forget and then wonder why their form reloads.
-        submits = form_store::is_submit_button(txn, atoms_, target);
-        resets = kind == control_kind::button &&
-                 ascii_iequals(txn.attribute_value(target, atoms_.intern("type")), "reset");
-        // Its FORM OWNER, `form=` and all; with none, a button does nothing.
-        form = form_store::owning_form(txn, atoms_, target);
+        // default people forget and then wonder why their form reloads. Its
+        // FORM OWNER, `form=` and all; with none, a button does nothing.
+        action = form_store::form_action_of(txn, atoms_, target);
     }
-    if (submits) { submit(form, target); }
-    if (resets) { reset(form); }
+    if (!action.form) { return; }
+    if (action.submits) { submit(action.form, target); }
+    if (action.resets) { reset(action.form); }
 }
 
 bool browser::toggle_details(node_id target) {

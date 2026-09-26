@@ -527,6 +527,7 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // preventDefault put back, not the one it saw.
     if (activation_target) {
         if (!prevented(event)) {
+            activation_event_target = at.node;
             run_activation_behavior(cx, activation_target);
         } else if (legacy_toggled) {
             // The legacy-canceled-activation behaviour: the checkedness the

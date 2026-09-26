@@ -69,6 +69,9 @@ struct control_helpers {
     bool is_labelable(const read_txn & txn, dom_bindings * b, node_id id) const;
     node_id labeled_control(const read_txn & txn, dom_bindings * b, node_id label) const;
     std::vector<node_id> elements_of_form(dom_bindings * b, node_id form) const;
+    // The SUBMITTABLE elements the form owns, in tree order - an image button
+    // included, which elements_of_form (the listed ones) leaves out.
+    std::vector<node_id> submittable_of_form(dom_bindings * b, node_id form) const;
     bool is_disabled(const read_txn & txn, dom_bindings * b, node_id id) const;
     bool in_radio_group(const read_txn & txn, dom_bindings * b, node_id a, node_id other) const;
     void uncheck_radio_group(const read_txn & txn, dom_bindings * b, node_id id) const;

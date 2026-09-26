@@ -455,16 +455,148 @@ void test_a_frame_document_is_laid_out_at_the_size_of_its_box() {
 } // namespace
 
 // HTML 4.10.21.3: a GET submission aimed at a frame this document names
-// navigates the frame to the action with the entries as its query - the
-// frame's own `location` reads it back and its document is the action's.
+// navigates the frame to the action with the entries as its query. PLANNED:
+// the frame still has its old document when submit() returns, and the new
+// one - whose `location` reads the query back - by the frame's next `load`.
 void test_a_form_submits_into_a_named_frame() {
-    is("<form id=fm action=inner.html target=f><input name=a value='x y'><input name=b value=2>"
-       "</form><iframe id=f name=f></iframe>",
-       "(function () { document.getElementById('fm').submit();"
-       " var w = document.getElementById('f').contentWindow;"
-       " return w.location.search + '|' + w.document.title + '|' + (w.location === "
-       "w.document.location) + '|' + (w.location === window.location); })()",
-       "?a=x+y&b=2|inner|true|false");
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///pages/the-page.html");
+    page.assets().add("inner.html", bytes_of(inner_html));
+    page.load_html("<!DOCTYPE html><html><body>"
+                   "<form id=fm action=inner.html target=f><input name=a value='x y'>"
+                   "<input name=b value=2></form><iframe id=f name=f></iframe><script>"
+                   "addEventListener('load', function () {"
+                   " var f = document.getElementById('f');"
+                   " document.getElementById('fm').submit();"
+                   " var before = f.contentDocument.title;"
+                   " f.onload = function () { var w = f.contentWindow;"
+                   "  console.log([before, w.location.search, w.document.title,"
+                   "   w.location === w.document.location, w.location === window.location]"
+                   "   .join('|')); }; });</script></body></html>");
+    for (int i = 0; i < 4; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"|?a=x+y&b=2|inner|true|false"}); }
+}
+
+// window.open(), HTML 7.2.2.1: a URL that does not parse is a SyntaxError
+// before anything else; `_blank` is a popup, which this user agent blocks
+// (null); a name an <iframe> has navigates it and answers its window.
+void test_window_open_follows_the_window_open_steps() {
+    is("<iframe id=f name=f></iframe>",
+       "(function () { var threw = ''; try { window.open('http://[') } catch (e) {"
+       " threw = e.name + (e instanceof DOMException); }"
+       " return [threw, window.open(), window.open('inner.html', '_blank'),"
+       " window.open('inner.html', 'f') === document.getElementById('f').contentWindow,"
+       " window.open('inner.html', 'f', 'noopener')].join('|'); })()",
+       "SyntaxErrortrue|||true|");
+    // ...and the navigation it started has happened a tick later - to the
+    // ABSOLUTE URL, which a page from disk reads as that path.
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///pages/the-page.html");
+    page.assets().add("/pages/inner.html", bytes_of(inner_html));
+    page.load_html("<!DOCTYPE html><html><body><iframe id=f name=f></iframe><script>"
+                   "addEventListener('load', function () {"
+                   " var f = document.getElementById('f');"
+                   " window.open('inner.html?x=1', 'f');"
+                   " f.onload = function () {"
+                   "  console.log(f.contentDocument.title + f.contentWindow.location.search); };"
+                   "});</script></body></html>");
+    for (int i = 0; i < 4; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"inner?x=1"}); }
+}
+
+// THE LOCATION OBJECT, HTML 7.2.4: getters over the document's URL, and
+// setters that navigate - `window.location = url` forwards to `href`
+// ([PutForwards]), a URL that does not parse is a SyntaxError, and a new
+// fragment is a fragment navigation whose `hashchange` comes a task later.
+void test_the_location_object_navigates() {
+    is(one_frame,
+       "(function () { var w = document.getElementById('f').contentWindow, threw = '';"
+       " try { w.location = 'http://[' } catch (e) { threw = e.name; }"
+       " var heard = []; w.addEventListener('hashchange', function (e) {"
+       "  heard.push(e.newURL); });"
+       " w.location.hash = 'there'; var now = w.location.href + ',' + heard.length;"
+       " var own = Object.getOwnPropertyDescriptor(w.location, 'href');"
+       " return [threw, now, typeof own.get, own.configurable, w.location.hash,"
+       "  String(w.location) === w.location.href].join('|'); })()",
+       "SyntaxError|file:///pages/inner.html#there,0|function|false|#there|true");
+    // A frame's `location.href =` navigates the frame, a tick later.
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///pages/the-page.html");
+    page.assets().add("/pages/inner.html", bytes_of(inner_html));
+    page.load_html("<!DOCTYPE html><html><body><iframe id=f></iframe><script>"
+                   "addEventListener('load', function () {"
+                   " var f = document.getElementById('f');"
+                   " f.contentWindow.location.href = 'inner.html?y=2';"
+                   " f.onload = function () {"
+                   "  console.log(f.contentDocument.title + f.contentWindow.location.search); };"
+                   "});</script></body></html>");
+    for (int i = 0; i < 4; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"inner?y=2"}); }
+}
+
+// HTML 4.8.5's insertion steps: a frame inserted with no `src` fires its
+// about:blank `load` DURING the insertion - heard by a listener added before
+// it, never by one added after - and a `src` given afterwards is the only
+// `load` a later listener hears (dom/ranges' Range-test-iframe setup).
+void test_a_blank_frame_loads_during_its_insertion() {
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///pages/the-page.html");
+    page.assets().add("inner.html", bytes_of(inner_html));
+    page.load_html("<!DOCTYPE html><html><body><script>"
+                   "var heard = [];"
+                   "addEventListener('load', function () {"
+                   " var f = document.createElement('iframe');"
+                   " f.onload = function () { heard.push('before'); };"
+                   " document.body.appendChild(f); heard.push('appended');"
+                   " var g = document.body.appendChild(document.createElement('iframe'));"
+                   " g.onload = function () { heard.push(g.contentDocument.title); };"
+                   " g.src = 'inner.html';"
+                   " setTimeout(function () { console.log(heard.join()); }, 40);"
+                   "});</script></body></html>");
+    for (int i = 0; i < 6; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"before,appended,inner"}); }
+}
+
+// HTML 4.8.5: an <iframe srcdoc> is its markup - text/html in UTF-8 at
+// about:srcdoc, over any `src`, its scripts run in the frame - and a
+// relative reference in it resolves against the page (the fallback base URL).
+void test_a_srcdoc_frame_is_its_markup() {
+    is("<iframe id=f src=inner.html srcdoc='<title>doc</title><a id=a href=x/y.html></a>"
+       "<script>parent.__ran = document.URL</script>'></iframe>",
+       "(function () { var d = document.getElementById('f').contentDocument;"
+       " return [d.title, d.URL, window.__ran, d.contentType, d.characterSet,"
+       " d.getElementById('a').href].join('|'); })()",
+       "doc|about:srcdoc|about:srcdoc|text/html|UTF-8|file:///pages/x/y.html");
+}
+
+// HTML 7.4.2.3.2: a `javascript:` source navigates the about:blank a frame
+// starts on - a task later, in its realm - to its string result, and a
+// result that is no string leaves the frame as it was and announces nothing.
+void test_a_javascript_source_is_its_string_result() {
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///pages/the-page.html");
+    page.load_html("<!DOCTYPE html><html><body>"
+                   "<iframe id=f src=\"javascript:'<title>js</title>'\"></iframe>"
+                   "<iframe id=g src='javascript:false'></iframe><script>"
+                   "var heard = [], f = document.getElementById('f'),"
+                   " g = document.getElementById('g');"
+                   "f.onload = function () { heard.push(f.contentDocument.title); };"
+                   "g.onload = function () { heard.push('g'); };"
+                   "setTimeout(function () {"
+                   " console.log(heard.join() + '|' + g.contentDocument.body.childNodes.length);"
+                   "}, 60);</script></body></html>");
+    for (int i = 0; i < 8; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"js|0"}); }
 }
 
 int main() {
@@ -489,5 +621,10 @@ int main() {
     test_a_frame_window_scrolls_its_own_viewport();
     test_a_frames_function_and_eval_are_the_frames();
     test_a_form_submits_into_a_named_frame();
+    test_window_open_follows_the_window_open_steps();
+    test_the_location_object_navigates();
+    test_a_blank_frame_loads_during_its_insertion();
+    test_a_srcdoc_frame_is_its_markup();
+    test_a_javascript_source_is_its_string_result();
     REPORT("frames");
 }

@@ -1,5 +1,9 @@
 #include <ctbrowser/shell/page/forms.hpp>
 
+#include <ctbrowser/dom/encoding.hpp>
+
+#include <string>
+
 // forms: the method bodies.
 // The header says what these do; this says how.
 
@@ -368,6 +372,173 @@ std::size_t form_store::next_code_point(std::string_view text, std::size_t at) {
     ++at;
     while (at < text.size() && (static_cast<unsigned char>(text[at]) & 0xC0u) == 0x80u) { ++at; }
     return at;
+}
+
+// --- the submission encodings, HTML 4.10.21.6-9 ------------------------------
+
+namespace {
+
+// The Encoding Standard's ENCODER for one encoding, in the "html" error mode:
+// a code point the encoding cannot express is written `&#N;`.
+//
+// BUILT FROM THE DECODER rather than from a copy of its index: each of the
+// 128 high bytes decoded by the same name (dom/encoding.hpp) says which code
+// point that byte is, and the encoder is that table read backwards - so the
+// single-byte encodings and x-user-defined come out of the one table the
+// decoder already reads, and cannot drift from it. An encoding the decoder
+// passes through as raw bytes - the legacy multi-byte ones, which have no
+// decoder here - has no encoder either, and its text goes as UTF-8.
+class text_encoder {
+public:
+    explicit text_encoder(std::string_view encoding) {
+        if (encoding.empty() || encoding == "UTF-8") { return; }
+        for (unsigned byte = 0x80; byte <= 0xFF; ++byte) {
+            const std::string decoded =
+                decode_document_bytes(std::string(1, static_cast<char>(byte)), encoding);
+            if (decoded.size() == 1 && static_cast<unsigned char>(decoded[0]) >= 0x80) {
+                table_.clear(); // passed through: no decoder, so no encoder
+                return;
+            }
+            std::size_t at = 0;
+            const char32_t cp = decoded.empty() ? char32_t{0xFFFD} : decode_utf8(decoded, at);
+            if (cp != 0xFFFD) { table_.emplace_back(cp, static_cast<char>(byte)); }
+        }
+        std::ranges::sort(table_);
+    }
+
+    [[nodiscard]] std::string operator()(std::string_view text) const {
+        if (table_.empty()) { return std::string{text}; }
+        std::string out;
+        out.reserve(text.size());
+        for (std::size_t at = 0; at < text.size();) {
+            const char32_t cp = decode_utf8(text, at);
+            if (cp < 0x80) {
+                out.push_back(static_cast<char>(cp));
+                continue;
+            }
+            const auto found = std::ranges::lower_bound(
+                table_, cp, {}, [](const std::pair<char32_t, char> & row) { return row.first; });
+            if (found != table_.end() && found->first == cp) {
+                out.push_back(found->second);
+            } else {
+                out += "&#" + std::to_string(static_cast<std::uint32_t>(cp)) + ";";
+            }
+        }
+        return out;
+    }
+
+private:
+    std::vector<std::pair<char32_t, char>> table_; // code point -> byte, by code point
+};
+
+// Every CR not followed by LF and every LF not preceded by CR made a CR LF.
+[[nodiscard]] std::string normalize_line_breaks(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '\r' || text[i] == '\n') {
+            out += "\r\n";
+            if (text[i] == '\r' && i + 1 < text.size() && text[i + 1] == '\n') { ++i; }
+        } else {
+            out += text[i];
+        }
+    }
+    return out;
+}
+
+// "Convert to a list of name-value pairs" (4.10.21.6): a File by its name, and
+// the line breaks of both halves normalised.
+[[nodiscard]] std::vector<std::pair<std::string, std::string>> name_value_pairs(
+    const std::vector<form_entry> & entries) {
+    std::vector<std::pair<std::string, std::string>> out;
+    out.reserve(entries.size());
+    for (const form_entry & entry : entries) {
+        out.emplace_back(normalize_line_breaks(entry.name),
+                         normalize_line_breaks(entry.file ? entry.filename : entry.value));
+    }
+    return out;
+}
+
+} // namespace
+
+std::string urlencoded_form_body(const std::vector<form_entry> & entries,
+                                 std::string_view encoding) {
+    // URL 5.2's serializer over the ENCODED bytes ("percent-encode after
+    // encoding"): a space is `+`, ASCII alphanumerics and `*-._` stand, every
+    // other byte is %XX - an NCR the encoder wrote included.
+    const text_encoder encode{encoding};
+    const auto append = [&](std::string & out, std::string_view text) {
+        constexpr std::string_view hex = "0123456789ABCDEF";
+        for (const char c : encode(text)) {
+            const auto byte = static_cast<unsigned char>(c);
+            if (c == ' ') {
+                out.push_back('+');
+            } else if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                       c == '*' || c == '-' || c == '.' || c == '_') {
+                out.push_back(c);
+            } else {
+                out.push_back('%');
+                out.push_back(hex[byte >> 4u]);
+                out.push_back(hex[byte & 0x0Fu]);
+            }
+        }
+    };
+    std::string out;
+    for (const auto & [name, value] : name_value_pairs(entries)) {
+        if (!out.empty()) { out.push_back('&'); }
+        append(out, name);
+        out.push_back('=');
+        append(out, value);
+    }
+    return out;
+}
+
+std::string text_plain_form_body(const std::vector<form_entry> & entries,
+                                 std::string_view encoding) {
+    std::string out;
+    for (const auto & [name, value] : name_value_pairs(entries)) {
+        out += name + "=" + value + "\r\n";
+    }
+    return text_encoder{encoding}(out);
+}
+
+std::string multipart_form_body(const std::vector<form_entry> & entries,
+                                std::string_view encoding) {
+    const text_encoder encode{encoding};
+    // A field name's and a filename's `"`, CR and LF - after encoding - are the
+    // only escapes there are ("the name escaping rule").
+    const auto escaped = [&](std::string_view text) {
+        std::string out;
+        for (const char c : encode(text)) {
+            switch (c) {
+            case '"': out += "%22"; break;
+            case '\r': out += "%0D"; break;
+            case '\n': out += "%0A"; break;
+            default: out.push_back(c); break;
+            }
+        }
+        return out;
+    };
+    std::string out;
+    for (const form_entry & entry : entries) {
+        out += "--";
+        out += multipart_boundary;
+        out += "\r\nContent-Disposition: form-data; name=\"" +
+               escaped(normalize_line_breaks(entry.name)) + "\"";
+        if (entry.file) {
+            // A File's name is escaped but NOT normalised, and its bytes go
+            // as they are, under its type.
+            out += "; filename=\"" + escaped(entry.filename) + "\"\r\nContent-Type: " +
+                   (entry.type.empty() ? std::string{"application/octet-stream"} : entry.type) +
+                   "\r\n\r\n" + entry.value + "\r\n";
+        } else {
+            out += "\r\n\r\n" + encode(normalize_line_breaks(entry.value)) + "\r\n";
+        }
+    }
+    out += "--";
+    out += multipart_boundary;
+    out += "--\r\n";
+    return out;
 }
 
 } // namespace ctbrowser::shell

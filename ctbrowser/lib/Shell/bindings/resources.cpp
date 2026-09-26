@@ -21,6 +21,8 @@ namespace detail {
 // A body's bytes decoded, BOM and all - defined in xhr.cpp beside the
 // response decoding that needed it first.
 [[nodiscard]] std::string decode_body(std::string_view bytes, std::string_view name);
+// "UTF-8 decode": a UTF-8 BOM dropped and none other sniffed - xhr.cpp.
+[[nodiscard]] std::string utf8_decode(std::string_view bytes);
 } // namespace detail
 
 namespace {
@@ -232,46 +234,32 @@ struct extracted_body {
         return {c.to_string(body), "application/x-www-form-urlencoded;charset=UTF-8"};
     }
     if (body.is_object() && is("FormData")) {
-        // "multipart/form-data encoding algorithm" (HTML 4.10.21.8): each entry
-        // a part, a name's `"`, CR and LF escaped, a File with its filename and
-        // type.
-        const std::string boundary = "----ctbrowserFormBoundary7MA4YWxkTrZu0gW";
-        const auto escape = [](const std::string & text) {
-            std::string out;
-            for (const char ch : text) {
-                if (ch == '"') {
-                    out += "%22";
-                } else if (ch == '\r') {
-                    out += "%0D";
-                } else if (ch == '\n') {
-                    out += "%0A";
-                } else {
-                    out += ch;
-                }
-            }
-            return out;
-        };
+        // "The multipart/form-data encoding algorithm" (HTML 4.10.21.8) over
+        // the entry list and UTF-8 - page/forms.cpp's, the one a form
+        // submission runs: the line breaks of names and string values
+        // normalised, a name's `"`, CR and LF escaped, a File with its
+        // filename and type.
         const value entries = c.iterable_values(body);
         if (c.throw_pending() || !entries.is_array()) { return {}; }
         const context::rooted keep{c, entries};
-        std::string out;
+        std::vector<form_entry> list;
         for (const value & pair : static_cast<script::array_object *>(entries.as_heap())->items) {
             const auto & two = static_cast<script::array_object *>(pair.as_heap())->items;
             if (two.size() != 2) { continue; }
-            out += "--" + boundary + "\r\nContent-Disposition: form-data; name=\"" +
-                   escape(c.to_string(two[0])) + "\"";
+            form_entry entry;
+            entry.name = c.to_string(two[0]);
             if (two[1].is_object()) {
-                const std::string type = c.to_string(c.lookup_property(two[1], "type"));
-                out += "; filename=\"" + escape(c.to_string(c.lookup_property(two[1], "name"))) +
-                       "\"\r\nContent-Type: " +
-                       (type.empty() ? std::string{"application/octet-stream"} : type) +
-                       "\r\n\r\n" + bytes_of(c, two[1]) + "\r\n";
+                entry.file = true;
+                entry.filename = c.to_string(c.lookup_property(two[1], "name"));
+                entry.type = c.to_string(c.lookup_property(two[1], "type"));
+                entry.value = bytes_of(c, two[1]);
             } else {
-                out += "\r\n\r\n" + c.to_string(two[1]) + "\r\n";
+                entry.value = c.to_string(two[1]);
             }
+            list.push_back(std::move(entry));
         }
-        out += "--" + boundary + "--\r\n";
-        return {out, "multipart/form-data; boundary=" + boundary};
+        return {multipart_form_body(list, "UTF-8"),
+                "multipart/form-data; boundary=" + std::string{multipart_boundary}};
     }
     // An ArrayBuffer or a view onto one: its bytes, the view's offset and
     // length applied, and no type. A plain array is no BufferSource - it is
@@ -817,11 +805,11 @@ void dom_bindings::install_resources(context & cx) {
             });
         };
         read("text", [](context & c, script::object_object &, const std::string & bytes) {
-            return c.make_promise(c.string(detail::decode_body(bytes, "UTF-8")), false);
+            return c.make_promise(c.string(detail::utf8_decode(bytes)), false);
         });
         read("json", [](context & c, script::object_object &, const std::string & bytes) {
             const value parse = c.lookup_property(c.global("JSON"), "parse");
-            const value text = c.string(detail::decode_body(bytes, "UTF-8"));
+            const value text = c.string(detail::utf8_decode(bytes));
             const value parsed = c.call(parse, std::span<const value>{&text, 1});
             if (c.throw_pending()) { return c.make_promise(c.take_pending_throw(), true); }
             return c.make_promise(parsed, false);
@@ -1196,6 +1184,21 @@ void dom_bindings::settle_fetch(context & cx, const pending_fetch & waiting) {
 
 dom_bindings::loaded_resource dom_bindings::load_resource(const std::string & url) {
     loaded_resource out;
+    // THE EMBEDDER FIRST (browser_options::on_request): a GET of the URL,
+    // resolved against this document's address. ponytail: a GET only - an
+    // XHR's or a fetch's method and body do not reach the handler yet.
+    if (!is_data_url(url) && !url.starts_with("blob:")) {
+        resource_request asked;
+        asked.url = location_href_.empty() ? url : resolve(location_href_, url);
+        if (asked.url.empty()) { asked.url = url; }
+        if (std::optional<resource_reply> reply = ask_request_handler(std::move(asked))) {
+            out.status = reply->status;
+            out.type = std::move(reply->content_type);
+            out.body.resize(reply->body.size());
+            std::memcpy(out.body.data(), reply->body.data(), reply->body.size());
+            return out;
+        }
+    }
     if (assets_ != nullptr && assets_->contains(url)) {
         const std::span<const std::byte> baked = assets_->find(url);
         out.body.assign(baked.begin(), baked.end());

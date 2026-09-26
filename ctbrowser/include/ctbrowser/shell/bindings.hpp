@@ -74,6 +74,12 @@ public:
     bool dispatch_event(std::string_view type, node_id target, value event);
 
     bool click(node_id target);
+    // The node the `click` whose activation behaviour is running was
+    // dispatched at (events/dispatch.cpp); a <label>'s activation reads it.
+    node_id activation_event_target;
+    // HTML 4.10.4: a label's labeled control, labelable custom elements and
+    // all (element/control_methods/collections_and_labels.cpp).
+    [[nodiscard]] node_id labeled_control(node_id label);
     // After ANY write to the document, the browser's own included (a
     // <summary>'s activation): the observers' records and the attribute change
     // steps (entry.cpp).
@@ -83,8 +89,9 @@ public:
     std::size_t run_due_callbacks();
 
     void reconcile_frames();
-    bool navigate_form_target(node_id form,
-                              const std::vector<std::pair<std::string, std::string>> & entries);
+    bool navigate_form_target(node_id form, form_navigation navigation);
+    void run_planned_navigations();
+    void observe_requests(const request_handler * handler);
     std::function<bool(node_id form, node_id submitter)> submit_from_;
     std::function<void(node_id form)> reset_form_;
     void record_first_paint();
@@ -206,7 +213,7 @@ private:
     [[nodiscard]] node_id viable_sibling(node_id self, std::span<value> args, bool forward);
     [[nodiscard]] std::string namespace_of(node_id id) const;
     [[nodiscard]] std::string text_content(node_id target) const;
-    void write_location_parts(context & cx, script::object_object & loc);
+    void define_location_property(context & cx, script::object_object & holder);
     void install_element_views(context & cx, script::object_object & obj, node_id id);
     void install_element_child_views(context & cx, script::object_object & obj, node_id id);
 
@@ -717,9 +724,25 @@ private:
     using frame_entry = binding_detail::frame_entry;
     std::vector<frame_entry> frames_;
     bool frames_dirty_ = true;
+    std::vector<planned_navigation> planned_navigations_; // the primary's
+    // A frame document's <iframe>: the bindings it is in and the element (load_frame).
+    dom_bindings * frame_owner_ = nullptr;
+    node_id frame_element_;
+    [[nodiscard]] std::pair<dom_bindings *, node_id> choose_navigable(std::string_view target);
+    void navigate_frame(dom_bindings & navigable, node_id element, form_navigation navigation);
+    void install_window_open(context & cx, script::object_object & window);
+    const request_handler * request_handler_ = nullptr; // the primary's
+    [[nodiscard]] std::optional<resource_reply> ask_request_handler(resource_request request);
     // Returns the bindings over the frame's document (null when no wrapper).
-    dom_bindings * load_frame(context & cx, node_id id, const std::string & src);
+    dom_bindings * load_frame(context & cx, node_id id, const std::string & src,
+                              const resource_request * request = nullptr);
     void settle_frame(context & cx, const pending_frame & waiting);
+    bool connect_blank_frame(node_id id, const std::string & source);
+    void forget_frame_load(node_id id);
+    dom_bindings * start_frame(node_id id, const std::string & source);
+    [[nodiscard]] std::string frame_source(const read_txn & txn, node_id id) const;
+    [[nodiscard]] std::string fallback_base_url();
+    void connect_inserted_frames(const std::vector<document::write_note> & writes);
     [[nodiscard]] static std::string_view mime_for_path(std::string_view path);
 
     using read_kind = binding_detail::read_kind;
