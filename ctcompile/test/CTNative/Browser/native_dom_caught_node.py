@@ -657,6 +657,23 @@ RAW_HELPER_SOURCES |= {
 }
 
 
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-typeof-void": source.replace(
+        "return this;", "return typeof null === 'object' ? this : null;"
+    )
+    .replace(
+        "return {done: done, value: anchor};",
+        "return void 'next' ? null : {done: done, value: anchor};",
+    )
+    .replace(
+        "throw anchor;",
+        "throw typeof (true ? false : 0) === 'boolean' ? anchor : null;",
+    )
+    for name, source in OUTER_SOURCES.items()
+}
+
+
 # Retain the complete source-global witnesses; the initialized provider and
 # absence of source writes must prove the binding before helper projection.
 RAW_HELPER_SOURCES |= {
