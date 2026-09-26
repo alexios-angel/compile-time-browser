@@ -269,14 +269,21 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         }
         animated = std::move(physical);
     }
-    const auto declared = [declared_on, at, atoms,
-                           &animated](std::string_view property) -> std::string_view {
+    // The one property whose INITIAL value is being asked for as though it
+    // had been declared - see the longhand loop below.
+    const style::css::property_syntax * as_initial = nullptr;
+    const auto declared = [declared_on, at, atoms, &animated,
+                           &as_initial](std::string_view property) -> std::string_view {
         if (at.chain.empty()) { return {}; }
         if (at.pseudo) { return at.pseudo->get(atoms->intern(property)); }
         for (const auto & [name, text] : animated) {
             if (std::string_view{name} == property) { return text; }
         }
-        return declared_on(at.chain.front(), property);
+        const std::string_view held = declared_on(at.chain.front(), property);
+        if (held.empty() && as_initial != nullptr && as_initial->name == property) {
+            return as_initial->initial;
+        }
+        return held;
     };
 
     // THE FONT SIZE OF AN ELEMENT WITH NO BOX. Every `em` below resolves against
@@ -519,6 +526,29 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             property != "perspective-origin") {
             std::string resolved = style::css::computed_position(text, declared("writing-mode"),
                                                                  declared("direction"));
+            // ...its lengths absolute, as every computed length is: `right
+            // 4em` is `100% 160px` at a 40px font (offset-anchor-computed).
+            if (!resolved.empty() && property != "background-position") {
+                style::css::length_context lengths;
+                lengths.font_size = at.font_size;
+                lengths.root_font_size = at.root_font_size;
+                lengths.viewport_width = static_cast<float>(viewport_width_);
+                lengths.viewport_height = static_cast<float>(viewport_height_);
+                std::string absolute;
+                for (const std::string_view part : split_top_level(resolved, " ")) {
+                    std::string one{part};
+                    if (ascii_istarts_with(one, "calc(")) {
+                        one = style::css::fold_math(one, lengths).text;
+                    } else if (!one.ends_with('%')) {
+                        if (const std::optional<float> px =
+                                style::css::length_text_to_px(one, lengths)) {
+                            one = px_text(*px);
+                        }
+                    }
+                    absolute += (absolute.empty() ? "" : " ") + one;
+                }
+                resolved = std::move(absolute);
+            }
             if (!resolved.empty()) { return resolved; }
         }
         // CSS Text 4 §7.1-7.2: `word-spacing: normal` computes to zero, and a
@@ -731,6 +761,77 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 return computed;
             }
         }
+        // 4b'''''. `match-parent` IS THE PARENT'S ALIGNMENT, a `start` or
+        //         `end` there turned by the parent's direction into the side
+        //         it is (CSS Text 3 §6.1) - the root's parent being the
+        //         initial containing block, left to right.
+        if (property == "text-align" && collapse_keyword(text) == "match-parent") {
+            for (std::size_t up = at.pseudo ? 0 : 1; up < at.chain.size(); ++up) {
+                std::string above = collapse_keyword(declared_on(at.chain[up], "text-align"));
+                if (above == "match-parent") { continue; }
+                if (above.empty()) { above = "start"; }
+                if (above != "start" && above != "end") { return above; }
+                const bool rtl = collapse_keyword(declared_on(at.chain[up], "direction")) == "rtl";
+                return (above == "start") != rtl ? "left" : "right";
+            }
+            return "left";
+        }
+        // 4b''''''. FONT FEATURE AND VARIATION SETTINGS ARE ONE PER TAG, the
+        //          last written, sorted by tag (CSS Fonts 4 §6.12, §7.2):
+        //          `"tnum", "hist"` is `"hist", "tnum"`.
+        if ((property == "font-feature-settings" || property == "font-variation-settings") &&
+            collapse_keyword(text) != "normal") {
+            std::vector<std::pair<std::string, std::string>> tags;
+            bool ok = true;
+            for (const std::string_view raw : split_top_level(text, ",")) {
+                const std::string_view item = trim(raw, html_whitespace);
+                const std::size_t close =
+                    item.empty() ? std::string_view::npos : item.find(item.front(), 1);
+                if (close == std::string_view::npos ||
+                    (item.front() != '"' && item.front() != '\'')) {
+                    ok = false;
+                    break;
+                }
+                std::string tag{item.substr(1, close - 1)};
+                std::erase_if(tags, [&tag](const auto & one) { return one.first == tag; });
+                tags.emplace_back(std::move(tag),
+                                  std::string{trim(item.substr(close + 1), html_whitespace)});
+            }
+            if (ok && !tags.empty()) {
+                std::ranges::stable_sort(tags, {}, &std::pair<std::string, std::string>::first);
+                std::string out;
+                for (const auto & [tag, setting] : tags) {
+                    out += (out.empty() ? "\"" : ", \"") + tag + "\"" +
+                           (setting.empty() ? "" : " " + setting);
+                }
+                return out;
+            }
+        }
+        // 4b''''. AN EMPHASIS MARK IS A SHAPE AND A FILL once computed (CSS
+        //        Text Decoration 3 §3.1): a lone fill takes `circle`, or
+        //        `sesame` in a vertical writing mode, and `filled` - the
+        //        default - is left unwritten.
+        if (property == "text-emphasis-style") {
+            const std::string words = collapse_keyword(text);
+            if (!words.empty() && words != "none" && words.front() != '"' &&
+                words.front() != '\'') {
+                bool open = false;
+                std::string shape;
+                for (const std::string_view word : split_top_level(words, " ")) {
+                    if (word == "open") {
+                        open = true;
+                    } else if (word != "filled") {
+                        shape = std::string{word};
+                    }
+                }
+                if (shape.empty()) {
+                    shape = collapse_keyword(declared("writing-mode")).starts_with("vertical")
+                                ? "sesame"
+                                : "circle";
+                }
+                return (open ? "open " : "") + shape;
+            }
+        }
         // 4b'. A BASIC SHAPE (lib/Style/css/properties/shapes.cpp).
         if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
             property == "object-view-box") {
@@ -764,6 +865,35 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                        px_text(static_cast<float>(std::max(answer.value.px, 0.0)));
             }
             return out.empty() ? collapse_keyword(text) : out;
+        }
+        // `text-size-adjust: none` is no adjustment, which is `100%` (CSS
+        // Mobile Text Size Adjustment 1 §2).
+        if (property == "text-size-adjust" && collapse_keyword(text) == "none") { return "100%"; }
+        // A scroll marker group's mode is `links` when none was written (CSS
+        // Overflow 5 §3.2): `before` computes to `before links`.
+        if (property == "scroll-marker-group") {
+            const std::string words = collapse_keyword(text);
+            if (words == "before" || words == "after") { return words + " links"; }
+        }
+        // hyphenate-limit-chars' numbers are <integer>s, so a calc() the
+        // cascade folded to a fraction rounds (CSS Values 4 §10.9).
+        if (property == "hyphenate-limit-chars") {
+            std::string out;
+            for (const std::string_view word : split_top_level(collapse_keyword(text), " ")) {
+                double n = 0;
+                const bool number =
+                    std::from_chars(word.data(), word.data() + word.size(), n).ptr ==
+                    word.data() + word.size();
+                out += (out.empty() ? "" : " ") +
+                       (number ? number_text(static_cast<float>(std::floor(n + 0.5)))
+                               : std::string{word});
+            }
+            return out;
+        }
+        // `distribute` is the legacy spelling of `inter-character`, which is
+        // what it computes to (CSS Text 3 §7.4).
+        if (property == "text-justify" && collapse_keyword(text) == "distribute") {
+            return "inter-character";
         }
         // text-fit's default `consistent` is left unwritten (text-fit-computed).
         if (property == "text-fit") {
@@ -902,7 +1032,30 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         if (p.shorthand) { continue; }
         const std::string physical = physical_of(p.name);
         std::string text = value_of(physical.empty() ? p.name : physical);
+        // AN INITIAL VALUE THAT IS NOT YET A COMPUTED ONE goes through the
+        // rules a declared one would: `normal` word spacing is `0px`, and a
+        // box's `50% 50%` origins are the pixels they resolve to (CSS Text 4
+        // §7.1, CSS Transforms 1 §6).
+        if (text.empty() &&
+            ascii_iequals_any(p.name, {"word-spacing", "transform-origin", "perspective-origin"})) {
+            as_initial = &p;
+            text = value_of(p.name);
+            as_initial = nullptr;
+        }
         if (text.empty()) { text = std::string{p.initial}; }
+        // `legacy` ALONE IS THE PARENT'S LEGACY VALUE, and `normal` when the
+        // parent's is not one (CSS Box Alignment 3 §6.1) - which is how a
+        // `legacy center` reaches the children of the box that says it.
+        if (p.name == "justify-items" && text == "legacy") {
+            text = "normal";
+            for (std::size_t up = at.pseudo ? 0 : 1; up < at.chain.size(); ++up) {
+                const std::string above =
+                    collapse_keyword(declared_on(at.chain[up], "justify-items"));
+                if (above.empty() || above == "legacy") { continue; }
+                if (above.starts_with("legacy ")) { text = above; }
+                break;
+            }
+        }
         if (ascii_iequals(text, "currentcolor")) { text = current_color; }
         // caret-color's initial `auto` is currentcolor as well (CSS UI 4 §6.2.1).
         if (p.name == "caret-color" && ascii_iequals(text, "auto")) { text = current_color; }
