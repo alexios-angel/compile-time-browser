@@ -90,8 +90,8 @@ bool compiler_impl::emit_with_object(std::string_view name, std::uint16_t obj) {
         // A non-object there has no properties, so `get_prop` on it reads
         // undefined and the veto does not fire - which is 9.1.1.2.1 step 4.
         const std::uint16_t unscopables = alloc_reg();
-        proto().emit(
-            instruction{op::get_prop, unscopables, candidate, name_operand("@@unscopables")});
+        proto().emit(instruction{op::get_prop, unscopables, candidate,
+                                 name_operand(CTBROWSER_SYMBOL_KEY("unscopables"))});
         const std::size_t no_veto = proto().emit(instruction{op::jump_if_false, unscopables});
         const std::uint16_t blocked = alloc_reg();
         proto().emit(

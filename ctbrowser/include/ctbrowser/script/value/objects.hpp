@@ -322,12 +322,13 @@ struct object_object final : heap_object {
     // Object.assign, object spread and JSON.stringify are each specified to
     // see. getOwnPropertyNames and Reflect.ownKeys keep the unfiltered walks
     // above, because those two report every own property by definition.
-    // STRING keys only: every symbol spelling starts "@@" - `@@sym:<n>:`,
-    // a registered `@@for:<key>` and a well-known `@@iterator` - and the
-    // last two were enumerated by the narrower symbol_key_prefix test.
+    // STRING keys only: every symbol spelling starts with symbol_key_mark -
+    // `Symbol()`'s, a registered `Symbol.for` one and a well-known one - and
+    // the last two were enumerated by the narrower symbol_key_prefix test.
     template <typename Fn> void each_own_enumerable_key(Fn && visit) const {
         each_own_entry([&](const std::string & key, std::uint8_t a) {
-            if ((a & attr_enumerable) != 0 && !key.starts_with("@@") && !is_private_key(key)) {
+            if ((a & attr_enumerable) != 0 && !key.starts_with(symbol_key_mark) &&
+                !is_private_key(key)) {
                 visit(key);
             }
         });
@@ -385,7 +386,7 @@ struct object_object final : heap_object {
 // is otherwise the object_object every other path already handles. A String
 // wrapper's `length` and indices are answered by lookup_property, own_property
 // and own_property_names off this slot (10.4.3, the String exotic object).
-inline constexpr std::string_view primitive_slot_key = "@#PrimitiveValue";
+inline constexpr std::string_view primitive_slot_key = CTBROWSER_PRIVATE_KEY("PrimitiveValue");
 // The wrapped primitive, or null when `v` is not a wrapper.
 [[nodiscard]] inline value * primitive_slot(value v) noexcept {
     if (!v.is_object()) { return nullptr; }

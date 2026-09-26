@@ -655,7 +655,8 @@ void context::await_for(coroutine_object * saved, value v) {
             // a page may have replaced.
             object_object * table = prototype(proto_kind::promise);
             const value * intrinsic =
-                table != nullptr ? table->find(std::string_view{"@#Promise"}) : nullptr;
+                table != nullptr ? table->find(std::string_view{CTBROWSER_PRIVATE_KEY("Promise")})
+                                 : nullptr;
             if (intrinsic == nullptr || !ctor.strict_equals(*intrinsic)) { wrap(); }
         }
     } else if (v.is_object_like()) {

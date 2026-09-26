@@ -150,12 +150,15 @@ value context::interned_bigint_literal(const void * site, std::uint32_t slot,
     return made;
 }
 
+// A compiled constant is the compiler's text: a page's own literals were
+// decoded with its source (compile.cpp), and a private name's key is the
+// compiler's to spell (compiler_impl::member_key).
 value context::interned_string(const void * site, std::uint32_t slot, std::string_view text) {
-    if (site == nullptr) { return string(std::string{text}); }
+    if (site == nullptr) { return minted_string(std::string{text}); }
     auto & cache = string_cache_[site];
     const auto found = cache.find(slot);
     if (found != cache.end()) { return found->second; }
-    const value made = string(std::string{text});
+    const value made = minted_string(std::string{text});
     cache.emplace(slot, made);
     return made;
 }

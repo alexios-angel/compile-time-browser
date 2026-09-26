@@ -77,7 +77,7 @@ struct iterator_record {
         cx.throw_error("TypeError", std::string{context::type_of(obj)} + " is not an iterator");
         return false;
     }
-    const value method = cx.lookup_property(obj, "@@iterator");
+    const value method = cx.lookup_property(obj, CTBROWSER_SYMBOL_KEY("iterator"));
     if (cx.throw_pending()) { return false; }
     value iterator = obj;
     if (!method.is_nullish()) {

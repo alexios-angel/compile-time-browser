@@ -579,7 +579,8 @@ void dom_bindings::install_window(context & cx) {
         if (!ctor.is_kind(script::heap_kind::native)) { continue; }
         auto * proto = cx.allocate<script::object_object>();
         proto->define("constructor", ctor, script::attr_builtin);
-        proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+        proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name),
+                      script::attr_configurable);
         static_cast<script::native_object *>(ctor.as_heap())
             ->define("prototype", value::object(proto), script::attr_none);
     }

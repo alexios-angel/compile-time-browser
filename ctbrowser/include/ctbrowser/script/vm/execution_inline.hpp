@@ -25,6 +25,15 @@ template <typename T, typename... Args>
 }
 
 [[nodiscard]] inline auto context::string(std::string s) -> value {
+    // NO JS STRING HOLDS AN INTERNAL KEY'S LEAD BYTE (core/symbol.hpp): one
+    // arriving here is a producer's undecoded bytes, and becomes the U+FFFD
+    // decoding would have made it - so no page ever holds a string that
+    // spells a symbol's key or a slot's.
+    ctbrowser::replace_internal_key_lead(s);
+    return minted_string(std::move(s));
+}
+
+[[nodiscard]] inline auto context::minted_string(std::string s) -> value {
     // Two halves of a surrogate pair that met here - `'\uD800' +
     // '\uDC00'`, String.fromCharCode(0xD800, 0xDC00) - are one code
     // point, as they would be in UTF-16 (core's join_surrogates).
@@ -294,8 +303,8 @@ inline auto context::refuse(std::string_view what, std::string why) -> void {
     // the Error constructor uses (builtins/objects/errors.cpp's
     // error_stack_slot): Error.prototype's `stack` accessor answers it,
     // and Error.isError tests for it.
-    o->define("@#ErrorData", string(std::string{kind} + ": " + message + current_stack()),
-              attr_none);
+    o->define(CTBROWSER_PRIVATE_KEY("ErrorData"),
+              string(std::string{kind} + ": " + message + current_stack()), attr_none);
     if (table != nullptr) { o->prototype = value::object(table); }
     return made;
 }

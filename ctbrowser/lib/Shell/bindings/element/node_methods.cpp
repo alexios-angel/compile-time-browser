@@ -908,7 +908,7 @@ void dom_bindings::install_node_methods(context & cx) {
             auto * blocked = static_cast<script::object_object *>(made.as_heap());
             blocked->prototype = value::undefined(); // an EXPLICIT null (object_object::prototype)
             for (const char * name : names) { blocked->set(name, value::boolean(true)); }
-            proto->define("@@unscopables", made, script::attr_configurable);
+            proto->define(CTBROWSER_SYMBOL_KEY("unscopables"), made, script::attr_configurable);
         }
     };
     unscopable(element, {"before", "after", "replaceWith", "remove", "prepend", "append",

@@ -208,8 +208,9 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
     const auto getter = [&](const char * name, native_fn fn) {
         // 10.2.9 SetFunctionName: a symbol-keyed getter is named by the
         // symbol's description in brackets.
-        const std::string shown =
-            std::string{name} == "@@toStringTag" ? "[Symbol.toStringTag]" : std::string{name};
+        const std::string shown = std::string{name} == CTBROWSER_SYMBOL_KEY("toStringTag")
+                                      ? "[Symbol.toStringTag]"
+                                      : std::string{name};
         auto * made = detail::method_native(cx, "get " + shown, std::move(fn));
         detail::install_arity(cx, made, 0);
         proto->define_accessor(name, value::object(made), value::undefined(), attr_configurable);
@@ -247,7 +248,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         if (typed_array_out_of_bounds(arr)) { return value::number(0); }
         return value::number(len_of(arr));
     });
-    getter("@@toStringTag", [](context & c, std::span<value>) {
+    getter(CTBROWSER_SYMBOL_KEY("toStringTag"), [](context & c, std::span<value>) {
         const value self = c.current_this();
         if (!is_typed_array(self)) { return value::undefined(); }
         return c.string(
@@ -318,7 +319,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
     iterator_method("keys", 0);
     iterator_method("values", 1);
     if (value * values = proto->find("values")) {
-        proto->define("@@iterator", *values, attr_builtin);
+        proto->define(CTBROWSER_SYMBOL_KEY("iterator"), *values, attr_builtin);
     }
     // --- 23.2.3.8 every, 23.2.3.29 some, 23.2.3.15 forEach ---------------------
     const auto walk = [&](const char * name, int mode) {

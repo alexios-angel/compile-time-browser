@@ -148,7 +148,7 @@ void install_function(context & cx) {
                // constructs the target with the bound arguments prepended (10.4.1.2),
                // reading them off `retained` as laid out above. A bound function is
                // a constructor exactly when its target is (10.4.1.3 step 5).
-               fn->define("@#BoundTargetFunction", self, attr_none);
+               fn->define(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"), self, attr_none);
                fn->is_constructor = is_constructor(self);
                fn->proto_link = proto;
                // 20.2.3.2: a bound function's `length` is the target's less the
@@ -228,7 +228,7 @@ void install_function(context & cx) {
         // A symbol-named built-in's name is "[Symbol.x]", which is not an
         // IdentifierName; the specification permits omitting it (the
         // IdentifierName is optional), so it is left out.
-        if (!name.empty() && (name.front() == '[' || name.starts_with("@@") ||
+        if (!name.empty() && (name.front() == '[' || name.starts_with(symbol_key_mark) ||
                               name.find(' ') != std::string::npos)) {
             name.clear();
         }
@@ -250,8 +250,9 @@ void install_function(context & cx) {
             value subject = arg_at(a, 0);
             if (!ctor.is_callable()) { return value::boolean(false); }
             if (ctor.is_kind(heap_kind::native)) {
-                if (const value * bound = static_cast<native_object *>(ctor.as_heap())
-                                              ->find("@#BoundTargetFunction")) {
+                if (const value * bound =
+                        static_cast<native_object *>(ctor.as_heap())
+                            ->find(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"))) {
                     return value::boolean(c.instance_of(subject, *bound));
                 }
             }
@@ -275,7 +276,8 @@ void install_function(context & cx) {
         });
     detail::install_arity(cx, has_instance, 1);
     has_instance->is_constructor = false;
-    function_proto->define("@@hasInstance", value::object(has_instance), attr_none);
+    function_proto->define(CTBROWSER_SYMBOL_KEY("hasInstance"), value::object(has_instance),
+                           attr_none);
     // 10.2.4 AddRestrictedFunctionProperties: `caller` and `arguments` on
     // Function.prototype are accessors whose getter and setter are
     // %ThrowTypeError% - `f.caller` on a strict function (a class, an arrow, a
@@ -626,7 +628,7 @@ void install_dynamic_function(context & cx) {
         if (object_object * fn_proto = cx.prototype(context::proto_kind::function)) {
             table->prototype = value::object(fn_proto);
         }
-        table->define("@@toStringTag", cx.string(name), attr_configurable);
+        table->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name), attr_configurable);
         auto * ctor = cx.allocate<native_object>(name, [keyword](context & c, std::span<value> a) {
             return dynamic_function(c, a, keyword);
         });
@@ -709,9 +711,10 @@ void install_generator(context & cx) {
     detail::method(cx, table, "return", 1, driver(context::resume_mode::returned));
     // A GENERATOR IS ITS OWN ITERATOR, which is what `for (x of gen())` needs
     // and what makes `[...gen()]` work.
-    detail::method(cx, table, "@@iterator", 0,
+    detail::method(cx, table, CTBROWSER_SYMBOL_KEY("iterator"), 0,
                    [](context & c, std::span<value>) { return c.current_this(); });
-    table->define("@@toStringTag", cx.string("Generator"), attr_configurable); // 27.5.1.5
+    table->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Generator"),
+                  attr_configurable); // 27.5.1.5
     cx.set_prototype(context::proto_kind::generator, table);
 
     // %AsyncGeneratorPrototype%, 27.6.1: the same three, each answering a
@@ -727,9 +730,10 @@ void install_generator(context & cx) {
     detail::method(cx, async_table, "next", 1, async_driver(context::resume_mode::next));
     detail::method(cx, async_table, "throw", 1, async_driver(context::resume_mode::thrown));
     detail::method(cx, async_table, "return", 1, async_driver(context::resume_mode::returned));
-    detail::method(cx, async_table, "@@asyncIterator", 0,
+    detail::method(cx, async_table, CTBROWSER_SYMBOL_KEY("asyncIterator"), 0,
                    [](context & c, std::span<value>) { return c.current_this(); });
-    async_table->define("@@toStringTag", cx.string("AsyncGenerator"), attr_configurable);
+    async_table->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("AsyncGenerator"),
+                        attr_configurable);
     cx.set_prototype(context::proto_kind::async_generator, async_table);
 }
 

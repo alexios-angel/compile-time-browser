@@ -52,18 +52,21 @@
 namespace ctbrowser::script::builtins_detail {
 
 inline constexpr std::string_view bytes_key = "__bytes";
-inline constexpr std::string_view store_max_key = "@#ArrayBufferMaxByteLength";
-inline constexpr std::string_view store_detached_key = "@#ArrayBufferDetached";
-inline constexpr std::string_view store_immutable_key = "@#ArrayBufferImmutable";
-inline constexpr std::string_view store_views_key = "@#ArrayBufferViews";
-inline constexpr std::string_view store_buffer_key = "@#ArrayBuffer";
-inline constexpr std::string_view view_tracking_key = "@#LengthTracking";
-inline constexpr std::string_view view_length_key = "@#ArrayLength";
-inline constexpr std::string_view view_offset_key = "@#ByteOffset";
-inline constexpr std::string_view data_view_store_key = "@#DataViewStore";
-inline constexpr std::string_view data_view_buffer_key = "@#DataViewBuffer";
-inline constexpr std::string_view data_view_offset_key = "@#DataViewByteOffset";
-inline constexpr std::string_view data_view_length_key = "@#DataViewByteLength";
+inline constexpr std::string_view store_max_key = CTBROWSER_PRIVATE_KEY("ArrayBufferMaxByteLength");
+inline constexpr std::string_view store_detached_key = CTBROWSER_PRIVATE_KEY("ArrayBufferDetached");
+inline constexpr std::string_view store_immutable_key =
+    CTBROWSER_PRIVATE_KEY("ArrayBufferImmutable");
+inline constexpr std::string_view store_views_key = CTBROWSER_PRIVATE_KEY("ArrayBufferViews");
+inline constexpr std::string_view store_buffer_key = CTBROWSER_PRIVATE_KEY("ArrayBuffer");
+inline constexpr std::string_view view_tracking_key = CTBROWSER_PRIVATE_KEY("LengthTracking");
+inline constexpr std::string_view view_length_key = CTBROWSER_PRIVATE_KEY("ArrayLength");
+inline constexpr std::string_view view_offset_key = CTBROWSER_PRIVATE_KEY("ByteOffset");
+inline constexpr std::string_view data_view_store_key = CTBROWSER_PRIVATE_KEY("DataViewStore");
+inline constexpr std::string_view data_view_buffer_key = CTBROWSER_PRIVATE_KEY("DataViewBuffer");
+inline constexpr std::string_view data_view_offset_key =
+    CTBROWSER_PRIVATE_KEY("DataViewByteOffset");
+inline constexpr std::string_view data_view_length_key =
+    CTBROWSER_PRIVATE_KEY("DataViewByteLength");
 
 // THE LARGEST BUFFER THIS ENGINE WILL MAKE. A byte is a `value` here - eight
 // bytes of host memory per byte of buffer - so the cap is 2^28 bytes (2 GiB of

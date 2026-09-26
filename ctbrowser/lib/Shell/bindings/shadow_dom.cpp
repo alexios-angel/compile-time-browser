@@ -43,8 +43,10 @@ namespace {
 // do not, since adoption copies a node into the other document's slab. So the
 // two lists live on the WRAPPERS, which adoption rebinds but keeps, and
 // which the collector traces through these properties.
-constexpr std::string_view manual_nodes_key = "@@sym:ctbrowser:manuallyAssignedNodes";
-constexpr std::string_view manual_slot_key = "@@sym:ctbrowser:manualSlotAssignment";
+constexpr std::string_view manual_nodes_key =
+    CTBROWSER_SYMBOL_KEY("sym:ctbrowser:manuallyAssignedNodes");
+constexpr std::string_view manual_slot_key =
+    CTBROWSER_SYMBOL_KEY("sym:ctbrowser:manualSlotAssignment");
 
 // The slot name an element asks for, and the one a slot offers. Text is always
 // the default slot's.

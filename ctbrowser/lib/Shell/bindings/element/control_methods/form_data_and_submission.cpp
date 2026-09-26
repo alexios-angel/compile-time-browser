@@ -227,7 +227,8 @@ void dom_bindings::install_control_form_data(context & cx) {
         helpers.install_data_transfer(cx);
         auto * form_data_proto = cx.allocate<script::object_object>();
         const value form_data_proto_value = value::object(form_data_proto);
-        form_data_proto->define("@@toStringTag", cx.string("FormData"), script::attr_configurable);
+        form_data_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("FormData"),
+                                script::attr_configurable);
         const auto fd_method = [&](const char * name, unsigned length, script::native_fn fn) {
             auto * made = cx.allocate<script::native_object>(name, std::move(fn));
             made->define("length", value::number(length), script::attr_configurable);
@@ -332,7 +333,7 @@ void dom_bindings::install_control_form_data(context & cx) {
         fd_method("keys", 0, [iterate](context & c, std::span<value>) { return iterate(c, 0); });
         fd_method("values", 0, [iterate](context & c, std::span<value>) { return iterate(c, 1); });
         fd_method("entries", 0, [iterate](context & c, std::span<value>) { return iterate(c, 2); });
-        form_data_proto->define("@@iterator", *form_data_proto->find("entries"),
+        form_data_proto->define(CTBROWSER_SYMBOL_KEY("iterator"), *form_data_proto->find("entries"),
                                 script::attr_builtin);
         fd_method(
             "forEach", 1, [entries_of, entry_name, entry_value](context & c, std::span<value> a) {
@@ -453,7 +454,8 @@ void dom_bindings::install_control_form_data(context & cx) {
             ctor->retained.push_back(proto_value);
             ctor->define("prototype", proto_value, script::attr_none);
             ctor->define("length", value::number(1), script::attr_configurable);
-            proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+            proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name),
+                          script::attr_configurable);
             proto->define("constructor", value::object(ctor), script::attr_builtin);
             cx.define_builtin_global(name, value::object(ctor));
         };

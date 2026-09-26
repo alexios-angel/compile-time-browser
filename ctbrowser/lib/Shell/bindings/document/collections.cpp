@@ -245,7 +245,7 @@ std::vector<node_id> dom_bindings::all_by_name(std::string_view name) {
 // has no strict mode (vm/objects/store.cpp), so it is silently refused instead.
 namespace {
 
-constexpr std::string_view collection_state_key = "@@sym:ctbrowser:collection";
+constexpr std::string_view collection_state_key = CTBROWSER_SYMBOL_KEY("sym:ctbrowser:collection");
 
 // One native, three questions, closing over the C++ side of a collection.
 // Called as state("length") / state("item", i) / state("namedItem", name).
@@ -335,13 +335,13 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
 // loop body appended.
 void dom_bindings::install_iterable_declaration(context & cx, script::object_object & proto,
                                                 bool named_only) {
-    if (proto.find("@@iterator") != nullptr) { return; }
+    if (proto.find(CTBROWSER_SYMBOL_KEY("iterator")) != nullptr) { return; }
     const value array = cx.global("Array");
     if (!array.is_object_like()) { return; }
     const value array_proto = cx.lookup_property(array, "prototype");
     const value values = cx.lookup_property(array_proto, "values");
     if (!values.is_callable()) { return; }
-    proto.define("@@iterator", values, script::attr_builtin);
+    proto.define(CTBROWSER_SYMBOL_KEY("iterator"), values, script::attr_builtin);
     if (named_only) { return; }
     for (const char * name : {"keys", "values", "entries", "forEach"}) {
         const value member = cx.lookup_property(array_proto, name);
@@ -687,7 +687,7 @@ value dom_bindings::make_live_collection(context & cx,
                      constexpr std::size_t max_keys = 1000000;
                      static_cast<script::object_object *>(args[0].as_heap())
                          ->each_own_key([&](const std::string & key) {
-                             if (!key.starts_with("@@") && count++ < max_keys) {
+                             if (!key.starts_with(symbol_key_mark) && count++ < max_keys) {
                                  items.push_back(c.string(key));
                              }
                          });

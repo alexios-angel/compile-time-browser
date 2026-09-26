@@ -5,7 +5,7 @@
 // tested against node (V8); 8 differences, and they share one cause worth
 // stating plainly.
 //
-// THE CAUSE: this engine represents a symbol key as the STRING "@@sym:N:desc"
+// THE CAUSE: this engine represents a symbol key as a STRING (core/symbol.hpp)
 // and stores it in the ordinary property table. That works for lookup - a
 // symbol key round-trips - and leaks everywhere the representation is
 // observable: Object.keys sees it, JSON.stringify serialises it, and
@@ -52,7 +52,7 @@ int main() {
               "1,2"); // same description, different keys - the collision guarantee
 
     // --- the representation no longer leaks -----------------------------------
-    // A symbol key is still stored as "@@sym:N:desc" in the ordinary property
+    // A symbol key is still stored as a string key in the ordinary property
     // table, but every enumeration specified to see STRING keys only now
     // filters it: Object.keys, Object.values, for-in, getOwnPropertyNames and
     // JSON.stringify. Object.assign and Reflect.ownKeys keep the UNFILTERED
@@ -93,6 +93,37 @@ int main() {
     js_expect("(function () { var got; new Proxy({}, { get: function (t, k) { got = k; } })"
               "[Symbol.iterator]; return got === Symbol.iterator; })()",
               "true");
+
+    // --- a symbol's key and a slot's key cannot be SPELLED -------------------
+    // Both are string keys led by a byte no JS string holds (core/symbol.hpp).
+    // While the spelling was `@@iterator` a computed key forged an iterator,
+    // and `@#ErrorData` made any object an Error to Object.prototype.toString.
+    js_expect("(function () { var o = {}; o['@@iterator'] = 1; o['@@sym:1:x'] = 2;"
+              " return [typeof o[Symbol.iterator], Symbol.iterator in o,"
+              " Object.getOwnPropertySymbols(o).length].join(); })()",
+              "undefined,false,0");
+    js_expect("Object.prototype.toString.call({'@#ErrorData': 1})", "[object Object]");
+    js_expect("(function () { var o = {}; o[String.fromCharCode(0xFF) + '@iterator'] = 1;"
+              " return typeof o[Symbol.iterator]; })()",
+              "undefined");
+    // The byte itself in the SOURCE is the U+FFFD decoding makes of it.
+    js_expect("(function () { var s = '\xFF@iterator'; var o = {}; o[s] = 1;"
+              " return s.charCodeAt(0).toString(16) + ' ' + typeof o[Symbol.iterator]; })()",
+              "fffd undefined");
+    // ...while every path that hands a key back keeps it the key it was.
+    js_expect("(function () { var s = Symbol('k'); var o = {}; o[s] = 7;"
+              " return [Reflect.get(o, s), Reflect.ownKeys(o)[0] === s,"
+              " Object.getOwnPropertySymbols(o)[0] === s, Reflect.set(o, s, 8), o[s]].join();"
+              " })()",
+              "7,true,true,true,8");
+    js_expect("(function () { var seen; var p = new Proxy({}, { getOwnPropertyDescriptor:"
+              " function (t, k) { seen = k; } }); Object.prototype.hasOwnProperty.call(p,"
+              " Symbol.iterator); return seen === Symbol.iterator; })()",
+              "true");
+    js_expect("(function () { class A { #x = 1; get #y() { return 2; } sum() {"
+              " return this.#x + this.#y; } static has(o) { return #x in o; } }"
+              " return [new A().sum(), A.has(new A()), A.has({})].join(); })()",
+              "3,true,false");
 
     // --- KNOWN WRONG: a symbol must REFUSE implicit conversion ----------------
     // `"" + sym` and `sym + 1` are specified to throw TypeError, and that is a

@@ -374,7 +374,7 @@ void perform_then(context & cx, value promise, value on_ok, value on_err, const 
         cx.throw_error("TypeError", "The .constructor property is not an object");
         return false;
     }
-    const value species = cx.lookup_property(ctor, "@@species");
+    const value species = cx.lookup_property(ctor, CTBROWSER_SYMBOL_KEY("species"));
     if (cx.throw_pending()) { return false; }
     if (species.is_nullish()) {
         out = fallback;
@@ -525,7 +525,8 @@ void perform_then(context & cx, value promise, value on_ok, value on_err, const 
         const value args[2] = {then_finally, catch_finally};
         return c.call(then, args, self);
     });
-    table->define("@@toStringTag", cx.string("Promise"), attr_configurable); // 27.2.5.5
+    table->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Promise"),
+                  attr_configurable); // 27.2.5.5
     return table;
 }
 

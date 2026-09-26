@@ -715,6 +715,10 @@ public:
 
 private:
     value invoke(value callable, std::span<const value> args, value this_value, bool constructing);
+    // context::string without the lead-byte guard: a string the VM minted
+    // from its own text - a compiled constant, a property key handed back
+    // (key_value) - which may be a private name's key and must stay one.
+    [[nodiscard]] value minted_string(std::string s);
 
     friend struct aot_bridge;
     friend class executing_as;

@@ -116,12 +116,12 @@ void install_proxy(context & cx) {
         std::string key;
         if (!key_of(c, arg_at(a, 1), key)) { return value::undefined(); }
         if (a.size() < 3 || a[0].is_kind(heap_kind::proxy)) {
-            return c.lookup_index(a[0], c.string(key));
+            return c.lookup_index(a[0], c.key_value(key));
         }
         const value receiver = a[2];
         value walk = a[0];
         for (int hops = 0; hops < 10000 && walk.is_object_like(); ++hops) {
-            if (walk.is_kind(heap_kind::proxy)) { return c.lookup_index(walk, c.string(key)); }
+            if (walk.is_kind(heap_kind::proxy)) { return c.lookup_index(walk, c.key_value(key)); }
             context::property_descriptor found;
             if (c.own_property(walk, key, found)) {
                 if (!found.is_accessor()) { return found.held; }
@@ -151,7 +151,7 @@ void install_proxy(context & cx) {
                 // The proxy's own [[Set]] - its trap - with the store path
                 // this engine has, which carries no receiver.
                 c.clear_store_rejected();
-                c.store_index(walk, c.string(key), v);
+                c.store_index(walk, c.key_value(key), v);
                 if (c.throw_pending()) { return value::undefined(); }
                 // 10.5.9 step 9: a trap answering false is the false here.
                 const bool refused = c.store_rejected();
@@ -382,7 +382,8 @@ void install_proxy(context & cx) {
         }
         return value::boolean(detail::set_prototype_of(c, a[0], proto));
     });
-    reflect->define("@@toStringTag", cx.string("Reflect"), attr_configurable); // 28.1.14
+    reflect->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Reflect"),
+                    attr_configurable); // 28.1.14
     cx.define_global("Reflect", value::object(reflect));
 }
 

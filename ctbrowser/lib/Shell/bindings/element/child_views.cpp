@@ -117,7 +117,7 @@ void dom_bindings::install_element_child_views(context & cx, script::object_obje
     // the wrapper under a symbol key, which is what roots it and what keeps it
     // out of `for...in` and getOwnPropertyNames.
     define_getter(cx, obj, "childNodes", [this, id, self = &obj](context & c, std::span<value>) {
-        constexpr std::string_view key = "@@sym:ctbrowser:childNodes";
+        constexpr std::string_view key = CTBROWSER_SYMBOL_KEY("sym:ctbrowser:childNodes");
         if (const value * held = self->find(key); held != nullptr) { return *held; }
         const value list = make_live_collection(
             c,

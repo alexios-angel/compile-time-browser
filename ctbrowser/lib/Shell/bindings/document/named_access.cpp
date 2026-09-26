@@ -161,7 +161,7 @@ value dom_bindings::make_document_proxy(context & cx, value target) {
                      std::vector<std::string> keys;
                      static_cast<script::object_object *>(args[0].as_heap())
                          ->each_own_key([&keys](const std::string & key) {
-                             if (!key.starts_with("@@")) { keys.push_back(key); }
+                             if (!key.starts_with(symbol_key_mark)) { keys.push_back(key); }
                          });
                      for (const std::string & name : document_property_names()) {
                          if (std::ranges::find(keys, name) == keys.end()) { keys.push_back(name); }

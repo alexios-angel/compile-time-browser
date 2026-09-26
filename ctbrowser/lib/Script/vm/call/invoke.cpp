@@ -433,7 +433,7 @@ value context::iterable_values(value v) {
     const bool materialising =
         std::find_if(materialising_.begin(), materialising_.end(),
                      [&](value held) { return held.bits() == v.bits(); }) != materialising_.end();
-    if (const value method = lookup_property(v, "@@iterator");
+    if (const value method = lookup_property(v, CTBROWSER_SYMBOL_KEY("iterator"));
         method.is_callable() && !materialising) {
         materialising_.push_back(v);
         const value iterator = get_iterator(v);
@@ -490,7 +490,7 @@ value context::get_iterator(value v) {
         return value::undefined();
     }
     const std::size_t unwound = unwinds_;
-    const value method = lookup_property(v, "@@iterator");
+    const value method = lookup_property(v, CTBROWSER_SYMBOL_KEY("iterator"));
     if (unwinds_ != unwound || throw_pending()) { return value::undefined(); } // a getter threw
     if (!method.is_callable()) {
         // A TYPED ARRAY, A Map, A Set OR AN ARRAY-LIKE THE LIBRARY OWNS has
@@ -625,10 +625,11 @@ value context::make_arguments_object(call_frame & fr, const value * slots, std::
         items->prototype = value::object(table);
     }
     object_object & named = items->named_table();
-    named.define("@#Arguments", value::boolean(true), attr_none);
+    named.define(CTBROWSER_PRIVATE_KEY("Arguments"), value::boolean(true), attr_none);
     if (object_object * table = prototype(proto_kind::array)) {
         if (value * values = table->find("values")) {
-            named.define("@@iterator", *values, attr_writable | attr_configurable);
+            named.define(CTBROWSER_SYMBOL_KEY("iterator"), *values,
+                         attr_writable | attr_configurable);
         }
     }
     const function_proto * proto = fr.proto;

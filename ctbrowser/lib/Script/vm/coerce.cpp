@@ -137,7 +137,7 @@ std::string context::to_string(value v) {
 // `[].join.call({toString: () => ({}), valueOf: () => ({})})` refuses once
 // rather than falling back to "[object Object]" in one place and NaN in another.
 bool context::to_primitive_hint(value v, const char * hint, value & out) {
-    const value exotic = lookup_property(v, "@@toPrimitive");
+    const value exotic = lookup_property(v, CTBROWSER_SYMBOL_KEY("toPrimitive"));
     if (throw_pending()) { return false; }
     if (!exotic.is_nullish()) {
         if (!exotic.is_callable()) {

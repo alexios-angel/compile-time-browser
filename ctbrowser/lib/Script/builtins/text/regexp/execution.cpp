@@ -245,7 +245,8 @@ value regexp_exec(context & cx, value rx, value subject) {
     // under a private key, not whatever `exec` a page has since put on the
     // prototype (step 4 runs exactly when that one is not callable).
     object_object * proto = cx.prototype(context::proto_kind::regexp);
-    const value * intrinsic = proto == nullptr ? nullptr : proto->find("@#IntrinsicRegExpExec:");
+    const value * intrinsic =
+        proto == nullptr ? nullptr : proto->find(CTBROWSER_PRIVATE_KEY("IntrinsicRegExpExec:"));
     const value builtin = intrinsic == nullptr ? value::undefined() : *intrinsic;
     if (!builtin.is_callable()) { return value::null(); }
     const value result = cx.call(builtin, std::span<const value>{&subject, 1}, rx);
@@ -351,7 +352,7 @@ void set_legacy_statics(context & cx, value result) {
         cx.throw_error("TypeError", "The constructor property is not an object");
         return value::undefined();
     }
-    const value species = cx.lookup_property(ctor, "@@species");
+    const value species = cx.lookup_property(ctor, CTBROWSER_SYMBOL_KEY("species"));
     if (watch.threw()) { return value::undefined(); }
     if (species.is_nullish()) { return fallback; }
     if (!is_constructor(species)) {
@@ -405,22 +406,23 @@ value regexp_string_iterator_next(context & cx, std::span<value>) {
         return value::undefined();
     }
     auto * it = static_cast<object_object *>(self.as_heap());
-    value * matcher = it->find("@#IteratingRegExp");
-    value * subject = it->find("@#IteratedString");
+    value * matcher = it->find(CTBROWSER_PRIVATE_KEY("IteratingRegExp"));
+    value * subject = it->find(CTBROWSER_PRIVATE_KEY("IteratedString"));
     if (matcher == nullptr || subject == nullptr) {
         cx.throw_error("TypeError",
                        "next called on an object that is not a RegExp String Iterator");
         return value::undefined();
     }
-    if (value * done = it->find("@#Done"); done != nullptr && done->as_boolean()) {
+    if (value * done = it->find(CTBROWSER_PRIVATE_KEY("Done"));
+        done != nullptr && done->as_boolean()) {
         return finish(value::undefined(), true);
     }
     // THE SLOTS ARE PROPERTIES, and a computed key can spell `@#` - so this
     // reads them as a page may have left them: a missing flag is the
     // TypeError a missing slot is, and the subject is made a string again
     // before anything below treats it as one.
-    const value * global_slot = it->find("@#Global");
-    const value * unicode_slot = it->find("@#FullUnicode");
+    const value * global_slot = it->find(CTBROWSER_PRIVATE_KEY("Global"));
+    const value * unicode_slot = it->find(CTBROWSER_PRIVATE_KEY("FullUnicode"));
     if (global_slot == nullptr || unicode_slot == nullptr) {
         cx.throw_error("TypeError",
                        "next called on an object that is not a RegExp String Iterator");
@@ -435,11 +437,11 @@ value regexp_string_iterator_next(context & cx, std::span<value>) {
     const value match = regexp_exec(cx, rx, s);
     if (match.is_undefined()) { return value::undefined(); }
     if (match.is_null()) {
-        it->define("@#Done", value::boolean(true), attr_none);
+        it->define(CTBROWSER_PRIVATE_KEY("Done"), value::boolean(true), attr_none);
         return finish(value::undefined(), true);
     }
     if (!global) {
-        it->define("@#Done", value::boolean(true), attr_none);
+        it->define(CTBROWSER_PRIVATE_KEY("Done"), value::boolean(true), attr_none);
         return finish(match, false);
     }
     std::string text;

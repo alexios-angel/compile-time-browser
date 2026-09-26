@@ -323,14 +323,14 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     };
     // A live NodeList, the same one every read - see the element's in
     // element/views.cpp.
-    define_getter(cx, doc, "childNodes",
-                  [this, children_now, self = &doc](context & c, std::span<value>) {
-                      constexpr std::string_view key = "@@sym:ctbrowser:childNodes";
-                      if (const value * held = self->find(key); held != nullptr) { return *held; }
-                      const value list = make_live_collection(c, children_now, "NodeList");
-                      self->define(key, list, script::attr_none);
-                      return list;
-                  });
+    define_getter(
+        cx, doc, "childNodes", [this, children_now, self = &doc](context & c, std::span<value>) {
+            constexpr std::string_view key = CTBROWSER_SYMBOL_KEY("sym:ctbrowser:childNodes");
+            if (const value * held = self->find(key); held != nullptr) { return *held; }
+            const value list = make_live_collection(c, children_now, "NodeList");
+            self->define(key, list, script::attr_none);
+            return list;
+        });
     define_getter(cx, doc, "firstChild", [this, children_now](context & c, std::span<value>) {
         const std::vector<node_id> kids = children_now();
         return kids.empty() ? value::null() : wrap(c, kids.front());
