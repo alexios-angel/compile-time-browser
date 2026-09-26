@@ -186,6 +186,41 @@ namespace ctbrowser::style::css::shorthand_detail {
     return parts.empty() ? std::string{"normal"} : join(parts);
 }
 
+// `transition`, folded: per item, the property then the components that are
+// not their defaults - a delay carries the duration before it - and the
+// property alone, `all` included, when nothing else is; "" when the lists
+// disagree in length.
+[[nodiscard]] std::string fold_transition(std::span<const std::string> v) {
+    std::array<std::vector<std::string_view>, 5> lists;
+    for (std::size_t i = 0; i < 5; ++i) {
+        for (const std::string_view item : split_top_level(v[i], ",")) {
+            lists[i].push_back(trim(item, html_whitespace));
+        }
+        if (lists[i].size() != lists[0].size()) { return {}; }
+    }
+    std::string out;
+    for (std::size_t item = 0; item < lists[0].size(); ++item) {
+        const std::string_view property = lists[0][item];
+        const std::string_view duration = lists[1][item];
+        const std::string_view easing = lists[2][item];
+        const std::string_view delay = lists[3][item];
+        const std::string_view behavior = lists[4][item];
+        std::vector<std::string_view> parts;
+        const bool zero_delay = ascii_iequals(delay, "0s");
+        if (!ascii_iequals(property, "all")) { parts.push_back(property); }
+        if (!ascii_iequals(duration, "0s") || !zero_delay) { parts.push_back(duration); }
+        if (!ascii_iequals(easing, "ease")) { parts.push_back(easing); }
+        if (!zero_delay) { parts.push_back(delay); }
+        if (!ascii_iequals(behavior, "normal")) { parts.push_back(behavior); }
+        std::string one;
+        for (const std::string_view part : parts) {
+            one += (one.empty() ? "" : " ") + std::string{part};
+        }
+        out += (out.empty() ? "" : ", ") + (one.empty() ? std::string{"all"} : one);
+    }
+    return out;
+}
+
 // `animation`, folded: per item, the components that are not their defaults in the
 // canonical order - a delay carries the duration before it, so the one time
 // is not read back as the other - and `none` for an item with nothing; ""
@@ -283,6 +318,7 @@ namespace ctbrowser::style::css::shorthand_detail {
     case shape::line_clamp: return fold_line_clamp(e, v);
     case shape::white_space: return fold_white_space(v);
     case shape::animation: return fold_animation(v);
+    case shape::transition: return fold_transition(v);
     case shape::border: {
         // Four equal sides per component, and border-image at its initial
         // values - CSS Backgrounds 3 §5.3: `border` resets it, so a block that

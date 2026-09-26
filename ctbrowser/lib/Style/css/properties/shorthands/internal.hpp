@@ -49,6 +49,8 @@ enum class shape : std::uint8_t {
                      // color applied to the axis's two sides (CSS Logical 1 §4.4)
     white_space,     // CSS Text 4 §3: one of six keywords, or `<'white-space-collapse'>
                      // || <'text-wrap-mode'> || <'white-space-trim'>`
+    transition,      // `<single-transition>#`, CSS Transitions 2 §3.5: per item a
+                     // property, two times, an easing and a behaviour, in any order
     animation,       // `<single-animation>#`, CSS Animations 1 §5.9: per item, the
                      // first <time> is the duration and the second the delay, an
                      // easing, a count, and the keywords of direction, fill mode
@@ -255,8 +257,10 @@ inline constexpr shorthand_syntax table[] = {
      "text-decoration-line text-decoration-thickness text-decoration-style "
      "text-decoration-color",
      "none"},
-    {"transition", shape::whole,
-     "transition-property transition-duration transition-timing-function transition-delay", ""},
+    {"transition", shape::transition,
+     "transition-property transition-duration transition-timing-function transition-delay "
+     "transition-behavior",
+     "all"},
     {"animation", shape::animation,
      "animation-duration animation-timing-function animation-delay animation-iteration-count "
      "animation-direction animation-fill-mode animation-play-state animation-name "
@@ -365,6 +369,10 @@ inline constexpr std::array<std::pair<std::string_view, std::string_view>, 8> an
 [[nodiscard]] std::string canonical_easing(std::string text);
 
 split split_animation(std::string_view value, std::vector<std::string> & out);
+
+split split_transition(std::string_view value, std::vector<std::string> & out);
+
+[[nodiscard]] std::string fold_transition(std::span<const std::string> v);
 
 split split_slash_pair(const expansion & e, std::string_view value, std::vector<std::string> & out);
 

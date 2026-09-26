@@ -420,6 +420,68 @@ split split_animation(std::string_view value, std::vector<std::string> & out) {
     return split::ok;
 }
 
+// `transition`: per comma-separated item, `[ none | <single-transition-property> ]
+// || <time> || <easing-function> || <time> || <transition-behavior-value>`
+// (CSS Transitions 2 §3.5) - the first time the duration, which cannot be
+// negative, the second the delay - each omitted one its longhand's initial
+// value. `none` names no property, so it may stand only in a list of one.
+split split_transition(std::string_view value, std::vector<std::string> & out) {
+    std::array<std::string, 5> lists;
+    const std::vector<std::string_view> items = split_top_level(value, ",");
+    for (const std::string_view item : items) {
+        std::array<std::string, 5> v{"all", "0s", "ease", "0s", "normal"};
+        std::array<bool, 5> given{};
+        const std::vector<std::string_view> parts =
+            split_top_level(trim(item, html_whitespace), " \t\n\r\f");
+        if (parts.empty() || trim(item, html_whitespace).empty()) { return split::invalid; }
+        for (const std::string_view part : parts) {
+            const auto take = [&](std::size_t i, std::string text) {
+                v[i] = std::move(text);
+                given[i] = true;
+            };
+            const value_check time = check_declaration("transition-delay", part, false);
+            if (time.valid && !is_wide_keyword(time.serialized)) {
+                if (!given[1]) {
+                    if (!check_declaration("transition-duration", part, false).valid) {
+                        return split::invalid;
+                    }
+                    take(1, time.serialized);
+                } else if (!given[3]) {
+                    take(3, time.serialized);
+                } else {
+                    return split::invalid;
+                }
+                continue;
+            }
+            if (!given[4] && ascii_iequals_any(part, {"normal", "allow-discrete"})) {
+                take(4, ascii_lower_copy(part));
+                continue;
+            }
+            const value_check easing = check_declaration("transition-timing-function", part, false);
+            if (!given[2] && easing.valid && !is_wide_keyword(easing.serialized)) {
+                take(2, easing.serialized);
+                continue;
+            }
+            if (given[0]) { return split::invalid; }
+            if (ascii_iequals(part, "none")) {
+                if (items.size() != 1) { return split::invalid; }
+                take(0, "none");
+                continue;
+            }
+            const value_check property = check_declaration("transition-property", part, false);
+            if (!property.valid || is_wide_keyword(property.serialized) ||
+                property.serialized.find(',') != std::string::npos) {
+                return split::invalid;
+            }
+            take(0, property.serialized);
+        }
+        for (std::size_t i = 0; i < 5; ++i) { lists[i] += (lists[i].empty() ? "" : ", ") + v[i]; }
+    }
+    if (lists[0].empty()) { return split::invalid; }
+    out.assign(lists.begin(), lists.end());
+    return split::ok;
+}
+
 // Each radius axis has the same nonnegative <length-percentage> grammar as padding.
 bool radius_components(std::string_view value, std::size_t maximum,
                        std::vector<std::string> & out) {
@@ -787,6 +849,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::border_axis: return split_border_axis(e, parts, out);
     case shape::white_space: return split_white_space(parts, out);
     case shape::animation: return split_animation(value, out);
+    case shape::transition: return split_transition(value, out);
     case shape::font: return split_font(parts, out);
     case shape::font_variant: return split_font_variant(e, parts, out);
     case shape::line_clamp: return split_line_clamp(e, parts, out);
