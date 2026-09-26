@@ -228,6 +228,10 @@ public:
     // observer sees the <script> first, and a document.write there has no
     // insertion point and opens the document, aborting this parser.
     void set_checkpoint_hook(std::function<void()> hook) { on_checkpoint_ = std::move(hook); }
+    // AFTER EACH NODE THE PARSER INSERTS OR MOVES: the DOM's insert steps
+    // queue a mutation record per insertion, so the host announces each one
+    // rather than the batch a later checkpoint would see as a single change.
+    void set_insertion_hook(std::function<void()> hook) { on_insert_ = std::move(hook); }
 
     // "CREATE AN ELEMENT FOR A TOKEN" FOR A CUSTOM ELEMENT (13.2.6.1 steps
     // 7-11), which only the shell can do: it owns the registry and runs the
@@ -564,6 +568,7 @@ private:
     int nesting_ = 0;
     std::function<void()> pending_blocking_;
     std::function<void()> on_checkpoint_;
+    std::function<void()> on_insert_;
     bool paused_ = false; // the parser pause flag
     int pumping_ = 0;     // see busy()
 };

@@ -89,6 +89,16 @@ void dom_bindings::replace_parser() {
     // parse (document-write/mutation-observer.html). The checkpoint is only
     // performed when no script is on the stack; inside a written script it
     // waits for that script's end.
+    // ONE MUTATION RECORD PER PARSER INSERTION, as the DOM's insert steps
+    // queue them (MutationObserver-document.html: the <p>, then the <script>,
+    // then the script's text - three records, not one) - asked only while an
+    // observer is registered, since each announcement diffs the observed
+    // subtree.
+    parser_->set_insertion_hook([this] {
+        if (mutation_registrations_.empty()) { return; }
+        doc_->note_unversioned_change();
+        mutated();
+    });
     parser_->set_checkpoint_hook([this] {
         doc_->note_unversioned_change();
         mutated();

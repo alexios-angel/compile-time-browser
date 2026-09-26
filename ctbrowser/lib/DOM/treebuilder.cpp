@@ -690,6 +690,7 @@ void tree_builder::insert_at(const insertion_point & where, node_id child) {
     } else {
         builder_->append(where.parent, child);
     }
+    if (on_insert_) { on_insert_(); }
 }
 
 void tree_builder::move_to(node_id child, const insertion_point & where) {
@@ -705,6 +706,7 @@ void tree_builder::move_to(node_id child, const insertion_point & where) {
     } else {
         builder_->reparent(child, where.parent);
     }
+    if (on_insert_) { on_insert_(); }
 }
 
 // "INSERT A CHARACTER": onto the Text node immediately before the insertion
