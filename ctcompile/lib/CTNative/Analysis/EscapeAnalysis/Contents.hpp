@@ -83,6 +83,31 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                 value = convert.getOperand();
                 continue;
             }
+            if (auto compare = value.getDefiningOp<ctjs::CompareOp>();
+                compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+                for (bool reversed : {false, true}) {
+                    auto input = reversed ? compare.getRhs() : compare.getLhs();
+                    auto literal = (reversed ? compare.getLhs() : compare.getRhs())
+                                       .getDefiningOp<ctjs::ConstantOp>();
+                    auto boolean = literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
+                                           : ctjs::BooleanAttr{};
+                    auto comparison = input.getDefiningOp<ctjs::CompareOp>();
+                    auto conversion = input.getDefiningOp<ctjs::ConvertOp>();
+                    auto unary = input.getDefiningOp<ctjs::UnaryOp>();
+                    // Equality with a Boolean preserves or reverses truthiness
+                    // only when the other operand is already exactly Boolean.
+                    // An opaque value, Number or read cannot borrow that tag.
+                    if (boolean &&
+                        ((comparison && comparison.getKind() == ctjs::CompareKind::StrictEq) ||
+                         (conversion && conversion.getKind() == ctjs::ConvertKind::ToBoolean) ||
+                         (unary && unary.getKind() == ctjs::UnaryKind::Not))) {
+                        value = input;
+                        negated ^= !boolean.getValue();
+                        break;
+                    }
+                }
+                if (value != compare.getResult()) { continue; }
+            }
             auto unary = value.getDefiningOp<ctjs::UnaryOp>();
             if (!unary || unary.getKind() != ctjs::UnaryKind::Not) { break; }
             value = unary.getOperand();

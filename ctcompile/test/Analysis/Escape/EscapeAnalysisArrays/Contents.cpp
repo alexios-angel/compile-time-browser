@@ -744,6 +744,27 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     unrelatedBoolean.replace(unrelatedBoolean.find("%p"), 2, "%q");
     auto numericCondition = booleanFlag;
     numericCondition.replace(numericCondition.find("to_boolean"), 10, "to_number");
+    const auto strictBooleanFlag = [](const std::string & input = "%boolean",
+                                      const std::string & literal = "#ctjs.boolean<true>",
+                                      const std::string & producer =
+                                          "    %boolean = ctjs.convert to_boolean %p\n",
+                                      bool reversed = false) {
+        return producer + "    %booleanLiteral = ctjs.constant " + literal +
+               "\n    %booleanTest = ctjs.compare strict_eq " +
+               (reversed ? "%booleanLiteral, " + input : input + ", %booleanLiteral") +
+               "\n    %secondFlag = ctjs.truthy %booleanTest\n";
+    };
+    const std::string strictBooleanKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", strictBooleanFlag()));
+    const std::string strictBooleanGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", strictBooleanFlag()));
+    auto strictBooleanReads = reloadedConditions("    ctjs.set_property %guard[%zero], %one\n");
+    strictBooleanReads.replace(
+        strictBooleanReads.find("    %secondFlag = ctjs.truthy %secondRead\n"),
+        std::string{"    %secondFlag = ctjs.truthy %secondRead\n"}.size(),
+        strictBooleanFlag("%boolean", "#ctjs.boolean<true>",
+                          "    %boolean = ctjs.convert to_boolean %secondRead\n"));
     const auto forwardedFlag =
         [&](const std::string & thenValue = "%p", const std::string & elseValue = "%p",
             const std::string & thenBody = "", const std::string & elseBody = "") {
@@ -2861,6 +2882,141 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(crossBlockKeys) + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "a strict true test of ToBoolean retains its exact input choice",
+         .body = loopValues + allocationLoop(strictBooleanKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "a strict false test aligns opposite Boolean branches",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  strictBooleanFlag("%boolean", "#ctjs.boolean<false>"), true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "a Boolean literal on the left retains strict test correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     strictBooleanFlag("%boolean", "#ctjs.boolean<true>",
+                                       "    %boolean = ctjs.convert to_boolean %p\n", true)))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "a strict false test of logical Not preserves positive input polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  strictBooleanFlag("%boolean", "#ctjs.boolean<false>",
+                                                    "    %boolean = ctjs.unary not %p\n")))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "strict Boolean tests preserve dominating strict comparison choices",
+         .body = loopValues +
+                 allocationLoop(crossBlockStore(representativeInput(strictBooleanFlag(
+                     "%secondCompare", "#ctjs.boolean<true>",
+                     "    %secondCompare = ctjs.compare strict_eq %p, %zero\n")))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "nested strict false tests retain exact Boolean polarity",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     strictBooleanFlag("%inner", "#ctjs.boolean<false>",
+                                       "    %boolean = ctjs.convert to_boolean %p\n"
+                                       "    %no = ctjs.constant #ctjs.boolean<false>\n"
+                                       "    %inner = ctjs.compare strict_eq %boolean, %no\n")))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "strict Boolean tests preserve the independent guard read gap",
+         .body = loopValues +
+                 allocationLoop(strictBooleanGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "an opaque input cannot borrow the tag of a Boolean test literal",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  strictBooleanFlag("%p", "#ctjs.boolean<true>", "")))) +
+                 done,
+         .complete = false},
+        {.what = "a truthy Number literal cannot stand in for a strict Boolean test",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     strictBooleanFlag("%boolean", "#ctjs.number<4607182418800017408>")))) +
+                 done,
+         .complete = false},
+        {.what = "a truthy String literal cannot stand in for a strict Boolean test",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  strictBooleanFlag("%boolean", "#ctjs.string<\"true\">")))) +
+                 done,
+         .complete = false},
+        {.what = "a null literal cannot stand in for a strict false test",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  strictBooleanFlag("%boolean", "#ctjs.null"), true))) +
+                 done,
+         .complete = false},
+        {.what = "an undefined literal cannot stand in for a strict false test",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  strictBooleanFlag("%boolean", "#ctjs.undefined"), true))) +
+                 done,
+         .complete = false},
+        {.what = "a strict false test with unswapped arms proves no correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  strictBooleanFlag("%boolean", "#ctjs.boolean<false>")))) +
+                 done,
+         .complete = false},
+        {.what = "strict Boolean tests cannot overwrite their guard dependency",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(
+                     "      %read = ctjs.get_property %guard[%zero]\n" +
+                     siblingInput("%read", "%two", "%secondFlag", strictBooleanFlag()))) +
+                 done,
+         .complete = false},
+        {.what = "strict Boolean tests retain separate mutable read snapshots",
+         .body = loopValues + allocationLoop(strictBooleanReads) + done,
+         .complete = false},
+        {.what = "strict Boolean tests cannot hide an unsupported producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(siblingInput(
+                     "%zero", "%one", "%secondFlag",
+                     strictBooleanFlag("%boolean", "#ctjs.boolean<true>",
+                                       "    %called = ctjs.call %p(%q)\n"
+                                       "    %boolean = ctjs.convert to_boolean %p\n")))) +
+                 done,
+         .complete = false},
+        {.what = "strict Boolean tests still require finite selected Number values",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%nan", "%secondFlag", strictBooleanFlag()))) +
+                 done,
+         .complete = false},
+        {.what = "a returned strict Boolean test holder retains its selected child",
+         .body = loopValues + allocationLoop(strictBooleanKeys) + "  ctjs.return %guard\n"},
+        {.what = "clearing a strict Boolean test holder releases its selected child",
+         .body =
+             loopValues + allocationLoop(strictBooleanKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved strict Boolean test child survives clearing its holder",
+         .body = loopValues + allocationLoop(strictBooleanKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "strict Boolean tests cannot authorize repeated allocation identities",
+         .body =
+             loopValues + allocationLoop(strictBooleanKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "zero visits cannot authorize strict Boolean test allocation identities",
+         .body = loopValues + allocationLoop(strictBooleanKeys, "%one") + done,
+         .complete = false},
+        {.what = "strict Boolean tests still require initialized solver inputs",
+         .body = loopValues + allocationLoop(strictBooleanKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "ToBoolean preserves the exact input truthiness choice",
          .body = loopValues + allocationLoop(booleanKeys) + done,
          .confinedNested = "fresh"},
@@ -4211,6 +4367,94 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = chainMutation.what, .body = chainMutation.body, .expected = ""},
              "the Not-chain mutation fixture did not parse");
     }
+    retention_row strictBooleanMutation{
+        .what = "strict Boolean tests reprove tags, producers, operands, polarity and guards",
+        .body = loopValues +
+                allocationLoop(strictBooleanGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto strictBooleanModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + strictBooleanMutation.body + "}\n", &context);
+    if (strictBooleanModule) {
+        ctjs::FuncOp function = *strictBooleanModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto compare = second.getCondition()
+                           .getDefiningOp<ctjs::TruthyOp>()
+                           .getValue()
+                           .getDefiningOp<ctjs::CompareOp>();
+        auto conversion = compare.getLhs().getDefiningOp<ctjs::ConvertOp>();
+        auto literal = compare.getRhs().getDefiningOp<ctjs::ConstantOp>();
+        auto * thenYield = second.getThenRegion().front().getTerminator();
+        auto * elseYield = second.getElseRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = conversion.getOperand();
+        const mlir::Value originalThen = thenYield->getOperand(0);
+        const mlir::Value originalElse = elseYield->getOperand(0);
+        const mlir::Value originalPosition = load.getKey();
+        mlir::Value zero;
+        for (auto constant : function.getBody().front().getOps<ctjs::ConstantOp>()) {
+            if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue());
+                number && number.getBits() == 0) {
+                zero = constant;
+            }
+        }
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*strictBooleanModule))) {
+            fail(row{.what = strictBooleanMutation.what,
+                     .body = strictBooleanMutation.body,
+                     .expected = ""},
+                 "the strict Boolean test stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 14; ++state) {
+            conversion->setOperand(0, state == 1 ? function.getBody().front().getArgument(4)
+                                                 : originalInput);
+            conversion.setKindAttr(ctjs::ConvertKindAttr::get(
+                &context, state == 2 ? ctjs::ConvertKind::ToNumber : ctjs::ConvertKind::ToBoolean));
+            compare.setKindAttr(ctjs::CompareKindAttr::get(
+                &context, state == 3 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+            literal.setValueAttr(
+                state == 5
+                    ? mlir::Attribute(ctjs::NumberAttr::get(&context, 4607182418800017408ULL))
+                    : mlir::Attribute(ctjs::BooleanAttr::get(&context, state != 4 && state != 11)));
+            compare->setOperand(0, state == 6   ? originalInput
+                                   : state == 9 ? literal.getResult()
+                                                : conversion.getResult());
+            compare->setOperand(1, state == 9 ? conversion.getResult() : literal.getResult());
+            const bool swapped = state == 11 || state == 12;
+            thenYield->setOperand(0, state == 7 ? originalPosition
+                                     : swapped  ? originalElse
+                                                : originalThen);
+            elseYield->setOperand(0, swapped ? originalThen : originalElse);
+            load->setOperand(1, state == 8 ? zero : originalPosition);
+            strictBooleanMutation.complete =
+                state == 0 || state == 9 || state == 10 || state == 11 || state == 13;
+            strictBooleanMutation.confinedNested = strictBooleanMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*strictBooleanModule, strictBooleanMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                strictBooleanMutation.complete) {
+                fail(row{.what = strictBooleanMutation.what,
+                         .body = strictBooleanMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied strict Boolean test correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = strictBooleanMutation.what,
+                 .body = strictBooleanMutation.body,
+                 .expected = ""},
+             "the strict Boolean test mutation fixture did not parse");
+    }
     retention_row booleanMutation{
         .what =
             "ToBoolean correspondence reproves live conversion inputs, kinds, yields and guards",
@@ -4727,7 +4971,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         }
     }
     std::printf(
-        "array retention: %zu rows, two hundred twenty-three live states, %zu budget cutoffs\n",
+        "array retention: %zu rows, two hundred thirty-seven live states, %zu budget cutoffs\n",
         rows.size(), budgets);
 }
 
