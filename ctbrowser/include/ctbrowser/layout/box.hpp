@@ -141,12 +141,13 @@ struct box_node {
     // ancestor's scrollable overflow rectangle (layout/overflow.hpp).
     bool scroll_container = false;
     bool clips_overflow = false;
-    // A FLOW LAYOUT DOES NOT MODEL: a vertical writing mode or right-to-left
-    // direction on this box. Layout places everything horizontal-tb, left to
-    // right, and a question whose answer turns on the flow - where a
-    // reversed flex container's scrolling starts - is left in that one mode
-    // rather than answered for a flow nothing was laid out in.
-    bool unmodelled_flow = false;
+    // A FLOW LAYOUT DOES NOT MODEL: right-to-left direction, which turns the
+    // inline axis round, and a vertical writing mode, which turns both.
+    // Layout places everything horizontal-tb, left to right, and a question
+    // whose answer turns on the flow - where a reversed flex container's
+    // scrolling starts - is left in that one mode on each axis the flow
+    // turns, rather than answered for a flow nothing was laid out in.
+    bool unmodelled_inline = false, unmodelled_block = false;
     // `height: stretch` (CSS Sizing 4 §3.1): the box's margin box fills its
     // containing block's height when that is definite, and it is `auto` when
     // it is not. `height` itself reads `auto` for it, as parse_length has it.
@@ -599,8 +600,9 @@ private:
         b.border_box = trimmed(prop(style, box_sizing_)) == "border-box";
         {
             const std::string_view mode = trimmed(prop(style, writing_mode_));
-            b.unmodelled_flow = ascii_iequals(trimmed(prop(style, direction_)), "rtl") ||
-                                (!mode.empty() && !ascii_iequals(mode, "horizontal-tb"));
+            b.unmodelled_block = !mode.empty() && !ascii_iequals(mode, "horizontal-tb");
+            b.unmodelled_inline =
+                b.unmodelled_block || ascii_iequals(trimmed(prop(style, direction_)), "rtl");
         }
         // The LONGHANDS, which the style engine expands every shorthand
         // into. Reading `margin`/`padding` directly meant a sheet that said

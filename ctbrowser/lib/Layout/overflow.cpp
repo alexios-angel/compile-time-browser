@@ -49,13 +49,14 @@ struct scroll_origin {
     bool right = false, bottom = false;
 };
 [[nodiscard]] scroll_origin origin_of(const fragment & f) noexcept {
-    if (f.box == nullptr || f.box->kind != box_kind::flex || f.box->unmodelled_flow) { return {}; }
+    if (f.box == nullptr || f.box->kind != box_kind::flex) { return {}; }
     const flex_direction d = f.box->flex.direction;
     const bool row = d == flex_direction::row || d == flex_direction::row_reverse;
     const bool main_reversed =
         d == flex_direction::row_reverse || d == flex_direction::column_reverse;
     const bool cross_reversed = f.box->flex.wrap == flex_wrap::wrap_reverse;
-    return {row ? main_reversed : cross_reversed, row ? cross_reversed : main_reversed};
+    return {!f.box->unmodelled_inline && (row ? main_reversed : cross_reversed),
+            !f.box->unmodelled_block && (row ? cross_reversed : main_reversed)};
 }
 
 void contribute(const fragment & child, const fragment & parent, bool icb, edges & into) noexcept {

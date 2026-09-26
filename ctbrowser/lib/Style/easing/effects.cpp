@@ -596,7 +596,8 @@ void promote(transform_fn & fn) {
 // turns the rotation through 720 degrees and blends only the rest
 // (list-interpolation). A matrix() pair is a pair of matrices, blended so.
 [[nodiscard]] std::optional<std::string> interpolate_transform(std::string_view from,
-                                                               std::string_view to, double p) {
+                                                               std::string_view to, double p,
+                                                               bool * singular) {
     std::optional<std::vector<transform_fn>> a = parse_transforms(from);
     std::optional<std::vector<transform_fn>> b = parse_transforms(to);
     if (!a || !b) { return std::nullopt; }
@@ -607,18 +608,19 @@ void promote(transform_fn & fn) {
     if (p == 1 && !b->empty()) { return std::string{to}; }
     const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
     // Matrices that will not blend: a percentage is the caller's, and a
-    // singular matrix makes the whole animation discrete (CSS Transforms 1
-    // §10), a list's product taken whole (transform-matrix-composition).
+    // singular matrix makes the whole pair discrete (CSS Transforms 1 §10) -
+    // no transition starts, and an animation flips the lists whole
+    // (transform-matrix-composition, transform-non-invertible-no-transition).
     const auto unblended = [&](const std::vector<transform_fn> & x,
                                const std::vector<transform_fn> & y) -> std::optional<std::string> {
-        for (const std::vector<transform_fn> * list : {&x, &y}) {
-            for (const transform_fn & fn : *list) {
-                if (std::ranges::any_of(fn.pct, [](double v) { return v != 0; })) {
-                    return std::nullopt;
-                }
-            }
+        const auto percent = [](const transform_fn & fn) {
+            return std::ranges::any_of(fn.pct, [](double v) { return v != 0; });
+        };
+        if (singular != nullptr && !std::ranges::any_of(x, percent) &&
+            !std::ranges::any_of(y, percent)) {
+            *singular = true;
         }
-        return std::string{p < 0.5 ? from : to};
+        return std::nullopt;
     };
     const std::size_t shorter = std::min(a->size(), b->size());
     std::size_t prefix = 0;

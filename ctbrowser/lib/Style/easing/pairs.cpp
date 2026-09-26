@@ -641,8 +641,11 @@ struct size_sum_reader {
 // so an animated size reads back as a declared one does: `size * 0.7` is
 // `(0.7 * size)` in both (interpolate-size-min-height-interpolation).
 [[nodiscard]] std::string sized_text(std::string_view basis, std::string_view calc) {
+    // Every keyword a basis can be here: the canonical forms only ever carry
+    // one the property took.
+    constexpr std::string_view sizes = "auto content min-content max-content fit-content stretch";
     std::string text = "calc-size(" + std::string{basis} + ", " + std::string{calc} + ")";
-    std::optional<std::string> canonical = css::calc_size_text(text, "auto");
+    std::optional<std::string> canonical = css::calc_size_text(text, sizes);
     return canonical ? std::move(*canonical) : text;
 }
 
@@ -707,7 +710,14 @@ struct size_sum_reader {
         return std::string{p < 0.5 ? from : to};
     }
     if (property == "transform") {
-        if (const std::optional<std::string> t = interpolate_transform(from, to, p)) { return *t; }
+        bool singular = false;
+        if (const std::optional<std::string> t = interpolate_transform(from, to, p, &singular)) {
+            return *t;
+        }
+        if (singular) {
+            interpolable = false;
+            return std::string{p < 0.5 ? from : to};
+        }
     }
     // TWO PALETTES MIX (CSS Fonts 4 §9.1): between the ends the value is
     // `palette-mix(in oklab, from, to p%)`, the percentage left out at the

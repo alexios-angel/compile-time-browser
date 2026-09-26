@@ -313,10 +313,16 @@ void test_composition() {
                          composite_op::accumulate, context) == "matrix(0, 1, -1, 0, 150, 0)");
     CHECK(composite_text("transform", "matrix(1, 1, 0, 0, 0, 100)", "matrix(1, 0, 0, 1, 50, 0)",
                          composite_op::accumulate, context) == "matrix(1, 0, 0, 1, 50, 0)");
-    // A singular matrix makes the whole interpolation discrete.
+    // A singular matrix makes the whole interpolation discrete, and the pair
+    // is not interpolable at all - no transition starts.
     CHECK(interpolate_text("transform", "matrix(1, 1, 0, 0, 0, 100) translate(10px)",
                            "matrix(1, 1, 0, 0, 0, 100) translate(20px)", 0.25,
                            context) == "matrix(1, 1, 0, 0, 0, 100) translate(10px)");
+    CHECK(!interpolable_text("transform",
+                             "matrix3d(2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)",
+                             "matrix(3, 0, 0, 3, 0, 0)", context));
+    CHECK(interpolable_text("transform", "matrix(2, 0, 0, 2, 0, 0)", "matrix(3, 0, 0, 3, 0, 0)",
+                            context));
     CHECK(composite_text("transform", "translate(10px) scale(2)", "translate(5px) scale(3)",
                          composite_op::accumulate, context) == "translate(15px, 0px) scale(4, 4)");
     CHECK(interpolate_text("transform", "matrix(1, 0, 0, 1, 0, -6)", "matrix(0, 7, -1, 0, 6, 0)",
@@ -348,7 +354,8 @@ void test_calc_size_interpolation() {
     ctbrowser::style::css::length_context context;
     // As the cascade writes the same declaration, which is what reads back.
     const auto sized = [](std::string_view text) {
-        return ctbrowser::style::css::calc_size_text(text, "auto").value_or(std::string{text});
+        return ctbrowser::style::css::calc_size_text(text, "auto min-content")
+            .value_or(std::string{text});
     };
     CHECK(interpolate_text("height", "calc-size(auto, size)", "calc-size(auto, size * 2)", 0.5,
                            context) == sized("calc-size(auto, size * 1.5)"));
