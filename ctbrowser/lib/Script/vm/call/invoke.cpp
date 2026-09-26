@@ -134,6 +134,7 @@ value context::invoke(value callable, std::span<const value> args, value this_va
     // meant the body was entered as an ordinary frame and its first `yield` had
     // no generator to suspend into.
     if (target.is_generator) { return make_generator(fnobj, this_value, args); }
+    callout_scope callout{*this};
 
     const std::size_t new_base = registers_.size();
     // EVERY argument lands in a register, not just the declared ones. Two
@@ -178,7 +179,7 @@ value context::invoke(value callable, std::span<const value> args, value this_va
             *this, target, callable, registers_.data() + new_base, new_base,
             static_cast<std::uint32_t>(args.size()), this_value, constructing, produced)) {
         if (registers_.size() >= new_base) { registers_.resize(new_base); }
-        return produced;
+        return callout.returned(produced);
     }
     if (frames_.size() > 512) {
         throw_error("RangeError", "Maximum call stack size exceeded");
@@ -204,7 +205,7 @@ value context::invoke(value callable, std::span<const value> args, value this_va
     // Only shrink back if nothing below is still using the space - a nested
     // call that grew the stack further has already returned by now.
     if (registers_.size() >= new_base) { registers_.resize(new_base); }
-    return out;
+    return callout.returned(out);
 }
 
 // Where a plain call's callee CAME FROM. A method call knows its name outright;

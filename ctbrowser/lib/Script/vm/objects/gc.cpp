@@ -186,17 +186,20 @@ std::size_t context::collect() {
     // oracle walks too. The whole register file and every frame: a
     // collection has no dead window.
     mark_roots(registers_.size());
-    // AND WHATEVER A NATIVE IN PROGRESS ALLOCATED - see context::native_scope.
-    // Newest first, down to but NOT including the head at the outermost
-    // entry: that one was live before the native and is the collector's to
-    // judge (ctcompile's Cycle.cpp pins that `churnVia` keeps exactly one
-    // dead ring, and the epoch head is a node of the previous one). sweep()
-    // moves the epoch along if it frees it.
-    if (native_depth_ > 0) {
-        for (heap_object * o = heap_; o != nullptr && o != native_epoch_; o = o->next) {
+    // AND WHATEVER A NATIVE IN PROGRESS ALLOCATED, AND WHAT ITS SCRIPT
+    // CALLEES RETURNED TO IT - see context::native_scope and callout_scope.
+    // Each range runs newest first down to but NOT including its bottom: that
+    // one was live before the range opened and is the collector's to judge
+    // (ctcompile's Cycle.cpp pins that `churnVia` keeps exactly one dead
+    // ring, and a bottom can be a node of the previous one). sweep() moves a
+    // bottom along if it frees it.
+    for (const pin_range & range : pins_) {
+        for (heap_object * o = range.top != nullptr ? range.top : heap_;
+             o != nullptr && o != range.bottom; o = o->next) {
             mark_object(o);
         }
     }
+    for (const value v : pinned_results_) { mark(v); }
     return sweep();
 }
 
@@ -207,6 +210,10 @@ void context::mark_roots(std::size_t register_limit) {
 std::size_t context::sweep() {
     std::size_t freed = 0;
     std::size_t live_string_bytes = 0;
+    // The pin ranges' bottoms come in list order, newest range first, so
+    // one index walks them alongside the heap: `pending` ranges have a
+    // bottom not yet passed.
+    std::size_t pending = pins_.size();
     heap_object ** link = &heap_;
     while (*link != nullptr) {
         heap_object * o = *link;
@@ -215,13 +222,16 @@ std::size_t context::sweep() {
             if (o->kind == heap_kind::string) {
                 live_string_bytes += static_cast<const string_object *>(o)->text.size();
             }
+            while (pending > 0 && pins_[pending - 1].bottom == o) { --pending; }
             link = &o->next;
         } else {
             *link = o->next;
-            // The native-scope boundary (see collect) moves to the next older
+            // A pin range's bottom (see collect) moves to the next older
             // object when the one it named is freed: everything between was
-            // freed too, so the "allocated since entry" prefix is unchanged.
-            if (o == native_epoch_) { native_epoch_ = o->next; }
+            // freed too, so the range is unchanged.
+            for (std::size_t k = pending; k > 0 && pins_[k - 1].bottom == o; --k) {
+                pins_[k - 1].bottom = o->next;
+            }
             // THE ESCAPE ORACLE HEARS ABOUT EVERY FREE, so a record can never
             // be read through a stale pointer: the recorder flags it dead and
             // forgets the address before `delete` reuses it.

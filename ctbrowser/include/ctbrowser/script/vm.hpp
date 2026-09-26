@@ -495,8 +495,14 @@ public:
 
     class native_scope {
     public:
-        explicit native_scope(context & cx) : cx_(&cx), saved_frames_(cx.native_frames_) {
-            if (cx.native_depth_++ == 0) { cx.native_epoch_ = cx.heap_; }
+        explicit native_scope(context & cx)
+            : cx_(&cx), saved_frames_(cx.native_frames_),
+              from_script_(cx.native_depth_ == 0 || cx.frames_.size() != cx.native_frames_),
+              saved_pins_(cx.pins_.size()), saved_results_(cx.pinned_results_.size()) {
+            ++cx.native_depth_;
+            // A native called by a native allocates into its caller's open
+            // range; one called from script opens its own.
+            if (from_script_) { cx.pins_.push_back({nullptr, cx.heap_}); }
             // How deep the interpreter was when THIS native began: `call`
             // parks a throw only while no interpreted frame has been pushed
             // since (see `call`).
@@ -504,7 +510,11 @@ public:
         }
         ~native_scope() {
             cx_->native_frames_ = saved_frames_;
-            if (--cx_->native_depth_ == 0) { cx_->native_epoch_ = nullptr; }
+            --cx_->native_depth_;
+            if (from_script_) {
+                cx_->pins_.resize(saved_pins_);
+                cx_->pinned_results_.resize(saved_results_);
+            }
         }
         native_scope(const native_scope &) = delete;
         native_scope & operator=(const native_scope &) = delete;
@@ -512,6 +522,43 @@ public:
     private:
         context * cx_;
         std::size_t saved_frames_;
+        bool from_script_;
+        std::size_t saved_pins_;
+        std::size_t saved_results_;
+    };
+
+    // A NATIVE CALLING INTO SCRIPT - context::invoke's closure path. What the
+    // native allocated so far stays pinned, what the callee allocates does
+    // not, and what the callee RETURNS is pinned instead, because the native
+    // holds it in a C++ local from here on. See native_scope's contract.
+    class callout_scope {
+    public:
+        explicit callout_scope(context & cx)
+            : cx_(&cx),
+              from_native_(cx.native_depth_ > 0 && cx.frames_.size() == cx.native_frames_) {
+            if (!from_native_ || cx.pins_.empty() || cx.pins_.back().top != nullptr) { return; }
+            // Close the open range at the head; an empty one is dropped, so
+            // a native that allocates nothing between calls (forEach over
+            // integer indices) does not grow the list.
+            if (cx.heap_ == cx.pins_.back().bottom) {
+                cx.pins_.pop_back();
+            } else {
+                cx.pins_.back().top = cx.heap_;
+            }
+        }
+        ~callout_scope() {
+            if (from_native_) { cx_->pins_.push_back({nullptr, cx_->heap_}); }
+        }
+        [[nodiscard]] value returned(value v) {
+            if (from_native_ && v.is_heap()) { cx_->pinned_results_.push_back(v); }
+            return v;
+        }
+        callout_scope(const callout_scope &) = delete;
+        callout_scope & operator=(const callout_scope &) = delete;
+
+    private:
+        context * cx_;
+        bool from_native_;
     };
 
     void set_gc_stress(bool on) noexcept;
@@ -853,9 +900,18 @@ private:
     type_recorder * recorder_ = active_type_recorder();
     heap_object * heap_ = nullptr;
     std::size_t live_objects_ = 0;
-    // See native_scope: the head of the heap when the outermost native in
-    // progress was entered, and how many natives are in progress.
-    heap_object * native_epoch_ = nullptr;
+    // See native_scope: what the natives in progress allocated, as ranges of
+    // the newest-first heap list - `top` is the range's newest object (null
+    // while the range is open: it runs to heap_) and `bottom` the head when
+    // it opened, NOT included. Oldest range first. And what their script
+    // callees returned to them (callout_scope). How many natives are in
+    // progress.
+    struct pin_range {
+        heap_object * top;
+        heap_object * bottom;
+    };
+    std::vector<pin_range> pins_;
+    std::vector<value> pinned_results_;
     std::size_t native_depth_ = 0;
     std::size_t native_frames_ = 0; // frames_.size() when the innermost native began
     // Values a C++ scope is holding across something that can collect. See
