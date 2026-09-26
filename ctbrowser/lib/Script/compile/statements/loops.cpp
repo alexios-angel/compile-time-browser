@@ -266,15 +266,16 @@ void compiler_impl::compile_for_head_source(const vp::node & n, std::uint16_t ds
 // runs the real protocol: GetIterator(async) through the builtin's hidden
 // native, then `next()` -> await -> `done`/`value` per iteration, so an async
 // generator is pulled lazily and a promise in a sync iterator's `value` is
-// awaited. Only the statement form; `for await` at a module's top level is
-// refused with the same message as an `await` there would be.
+// awaited. Only the statement form - in an async function, or at a MODULE'S
+// top level, which is [+Await] (16.2.1) and awaits exactly as a top-level
+// `await` expression does.
 // AsyncIteratorClose (7.4.13) runs on `break` and on a throw out of the body:
 // the iterator's `return()`, if it has one, is called and awaited. A `return`
 // statement inside the body and a throw from `next()` itself do not close
 // (the first is a known gap; the second is the specification). The sync
 // for-of below closes on `break` only.
 void compiler_impl::compile_for_await(const vp::node & n) {
-    if (!fn().is_async) {
+    if (!fn().is_async && !(module_scope_ && frames_.size() == 1)) {
         fail("`for await` outside an async function");
         return;
     }
