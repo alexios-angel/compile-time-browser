@@ -129,8 +129,10 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                 compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
                 for (bool reversed : {false, true}) {
                     auto input = reversed ? compare.getRhs() : compare.getLhs();
-                    auto literal = (reversed ? compare.getLhs() : compare.getRhs())
-                                       .getDefiningOp<ctjs::ConstantOp>();
+                    auto literalInput =
+                        stripIdentity(reversed ? compare.getLhs() : compare.getRhs());
+                    if (!literalInput) { return {}; }
+                    auto literal = literalInput.getDefiningOp<ctjs::ConstantOp>();
                     auto boolean = literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
                                            : ctjs::BooleanAttr{};
                     if (!boolean) { continue; }
