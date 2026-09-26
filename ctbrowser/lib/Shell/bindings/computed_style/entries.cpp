@@ -732,6 +732,14 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             return out.empty() ? collapse_keyword(text) : out;
         }
+        // 4h. offset-rotate's angle in degrees, `reverse` as `auto 180deg`
+        //     (Motion Path 1 §4.4, offset-rotate-computed).
+        if (property == "offset-rotate") {
+            if (std::string computed = style::css::computed_offset_rotate(text, true);
+                !computed.empty()) {
+                return computed;
+            }
+        }
         // 4g. A FONT STYLE'S ANGLE IS IN DEGREES, and `oblique 0deg` is
         //     `normal` (CSS Fonts 4 §2.4, font-style-computed).
         if (property == "font-style") {

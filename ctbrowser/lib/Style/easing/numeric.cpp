@@ -368,6 +368,13 @@ namespace ctbrowser::style::easing_detail {
             return computed;
         }
     }
+    // offset-rotate's keywords are angles too: `reverse` is `auto 180deg`, so
+    // it pairs with `auto 100deg` (offset-rotate-interpolation).
+    if (property == "offset-rotate") {
+        if (std::string computed = css::computed_offset_rotate(text, false); !computed.empty()) {
+            return computed;
+        }
+    }
     // `normal` is `oblique 0deg` and a bare `oblique` is `oblique 14deg` (CSS
     // Fonts 4 §2.4), so either pairs with an oblique angle.
     if (property == "font-style") {

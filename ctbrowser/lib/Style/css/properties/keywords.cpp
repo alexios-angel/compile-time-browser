@@ -968,6 +968,32 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
 
 } // namespace detail
 
+std::string computed_offset_rotate(std::string_view specified, bool keep_auto) {
+    bool automatic = false;
+    double degrees = 0;
+    for (const std::string_view raw : split_top_level(specified, html_whitespace)) {
+        const std::string_view word = trim(raw, html_whitespace);
+        if (word.empty()) { continue; }
+        if (ascii_iequals(word, "auto")) {
+            automatic = true;
+        } else if (ascii_iequals(word, "reverse")) {
+            automatic = true;
+            degrees += 180;
+        } else {
+            const math_answer answer = evaluate_math(word, length_context{});
+            if (answer.outcome != math_outcome::resolved || answer.value.is_number ||
+                answer.value.type != numeric_type::angle) {
+                return {};
+            }
+            degrees += answer.value.px;
+        }
+    }
+    const std::string angle = serialize_number(degrees) + "deg";
+    if (!automatic) { return angle; }
+    if (keep_auto && degrees == 0) { return "auto"; }
+    return "auto " + angle;
+}
+
 std::optional<std::string_view> font_width_percentage(std::string_view keyword) {
     static constexpr std::pair<std::string_view, std::string_view> table[] = {
         {"ultra-condensed", "50%"},  {"extra-condensed", "62.5%"}, {"condensed", "75%"},

@@ -224,6 +224,12 @@ struct color_context {
 // The percentage a font-width keyword names (CSS Fonts 4 §2.3) - `normal`
 // is 100%, `condensed` 75% - or nothing for any other text.
 [[nodiscard]] std::optional<std::string_view> font_width_percentage(std::string_view keyword);
+// offset-rotate's computed value (Motion Path 1 §4.4): `auto` plus an angle in
+// degrees, `reverse` being `auto 180deg`, or an angle alone in degrees. With
+// `keep_auto`, a bare `auto` - `auto 0deg` - stays `auto`, as getComputedStyle
+// writes it; without, it is written out, as an interpolation pairs it. Empty
+// for text that is not a value of it.
+[[nodiscard]] std::string computed_offset_rotate(std::string_view specified, bool keep_auto);
 [[nodiscard]] std::string computed_basic_shape(std::string_view property, std::string_view text,
                                                const length_context & ctx);
 // Two COMPUTED basic shapes of one function, blended component by
