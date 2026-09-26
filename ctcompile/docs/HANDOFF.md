@@ -22,6 +22,81 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Exact primitive tag helpers and Boolean selection predicates, 2026-09-26 UTC
+
+Continued **37e5b728** and its recorded `TypeOf`/`Void` boundary. Iteration 40
+was complete and the old WIP branch was already an ancestor. Service cutoffs
+interrupted agents; saved candidates and checks were retained. Native tests and
+final review resumed; the parent finished escape review from its saved candidate.
+
+**825f0a0f** reuses `prefixUnary` for exact primitive `TypeOf` and `Void`
+in private iterator helpers. The existing five-tag literal guard precedes the
+shared evaluator; unknown producers, objects and BigInts remain refused.
+These operations inspect tags without converting String contents. All operand
+uses, selected effects, thrown identities and complete DOM proofs remain required.
+There are **92 new controls, 1518 total**: 52 admissions, 36 valid refusals and
+four malformed inputs, including signed zeros/NaNs, malformed and oversized
+String bytes, transport, shared arguments and public zero/late-budget rollback.
+No existing TypeOf/Void controls required promotion. All ten prior C++ raw
+literals remain unchanged. The native agent checked ten tag/void expectations
+with Node; malformed bytes remain direct IR coverage. Final independent review passes.
+
+**4d262af2** recognizes If results whose two normalized Boolean literal
+yields are complementary. They retain the exact condition key and polarity;
+Number truthiness and differing snapshots gain no equivalence. Shared charged
+census and current replay still check every effect, finite Number requirement,
+guard dependency and exit. **19 new retention rows, 483 total**, and **ten new
+live mutation states, 156 total**, cover stale solvers, forged completion markers
+and incomplete budgets. Existing retention rows are unchanged. This grants no
+new ownership or shorter-lifetime authority and adds no general CFG support.
+
+**4894f6f5** adds two complete iterator/DOM sources. All 42 prior helper
+and two outer sources remain unchanged. Each raw import retains two TypeOf
+operations; source `void` evaluates its operand then imports as undefined, so
+direct Void IR is covered by the C++ controls above.
+
+The initial devbox build caught a conditional expression combining different
+MLIR TypedValue wrappers in the escape helper. Explicit `mlir::Value` conversions
+fixed it; no CTests or source checks ran before that correction.
+
+The retry built seven explicit targets: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Four exact CTests passed (total elapsed):
+`ctcompile_exception_recovery` **19.16 s**, `ctcompile_host_contract` **2.72 s**,
+`ctcompile_escape_analysis_arrays` **5.22 s**, and
+`ctcompile_escape_analysis_completion` **0.02 s**, each 1/1.
+Final repository formatting passed **1127 C++, 159 Python and 114 web files**;
+diff checks passed.
+
+Both complete sources pass at the default **100,000-step raw and structured
+budgets**. Node/VM traces agree; **20 generated C++ files and 40 GCC/Clang binaries**
+pass across both printers, providers and optimization modes, with ten zero-budget
+refusals. Ordered DOM writes, two documents and 16 lifetimes pass. Generated
+source and linked symbols have no Script/AOT dependency. All five final local/
+devbox hashes match, and all 20 generated files were retrieved and inspected:
+typed primitive values, borrowed element handles, public DOM calls and ordinary
+document ownership. No CTest or source gate failed or required replay; only the
+initial compile failure required a build retry.
+
+**Next:** preserve the existing complete `unguarded-default` witness in
+`native_dom_document_default.py` (`return R.find('*').length;`). The pinned
+Bootstrap FIND defaults to `document.documentElement`; prove checked root
+presence at the original query call, preserving missing-root failure/effect
+order, document identity and root replacement. Current presence facts only
+flow from proved guard arms. Independent sibling comparisons without a dominating
+representative, differing snapshots, repeated allocations, protected numeric
+setAttribute, mutable exceptional state, escaping owners, the native application
+driver and full Bootstrap remain unfinished. No full-Bootstrap admission, raw
+escape-oracle improvement or shortened native lifetime is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrices, raw escape
+oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and performance
+were skipped. Linux actual Claude loop PID 2333739 was running; Windows identity
+inspection succeeded (362 processes, no matches), so concurrent rules applied.
+No browser/runtime/shared implementation edits, local builds, push or history
+rewrite. Evidence: `/tmp/ctcompile-iteration41/`.
+
 ## Exact template Concat and shared comparison yields, 2026-09-25 UTC
 
 Resumed clean **68c5e51a** from HANDOFF/part 00. Iteration 39 was complete;
