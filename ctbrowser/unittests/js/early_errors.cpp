@@ -145,6 +145,11 @@ int main() {
     refused("var a; a?.b() = 1;");
     // A binding the parser took leniently from a token that is no name.
     refused("var 1 = 1;");
+    // B.3.1: a label's item may be a (labelled) function declaration in
+    // sloppy code - never in strict code, nor as an `if` body.
+    accepted("label1: label2: function f() {}");
+    refused("'use strict'; label1: label2: function f() {}");
+    refused("if (1) label1: function f() {}");
     refused("function f(1, 1) {}");
     accepted("var $a, _b, \\u0061c, \xc3\xa9t\xc3\xa9;");
 

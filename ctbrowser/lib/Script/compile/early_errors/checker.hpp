@@ -264,7 +264,8 @@ private:
     // --- defined in statements.cpp --------------------------------------------------------
     void walk_statement(std::int32_t idx, list_kind kind, std::vector<binding> & vars);
     [[nodiscard]] bool newline_follows(std::int32_t idx, std::size_t lexeme) const;
-    void check_nested_declaration(std::int32_t idx, bool annex_b_function);
+    void check_nested_declaration(std::int32_t idx, bool annex_b_function,
+                                  bool labelled_item = false);
     void walk_loop_body(std::int32_t body, std::vector<binding> & vars);
     void check_declaration(std::int32_t idx, std::vector<binding> & vars);
     void check_for(std::int32_t idx, list_kind kind, std::vector<binding> & vars);

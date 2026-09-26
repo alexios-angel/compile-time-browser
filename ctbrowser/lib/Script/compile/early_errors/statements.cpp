@@ -259,14 +259,17 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
     return true; // end of input ends the line too
 }
 
-void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function) {
+void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function,
+                                       bool labelled_item) {
     if (idx < 0) { return; }
     // 14.6.1 / 14.7.1: IsLabelledFunction(Statement) - a function declaration
     // behind one or more labels is never the body of an `if` or a loop, and
-    // B.3.3 does not reach it.
+    // B.3.3 does not reach it. A LABEL'S item is not such a body: `a: b:
+    // function f() {}` is B.3.1's labelled function, which the inner label's
+    // own check judges.
     std::int32_t item = idx;
     while (at(item).kind == nk::labeled) { item = at(item).a; }
-    if (item != idx && at(item).kind == nk::func_decl) {
+    if (!labelled_item && item != idx && at(item).kind == nk::func_decl) {
         report("a labelled function declaration cannot be the body of a statement", item);
         return;
     }
@@ -620,7 +623,7 @@ void checker::check_labeled(std::int32_t idx, std::vector<binding> & vars) {
             break;
         }
     }
-    check_nested_declaration(n.a, true);
+    check_nested_declaration(n.a, true, true);
     const bool names_a_loop = labels_iteration(n.a);
     f.labels.push_back(n.text);
     if (names_a_loop) { f.loop_labels.push_back(n.text); }
