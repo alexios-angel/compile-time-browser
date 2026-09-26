@@ -542,7 +542,8 @@ struct DOMAttributeProof {
         // The initial global binding is checked by the complete final DOM proof.
         return attributeCall(call) ||
                (numberCallee(call) &&
-                (stringValue(call.getArgs().front()) || booleanValue(call.getArgs().front())));
+                (stringValue(call.getArgs().front()) || booleanValue(call.getArgs().front()) ||
+                 numberValue(call.getArgs().front())));
     }
     void callResult(ctjs::CallOp call, mlir::Value result) {
         // Called only after the independent nonthrowing proof succeeds.

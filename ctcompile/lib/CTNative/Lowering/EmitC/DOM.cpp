@@ -698,7 +698,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     }
     const auto & edge = found->second;
     if (edge.kind == HostDOMMethod::number && (isBooleanCarrier(call.getArgs().front().getType()) ||
-                                               call.getArgs().front().getType().isInteger(1))) {
+                                               call.getArgs().front().getType().isInteger(1) ||
+                                               isNumberCarrier(call.getArgs().front().getType()) ||
+                                               call.getArgs().front().getType().isF64())) {
         swap(number(at, where, call.getArgs().front()));
         return true;
     }
