@@ -887,9 +887,10 @@ private:
                         continue;
                     }
                     // A PSEUDO-ELEMENT AFTER ANOTHER is ::marker of ::before or
-                    // ::after (CSS Pseudo 4 §4.3), or one of a ::part() or a
-                    // ::slotted(); `::before::before`, `::selection::after` and
-                    // `::placeholder::marker` are no selectors.
+                    // ::after (CSS Pseudo 4 §4.3), or one of an element-backed
+                    // pseudo-element - ::part(), ::slotted(), ::picker() or
+                    // ::details-content; `::before::before`, `::selection::after`
+                    // and `::placeholder::marker` are no selectors.
                     if (after_pe) {
                         const bool marker_of = ascii_iequals(name, "marker") &&
                                                (last_pe == "before" || last_pe == "after");
@@ -899,7 +900,8 @@ private:
                             dead = true;
                             continue;
                         }
-                        if (last_pe != "part" && last_pe != "slotted") {
+                        if (!ascii_iequals_any(last_pe,
+                                               {"part", "slotted", "picker", "details-content"})) {
                             dead = invalid_ = true;
                             continue;
                         }
