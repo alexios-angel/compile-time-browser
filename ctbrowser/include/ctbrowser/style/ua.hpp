@@ -49,6 +49,11 @@ inline constexpr std::string_view ua_css = R"(
 
     a { color: #0000ee; text-decoration: underline; cursor: pointer }
     a:active { color: #ee0000 }
+    /* HTML's rendering section, `:focus-visible { outline: auto }`: a focused
+       element the UA would show a ring for shows the platform's own
+       (focus-visible-017-2). The longhand, because `auto` is an outline
+       colour too and the shorthand's split would hand it to the colour. */
+    :focus-visible { outline-style: auto }
     input, textarea { cursor: text }
 
     /* A <button> IS NOT A REPLACED ELEMENT: its size comes from here, so a sheet
