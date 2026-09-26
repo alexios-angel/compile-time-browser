@@ -4072,7 +4072,10 @@ static void testConditionalNumberCallee(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 19; ++control) {
+        for (unsigned variant = 0; variant < 38; ++variant) {
+            const unsigned control = variant % 19;
+            if (variant >= 19 && control <= 1) { continue; }
+            const bool normalReturn = variant >= 19 || control == 1;
             std::string source = R"js(function guarded(element) {
                 try {
                     const saved = Number(element.hasAttribute('flag') ?
@@ -4084,7 +4087,7 @@ static void testConditionalNumberCallee(mlir::MLIRContext & context) {
             const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
                 source.replace(source.find(from.str()), from.size(), to.str());
             };
-            if (control == 1) { replace("throw element;", "return true;"); }
+            if (normalReturn) { replace("throw element;", "return true;"); }
             if (control == 2) {
                 replace("element.setAttribute('data-written'",
                         "element.setAttribute('data-number', '99'); "
@@ -4150,8 +4153,7 @@ static void testConditionalNumberCallee(mlir::MLIRContext & context) {
                                          control == 16   ? 0
                                          : control == 17 ? 500
                                                          : 100000);
-            // The normal-return source still needs checked-invocation state proof.
-            if (control == 1 || control >= 4) {
+            if (control >= 4) {
                 check(static_cast<bool>(error) && printed(*candidate) == original &&
                           request.moduleSha256 == originalContract.moduleSha256 &&
                           request.initialIntrinsics == originalContract.initialIntrinsics &&
@@ -4163,14 +4165,14 @@ static void testConditionalNumberCallee(mlir::MLIRContext & context) {
                 continue;
             }
             if (!check(!error, "identical saved conditional callee completes its DOM proof")) {
-                llvm::errs() << "conditional callee control " << control << ": "
+                llvm::errs() << "conditional callee variant " << variant << ": "
                              << llvm::toString(std::move(error)) << '\n';
                 continue;
             }
             DOMEntryAnalysis proof(*candidate, request);
             check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
                   "forwarded callee requires fresh complete DOM proof");
-            if (control == 1 || control == 3) { continue; }
+            if (normalReturn || control == 3) { continue; }
             ctjs::CallOp conversion, write;
             candidate->walk([&](ctjs::CallOp call) {
                 const auto * method = proof.call(call);
