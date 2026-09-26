@@ -263,26 +263,46 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
             return found != nullptr ? *found : value::undefined();
         };
         const value iterator = slot("iterator");
-        const value method =
-            lookup_property(iterator, how == resume_mode::thrown ? "throw" : "return");
         value forwarded = value::undefined();
         bool threw = false;
-        if (method.is_nullish()) {
-            if (how == resume_mode::returned) {
-                // No `return`: the return completion carries on through the
-                // outer generator's own finally blocks (below).
-                saved->delegate = value::undefined();
-                rec->set("done", value::boolean(true));
-            }
+        // EVERY `?` IN 14.4.14 STEP 7 IS A THROW AT THE YIELD: a getter on
+        // the inner iterator or on its result that throws hands its
+        // exception to the frame's own handlers, not to whoever called
+        // `.throw()`/`.return()`. Under the native that resumed us the
+        // throw is parked (context::call), so it is taken back here; one
+        // that already unwound past us (the interpreter asked directly) is
+        // the caller's, and this resume is over.
+        const std::size_t unwound = unwinds_;
+        const auto took = [&] {
+            if (unwinds_ != unwound || !throw_pending()) { return false; }
+            forwarded = take_pending_throw();
+            threw = true;
+            return true;
+        };
+        const value method =
+            lookup_property(iterator, how == resume_mode::thrown ? "throw" : "return");
+        if (unwinds_ != unwound) { return value::undefined(); }
+        const bool no_method = !took() && method.is_nullish();
+        if (threw) {
+            // GetMethod threw - handled with the rest below.
+        } else if (no_method && how == resume_mode::returned) {
+            // No `return`: the return completion carries on through the
+            // outer generator's own finally blocks (below) - step 7.c.iii,
+            // with the method read once.
+            saved->delegate = value::undefined();
+            rec->set("done", value::boolean(true));
+        } else if (no_method) {
             // No `throw`: close the inner iterator, then a TypeError at the
-            // yield - the protocol was violated by the delegate.
-            if (const value close = lookup_property(iterator, "return"); close.is_callable()) {
-                value ignored = value::undefined();
+            // yield - the protocol was violated by the delegate (7.b.iii).
+            const value close = lookup_property(iterator, "return");
+            if (unwinds_ != unwound) { return value::undefined(); }
+            if (!took() && close.is_callable()) {
+                value thrown_by = value::undefined();
                 bool close_threw = false;
-                (void)call_fenced(close, {}, iterator, close_threw, ignored);
+                (void)call_fenced(close, {}, iterator, close_threw, thrown_by);
                 if (close_threw) {
                     threw = true;
-                    forwarded = ignored;
+                    forwarded = thrown_by;
                 }
             }
             if (!threw) {
@@ -297,13 +317,31 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
                                  std::string{how == resume_mode::thrown ? "throw" : "return"} +
                                  " is not a function");
         } else {
-            forwarded = call_fenced(method, {&sent, 1}, iterator, threw, forwarded);
+            // The thrown value in its OWN variable: `forwarded =
+            // call_fenced(..., forwarded)` stored the call's undefined answer
+            // over the exception call_fenced had just written there.
+            value thrown_by = value::undefined();
+            const value answer = call_fenced(method, {&sent, 1}, iterator, threw, thrown_by);
+            forwarded = threw ? thrown_by : answer;
             if (!threw && !forwarded.is_object()) {
                 threw = true;
                 forwarded = make_error("TypeError", "Iterator result is not an object");
             }
         }
-        if (method.is_nullish() && how == resume_mode::returned) {
+        // IteratorComplete, then IteratorValue when done - either getter
+        // may throw, and that throw is the frame's too.
+        bool finished = false;
+        value final = value::undefined();
+        if (!threw && !(no_method && how == resume_mode::returned)) {
+            finished = truthy(lookup_property(forwarded, "done"));
+            if (unwinds_ != unwound) { return value::undefined(); }
+            if (!took() && finished) {
+                final = lookup_property(forwarded, "value");
+                if (unwinds_ != unwound) { return value::undefined(); }
+                (void)took();
+            }
+        }
+        if (!threw && no_method && how == resume_mode::returned) {
             // fall through to the return completion
         } else if (threw) {
             // Thrown at the yield inside the loop - the frame resumes with it.
@@ -311,10 +349,9 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
             rec->set("done", value::boolean(true));
             sent = forwarded;
             how = resume_mode::thrown;
-        } else if (truthy(lookup_property(forwarded, "done"))) {
+        } else if (finished) {
             saved->delegate = value::undefined();
             rec->set("done", value::boolean(true));
-            const value final = lookup_property(forwarded, "value");
             if (how == resume_mode::returned) {
                 // The delegate returned: the outer generator returns its
                 // value, through its own finally blocks (below).

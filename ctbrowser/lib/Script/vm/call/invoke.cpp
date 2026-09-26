@@ -433,29 +433,49 @@ value context::iterable_values(value v) {
     const bool materialising =
         std::find_if(materialising_.begin(), materialising_.end(),
                      [&](value held) { return held.bits() == v.bits(); }) != materialising_.end();
-    if (const value method = lookup_property(v, CTBROWSER_SYMBOL_KEY("iterator"));
-        method.is_callable() && !materialising) {
+    // EVERY STEP BELOW CAN THROW, and from the interpreter a throw lands on
+    // the page's handler at once - throw_pending never sees it, only
+    // unwinds_ does (contract-17). Whatever landed is the answer: one more
+    // step, or a TypeError of our own on top, would be a second throw that
+    // unwinds past the handler the first one reached.
+    const std::size_t unwound = unwinds_;
+    const auto threw = [&] { return unwinds_ != unwound || throw_pending(); };
+    // GetMethod once (7.3.10): a getter runs one time, and a method that is
+    // there but not callable - `null` included - is the TypeError of
+    // GetIterator. Only an ABSENT one falls through to the array-like walk.
+    const value method = lookup_property(v, CTBROWSER_SYMBOL_KEY("iterator"));
+    if (threw()) { return make_array(); }
+    if (!method.is_undefined() && !method.is_callable()) {
+        throw_error("TypeError", std::string{type_of(v)} + " is not iterable");
+        return make_array();
+    }
+    if (method.is_callable() && !materialising) {
         materialising_.push_back(v);
-        const value iterator = get_iterator(v);
-        const rooted keep_iterator{*this, iterator};
         value out = make_array();
         const rooted keep{*this, out}; // see the generator branch above
-        if (iterator.is_object()) {
+        const value iterator = call(method, {}, v);
+        const rooted keep_iterator{*this, iterator};
+        // 7.4.2 GetIteratorFromMethod step 3: any Object, a proxy or a
+        // function included.
+        if (!threw() && !iterator.is_object_like()) {
+            throw_error("TypeError", "Result of the Symbol.iterator method is not an object");
+        }
+        const value next = threw() ? value::undefined() : lookup_property(iterator, "next");
+        const rooted keep_next{*this, next};
+        if (!threw()) {
             auto * items = static_cast<array_object *>(out.as_heap());
-            const value next = lookup_property(iterator, "next");
-            const rooted keep_next{*this, next};
             std::size_t guard = 0;
-            for (; guard < 1u << 20 && !throw_pending(); ++guard) {
+            for (; guard < 1u << 20; ++guard) {
                 bool done = false;
                 const value item = iterator_step(iterator, next, done);
-                if (done || throw_pending()) { break; }
+                if (done) { break; } // the end, or a throw - iterator_step says done for both
                 items->items.push_back(item);
             }
             // An iterator that never finishes is an infinite loop under an
             // eager materialisation; a diagnosable throw beats an
             // out-of-memory kill (test262's for-of IteratorClose tests are
             // exactly this shape: `next` never says done and the body breaks).
-            if (guard == 1u << 20 && !throw_pending()) {
+            if (guard == 1u << 20 && !threw()) {
                 throw_error("RangeError", "iterator did not finish in 1,048,576 steps - "
                                           "for-of materialises its source (docs/script.md)");
             }
@@ -513,7 +533,7 @@ value context::get_iterator(value v) {
             return value::undefined();
         }
         const value items = iterable_values(v);
-        if (throw_pending()) { return value::undefined(); }
+        if (unwinds_ != unwound || throw_pending()) { return value::undefined(); }
         const rooted keep{*this, items};
         auto * state = static_cast<object_object *>(make_object().as_heap());
         const rooted keep_state{*this, value::object(state)};
@@ -535,8 +555,11 @@ value context::get_iterator(value v) {
         it->set("state", value::object(state)); // keeps the list reachable
         return iterator;
     }
+    // The call's throw has LANDED when the interpreter is what asked (the
+    // run loop's handler took it, contract-17) - a TypeError on top of it
+    // would be a second throw, unwinding past that handler.
     const value iterator = call(method, {}, v);
-    if (throw_pending()) { return value::undefined(); }
+    if (unwinds_ != unwound || throw_pending()) { return value::undefined(); }
     // ANY OBJECT - a proxy, a function, an array - not only an ordinary one
     // (7.4.2 GetIteratorFromMethod step 3: "is not an Object").
     if (!iterator.is_object_like()) {
@@ -547,20 +570,29 @@ value context::get_iterator(value v) {
 }
 
 value context::iterator_step(value iterator, value next, bool & done) {
+    // DONE ON A THROW TOO, as IteratorStep leaves the record's [[Done]] - so a
+    // caller's loop stops whether the throw is pending or has already landed
+    // on an interpreted handler, which throw_pending cannot see (the unwinds_
+    // test below is what can).
     done = true;
     if (!next.is_callable()) {
         throw_error("TypeError", "iterator.next is not a function");
         return value::undefined();
     }
+    const std::size_t unwound = unwinds_;
+    const auto threw = [&] { return unwinds_ != unwound || throw_pending(); };
     const value result = call(next, {}, iterator);
-    if (throw_pending()) { return value::undefined(); }
+    if (threw()) { return value::undefined(); }
     if (!result.is_object_like()) {
         throw_error("TypeError", "Iterator result is not an object");
         return value::undefined();
     }
-    done = truthy(lookup_property(result, "done"));
-    if (done || throw_pending()) { return value::undefined(); }
-    return lookup_property(result, "value");
+    const value finished = lookup_property(result, "done");
+    if (threw() || truthy(finished)) { return value::undefined(); }
+    const value item = lookup_property(result, "value");
+    if (threw()) { return value::undefined(); }
+    done = false;
+    return item;
 }
 
 std::vector<value> context::spread_arguments(value arg_array) {
