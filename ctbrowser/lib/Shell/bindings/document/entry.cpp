@@ -87,6 +87,7 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     }
     for (const timer & t : timers_) {
         mark(t.callback);
+        mark(t.window);
         for (const value held : t.arguments) { mark(held); }
     }
     // A QUEUED FETCH holds the only reference to the promise a page is
@@ -139,11 +140,20 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     mark(event_target_prototype_);
     mark(abort_signal_prototype_);
     mark(media_query_list_prototype_);
+    // EVERY ANIMATION'S OBJECTS, here and not only in the `retained` list of
+    // an `Animation` interface (sync_animation_roots): a frame document's CSS
+    // animations are made by a style flush whether or not its bindings have
+    // that interface, and their `finished` promises were reachable from
+    // nothing (ASan, 2026-09-26: freed, then read by cancel_record).
+    for (const animation_record & a : animations_) {
+        mark(a.self);
+        mark(a.finished);
+    }
+    for (const keyframe_effect_record & e : effects_) { mark(e.self); }
     for (const value & range : live_ranges_) { mark(range); }
     for (const value & list : pending_media_changes_) { mark(list); }
     for (const value & promise : rejections_to_notify_) { mark(promise); }
     for (const value & promise : outstanding_rejections_) { mark(promise); }
-    for (const value & promise : rejections_handled_late_) { mark(promise); }
     // DOMException.prototype, for the same reason: `assert_throws_dom`
     // requires `e.constructor === DOMException`, and a prototype the
     // collector could not see would break that on the first sweep.
@@ -210,6 +220,7 @@ void dom_bindings::install(context & cx) {
     // `dom_exception_prototype_` and hang their state off `document_`.
     install_style_sheets(cx);
     install_timers(cx);
+    install_image_bitmap(cx);
     install_resources(cx);
     install_navigation(cx);
     // AND THE INTERFACE OBJECTS, LAST AND EAGERLY.
@@ -549,7 +560,7 @@ void dom_bindings::execute_script_element(context & cx, node_id id, const std::s
         const script::program & kept = cx.own_program(std::move(compiled));
         // Its `var`s exist before it starts, as a parser-run script's do
         // (browser/scripts.cpp; GlobalDeclarationInstantiation).
-        for (const std::string & name : kept.hoisted_vars) { cx.declare_global_var(name); }
+        for (const std::string & name : kept.hoisted_vars) { cx.declare_global_var(name, false); }
         auto * entry = cx.allocate<script::closure_object>(&kept.functions[0]);
         entry->owner = &kept;
         entry->realm = &cx.current_realm();

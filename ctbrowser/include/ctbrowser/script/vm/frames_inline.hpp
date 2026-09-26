@@ -142,6 +142,9 @@ inline auto context::each_root(std::size_t register_limit, std::size_t frame_lim
     for (auto & [specifier, mod] : modules_) {
         for (auto & [name, cell] : mod.exports) { visit(root_label::module_exports, cell); }
         visit(root_label::module_namespace, mod.namespace_object);
+        // The deferred one is a cache as well: unvisited, a page that dropped
+        // it freed it, and the next `import defer` got the freed object back.
+        visit(root_label::module_namespace, mod.deferred_namespace_object);
     }
     // A thrown value in flight is reachable from nothing else.
     visit(root_label::thrown, thrown_);

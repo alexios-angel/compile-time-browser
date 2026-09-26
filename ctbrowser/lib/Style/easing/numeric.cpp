@@ -256,6 +256,27 @@ namespace ctbrowser::style::easing_detail {
 
 [[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text,
                                          const css::length_context & ctx) {
+    // A BORDER SPACING IS A PAIR, the vertical the horizontal when omitted, and
+    // it interpolates as one: `10px` to `20px` passes `15px 15px`
+    // (border-spacing-interpolation).
+    if (property == "border-spacing") {
+        const std::vector<std::string_view> parts = split_top_level(text, html_whitespace);
+        std::vector<std::string_view> words;
+        for (const std::string_view part : parts) {
+            if (!trim(part, html_whitespace).empty()) {
+                words.push_back(trim(part, html_whitespace));
+            }
+        }
+        if (words.size() == 1) { return std::string{words[0]} + " " + std::string{words[0]}; }
+        return std::string{text};
+    }
+    // A font width's keyword IS its percentage, which is what interpolates:
+    // `normal` to `ultra-expanded` is 100% to 200% (font-stretch-interpolation).
+    if (property == "font-width" || property == "font-stretch") {
+        if (const std::optional<std::string_view> percentage = css::font_width_percentage(text)) {
+            return std::string{*percentage};
+        }
+    }
     if (image_sides(property)) {
         const css::value_check checked = css::check_declaration(property, text, false);
         if (!checked.valid) { return std::string{text}; }
@@ -270,7 +291,8 @@ namespace ctbrowser::style::easing_detail {
         return std::string{parts[0]} + ' ' + std::string{parts[1]} + ' ' + std::string{parts[2]} +
                ' ' + std::string{parts[3]} + (fill ? " fill" : "");
     }
-    if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
+    if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
+        property == "object-view-box") {
         std::string computed = css::computed_basic_shape(property, text, ctx);
         return computed.empty() ? std::string{text} : computed;
     }
@@ -333,6 +355,101 @@ namespace ctbrowser::style::easing_detail {
         return parts[0] + ' ' + parts[1] + ' ' + parts[2];
     }
     if (property == "rotate" && ascii_iequals(text, "none")) { return "0deg"; }
+    // `normal` spacing is none at all (CSS Text 4 §7.1-7.2): `word-spacing:
+    // initial` pairs with `20px` (word-spacing-interpolation).
+    if ((property == "word-spacing" || property == "letter-spacing") &&
+        ascii_iequals(text, "normal")) {
+        return "0px";
+    }
+    // A <position>'s keywords are the percentages they name (CSS Values 5
+    // §position): `left top` pairs with `50% 50%`.
+    if (property == "object-position" || property == "offset-anchor" ||
+        property == "offset-position") {
+        if (std::string computed = css::computed_position(text, "", ""); !computed.empty()) {
+            return computed;
+        }
+    }
+    // ...and so are transform-origin's, horizontal first whichever order they
+    // were written in, a z offset after them (CSS Transforms 1 §6): `top left`
+    // pairs with `100% 100%` (transform-origin-interpolation).
+    if (property == "transform-origin") {
+        std::vector<std::string_view> words;
+        for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+            if (!trim(raw, html_whitespace).empty()) {
+                words.push_back(trim(raw, html_whitespace));
+            }
+        }
+        const auto keyword = [](std::string_view w) {
+            return ascii_iequals_any(w, {"left", "right", "top", "bottom", "center"});
+        };
+        if (!words.empty() && words.size() <= 3 && std::ranges::any_of(words, keyword)) {
+            const auto vertical = [](std::string_view w) {
+                return ascii_iequals_any(w, {"top", "bottom"});
+            };
+            const auto percent = [](std::string_view w) {
+                if (ascii_iequals_any(w, {"left", "top"})) { return std::string{"0%"}; }
+                if (ascii_iequals_any(w, {"right", "bottom"})) { return std::string{"100%"}; }
+                if (ascii_iequals(w, "center")) { return std::string{"50%"}; }
+                return std::string{w};
+            };
+            std::string x = "50%", y = "50%";
+            if (words.size() == 1) {
+                (vertical(words[0]) ? y : x) = percent(words[0]);
+            } else {
+                const bool swapped =
+                    vertical(words[0]) || ascii_iequals_any(words[1], {"left", "right"});
+                x = percent(words[swapped ? 1 : 0]);
+                y = percent(words[swapped ? 0 : 1]);
+            }
+            return x + ' ' + y + (words.size() == 3 ? ' ' + std::string{words[2]} : "");
+        }
+    }
+    // An <absolute-size> is the length it names (CSS Fonts 4 §2.5's table
+    // at the 16px medium): `large` adds to `100px` as 18px
+    // (font-size-composition).
+    if (property == "font-size") {
+        static constexpr std::pair<std::string_view, std::string_view> sizes[] = {
+            {"xx-small", "9px"}, {"x-small", "10px"}, {"small", "13px"},    {"medium", "16px"},
+            {"large", "18px"},   {"x-large", "24px"}, {"xx-large", "32px"}, {"xxx-large", "48px"}};
+        for (const auto & [word, length] : sizes) {
+            if (ascii_iequals(text, word)) { return std::string{length}; }
+        }
+    }
+    // offset-rotate's keywords are angles too: `reverse` is `auto 180deg`, so
+    // it pairs with `auto 100deg` (offset-rotate-interpolation).
+    if (property == "offset-rotate") {
+        if (std::string computed = css::computed_offset_rotate(text, false); !computed.empty()) {
+            return computed;
+        }
+    }
+    // font-variation-settings pairs axis by axis, whatever order either side
+    // wrote them in: each list sorted by tag, a repeated tag's last value
+    // winning (font-variation-settings-interpolation).
+    if (property == "font-variation-settings" && !ascii_iequals(text, "normal")) {
+        std::vector<std::pair<std::string, std::string>> axes;
+        for (const std::string_view raw : split_top_level(text, ",")) {
+            const std::string_view item = trim(raw, html_whitespace);
+            const std::size_t space = item.find_last_of(" \t\n\r\f");
+            if (space == std::string_view::npos) { return std::string{text}; }
+            std::string tag{trim(item.substr(0, space), html_whitespace)};
+            if (tag.size() < 2) { return std::string{text}; }
+            tag = tag.substr(1, tag.size() - 2);
+            std::erase_if(axes, [&tag](const auto & axis) { return axis.first == tag; });
+            axes.emplace_back(std::move(tag), std::string{item.substr(space + 1)});
+        }
+        std::ranges::stable_sort(axes, {}, &std::pair<std::string, std::string>::first);
+        std::string out;
+        for (const auto & [tag, value] : axes) {
+            out += (out.empty() ? "\"" : ", \"") + tag + "\" " + value;
+        }
+        return out;
+    }
+    // `normal` is `oblique 0deg` and a bare `oblique` is `oblique 14deg` (CSS
+    // Fonts 4 §2.4), so either pairs with an oblique angle.
+    if (property == "font-style") {
+        if (ascii_iequals(text, "normal")) { return "oblique 0deg"; }
+        if (ascii_iequals(text, "oblique")) { return "oblique 14deg"; }
+    }
     // A line width keyword is its length (CSS Backgrounds 3 §4.2), so
     // `border-left-width: initial` - `medium` - pairs with `23px`.
     if (property.ends_with("-width")) {

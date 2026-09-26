@@ -225,11 +225,27 @@ value context::lookup_index(value target, value key) {
         return array_inherited(*this, target, *arr, std::to_string(i));
     }
     if (target.is_string() && key.is_number() && array_index_number(key.as_number())) {
-        const std::string & text = static_cast<string_object *>(target.as_heap())->text;
+        // One CODE UNIT (10.4.3.5), a pair's half included.
+        const auto & str = *static_cast<const string_object *>(target.as_heap());
         const auto i = static_cast<std::size_t>(key.as_number());
-        return i < text.size() ? string(std::string{text[i]}) : value::undefined();
+        return i < str.length() ? string(str.unit_text(i)) : value::undefined();
     }
-    return lookup_property(target, to_string(key));
+    // ToObject(base) BEFORE the key's ToPropertyKey (GetValue step 3.a; 13.3.3
+    // hands the key over unconverted): `null[k]` is the TypeError without
+    // running k's toString - whose own throw, left pending under this one,
+    // made the pair uncatchable.
+    if (target.is_nullish()) [[unlikely]] {
+        const bool plain = key.is_string() || key.is_number() || key.is_boolean();
+        throw_error("TypeError", "Cannot read properties of " +
+                                     std::string{target.is_null() ? "null" : "undefined"} +
+                                     (plain ? " (reading '" + to_string(key) + "')" : ""));
+        return value::undefined();
+    }
+    const std::size_t unwound = unwinds();
+    const bool pending = throw_pending();
+    const std::string name = to_string(key);
+    if ((!pending && throw_pending()) || unwinds() != unwound) { return value::undefined(); }
+    return lookup_property(target, name);
 }
 
 value context::lookup_property(value target, const std::string & name) {
@@ -341,13 +357,13 @@ value context::lookup_property(value target, const std::string & name) {
             if (depth == 0 &&
                 (name == "length" || (!name.empty() && name[0] >= '0' && name[0] <= '9'))) {
                 if (value * slot = primitive_slot(target); slot != nullptr && slot->is_string()) {
-                    const std::string & text = static_cast<string_object *>(slot->as_heap())->text;
+                    const auto & str = *static_cast<const string_object *>(slot->as_heap());
                     if (name == "length") {
-                        return value::number(static_cast<double>(text.size()));
+                        return value::number(static_cast<double>(str.length()));
                     }
                     if (std::uint32_t at = 0;
-                        object_object::array_index_key(name, at) && at < text.size()) {
-                        return string(std::string{text[at]});
+                        object_object::array_index_key(name, at) && at < str.length()) {
+                        return string(str.unit_text(at));
                     }
                 }
             }
@@ -425,7 +441,12 @@ value context::lookup_property(value target, const std::string & name) {
     }
     if (target.is_string()) {
         auto * str = static_cast<string_object *>(target.as_heap());
-        if (name == "length") { return value::number(static_cast<double>(str->text.size())); }
+        if (name == "length") { return value::number(static_cast<double>(str->length())); }
+        // AN INDEX SPELLED AS A STRING - `s["1"]`, the key a for-in hands
+        // over - is the same own property `s[1]` reads (10.4.3.5).
+        if (std::uint32_t at = 0; object_object::array_index_key(name, at) && at < str->length()) {
+            return string(str->unit_text(at));
+        }
         // The prototype's accessors too, called with the PRIMITIVE as the
         // receiver (GetV, 7.3.3) - a strict getter sees `typeof this` as
         // "string" - and its own chain behind it (lookup_along).
@@ -539,7 +560,10 @@ value context::lookup_property(value target, const std::string & name) {
         if (accessor_entry * entry = closure->find_accessor(name)) {
             return call_getter(*this, *entry, target);
         }
-        if (name == "prototype") { return ensure_prototype(target); }
+        if (name == "prototype") {
+            return method_without_prototype(*closure) ? value::undefined()
+                                                      : ensure_prototype(target);
+        }
         // `f.name` and `f.length`, read off the compiled function rather than
         // stored on every closure - most functions are never asked and an extra
         // two properties each is a real cost on a 4,754-function bundle.

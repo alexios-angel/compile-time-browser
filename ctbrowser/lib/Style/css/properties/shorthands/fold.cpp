@@ -87,6 +87,52 @@ namespace ctbrowser::style::css::shorthand_detail {
     return out;
 }
 
+// `mask`, folded per layer in its longhands' order with the initial values
+// left out: the position when it or the size is not initial, the size after
+// a `/`, and one box for an origin and clip that agree - none at all for
+// `border-box` - or `no-clip` alone after the initial origin; `none` for a
+// layer that is all initial (mask-valid, mask-computed).
+[[nodiscard]] std::string fold_mask(std::span<const std::string> v) {
+    const auto names = longhands_of("mask");
+    // A mask-border the shorthand cannot spell - anything but its reset, a
+    // computed `0px` for the `0` included.
+    for (std::size_t i = 8; i < v.size(); ++i) {
+        const bool zero = initial_of(names[i]) == "0" && v[i] == "0px";
+        if (v[i] != initial_of(names[i]) && !zero) { return {}; }
+    }
+    std::array<std::vector<std::string_view>, 8> lists;
+    for (std::size_t i = 0; i < lists.size(); ++i) {
+        lists[i] = split_top_level(v[i], ",");
+        if (lists[i].size() != lists[0].size()) { return {}; }
+    }
+    std::string out;
+    for (std::size_t layer = 0; layer < lists[0].size(); ++layer) {
+        std::vector<std::string> parts;
+        const auto value = [&](std::size_t i) {
+            return std::string{trim(lists[i][layer], html_whitespace)};
+        };
+        const auto initial = [&](std::size_t i) { return value(i) == initial_of(names[i]); };
+        if (!initial(0)) { parts.push_back(value(0)); }
+        if (!initial(1) || !initial(2)) {
+            parts.push_back(value(1));
+            if (!initial(2)) { parts.push_back("/ " + value(2)); }
+        }
+        if (!initial(3)) { parts.push_back(value(3)); }
+        if (value(4) == value(5)) {
+            if (!initial(4)) { parts.push_back(value(4)); }
+        } else if (initial(4) && value(5) == "no-clip") {
+            parts.emplace_back("no-clip");
+        } else {
+            parts.push_back(value(4));
+            parts.push_back(value(5));
+        }
+        if (!initial(6)) { parts.push_back(value(6)); }
+        if (!initial(7)) { parts.push_back(value(7)); }
+        out += (layer == 0 ? "" : ", ") + (parts.empty() ? std::string{"none"} : join(parts));
+    }
+    return out;
+}
+
 // `font`, folded: the keywords that are not `normal`, the size, ` / ` and
 // the line-height when it is not `normal`, then the family - CSS Fonts 4
 // §3.1's canonical form, which getComputedStyle reads back too, so the
@@ -186,6 +232,64 @@ namespace ctbrowser::style::css::shorthand_detail {
     return parts.empty() ? std::string{"normal"} : join(parts);
 }
 
+// `animation-range`, folded: per item the start, and the end only when it is
+// not the one the start implies - its range name, or `normal` (or the
+// `100%` that means the same) after a start that names none.
+[[nodiscard]] std::string fold_range(std::span<const std::string> v) {
+    const std::vector<std::string_view> starts = split_top_level(v[0], ",");
+    const std::vector<std::string_view> ends = split_top_level(v[1], ",");
+    if (starts.size() != ends.size()) { return {}; }
+    std::string out;
+    for (std::size_t i = 0; i < starts.size(); ++i) {
+        const std::string_view start = trim(starts[i], html_whitespace);
+        const std::string_view end = trim(ends[i], html_whitespace);
+        const std::string_view first = start.substr(0, start.find(' '));
+        const bool named =
+            !first.empty() && std::isalpha(static_cast<unsigned char>(first.front())) != 0 &&
+            first.find('(') == std::string_view::npos && !ascii_iequals(first, "normal");
+        const bool implied =
+            named ? ascii_iequals(end, first) : ascii_iequals(end, "normal") || end == "100%";
+        out += (out.empty() ? "" : ", ") + std::string{start} +
+               (implied ? "" : " " + std::string{end});
+    }
+    return out;
+}
+
+// `transition`, folded: per item, the property then the components that are
+// not their defaults - a delay carries the duration before it - and the
+// property alone, `all` included, when nothing else is; "" when the lists
+// disagree in length.
+[[nodiscard]] std::string fold_transition(std::span<const std::string> v) {
+    std::array<std::vector<std::string_view>, 5> lists;
+    for (std::size_t i = 0; i < 5; ++i) {
+        for (const std::string_view item : split_top_level(v[i], ",")) {
+            lists[i].push_back(trim(item, html_whitespace));
+        }
+        if (lists[i].size() != lists[0].size()) { return {}; }
+    }
+    std::string out;
+    for (std::size_t item = 0; item < lists[0].size(); ++item) {
+        const std::string_view property = lists[0][item];
+        const std::string_view duration = lists[1][item];
+        const std::string_view easing = lists[2][item];
+        const std::string_view delay = lists[3][item];
+        const std::string_view behavior = lists[4][item];
+        std::vector<std::string_view> parts;
+        const bool zero_delay = ascii_iequals(delay, "0s");
+        if (!ascii_iequals(property, "all")) { parts.push_back(property); }
+        if (!ascii_iequals(duration, "0s") || !zero_delay) { parts.push_back(duration); }
+        if (!ascii_iequals(easing, "ease")) { parts.push_back(easing); }
+        if (!zero_delay) { parts.push_back(delay); }
+        if (!ascii_iequals(behavior, "normal")) { parts.push_back(behavior); }
+        std::string one;
+        for (const std::string_view part : parts) {
+            one += (one.empty() ? "" : " ") + std::string{part};
+        }
+        out += (out.empty() ? "" : ", ") + (one.empty() ? std::string{"all"} : one);
+    }
+    return out;
+}
+
 // `animation`, folded: per item, the components that are not their defaults in the
 // canonical order - a delay carries the duration before it, so the one time
 // is not read back as the other - and `none` for an item with nothing; ""
@@ -243,9 +347,19 @@ namespace ctbrowser::style::css::shorthand_detail {
     case shape::radius: return fold_radius(v);
     case shape::border_image: return fold_border_image(v);
     case shape::background: return fold_background(v);
+    case shape::mask: return fold_mask(v);
+    case shape::text_spacing:
+        if (v[0] == "space-all" && v[1] == "no-autospace") { return "none"; }
+        if (v[0] == "auto" && v[1] == "auto") { return "auto"; }
+        if (v[0] == "auto" || v[1] == "auto") { return {}; }
+        if (v[0] == "normal") { return v[1]; }
+        return v[1] == "normal" ? v[0] : v[0] + " " + v[1];
+    case shape::position_try: return ascii_iequals(v[0], "normal") ? v[1] : v[0] + " " + v[1];
     case shape::pair:
     case shape::place: return v[0] == v[1] ? v[0] : join(v);
     case shape::grid_lines: return fold_grid_lines(v);
+    case shape::grid_template: return fold_grid_template(v);
+    case shape::grid: return fold_grid(v);
     case shape::slash_pair:
         return ascii_iequals(v[1], initial_of(e.longhands[1])) ? v[0] : v[0] + " / " + v[1];
     case shape::bar:
@@ -281,6 +395,8 @@ namespace ctbrowser::style::css::shorthand_detail {
     case shape::line_clamp: return fold_line_clamp(e, v);
     case shape::white_space: return fold_white_space(v);
     case shape::animation: return fold_animation(v);
+    case shape::transition: return fold_transition(v);
+    case shape::range: return fold_range(v);
     case shape::border: {
         // Four equal sides per component, and border-image at its initial
         // values - CSS Backgrounds 3 §5.3: `border` resets it, so a block that

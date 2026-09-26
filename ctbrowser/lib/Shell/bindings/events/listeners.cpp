@@ -368,10 +368,16 @@ bool dom_bindings::invoke_listener(context & cx, value callback, value receiver,
     const context::rooted keep_callback{cx, callback};
     const context::rooted keep_receiver{cx, receiver};
     const context::rooted keep_args{cx, args};
-    compile_listener_fence(cx);
-    if (listener_fence_.is_callable() && listener_invoke_.is_callable()) {
-        const value passed[4] = {listener_invoke_, callback, receiver, args};
-        const value answer = cx.call(listener_fence_, passed);
+    // THE PAGE'S FENCE FOR EVERY DOCUMENT OF THE REALM: a frame's document
+    // and one a page made install no event interfaces of their own, and a
+    // listener of theirs that threw left for the page's `try` - out of
+    // `frames[1].document.dispatchEvent(...)` itself
+    // (window-onerror-with-cross-frame-event-listeners-1.html).
+    dom_bindings & fenced = fence_keeper_ != nullptr ? *this : primary();
+    fenced.compile_listener_fence(cx);
+    if (fenced.listener_fence_.is_callable() && fenced.listener_invoke_.is_callable()) {
+        const value passed[4] = {fenced.listener_invoke_, callback, receiver, args};
+        const value answer = cx.call(fenced.listener_fence_, passed);
         if (!answer.is_array()) {
             returned = answer;
             return false;
@@ -456,13 +462,31 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
     // that was never an exception, unwinds nothing, and is still only visible
     // as `failed()`. Both are reported and both clear what they read, because a
     // flag left up refuses every later callback of any kind.
-    const auto report_fault = [this, type](bool threw, value thrown) {
+    //
+    // AT THE LISTENER'S OWN GLOBAL (DOM 2.10 "inner invoke" step 10.2: "report
+    // exception for listener's callback's corresponding JavaScript object's
+    // associated realm's global object"): a function made in a frame reports
+    // to the frame's window, whatever target it listened on and whichever
+    // window's addEventListener added it. The realm is the closure's; a
+    // native or a `handleEvent` object has none here, and reports where the
+    // dispatch is.
+    //
+    // THE GUARD IS THAT GLOBAL'S "IN ERROR REPORTING MODE" (HTML 8.1.3.3),
+    // set by dispatch_error_value for the length of the `error` event it
+    // fires: an `error` listener that throws while its own window is
+    // reporting is dropped, which bounds the recursion at one level - and one
+    // that throws into ANOTHER window's report is reported there
+    // (window-onerror-with-cross-frame-event-listeners-5.html). Only an
+    // `error` listener: a promise job the dispatch's microtask checkpoint runs
+    // is inside the flag too, and what IT throws is a report of its own.
+    const auto report_fault = [this, type](bool threw, value thrown, value callback) {
         if (cx_ == nullptr) { return; }
         const bool faulted = cx_->failed();
         if (!threw && !faulted) { return; }
-        if (type == "error") {
-            // Reporting is itself a dispatch, so this is the recursion; bounded
-            // at one level with no state to keep. The flag still has to go.
+        dom_bindings * global = &global_of(callback, *this);
+        if (type == "error" && global->error_reporting_) {
+            // Reporting is itself a dispatch, so this is the recursion. The
+            // flag still has to go.
             if (faulted) { (void)cx_->take_error(); }
             return;
         }
@@ -475,7 +499,7 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
         // as well, which is what a browser's console is for. The FIRST one is
         // kept there, exactly as note_callback_fault keeps it: a listener that
         // faults on every event has one bug, not a thousand.
-        const bool handled = dispatch_error_value(fault, thrown);
+        const bool handled = global->dispatch_error_value(fault, thrown);
         if (!handled && callback_error_.empty()) { callback_error_ = fault; }
     };
     // THE LIST IS COPIED BEFORE ANY OF IT RUNS, which is what the DOM says and
@@ -534,9 +558,11 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
                 // The event handler's listener: the handler property AS IT IS NOW,
                 // at the place the handler was first set (HTML 8.1.8.1).
                 value thrown = value::undefined();
-                const bool threw =
-                    fire_handler_property(object_of_step(*cx_, step), type, event, &thrown);
-                report_fault(threw, thrown);
+                const value target = object_of_step(*cx_, step);
+                const value handler = cx_->lookup_property(target, "on" + ascii_lower_copy(type));
+                const context::rooted keep_handler{*cx_, handler};
+                const bool threw = fire_handler_property(target, type, event, &thrown);
+                report_fault(threw, thrown, handler);
                 continue;
             }
             if (entry->once) { entry->spent = true; }
@@ -563,7 +589,7 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
             // later `call` declines while the VM's failure flag is up and then
             // because the throw left the dispatch entirely - and each one that
             // throws is its own report.
-            report_fault(threw, thrown);
+            report_fault(threw, thrown, callback);
         }
         // A HANDLER NOBODY REGISTERED A LISTENER FOR - a parsed attribute the
         // write log never saw, a name whose event type is not its lowercase
@@ -579,12 +605,14 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
         if (!capturing && !flag_of(*cx_, event, stop_immediate_property) &&
             !has_handler_listener(step, type) && !forwarded) {
             value thrown = value::undefined();
-            const bool threw =
-                fire_handler_property(object_of_step(*cx_, step), type, event, &thrown);
+            const value target = object_of_step(*cx_, step);
+            const value handler = cx_->lookup_property(target, "on" + ascii_lower_copy(type));
+            const context::rooted keep_handler{*cx_, handler};
+            const bool threw = fire_handler_property(target, type, event, &thrown);
             found = found || threw ||
                     cx_->lookup_property(object_of_step(*cx_, step), "on" + ascii_lower_copy(type))
                         .is_callable();
-            report_fault(threw, thrown);
+            report_fault(threw, thrown, handler);
         }
         return found;
     };

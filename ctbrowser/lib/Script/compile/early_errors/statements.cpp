@@ -73,6 +73,43 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
                                   : " is only allowed in a module, not in a script"),
                    idx);
         }
+        // `export default function () {}()` (16.2.3): after `default` a
+        // `function` or `class` is a DECLARATION, which ends at its `}` - so
+        // a call, member or operator after it is the SyntaxError, where the
+        // parser read one expression. Found as the leftmost operand being a
+        // function or class that no `(` stands in front of.
+        // ONLY A CONTINUATION THAT CANNOT START A STATEMENT is judged: `(x)`,
+        // `[a]`, a template, `+1`, `-1` and `/re/` after the `}` begin a new,
+        // valid statement, and refusing them refused a valid module whole.
+        if (n.kind == nk::export_decl && n.c == 1 && n.a >= 0) {
+            std::int32_t left = n.a;
+            std::int32_t after = -1; // the first continuation past the declaration
+            while (at(left).a >= 0 && (at(left).kind == nk::call || at(left).kind == nk::member ||
+                                       at(left).kind == nk::index || at(left).kind == nk::binary ||
+                                       at(left).kind == nk::tagged || at(left).kind == nk::seq)) {
+                after = left;
+                left = at(left).a;
+            }
+            const vp::node & first = at(left);
+            const bool cannot_start = after >= 0 && [&] {
+                const vp::node & next = at(after);
+                return (next.kind == nk::call && kids(next).empty()) || next.kind == nk::member ||
+                       next.kind == nk::seq ||
+                       (next.kind == nk::binary && next.text != "+" && next.text != "-" &&
+                        next.text != "/");
+            }();
+            if (cannot_start && (first.kind == nk::func_expr || first.kind == nk::class_decl)) {
+                const std::size_t where = offset_of(left);
+                std::size_t i = where == early_error::nowhere ? 0 : where;
+                while (i > 0 && (source_[i - 1] == ' ' || source_[i - 1] == '\t' ||
+                                 source_[i - 1] == '\n' || source_[i - 1] == '\r')) {
+                    --i;
+                }
+                if (where != early_error::nowhere && i > 0 && source_[i - 1] != '(') {
+                    report("a default-exported declaration ends at its `}`", idx);
+                }
+            }
+        }
         // The wrapper contributes nothing of its own; its declaration does.
         if (n.kind == nk::export_decl) { walk_statement(n.a, kind, vars); }
         return;
@@ -149,6 +186,12 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         // A STATIC BLOCK is [~Return] (15.7.1) and is not the top level.
         if (frames_.back().what == frame_kind::static_block) {
             report("`return` is not allowed in a class static block", idx);
+        }
+        // Nor is an EVAL'S top level: its source is a Script from script,
+        // not an embedder's program, so the contract above does not reach it
+        // - nor a MODULE'S (16.2.1: a ModuleItemList is [~Return]).
+        if ((eval_ != nullptr || module_()) && frames_.size() == 1) {
+            report("`return` outside a function", idx);
         }
         walk_expression(n.a);
         return;
@@ -256,14 +299,17 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
     return true; // end of input ends the line too
 }
 
-void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function) {
+void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function,
+                                       bool labelled_item) {
     if (idx < 0) { return; }
     // 14.6.1 / 14.7.1: IsLabelledFunction(Statement) - a function declaration
     // behind one or more labels is never the body of an `if` or a loop, and
-    // B.3.3 does not reach it.
+    // B.3.3 does not reach it. A LABEL'S item is not such a body: `a: b:
+    // function f() {}` is B.3.1's labelled function, which the inner label's
+    // own check judges.
     std::int32_t item = idx;
     while (at(item).kind == nk::labeled) { item = at(item).a; }
-    if (item != idx && at(item).kind == nk::func_decl) {
+    if (!labelled_item && item != idx && at(item).kind == nk::func_decl) {
         report("a labelled function declaration cannot be the body of a statement", item);
         return;
     }
@@ -617,7 +663,7 @@ void checker::check_labeled(std::int32_t idx, std::vector<binding> & vars) {
             break;
         }
     }
-    check_nested_declaration(n.a, true);
+    check_nested_declaration(n.a, true, true);
     const bool names_a_loop = labels_iteration(n.a);
     f.labels.push_back(n.text);
     if (names_a_loop) { f.loop_labels.push_back(n.text); }

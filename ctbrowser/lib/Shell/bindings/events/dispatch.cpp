@@ -280,6 +280,7 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     node_id activation_target;
     bool legacy_toggled = false;
     bool legacy_was_checked = false;
+    std::optional<bool> legacy_was_indeterminate; // a checkbox's only
     node_id legacy_was_checked_radio;
     if (type == "click" && doc_ != nullptr && at.on == listen_on::node && at.node &&
         mouse_event_prototype_.is_object()) {
@@ -333,6 +334,14 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
                             for (const node_id child : txn.children(node)) { self(self, child); }
                         };
                         if (!group.empty()) { walk(walk, txn.root()); }
+                    }
+                    // ...and a checkbox's sets `indeterminate` to false, which
+                    // the cancelled activation puts back with the checkedness
+                    // (checkbox.html's pre-activation subtests).
+                    if (kind == control_kind::checkbox) {
+                        auto & state = forms_->state_of(txn, *atoms_, activation_target);
+                        legacy_was_indeterminate = state.indeterminate;
+                        state.indeterminate = false;
                     }
                     forms_->toggle(txn, *atoms_, activation_target, kind);
                     legacy_toggled = true;
@@ -478,9 +487,25 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // BUBBLE: back up. A non-bubbling event gets this pass at the target only -
     // `continue` and not `break`, because a shadow host further up is a target
     // too and the steps between are merely skipped.
+    //
+    // A `submit` OR `reset` GOES NO FURTHER THAN A FORM THAT IS NOT ITS
+    // TARGET: that form neither hears it nor passes it on. HTML does not write
+    // this down; Blink (HTMLFormElement::HandleLocalEvents) and Gecko
+    // (HTMLFormElement::WillHandleEvent) both do it, because a form nested in
+    // another - which only a script can build - submits itself and not its
+    // ancestor, and Event-dispatch-single-activation-behavior.html counts one
+    // `onsubmit` per click.
+    const bool form_event = type == "submit" || type == "reset";
+    const auto is_html_form = [&](const path_step & step) {
+        if (step.on != listen_on::node) { return false; }
+        const auto txn = doc_->read();
+        return txn.element_ns(step.node) == node_ns::html && txn.local_name(step.node) == "form";
+    };
     for (std::size_t i = 0; i < path.size(); ++i) {
         if (stopped()) { break; }
-        if (!visit(i, 3) && !bubbles) { continue; }
+        const bool at_target = visit(i, 3);
+        if (form_event && !at_target && is_html_form(path[i])) { break; }
+        if (!at_target && !bubbles) { continue; }
         fire_at(path[i], type, event, false);
     }
 
@@ -534,10 +559,12 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
             run_activation_behavior(cx, activation_target);
         } else if (legacy_toggled) {
             // The legacy-canceled-activation behaviour: the checkedness the
-            // pre-activation changed goes back, and so does the radio it
-            // unchecked.
+            // pre-activation changed goes back - a checkbox's indeterminate
+            // with it - and so does the radio it unchecked.
             const auto txn = doc_->read();
-            forms_->state_of(txn, *atoms_, activation_target).checked = legacy_was_checked;
+            auto & state = forms_->state_of(txn, *atoms_, activation_target);
+            state.checked = legacy_was_checked;
+            if (legacy_was_indeterminate) { state.indeterminate = *legacy_was_indeterminate; }
             if (legacy_was_checked_radio) {
                 forms_->state_of(txn, *atoms_, legacy_was_checked_radio).checked = true;
             }
@@ -552,8 +579,13 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // listener that resolves a promise has its handlers run before the next
     // event is dispatched, not at some later frame. NOT from inside the
     // mutation observer microtask, though: a checkpoint does not nest
-    // (HTML's "performing a microtask checkpoint" flag).
-    if (!primary().delivering_mutations_) { cx.drain_microtasks(); }
+    // (HTML's "performing a microtask checkpoint" flag). And ONLY WITH AN
+    // EMPTY STACK ("clean up after running script"): an event a script
+    // dispatches - `el.click()`, an AbortController's `abort` - runs the
+    // queue after that script, not in the middle of it (testharness aborts a
+    // signal as each test ends, and every test after the first ran its
+    // predecessors' microtasks mid-script).
+    if (!primary().delivering_mutations_ && cx.current_stack().empty()) { cx.drain_microtasks(); }
     note_callback_fault(type);
     return prevented(event);
 }

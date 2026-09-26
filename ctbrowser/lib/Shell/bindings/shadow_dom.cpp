@@ -500,18 +500,33 @@ void dom_bindings::set_html_unsafe(node_id target, std::string_view markup, bool
     document scratch{*atoms_};
     // The fragment case with the ELEMENT as its context (HTML 12.4 step 5:
     // "with context element"), not a body's - `table.setHTMLUnsafe("<tr>")`
-    // keeps its row - and the document's own scripting flag.
+    // keeps its row - and the document's own scripting flag (none for a
+    // template's contents, which are its inert document's).
     node_id body;
     {
         const auto txn = doc_->read();
-        body = parse_html_fragment(scratch, markup, txn.local_name(context),
-                                   txn.element_ns(context), doc_->scripting(), true);
+        body =
+            parse_html_fragment(scratch, markup, txn.local_name(context), txn.element_ns(context),
+                                doc_->scripting() && !is_template, true);
     }
     const auto from = scratch.read();
     const std::span<const node_id> kids = from.children(body);
     const std::vector<node_id> sources{kids.begin(), kids.end()};
     for (const node_id child : sources) {
         copy_shadow_trees(scratch, from, child, copy_subtree(from, child, into));
+    }
+    {
+        // The registries, as set_inner_html gives them - the declarative
+        // shadow roots' included.
+        const auto txn = doc_->read();
+        custom_element_registry * inherited = registry_of_node(txn, target);
+        if (is_template) { inherited = nullptr; }
+        if (scratch.has_null_custom_element_registries() || scratch.has_shadow_roots() ||
+            inherited != document_registry()) {
+            for (const node_id child : txn.children(into)) {
+                assign_parsed_registries(txn, child, inherited);
+            }
+        }
     }
     if (run_scripts) {
         std::vector<node_id> scripts;
@@ -578,7 +593,12 @@ void dom_bindings::install_shadow_dom(context & cx) {
                 cx, *on, elements_only ? "assignedElements" : "assignedNodes",
                 [this, elements_only](context & c, std::span<value> args) {
                     const value made = c.make_array();
-                    const node_id slot = handle_of(c.current_this());
+                    // THE SLOT'S OWN DOCUMENT answers - a frame's, or one a
+                    // page made - since the method is on the shared prototype.
+                    dom_bindings * owner = owner_of(c.current_this());
+                    if (owner == nullptr) { return made; }
+                    dom_bindings & d = *owner;
+                    const node_id slot = d.handle_of(c.current_this());
                     if (!slot) { return made; }
                     auto & items = static_cast<script::array_object *>(made.as_heap())->items;
                     const bool flatten = dict_flag(c, arg(args, 0), "flatten");
@@ -586,19 +606,19 @@ void dom_bindings::install_shadow_dom(context & cx) {
                     // slot outside a shadow tree, whose children are not
                     // fallback content of anything; the slot's own slottable
                     // children when nothing is assigned to it.
-                    const auto in_shadow_tree = [this](const read_txn & txn, node_id at) {
-                        return shadow_tree_of(root_of_tree(txn, at, false)) != nullptr;
+                    const auto in_shadow_tree = [&d](const read_txn & txn, node_id at) {
+                        return d.shadow_tree_of(d.root_of_tree(txn, at, false)) != nullptr;
                     };
                     const auto gather = [&](auto && self, node_id at) -> void {
-                        if (flatten && !in_shadow_tree(doc_->read(), at)) { return; }
-                        std::vector<node_id> assigned = assigned_nodes_of(at);
+                        if (flatten && !in_shadow_tree(d.doc_->read(), at)) { return; }
+                        std::vector<node_id> assigned = d.assigned_nodes_of(at);
                         if (flatten && assigned.empty()) {
-                            const auto txn = doc_->read();
+                            const auto txn = d.doc_->read();
                             const std::span<const node_id> kids = txn.children(at);
                             assigned.assign(kids.begin(), kids.end());
                         }
                         for (const node_id one : assigned) {
-                            const auto txn = doc_->read();
+                            const auto txn = d.doc_->read();
                             // A SLOT AMONG THEM IS ITS OWN ASSIGNMENT, flattened
                             // in its place - that is what makes the flat tree
                             // flat. Only one IN a shadow tree: a light-DOM
@@ -611,7 +631,7 @@ void dom_bindings::install_shadow_dom(context & cx) {
                             const bool wanted = elements_only ? kind == node_kind::element
                                                               : kind == node_kind::element ||
                                                                     kind == node_kind::text;
-                            if (wanted) { items.push_back(wrap(c, one)); }
+                            if (wanted) { items.push_back(d.wrap(c, one)); }
                         }
                     };
                     gather(gather, slot);
@@ -730,18 +750,20 @@ void dom_bindings::install_shadow_dom(context & cx) {
         if (!proto.is_object()) { continue; }
         define_getter(cx, *static_cast<script::object_object *>(proto.as_heap()), "assignedSlot",
                       [this](context & c, std::span<value>) {
-                          const node_id id = handle_of(c.current_this());
+                          dom_bindings * owner = owner_of(c.current_this());
+                          const node_id id =
+                              owner == nullptr ? node_id{} : owner->handle_of(c.current_this());
                           if (!id) { return value::null(); }
                           // NULL FOR A CLOSED TREE, though the assignment is the
                           // same: assigned_slot_of answers mode-agnostically
                           // (the event path needs that), so the open gate is
                           // here.
-                          const node_id host = doc_->read().parent(id);
-                          const node_id root = host ? doc_->shadow_root_of(host) : node_id{};
-                          const document::shadow_tree * tree = shadow_tree_of(root);
+                          const node_id host = owner->doc_->read().parent(id);
+                          const node_id root = host ? owner->doc_->shadow_root_of(host) : node_id{};
+                          const document::shadow_tree * tree = owner->shadow_tree_of(root);
                           if (tree == nullptr || !tree->open) { return value::null(); }
-                          const node_id answer = assigned_slot_of(id);
-                          return answer ? wrap(c, answer) : value::null();
+                          const node_id answer = owner->assigned_slot_of(id);
+                          return answer ? owner->wrap(c, answer) : value::null();
                       });
     }
 
@@ -820,6 +842,28 @@ void dom_bindings::install_shadow_dom(context & cx) {
         enumerated("shadowRootMode", "shadowrootmode", {"open", "closed"}, "");
         enumerated("shadowRootSlotAssignment", "shadowrootslotassignment", {"named", "manual"},
                    "named");
+        // `shadowRootCustomElementRegistry` reflects as a plain DOMString -
+        // its presence is what the parser reads, not its value.
+        on->define_accessor(
+            "shadowRootCustomElementRegistry",
+            native(cx, "shadowRootCustomElementRegistry",
+                   [this, element_of](context & c, std::span<value>) {
+                       const auto [owner, id] = element_of(c);
+                       if (!id) { return c.string(std::string{}); }
+                       return c.string(std::string{owner->doc_->read().attribute_value(
+                           id, atoms_->intern("shadowrootcustomelementregistry"))});
+                   }),
+            native(cx, "shadowRootCustomElementRegistry",
+                   [this, element_of](context & c, std::span<value> a) {
+                       const auto [owner, id] = element_of(c);
+                       if (!id) { return value::undefined(); }
+                       (void)owner->doc_->set_attribute(
+                           id, atoms_->intern("shadowrootcustomelementregistry"),
+                           arg_string(c, a, 0));
+                       owner->mutated();
+                       return value::undefined();
+                   }),
+            script::attr_enumerable | script::attr_configurable);
         for (const auto & [idl, content] :
              std::initializer_list<std::pair<const char *, const char *>>{
                  {"shadowRootDelegatesFocus", "shadowrootdelegatesfocus"},
@@ -902,9 +946,14 @@ void dom_bindings::install_shadow_dom(context & cx) {
         set_method(
             cx, *on, "setHTMLUnsafe",
             [this](context & c, std::span<value> args) {
-                if (const node_id id = handle_of(c.current_this())) {
-                    set_html_unsafe(id, arg_string(c, args, 0),
-                                    dict_flag(c, arg(args, 1), "runScripts"));
+                // THE RECEIVER'S DOCUMENT parses and owns the result - a frame's
+                // element, or one a page made in another document, is not a
+                // node of these bindings.
+                dom_bindings * owner = owner_of(c.current_this());
+                if (owner == nullptr) { return value::undefined(); }
+                if (const node_id id = owner->handle_of(c.current_this())) {
+                    owner->set_html_unsafe(id, arg_string(c, args, 0),
+                                           dict_flag(c, arg(args, 1), "runScripts"));
                 }
                 return value::undefined();
             },
@@ -918,7 +967,9 @@ void dom_bindings::install_shadow_dom(context & cx) {
         set_method(
             cx, *on, "getHTML",
             [this](context & c, std::span<value> args) {
-                const node_id id = handle_of(c.current_this());
+                dom_bindings * owner = owner_of(c.current_this());
+                const node_id id =
+                    owner == nullptr ? node_id{} : owner->handle_of(c.current_this());
                 if (!id) { return c.string(std::string{}); }
                 bool serializable = false;
                 std::vector<node_id> roots;
@@ -930,11 +981,11 @@ void dom_bindings::install_shadow_dom(context & cx) {
                     if (list.is_array()) {
                         for (const value & item :
                              static_cast<script::array_object *>(list.as_heap())->items) {
-                            if (const node_id r = handle_of(item)) { roots.push_back(r); }
+                            if (const node_id r = owner->handle_of(item)) { roots.push_back(r); }
                         }
                     }
                 }
-                return c.string(serialize_html(id, false, serializable, roots));
+                return c.string(owner->serialize_html(id, false, serializable, roots));
             },
             script::attr_builtin);
     }
@@ -1047,6 +1098,17 @@ void dom_bindings::install_shadow_dom(context & cx) {
                                          owner->copy_subtree(from, child, holder));
             }
         }
+        {
+            // The parent's registry, as set_inner_html gives the context's.
+            const auto txn = doc.read();
+            custom_element_registry * inherited = owner->registry_of_node(txn, parent);
+            if (scratch.has_null_custom_element_registries() || scratch.has_shadow_roots() ||
+                inherited != owner->document_registry()) {
+                for (const node_id child : txn.children(holder)) {
+                    owner->assign_parsed_registries(txn, child, inherited);
+                }
+            }
+        }
         if (run_scripts) {
             std::vector<node_id> scripts;
             {
@@ -1091,6 +1153,9 @@ void dom_bindings::install_shadow_dom(context & cx) {
     install_positions("ShadowRoot", {"append", "prepend"});
     install_positions("CharacterData", {"before", "after", "replaceWith"});
     install_positions("DocumentType", {"before", "after", "replaceWith"});
+    // `customElementRegistry` on Element, ShadowRoot and Document - the
+    // prototypes exist from here (custom_elements.cpp).
+    install_registry_accessors(cx);
 }
 
 } // namespace ctbrowser::shell

@@ -120,6 +120,174 @@ struct gap_shape {
     return out;
 }
 
+// --- clip's rect() (CSS Masking 1 §7.1) ---
+
+// The four components of a `rect()`, comma- or space-separated as CSS 2.1
+// allowed; nullopt for anything else.
+[[nodiscard]] std::optional<std::vector<std::string_view>> rect_parts(std::string_view text) {
+    text = trim(text, html_whitespace);
+    if (!ascii_istarts_with(text, "rect(") || !text.ends_with(')')) { return std::nullopt; }
+    const std::string_view body = text.substr(5, text.size() - 6);
+    std::vector<std::string_view> parts = split_top_level(body, ",");
+    if (parts.size() == 1) { parts = split_top_level(body, html_whitespace); }
+    std::vector<std::string_view> out;
+    for (const std::string_view part : parts) {
+        if (!trim(part, html_whitespace).empty()) { out.push_back(trim(part, html_whitespace)); }
+    }
+    if (out.size() != 4) { return std::nullopt; }
+    return out;
+}
+
+// Two rects, component by component - `wa * a + wb * b` - and nullopt when
+// an `auto` meets a length, which makes the pair discrete.
+[[nodiscard]] std::optional<std::string> blend_rects(std::string_view from, std::string_view to,
+                                                     double wa, double wb,
+                                                     const css::length_context & ctx) {
+    const std::optional<std::vector<std::string_view>> a = rect_parts(from);
+    const std::optional<std::vector<std::string_view>> b = rect_parts(to);
+    if (!a || !b) { return std::nullopt; }
+    std::string out = "rect(";
+    for (std::size_t i = 0; i < 4; ++i) {
+        std::string one;
+        if (ascii_iequals((*a)[i], "auto") || ascii_iequals((*b)[i], "auto")) {
+            if (!ascii_iequals((*a)[i], (*b)[i])) { return std::nullopt; }
+            one = "auto";
+        } else {
+            const std::optional<numeric_pair> n = numeric_of((*a)[i], (*b)[i], ctx);
+            if (!n) { return std::nullopt; }
+            css::calc_result v = n->a;
+            v.px = wa * n->a.px + wb * n->b.px;
+            v.percent = wa * n->a.percent + wb * n->b.percent;
+            v.has_percent = n->a.has_percent || n->b.has_percent;
+            one = css::serialize_calc(v);
+        }
+        out += (i == 0 ? "" : ", ") + one;
+    }
+    return out + ")";
+}
+
+// --- grid track lists (CSS Grid 2 §7.2.5) ---
+
+// The top-level words of a track list: a `[names]` block, a `repeat(...)` or
+// one track size, each whole.
+[[nodiscard]] std::vector<std::string_view> track_words(std::string_view text) {
+    std::vector<std::string_view> out;
+    int depth = 0;
+    std::size_t start = std::string_view::npos;
+    for (std::size_t i = 0; i <= text.size(); ++i) {
+        const char c = i < text.size() ? text[i] : ' ';
+        const bool space = c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
+        if (depth == 0 && space) {
+            if (start != std::string_view::npos) { out.push_back(text.substr(start, i - start)); }
+            start = std::string_view::npos;
+            continue;
+        }
+        if (start == std::string_view::npos) { start = i; }
+        if (c == '(' || c == '[') { ++depth; }
+        if (c == ')' || c == ']') { --depth; }
+    }
+    return out;
+}
+
+// One track size of each list, blended: the same function's arguments one by
+// one, two numbers of one type as numbers - never below zero - and anything
+// else discrete, track by track.
+[[nodiscard]] std::string blend_track(std::string_view x, std::string_view y, double p,
+                                      const css::length_context & ctx) {
+    if (x == y) { return std::string{x}; }
+    const auto function = [](std::string_view text, std::string_view name) {
+        return ascii_istarts_with(text, name) && text.ends_with(')');
+    };
+    for (const std::string_view name : {"minmax(", "fit-content("}) {
+        if (!function(x, name) || !function(y, name)) { continue; }
+        const std::vector<std::string_view> a =
+            split_top_level(x.substr(name.size(), x.size() - name.size() - 1), ",");
+        const std::vector<std::string_view> b =
+            split_top_level(y.substr(name.size(), y.size() - name.size() - 1), ",");
+        if (a.size() != b.size()) { break; }
+        std::string out{name};
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            out += (i == 0 ? "" : ", ") +
+                   blend_track(trim(a[i], html_whitespace), trim(b[i], html_whitespace), p, ctx);
+        }
+        return out + ")";
+    }
+    if (const std::optional<numeric_pair> n = numeric_of(x, y, ctx)) {
+        css::calc_result out = mix(n->a, n->b, p);
+        if (!out.has_percent) { out.px = std::max(out.px, 0.0); }
+        return css::serialize_calc(out);
+    }
+    return std::string{p < 0.5 ? x : y};
+}
+
+// Two track lists of one shape - the same number of tracks, the same
+// repeat()s with the same counts - blended track by track, with the line
+// names of the nearer end (§7.2.5). nullopt for two shapes, or an auto
+// repeat, which is discrete.
+[[nodiscard]] std::optional<std::string> interpolate_tracks(std::string_view from,
+                                                            std::string_view to, double p,
+                                                            const css::length_context & ctx) {
+    const auto shape_of = [](std::string_view text, std::vector<std::string_view> & sizes,
+                             std::string & shape) {
+        for (const std::string_view word : track_words(text)) {
+            if (word.starts_with('[')) { continue; }
+            if (ascii_istarts_with(word, "repeat(") && word.ends_with(')')) {
+                const std::vector<std::string_view> args =
+                    split_top_level(word.substr(7, word.size() - 8), ",");
+                if (args.size() != 2) { return false; }
+                const std::string_view count = trim(args[0], html_whitespace);
+                if (ascii_iequals_any(count, {"auto-fill", "auto-fit"})) { return false; }
+                shape += "r" + std::string{count} + "(";
+                for (const std::string_view inner : track_words(args[1])) {
+                    if (inner.starts_with('[')) { continue; }
+                    sizes.push_back(inner);
+                    shape += 't';
+                }
+                shape += ')';
+                continue;
+            }
+            sizes.push_back(word);
+            shape += 't';
+        }
+        return true;
+    };
+    std::vector<std::string_view> a, b;
+    std::string shape_a, shape_b;
+    if (!shape_of(from, a, shape_a) || !shape_of(to, b, shape_b) || shape_a != shape_b ||
+        a.empty() || ascii_iequals(from, "none") || ascii_iequals(to, "none")) {
+        return std::nullopt;
+    }
+    // The nearer end's words, its sizes replaced by the blend in order.
+    const std::string_view skeleton = p < 0.5 ? from : to;
+    std::size_t next = 0;
+    std::string out;
+    const auto size_text = [&] {
+        std::string one = blend_track(a[next], b[next], p, ctx);
+        ++next;
+        return one;
+    };
+    for (const std::string_view word : track_words(skeleton)) {
+        if (!out.empty()) { out += ' '; }
+        if (word.starts_with('[')) {
+            out += word;
+            continue;
+        }
+        if (ascii_istarts_with(word, "repeat(") && word.ends_with(')')) {
+            const std::vector<std::string_view> args =
+                split_top_level(word.substr(7, word.size() - 8), ",");
+            std::string inner;
+            for (const std::string_view piece : track_words(args[1])) {
+                if (!inner.empty()) { inner += ' '; }
+                inner += piece.starts_with('[') ? std::string{piece} : size_text();
+            }
+            out += "repeat(" + std::string{trim(args[0], html_whitespace)} + ", " + inner + ")";
+            continue;
+        }
+        out += size_text();
+    }
+    return out;
+}
+
 // --- the pair ---
 
 // calc-size(A, B)'s basis and calculation, or nothing when `text` is not one.
@@ -158,6 +326,14 @@ struct gap_shape {
     from = trim(from, html_whitespace);
     to = trim(to, html_whitespace);
     interpolable = true;
+    // `display: none` holds only at its own end (CSS Display 4 §2.9): from
+    // `none`, the other value shows past 0; to `none`, until 1
+    // (display-interpolation-none).
+    if (property == "display" && ascii_iequals(from, "none") != ascii_iequals(to, "none")) {
+        interpolable = false;
+        if (ascii_iequals(from, "none")) { return std::string{p <= 0 ? from : to}; }
+        return std::string{p >= 1 ? to : from};
+    }
     // A gap rule LIST, which a single value is not: that pairs as the lone
     // length or colour it is, below. A comma at the TOP LEVEL makes a list -
     // `rgb(170, 70, 70)` is one colour, and taking its inner commas for a list
@@ -212,7 +388,8 @@ struct gap_shape {
     // Two basic shapes of one function blend (CSS Shapes 1 §3.3); anything
     // else in clip-path or shape-outside - a url(), `none`, two functions -
     // is discrete.
-    if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
+    if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
+        property == "object-view-box") {
         if (std::optional<std::string> s = css::blend_basic_shapes(property, from, to, 1 - p, p)) {
             return *s;
         }
@@ -231,16 +408,44 @@ struct gap_shape {
                 return auto_a ? "auto " + *r : *r;
             }
         }
+        // ...and a DEGENERATE ratio - `1 / 0`, `0 / 1` - is discrete too
+        // (CSS Sizing 4 §7.1), not the quotient the numeric path below folds
+        // it to (aspect-ratio-interpolation).
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
     }
     if (property == "rotate") {
         if (const std::optional<std::string> r = interpolate_rotate(from, to, p, ctx)) {
             return *r;
         }
     }
+    // TWO RECTS blend component by component (clip-interpolation).
+    if (property == "clip") {
+        if (const std::optional<std::string> r = blend_rects(from, to, 1 - p, p, ctx)) {
+            return *r;
+        }
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
+    }
+    // TWO TRACK LISTS OF ONE SHAPE blend track by track (CSS Grid 2 §7.2.5);
+    // two shapes are discrete.
+    if (property == "grid-template-columns" || property == "grid-template-rows") {
+        if (const std::optional<std::string> t = interpolate_tracks(from, to, p, ctx)) {
+            return *t;
+        }
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
+    }
+    // TWO FILTER LISTS INTERPOLATE AS FILTER LISTS OR NOT AT ALL (Filter
+    // Effects 1 §11.2): a url() in either, or two functions that do not pair,
+    // is discrete - not the item-by-item blend below, which kept the url()
+    // and blended the functions beside it (backdrop-filter-composition).
     if (property == "filter" || property == "backdrop-filter") {
         if (const std::optional<std::string> f = interpolate_filter(from, to, p, ctx)) {
             return *f;
         }
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
     }
     // A COLOUR, which a comma LIST of colours is not - `rgb(1, 2, 3), red` is
     // two items, each paired below, and not the first of them alone.
@@ -327,9 +532,13 @@ struct gap_shape {
     underlying = trim(underlying, html_whitespace);
     value = trim(value, html_whitespace);
     if (underlying.empty()) { return std::string{value}; }
-    if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
+    if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
+        property == "object-view-box") {
         return css::blend_basic_shapes(property, underlying, value, 1, 1)
             .value_or(std::string{value});
+    }
+    if (property == "clip") {
+        return blend_rects(underlying, value, 1, 1, ctx).value_or(std::string{value});
     }
     const bool single = comma_items(underlying).size() == 1 && comma_items(value).size() == 1;
     if (const auto a = single ? css::resolve_color(underlying, {}) : std::nullopt,

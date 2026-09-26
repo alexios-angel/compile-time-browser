@@ -78,9 +78,33 @@ template <class Obj>
 void define_getter(context & cx, Obj & obj, const std::string & name, script::native_fn get,
                    script::native_fn set = {},
                    std::uint8_t attrs = script::attr_enumerable | script::attr_configurable) {
-    obj.define_accessor(name, native(cx, "get " + name, std::move(get)),
-                        set ? native(cx, "set " + name, std::move(set)) : value::undefined(),
-                        attrs);
+    value setter = value::undefined();
+    if (set) {
+        setter = native(cx, "set " + name, std::move(set));
+        // An attribute setter's `length` is 1 (WebIDL 3.7.7), whatever it reads.
+        static_cast<script::native_object *>(setter.as_heap())
+            ->define("length", value::number(1), script::attr_configurable);
+    }
+    obj.define_accessor(name, native(cx, "get " + name, std::move(get)), setter, attrs);
+}
+// A WebIDL OPERATION (3.7.6): an enumerable data property whose function's
+// `length` is the number of REQUIRED arguments, and a call with fewer is a
+// TypeError before the body runs (overload resolution, 3.6.8 step 4).
+template <class Obj>
+void set_operation(context & cx, Obj & obj, const std::string & name, unsigned required,
+                   script::native_fn fn) {
+    auto * made = cx.allocate<script::native_object>(
+        name, [name, required, fn = std::move(fn)](context & c, std::span<value> args) {
+            if (args.size() < required) {
+                c.throw_error("TypeError", name + ": " + std::to_string(required) +
+                                               " argument(s) required, but only " +
+                                               std::to_string(args.size()) + " present");
+                return value::undefined();
+            }
+            return fn(c, args);
+        });
+    made->define("length", value::number(required), script::attr_configurable);
+    obj.set(name, value::object(made));
 }
 
 // WebIDL DICTIONARY MEMBERS - an event's init, observe()'s options, an
@@ -171,5 +195,13 @@ inline constexpr std::string_view handle_property = "__node";
 // when it was built. Keeping the verbs in an ordinary script array means the
 // GC traces them with no new heap kind, and a page can be shown what it built.
 inline constexpr std::string_view path_commands_property = "__cmds";
+
+// An ImageBitmap's handle into the image store (window/image_bitmap.cpp), which
+// image_argument answers drawImage from.
+inline constexpr std::string_view image_bitmap_property = "@#ImageBitmap";
+
+// THE BYTES BEHIND A BufferSource - an ArrayBuffer, or any view onto one with
+// its offset and length applied (window/encoding.cpp). False for anything else.
+[[nodiscard]] bool buffer_source_bytes(context & c, value source, std::vector<std::uint8_t> & out);
 
 } // namespace ctbrowser::shell

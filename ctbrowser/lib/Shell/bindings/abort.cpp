@@ -265,7 +265,7 @@ void dom_bindings::install_abort(context & cx) {
             return signal;
         },
         script::attr_builtin);
-    cx.define_global("AbortSignal", value::object(signal_ctor));
+    cx.define_builtin_global("AbortSignal", value::object(signal_ctor));
 
     // --- AbortController ----------------------------------------------------
     auto * controller_proto = cx.allocate<script::object_object>();
@@ -298,7 +298,7 @@ void dom_bindings::install_abort(context & cx) {
     controller_ctor->retained.push_back(controller_prototype);
     controller_ctor->define("prototype", controller_prototype, script::attr_none);
     controller_proto->define("constructor", value::object(controller_ctor), script::attr_builtin);
-    cx.define_global("AbortController", value::object(controller_ctor));
+    cx.define_builtin_global("AbortController", value::object(controller_ctor));
 }
 
 } // namespace ctbrowser::shell

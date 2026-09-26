@@ -5,4 +5,5 @@ target_sources(ctbrowser-script PRIVATE
   gc.cpp
   lookup.cpp
   store.cpp
+  strings.cpp
 )

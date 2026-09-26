@@ -7,8 +7,10 @@
 // include/ctbrowser/script/vm.hpp - so they split across translation units
 // with nothing to declare.
 
+#include <algorithm>
 #include <span>
 #include <string>
+#include <vector>
 
 #include <ctbrowser/script/vm.hpp>
 
@@ -45,12 +47,26 @@ void context::instantiate_module(const program & prog, module_record & into) {
 // ONE OBJECT PER MODULE, cached in the record: `import * as a` and `import * as
 // b` of the same module are required to be the SAME object, and code compares
 // namespaces by identity.
+//
+// AND AS MUCH OF 10.4.6's EXOTIC OBJECT AS AN ORDINARY ONE CAN BE: a null
+// [[Prototype]], not extensible, `@@toStringTag` "Module" (non-writable,
+// non-enumerable, non-configurable), the exports in code-unit order, each
+// enumerable and NOT configurable - so a write, a `delete` and a new property
+// are refused as the specification refuses them. Still getters rather than
+// its data properties: a namespace read is a get_prop and an accessor
+// re-entry, which is what the AOT bridge's lowering of one is written against
+// (aot/helpers/calls-and-modules.def, ct_aot_module_namespace).
 value context::module_namespace(module_record & of) {
     if (of.namespace_object.is_kind(heap_kind::object)) { return of.namespace_object; }
     object_object * const ns = allocate<object_object>();
     of.namespace_object = value::object(ns);
-    for (auto & [name, cell] : of.exports) {
-        const value box = cell;
+    ns->prototype = value::undefined(); // an explicit null (object_object::prototype)
+    std::vector<std::string> names;
+    names.reserve(of.exports.size());
+    for (const auto & [name, cell] : of.exports) { names.push_back(name); }
+    std::ranges::sort(names);
+    for (const std::string & name : names) {
+        const value box = of.exports.find(name)->second;
         ns->define_accessor(name,
                             value::object(allocate<native_object>(
                                 "get " + name,
@@ -59,53 +75,142 @@ value context::module_namespace(module_record & of) {
                                                ? static_cast<cell_object *>(box.as_heap())->slot
                                                : value::undefined();
                                 })),
-                            value::undefined());
+                            value::undefined(), attr_enumerable);
     }
+    ns->define("@@toStringTag", string("Module"), attr_none);
+    ns->extensible = false;
     return of.namespace_object;
 }
 
-// The deferred form. ORDINARY, NOT EXOTIC: a getter per export that runs
-// the module on its first read, which is [[Get]] of 16.2.2's namespace
-// object and the trigger every real program uses. What this ordinary object
-// does not do: [[HasProperty]], [[OwnPropertyKeys]], [[Delete]] and
-// [[GetOwnProperty]] of a string key also evaluate the module in the
-// specification, and a read of an export that does not exist does too.
+// THE DEFERRED FORM (`import defer * as ns`, 16.2.2), and this one IS exotic:
+// a proxy over the specification's namespace object. Every operation on a
+// string key but `then` - [[Get]], [[GetOwnProperty]], [[DefineOwnProperty]],
+// [[HasProperty]], [[Delete]] and [[OwnPropertyKeys]] - evaluates the module
+// first (EnsureDeferredNamespaceEvaluation); a symbol key, `then`, [[Set]]
+// and the prototype and extensibility questions do not
+// (language/import/import-defer/evaluation-triggers). The target is what the
+// traps must answer consistently with: no prototype, not extensible, each
+// export a writable, enumerable, non-configurable property, and
+// @@toStringTag "Deferred Module". Values come from the cells.
 value context::deferred_module_namespace(module_record & of) {
-    if (of.deferred_namespace_object.is_kind(heap_kind::object)) {
-        return of.deferred_namespace_object;
-    }
-    object_object * const ns = allocate<object_object>();
-    of.deferred_namespace_object = value::object(ns);
+    if (!of.deferred_namespace_object.is_undefined()) { return of.deferred_namespace_object; }
     const std::string key = of.specifier;
-    for (auto & [name, cell] : of.exports) {
-        if (name == "then") { continue; } // IsSymbolLikeNamespaceKey: never an export here
-        const value box = cell;
-        ns->define_accessor(
-            name,
-            value::object(allocate<native_object>(
-                "get " + name,
-                [key, box](context & c, std::span<value>) {
-                    const auto found = c.modules_.find(key);
-                    if (found != c.modules_.end() && !found->second.evaluated) {
-                        if (!c.module_evaluator_) {
-                            c.raise("a deferred module has no evaluator installed");
-                            return value::undefined();
-                        }
-                        if (!c.module_evaluator_(c, found->second)) {
-                            const value thrown = c.last_thrown();
-                            c.throw_value(thrown.is_undefined()
-                                              ? c.make_error("Error", "module `" + key +
-                                                                          "` failed to evaluate")
-                                              : thrown);
-                            return value::undefined();
-                        }
-                    }
-                    return box.is_kind(heap_kind::cell)
-                               ? static_cast<cell_object *>(box.as_heap())->slot
-                               : value::undefined();
-                })),
-            value::undefined());
+    std::vector<std::string> names;
+    names.reserve(of.exports.size());
+    for (const auto & [name, cell] : of.exports) { names.push_back(name); }
+    std::ranges::sort(names);
+
+    object_object * const target = allocate<object_object>();
+    const rooted keep_target{*this, value::object(target)};
+    target->prototype = value::undefined(); // an explicit null
+    for (const std::string & name : names) {
+        target->define(name, value::undefined(), attr_writable | attr_enumerable);
     }
+    target->define("@@toStringTag", string("Deferred Module"), attr_none);
+    target->extensible = false;
+    object_object * const handler = allocate<object_object>();
+    const rooted keep_handler{*this, value::object(handler)};
+    const auto trap = [&](const char * name, native_fn fn) {
+        handler->set(name, value::object(allocate<native_object>(name, std::move(fn))));
+    };
+
+    // IsSymbolLikeNamespaceKey: a symbol, or "then".
+    const auto symbol_like = [](context & c, value k) {
+        return k.is_kind(heap_kind::symbol) || c.to_string(k) == "then";
+    };
+    // EnsureDeferredNamespaceEvaluation. False when the module threw, which
+    // is then this operation's throw.
+    const auto evaluate = [key](context & c) {
+        const auto found = c.modules_.find(key);
+        if (found == c.modules_.end() || found->second.evaluated) { return true; }
+        if (!c.module_evaluator_) {
+            c.raise("a deferred module has no evaluator installed");
+            return false;
+        }
+        if (!c.module_evaluator_(c, found->second)) {
+            const value thrown = c.last_thrown();
+            c.throw_value(thrown.is_undefined()
+                              ? c.make_error("Error", "module `" + key + "` failed to evaluate")
+                              : thrown);
+            return false;
+        }
+        return true;
+    };
+    // The export's cell, or null for a name the module does not export.
+    const auto cell_of = [key](context & c, const std::string & name) -> const value * {
+        const auto found = c.modules_.find(key);
+        if (found == c.modules_.end()) { return nullptr; }
+        const auto cell = found->second.exports.find(name);
+        return cell == found->second.exports.end() ? nullptr : &cell->second;
+    };
+    const auto slot_of = [](const value & cell) {
+        return cell.is_kind(heap_kind::cell) ? static_cast<cell_object *>(cell.as_heap())->slot
+                                             : value::undefined();
+    };
+
+    trap("get", [symbol_like, evaluate, cell_of, slot_of](context & c, std::span<value> a) {
+        if (symbol_like(c, a[1])) { return c.lookup_property(a[0], c.to_string(a[1])); }
+        if (!evaluate(c)) { return value::undefined(); }
+        const value * cell = cell_of(c, c.to_string(a[1]));
+        return cell == nullptr ? value::undefined() : slot_of(*cell);
+    });
+    trap("getOwnPropertyDescriptor",
+         [symbol_like, evaluate, cell_of, slot_of](context & c, std::span<value> a) {
+             const std::string name = c.to_string(a[1]);
+             property_descriptor found;
+             if (symbol_like(c, a[1])) {
+                 return c.own_property(a[0], name, found) ? c.from_property_descriptor(found)
+                                                          : value::undefined();
+             }
+             if (!evaluate(c)) { return value::undefined(); }
+             const value * cell = cell_of(c, name);
+             if (cell == nullptr) { return value::undefined(); }
+             return c.from_property_descriptor(
+                 property_descriptor::data(slot_of(*cell), attr_writable | attr_enumerable));
+         });
+    // 10.4.6.6 for a string key: only a description the binding already
+    // satisfies is "defined".
+    trap("defineProperty",
+         [symbol_like, evaluate, cell_of, slot_of](context & c, std::span<value> a) {
+             const std::string name = c.to_string(a[1]);
+             const property_descriptor wanted = c.to_property_descriptor(a[2]);
+             if (c.throw_pending()) { return value::boolean(false); }
+             if (symbol_like(c, a[1])) {
+                 return value::boolean(c.define_own_property(a[0], name, wanted));
+             }
+             if (!evaluate(c)) { return value::boolean(false); }
+             const value * cell = cell_of(c, name);
+             if (cell == nullptr) { return value::boolean(false); }
+             if ((wanted.has_configurable && wanted.configurable) ||
+                 (wanted.has_enumerable && !wanted.enumerable) || wanted.is_accessor() ||
+                 (wanted.has_writable && !wanted.writable)) {
+                 return value::boolean(false);
+             }
+             return value::boolean(!wanted.has_value || wanted.held.same_value(slot_of(*cell)));
+         });
+    trap("has", [symbol_like, evaluate, cell_of](context & c, std::span<value> a) {
+        if (symbol_like(c, a[1])) { return value::boolean(c.has_property(a[0], a[1])); }
+        if (!evaluate(c)) { return value::boolean(false); }
+        return value::boolean(cell_of(c, c.to_string(a[1])) != nullptr);
+    });
+    trap("deleteProperty", [symbol_like, evaluate, cell_of](context & c, std::span<value> a) {
+        const std::string name = c.to_string(a[1]);
+        if (symbol_like(c, a[1])) { return value::boolean(c.delete_own_property(a[0], name)); }
+        if (!evaluate(c)) { return value::boolean(false); }
+        return value::boolean(cell_of(c, name) == nullptr);
+    });
+    trap("ownKeys", [evaluate, names](context & c, std::span<value>) {
+        if (!evaluate(c)) { return value::undefined(); }
+        const value keys = c.make_array();
+        auto * list = static_cast<array_object *>(keys.as_heap());
+        for (const std::string & name : names) { list->items.push_back(c.string(name)); }
+        list->items.push_back(c.key_value("@@toStringTag"));
+        return keys;
+    });
+    trap("set", [](context &, std::span<value>) { return value::boolean(false); });
+
+    of.deferred_namespace_object =
+        value::object(allocate<proxy_object>(value::object(target), value::object(handler)));
     return of.deferred_namespace_object;
 }
 
@@ -202,7 +307,25 @@ value context::dynamic_import(value specifier, const std::string & referrer) {
     // the page's own toString, which can throw and can re-enter - so a tier that
     // converted at its call site instead would be a second conversion with a
     // second set of effects.
-    return module_loader_(*this, to_string(specifier), referrer);
+    //
+    // BOTH BEHIND A FENCE (13.3.10.1 EvaluateImportCall): a ToString that
+    // throws, and a module whose evaluation throws, REJECT the promise the
+    // import answers (IfAbruptRejectPromise; a rejected evaluation promise).
+    // Called bare, the throw landed on the IMPORTER's handler, synchronously -
+    // `import(x).catch(...)` never saw it and a script with no try died.
+    auto * step =
+        allocate<native_object>("import()", [referrer](context & c, std::span<value> args) {
+            const std::string text = c.to_string(args.empty() ? value::undefined() : args[0]);
+            if (c.throw_pending()) { return value::undefined(); }
+            return c.module_loader_(c, text, referrer);
+        });
+    const rooted keep{*this, value::object(step)};
+    bool threw = false;
+    value thrown = value::undefined();
+    const value arg[1] = {specifier};
+    const value promise = call_fenced(value::object(step), arg, value::undefined(), threw, thrown);
+    if (failed_) { return value::undefined(); }
+    return threw ? make_promise(thrown, true) : promise;
 }
 
 // A MODULE IS RUN LIKE ANY OTHER PROGRAM, with two differences: it knows which

@@ -45,6 +45,31 @@ void test_white_space_is_a_shorthand() {
     CHECK_EQ(declaration_value(block, "white-space-collapse"), std::string{"preserve"});
     CHECK_EQ(declaration_value(block, "text-wrap-mode"), std::string{"wrap"});
     CHECK_EQ(declaration_value(block, "white-space-trim"), std::string{"none"});
+    // block-step-valid: `size || insert || align || round`, written in that order.
+    CHECK_EQ(set_and_read("block-step", "content-box 100px up"), std::string{"100px content-box"});
+    CHECK_EQ(set_and_read("block-step", "none auto up margin-box"), std::string{"none"});
+    // mask-valid: a layer's boxes need not stand together, and fold back as one.
+    CHECK_EQ(set_and_read("mask", "intersect no-clip space round 1px 2px / contain stroke-box "
+                                  "url(\"m.svg\") luminance"),
+             std::string{"url(\"m.svg\") 1px 2px / contain space round stroke-box no-clip "
+                         "intersect luminance"});
+    CHECK_EQ(set_and_read("mask", "border-box no-clip"), std::string{"no-clip"});
+    CHECK_EQ(set_and_read("mask", "content-box content-box"), std::string{"content-box"});
+    CHECK_EQ(set_and_read("mask", "stroke-box no-clip view-box"), std::string{});
+    // text-spacing-valid: the trim keyword at either end, the autospace beside it.
+    CHECK_EQ(set_and_read("text-spacing", "no-autospace space-all"), std::string{"none"});
+    CHECK_EQ(set_and_read("text-spacing", "normal trim-start"), std::string{"trim-start"});
+    CHECK_EQ(set_and_read("text-spacing", "no-autospace trim-start"),
+             std::string{"trim-start no-autospace"});
+    CHECK_EQ(set_and_read("text-spacing", "normal normal no-autospace"), std::string{});
+    // position-try-parsing, position-try-fallbacks-parsing.
+    CHECK_EQ(set_and_read("position-try", "most-width flip-y flip-x, --foo, top left"),
+             std::string{"most-width flip-y flip-x, --foo, left top"});
+    CHECK_EQ(set_and_read("position-try", "normal flip-inline --foo"),
+             std::string{"--foo flip-inline"});
+    CHECK_EQ(set_and_read("position-try", "none normal"), std::string{});
+    CHECK_EQ(set_and_read("position-try-fallbacks", "start start, --foo left"), std::string{});
+    CHECK_EQ(set_and_read("position-try-fallbacks", "start start"), std::string{"start"});
 }
 
 // animation-shorthand, animation-valid, animation-name-valid/invalid.
@@ -151,9 +176,31 @@ void test_what_a_page_reads_back() {
     CHECK_EQ(logged(page, "set="), std::string{"set=20px / 1.5 fantasy|20px / 30px fantasy"});
 }
 
+// grid-template and grid (CSS Grid 2 §7.4, §7.8): split into their longhands
+// and folded back only when the longhands can be spelled as one value.
+void test_grid_is_a_shorthand() {
+    declaration_block block;
+    CHECK(set_declaration(block, "grid-template", "[a] \"a\" 10px [] \"b\" / 5fr", false));
+    CHECK_EQ(declaration_value(block, "grid-template-rows"), std::string{"[a] 10px auto"});
+    CHECK_EQ(declaration_value(block, "grid-template-areas"), std::string{"\"a\" \"b\""});
+    CHECK_EQ(declaration_value(block, "grid-template"), std::string{"[a] \"a\" 10px \"b\" / 5fr"});
+    CHECK_EQ(set_and_read("grid-template", "none / none"), std::string{"none"});
+    CHECK_EQ(set_and_read("grid-template", "10px"), std::string{});
+    CHECK_EQ(set_and_read("grid", "auto-flow auto / 100px 100px"),
+             std::string{"none / 100px 100px"});
+    CHECK_EQ(set_and_read("grid", "1px / auto-flow dense 2px"),
+             std::string{"1px / auto-flow dense 2px"});
+    declaration_block mixed;
+    CHECK(set_declaration(mixed, "grid", "30px / 50px", false));
+    CHECK(set_declaration(mixed, "grid-auto-flow", "column", false));
+    CHECK_EQ(declaration_value(mixed, "grid"), std::string{});
+    CHECK_EQ(declaration_value(mixed, "grid-template"), std::string{"30px / 50px"});
+}
+
 } // namespace
 
 int main() {
+    test_grid_is_a_shorthand();
     test_white_space_is_a_shorthand();
     test_animation_is_a_shorthand();
     test_what_a_page_reads_back();

@@ -144,6 +144,17 @@ constexpr void append_utf8(std::string & out, char32_t cp) {
     }
 }
 
+// Infra's ISOMORPHIC DECODE: each byte as the code point of the same value,
+// U+0000-U+00FF. It is what a "binary string" is - atob's answer, FileReader's
+// readAsBinaryString, a canvas's PNG on its way to btoa - now that a script
+// reads a string by UTF-16 code unit and not by byte.
+[[nodiscard]] inline std::string isomorphic_decode(std::string_view bytes) {
+    std::string out;
+    out.reserve(bytes.size());
+    for (const char byte : bytes) { append_utf8(out, static_cast<unsigned char>(byte)); }
+    return out;
+}
+
 // WTF-8 CONCATENATION (WTF-8 §4.3): a high surrogate ending one piece and a
 // low surrogate starting the next - `ED A0..AF xx` then `ED B0..BF xx` -
 // are one code point once they meet, as the UTF-16 they stand for would be.
@@ -240,5 +251,12 @@ inline void join_surrogates(std::string & text) {
 // whitespace is skipped, and a character outside the alphabet is ignored rather
 // than fatal. A truncated tail decodes as far as it goes.
 [[nodiscard]] std::string base64_decode(std::string_view text);
+
+// Bytes to base64 (RFC 4648 section 4, or section 5's URL alphabet with `url`),
+// padded to a multiple of four unless `omit_padding`. What btoa answers after
+// its isomorphic encode, what Uint8Array.prototype.toBase64 answers, and what a
+// data: URL made from bytes - a canvas's PNG, a Blob - carries.
+[[nodiscard]] std::string base64_encode(std::string_view bytes, bool url = false,
+                                        bool omit_padding = false);
 
 } // namespace ctbrowser

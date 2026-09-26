@@ -289,6 +289,23 @@ void test_a_deep_chain_does_not_exhaust_the_stack() {
 // first and hides the rest. Under the asan preset each case has to be run on
 // its own to be seen at all, and the filter is what makes that one command
 // rather than an edit-and-rebuild. ctest runs the whole file with no argument.
+// A LOOP THAT ONLY CONCATENATES reaches no call and so no safepoint: 300
+// megabytes of dead strings, none collected, was how a 100,000-character tag
+// name built with `+=` reached the 4 GB address-space cap (document-write/
+// 032.html). The loop's back edge collects once the string budget is spent.
+void test_a_concatenating_loop_collects_its_strings() {
+    const program prog =
+        ctbrowser::script::compiler::compile("var big = 'x'.repeat(1 << 20); var t;"
+                                             "for (var i = 0; i < 300; ++i) { t = big + i; }"
+                                             "return t.length;");
+    context cx;
+    ctbrowser::script::install_builtins(cx);
+    const run_result r = cx.run(prog);
+    CHECK(r.ok);
+    if (r.ok) { CHECK_EQ(cx.to_string(r.returned), std::string{"1048579"}); }
+    CHECK(cx.collections() > 0);
+}
+
 int main(int argc, char ** argv) {
     const std::string_view only = argc > 1 ? std::string_view{argv[1]} : std::string_view{};
     const auto run = [&](std::string_view name, void (*body)()) {
@@ -302,5 +319,6 @@ int main(int argc, char ** argv) {
     run("flatmap", &test_flat_map_result_survives_a_collection);
     run("sort", &test_sort_snapshot_survives_a_collection);
     run("chain", &test_a_deep_chain_does_not_exhaust_the_stack);
+    run("concat", &test_a_concatenating_loop_collects_its_strings);
     REPORT("script_gc");
 }

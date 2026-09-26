@@ -110,7 +110,7 @@ namespace {
         const bool string_wrapper =
             slot != nullptr && slot->is_string() && which != key_filter::symbols;
         if (string_wrapper) {
-            const std::size_t n = static_cast<string_object *>(slot->as_heap())->text.size();
+            const std::size_t n = static_cast<string_object *>(slot->as_heap())->length();
             for (std::size_t i = 0; i < n; ++i) { out.push_back(std::to_string(i)); }
         }
         const std::size_t own_from = out.size();
@@ -176,7 +176,7 @@ namespace {
     // the engine itself.
     if (which == key_filter::symbols && !of.is_kind(heap_kind::function)) { return out; }
     if (of.is_string()) {
-        const std::size_t n = static_cast<string_object *>(of.as_heap())->text.size();
+        const std::size_t n = static_cast<string_object *>(of.as_heap())->length();
         for (std::size_t i = 0; i < n; ++i) { out.push_back(std::to_string(i)); }
         out.emplace_back("length");
         return out;

@@ -32,38 +32,79 @@ namespace ctbrowser::script::builtins_detail {
 // node - is not clonable. Cycles are preserved through a seen-list, because a
 // structure that points back at itself is exactly what a naive recursive copy
 // cannot survive.
+// A DOMException named `name` when the host defined the interface (lib/Shell
+// does), so `assert_throws_dom(name, ...)` sees its `code`; without a host, an
+// Error with that name. btoa and atob throw InvalidCharacterError through it,
+// structuredClone DataCloneError.
+namespace {
+void throw_dom_exception(context & c, const char * name, std::string message) {
+    const value dom_exception = c.global("DOMException");
+    if (dom_exception.is_callable()) {
+        const value args[2] = {c.string(message), c.string(name)};
+        const value made = c.construct(dom_exception, args);
+        if (c.throw_pending()) { return; }
+        c.throw_value(made);
+        return;
+    }
+    c.throw_error(name, std::move(message));
+}
+} // namespace
+
 // `btoa` and `atob` - base64, which is how bytes travel inside a string.
 //
 // A data: URL is base64, `canvas.toDataURL()` produces one, and a page that
 // hand-rolls a download encodes with btoa. Byte-oriented, which is what these
-// two actually are: btoa's argument is a "binary string" of bytes 0-255 and not
-// text, and treating it as text is how a page's image comes out corrupted.
+// two actually are: btoa's argument is a "binary string" - code UNITS 0-255,
+// one per byte, Infra's isomorphic encode - and atob's answer is one (its
+// isomorphic decode). A unit above 0xFF is not a byte and btoa refuses it;
+// `btoa("\u00e9")` is "6Q==", the one byte E9, not the base64 of the two
+// bytes of its UTF-8.
 void install_base64(context & cx) {
-    static constexpr std::string_view alphabet =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     cx.define_native("btoa", [](context & c, std::span<value> a) {
-        const std::string in = a.empty() ? std::string{} : c.to_string(a[0]);
-        std::string out;
-        out.reserve((in.size() + 2) / 3 * 4);
-        for (std::size_t i = 0; i < in.size(); i += 3) {
-            const unsigned b0 = static_cast<unsigned char>(in[i]);
-            const unsigned b1 = i + 1 < in.size() ? static_cast<unsigned char>(in[i + 1]) : 0;
-            const unsigned b2 = i + 2 < in.size() ? static_cast<unsigned char>(in[i + 2]) : 0;
-            const unsigned triple = (b0 << 16) | (b1 << 8) | b2;
-            out += alphabet[(triple >> 18) & 0x3F];
-            out += alphabet[(triple >> 12) & 0x3F];
-            // The padding is what says how many of the last three bytes were
-            // real, so it is not optional.
-            out += i + 1 < in.size() ? alphabet[(triple >> 6) & 0x3F] : '=';
-            out += i + 2 < in.size() ? alphabet[triple & 0x3F] : '=';
+        const std::string text = a.empty() ? std::string{} : c.to_string(a[0]);
+        std::string in;
+        in.reserve(text.size());
+        for (std::size_t at = 0; at < text.size();) {
+            const char32_t unit = decode_utf8(text, at);
+            if (unit > 0xFF) {
+                throw_dom_exception(c, "InvalidCharacterError",
+                                    "btoa: the string has a character outside Latin1");
+                return value::undefined();
+            }
+            in += static_cast<char>(unit);
         }
-        return c.string(out);
+        return c.string(base64_encode(in));
     });
     // THE SAME DECODER A data: URL GOES THROUGH (core/algorithms.hpp). These
     // were one loop retyped twice for a while, which is the shape of bug this
     // tree has already paid for once in its two URL parsers.
+    //
+    // atob is Infra's FORGIVING-BASE64 DECODE (4.9) and then an isomorphic
+    // decode: ASCII whitespace is dropped, one or two `=` may close a length
+    // that is a multiple of four, and after that a length leaving a remainder
+    // of 1 or a character outside the alphabet is an InvalidCharacterError.
+    // core's decoder is lenient about exactly the inputs this has refused.
     cx.define_native("atob", [](context & c, std::span<value> a) {
-        return c.string(base64_decode(a.empty() ? std::string{} : c.to_string(a[0])));
+        const std::string given = a.empty() ? std::string{"undefined"} : c.to_string(a[0]);
+        std::string data;
+        data.reserve(given.size());
+        for (const char ch : given) {
+            if (ch != ' ' && ch != '\t' && ch != '\n' && ch != '\f' && ch != '\r') { data += ch; }
+        }
+        if (data.size() % 4 == 0 && data.ends_with('=')) {
+            data.pop_back();
+            if (data.ends_with('=')) { data.pop_back(); }
+        }
+        const bool alphabet_only = std::all_of(data.begin(), data.end(), [](char ch) {
+            return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                   (ch >= '0' && ch <= '9') || ch == '+' || ch == '/';
+        });
+        if (data.size() % 4 == 1 || !alphabet_only) {
+            throw_dom_exception(c, "InvalidCharacterError",
+                                "atob: the string is not correctly encoded");
+            return value::undefined();
+        }
+        return c.string(isomorphic_decode(base64_decode(data)));
     });
     // The other four text-shaped globals, installed alongside.
     install_uri(cx);
@@ -136,7 +177,7 @@ void install_uri(context & cx) {
     // "%uD801%uDC01". Hence the round trip through wtf8_to_utf16: the WTF-8
     // bytes would have answered %F0%90%90%81, which is encodeURI's answer.
     detail::global_fn(cx, "escape", 1, [](context & c, std::span<value> a) {
-        const std::string before = c.current_stack();
+        const context::stack_mark before = c.mark_stack();
         const std::string in = string_arg(c, arg_at(a, 0));
         if (detail::threw_since(c, before)) { return value::undefined(); }
         static constexpr std::string_view kept =
@@ -160,7 +201,7 @@ void install_uri(context & cx) {
         return c.string(out);
     });
     detail::global_fn(cx, "unescape", 1, [](context & c, std::span<value> a) {
-        const std::string before = c.current_stack();
+        const context::stack_mark before = c.mark_stack();
         const std::string in = string_arg(c, arg_at(a, 0));
         if (detail::threw_since(c, before)) { return value::undefined(); }
         const std::u16string units = wtf8_to_utf16(in);
@@ -219,15 +260,7 @@ void install_uri(context & cx) {
 namespace {
 
 void throw_data_clone_error(context & c, std::string message) {
-    const value dom_exception = c.global("DOMException");
-    if (dom_exception.is_callable()) {
-        const value args[2] = {c.string(message), c.string("DataCloneError")};
-        const value made = c.construct(dom_exception, args);
-        if (c.throw_pending()) { return; }
-        c.throw_value(made);
-        return;
-    }
-    c.throw_error("DataCloneError", std::move(message));
+    throw_dom_exception(c, "DataCloneError", std::move(message));
 }
 
 struct cloner {

@@ -176,13 +176,12 @@ int main() {
     js_expect("JSON.parse('[\"\\\\\\\\\"]')[0].length", "1");
     js_expect("JSON.parse('[\"\\\\b\"]')[0].charCodeAt(0)", "8");
     js_expect("JSON.parse('[\"\\\\f\"]')[0].charCodeAt(0)", "12");
-    // A SURROGATE PAIR IS ONE CODE POINT: U+1F600 is four UTF-8 bytes, and a
-    // string's `length` here counts bytes. Encoding the halves separately
-    // produced six bytes of two replacement characters.
-    js_expect("JSON.parse('[\"\\\\ud83d\\\\ude00\"]')[0].length", "4");
-    // A LONE surrogate cannot be spelled in UTF-8 and becomes U+FFFD, which is
-    // three bytes. This is the engine's answer, not V8's.
-    js_expect("JSON.parse('[\"\\\\ud800\"]')[0].length", "3");
+    // A SURROGATE PAIR IS ONE CODE POINT, two UTF-16 units. Encoding the halves
+    // separately produced two replacement characters.
+    js_expect("JSON.parse('[\"\\\\ud83d\\\\ude00\"]')[0].length", "2");
+    // A LONE surrogate stays one: its own unit, kept as WTF-8.
+    js_expect("JSON.parse('[\"\\\\ud800\"]')[0].length", "1");
+    js_expect("JSON.parse('[\"\\\\ud800\"]')[0].charCodeAt(0)", "55296");
     // Round-tripping is the property that matters most, and it holds.
     js_expect("JSON.stringify(JSON.parse('{\"a\":[1,{\"b\":null}],\"c\":\"x\"}'))",
               "{\"a\":[1,{\"b\":null}],\"c\":\"x\"}");

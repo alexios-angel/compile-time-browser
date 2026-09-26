@@ -35,6 +35,7 @@ void dom_bindings::install_control_methods(context & cx) {
     install_control_numbers_validation(cx);
     install_control_form_data(cx);
     install_control_text_selection(cx);
+    install_control_pickers(cx);
 }
 
 } // namespace ctbrowser::shell

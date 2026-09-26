@@ -53,6 +53,16 @@ struct closure_object;
 // what it does not see is the page's own `var`s.
 struct realm_record {
     string_flat_map<value> globals;
+    // THE NAMES A SCRIPT DECLARED - `var`, and a block function's Annex B var:
+    // enumerable and NOT configurable, so `delete` refuses them (16.1.7
+    // CreateGlobalVarBinding).
+    string_flat_map<bool> declared;
+    // THE PLATFORM'S NAMES - every intrinsic (clause 19) and every interface
+    // object or namespace a binding installed (WebIDL 3.7.1): { writable,
+    // !enumerable, configurable }. Any other binding is a script's plain
+    // assignment or a member of the Window itself, { writable, enumerable,
+    // configurable }. A `delete` forgets the mark with the binding.
+    string_flat_map<bool> builtin;
     value global_this = value::undefined();
     // See context::set_undeclared_name_hook.
     std::function<value(std::string_view)> undeclared_name;

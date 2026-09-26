@@ -554,10 +554,30 @@ value dom_bindings::make_live_collection(context & cx,
     // assignment is silently ignored. Anything else is an expando on the
     // target, which is how `list.item = "pass"` shadows the prototype's.
     handler->set(
-        "set", native(cx, "set", [refresh, visible_name](context & c, std::span<value> args) {
+        "set", native(cx, "set", [held, refresh, visible_name](context & c, std::span<value> args) {
             if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
             refresh(c);
             const std::string key = c.to_string(args[1]);
+            // A WRITE THROUGH AN OBJECT THAT INHERITS FROM THE COLLECTION -
+            // `Object.create(list).x = 1` - is WebIDL 3.9.2 [[Set]] with a
+            // receiver that is not the collection: the named properties are
+            // ignored (step 2's ignoreNamedProps), a supported index is still
+            // a read-only data property, and the rest is OrdinarySet, which
+            // ends in a data property ON THE RECEIVER
+            // (HTMLCollection-as-prototype.html).
+            const value receiver = args.size() > 3 ? args[3] : args[0];
+            const bool through_proxy =
+                receiver.is_kind(script::heap_kind::proxy) &&
+                static_cast<script::proxy_object *>(receiver.as_heap())->target.bits() ==
+                    args[0].bits();
+            if (!through_proxy && receiver.bits() != args[0].bits()) {
+                if (const auto at = whole_index(key); at && *at < held->members.size()) {
+                    return value::boolean(false);
+                }
+                return value::boolean(script::set_for_receiver(
+                    c, visible_name(key) ? c.get_prototype(args[0]) : args[0], key, args[2],
+                    receiver));
+            }
             // ...UNLESS AN INTERFACE UP THE CHAIN HAS A SETTER FOR IT:
             // HTMLOptionsCollection's `length` is writable (HTML
             // 4.10.10, `select.options.length = 2` truncates), and it

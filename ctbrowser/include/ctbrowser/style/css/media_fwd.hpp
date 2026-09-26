@@ -72,6 +72,7 @@ struct media_feature {
         color_gamut,
         grid,
         scan,
+        color_index,
     };
     // What kind of value the feature takes, which decides whether a value is
     // VALID for it - `(width: foo)` and `(orientation: 0)` parse but are

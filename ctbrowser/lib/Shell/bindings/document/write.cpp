@@ -75,6 +75,10 @@ parse_result dom_bindings::parse_document(std::string_view html) {
     doc_->set_allow_declarative_shadow_roots(true);
     parser_ = std::make_unique<html::tree_builder>(*doc_, *atoms_);
     parser_->set_script_hook([this](node_id script) { prepare_parser_script(script); });
+    parser_->set_custom_element_hooks(
+        [this](std::string_view name, const std::vector<html::token_attribute> & attributes,
+               node_id parent) { return parser_create_custom_element(name, attributes, parent); },
+        [this](node_id element) { parser_inserted_custom_element(element); });
     // THE BYTES, DECODED (HTML 13.2.3.1): the loader sniffed the encoding
     // into the document's name; a windows-1251 page reaches the tokenizer as
     // UTF-8 here, and a UTF-8 one passes through untouched.
@@ -97,6 +101,7 @@ void dom_bindings::prepare_parser_script(node_id script) {
     // type (microtask_before_prepare_the_script_element-01.html does exactly
     // that). The checkpoint is only performed when no script is on the stack;
     // inside a written script it waits for that script's end.
+    doc_->note_unversioned_change();
     mutated();
     if (cx_ != nullptr && cx_->current_stack().empty()) { cx_->drain_microtasks(); }
     const atom src_name = atoms_->intern("src");
@@ -239,6 +244,7 @@ void dom_bindings::prepare_parser_script(node_id script) {
 // DOMContentLoaded / complete / load task the browser's tick already is; a
 // script-created parser queues that task here.
 void dom_bindings::parser_finished(bool initial) {
+    doc_->note_unversioned_change();
     mutated();
     set_ready_state("interactive");
     // Steps 3-6: the deferred scripts in the order they were seen, still in
@@ -297,6 +303,13 @@ void dom_bindings::document_open(context & cx) {
         throw_dom_exception(cx, "InvalidStateError", "document.open() on an XML document");
         return;
     }
+    // Step 2: the parser is constructing a custom element (13.2.6.1) - its
+    // constructor and reactions may not blow the document away.
+    if (markup_insertion_counter_ > 0) {
+        throw_dom_exception(cx, "InvalidStateError",
+                            "document.open() while the parser constructs a custom element");
+        return;
+    }
     // Step 4: a parser-inserted script is running - the parser is active with
     // a script nesting level above zero - and open() is a no-op.
     if (parser_ != nullptr && !parser_->finished() && parser_->script_nesting() > 0) { return; }
@@ -348,7 +361,12 @@ void dom_bindings::document_open(context & cx) {
     parser_script_created_ = true;
     parser_ = std::make_unique<html::tree_builder>(*doc_, *atoms_);
     parser_->set_script_hook([this](node_id script) { prepare_parser_script(script); });
+    parser_->set_custom_element_hooks(
+        [this](std::string_view name, const std::vector<html::token_attribute> & attributes,
+               node_id parent) { return parser_create_custom_element(name, attributes, parent); },
+        [this](node_id element) { parser_inserted_custom_element(element); });
     parser_->begin({}, true, !secondary_);
+    doc_->note_unversioned_change();
     mutated();
 }
 
@@ -356,6 +374,11 @@ void dom_bindings::document_open(context & cx) {
 void dom_bindings::document_write(context & cx, std::span<value> args, bool newline) {
     if (doc_->xml()) {
         throw_dom_exception(cx, "InvalidStateError", "document.write() on an XML document");
+        return;
+    }
+    if (markup_insertion_counter_ > 0) {
+        throw_dom_exception(cx, "InvalidStateError",
+                            "document.write() while the parser constructs a custom element");
         return;
     }
     // Step 3: a parser a navigation aborted reads nothing more.
@@ -373,6 +396,7 @@ void dom_bindings::document_write(context & cx, std::span<value> args, bool newl
     if (newline) { text += '\n'; }
     // Steps 5-7: into the stream at the insertion point, and parsed up to it.
     parser_->write(text);
+    doc_->note_unversioned_change();
     // `compatMode` is written once at install (install.cpp); a doctype the
     // write carried has just decided it again.
     if (auto * doc = document_object()) {
@@ -388,10 +412,16 @@ void dom_bindings::document_close(context & cx) {
         throw_dom_exception(cx, "InvalidStateError", "document.close() on an XML document");
         return;
     }
+    if (markup_insertion_counter_ > 0) {
+        throw_dom_exception(cx, "InvalidStateError",
+                            "document.close() while the parser constructs a custom element");
+        return;
+    }
     // Step 3: no script-created parser, nothing to close - a page's own parser
     // is not one, and close() on it during the load is a no-op.
     if (parser_ == nullptr || !parser_script_created_ || parser_->finished()) { return; }
     parser_->close();
+    doc_->note_unversioned_change();
     if (auto * doc = document_object()) {
         doc->set("compatMode", cx.string(doc_->quirks() ? "BackCompat" : "CSS1Compat"));
     }

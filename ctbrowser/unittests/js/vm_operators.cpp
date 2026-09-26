@@ -313,15 +313,15 @@ void test_string_escapes() {
     expect_result("return '\\x41'.length;", "1");
     expect_result("return '\\x41';", "A");
     expect_result("return '\\x00'.charCodeAt(0);", "0");
-    expect_result("return '\\xff'.length;", "2"); // U+00FF is two bytes of UTF-8
+    expect_result("return '\\xff'.length;", "1"); // one UTF-16 code unit
     expect_result("return '\\u0041';", "A");
     expect_result("return '\\u{41}';", "A");
-    expect_result("return '\\u00e9'.length;", "2");
+    expect_result("return '\\u00e9'.length;", "1");
     // A surrogate PAIR is one code point: an escaped emoji must equal the same
     // emoji written literally, which encoding the halves separately would break.
-    expect_result("return '\\ud83d\\ude00'.length;", "4");
+    expect_result("return '\\ud83d\\ude00'.length;", "2"); // a pair: two units
     expect_result("return '\\ud83d\\ude00' === '\\u{1f600}';", "true");
-    expect_result("return '\\u4e2d'.length;", "3");
+    expect_result("return '\\u4e2d'.length;", "1");
     expect_result("return '\\q';", "q");     // an unknown escape is the character itself
     expect_result("return 'a\\\nb';", "ab"); // a backslash before a real newline joins the lines
     expect_result("return '\\0'.charCodeAt(0);", "0");

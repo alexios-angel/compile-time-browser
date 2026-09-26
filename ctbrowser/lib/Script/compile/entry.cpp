@@ -19,7 +19,7 @@ void compiler_impl::compile_program() {
 
     const vp::node & root = at(ast_.root);
     // A module is strict code; a script is when it says so (11.2.1, 16.2.1).
-    fn().is_strict = module_scope_ || has_use_strict_directive(ast_.root) || eval_outer_strict_;
+    fn().is_strict = module_scope_ || has_use_strict_directive(ast_.root) || eval_site_.strict;
     out_.functions[script].is_strict = fn().is_strict;
     // An eval program is the one that returns its completion value.
     top_level_is_scope_ = module_scope_ || (completion_value_ && fn().is_strict);
@@ -29,6 +29,15 @@ void compiler_impl::compile_program() {
     for (std::size_t i = 0; i < eval_outer_names_.size(); ++i) {
         (void)add_upvalue(0, eval_outer_names_[i],
                           upvalue_desc{false, static_cast<std::uint16_t>(i)});
+    }
+    // A DIRECT EVAL SEES ITS CALLER'S PRIVATE NAMES, under the caller's keys.
+    if (!eval_site_.private_names.empty()) {
+        private_scope outer;
+        for (const auto & [name, key] : eval_site_.private_names) {
+            outer.names.emplace_back(name);
+            outer.keys.emplace_back(key);
+        }
+        private_scopes_.push_back(std::move(outer));
     }
     build_capture_index();
     fn().captures = range_of(ast_.root);
@@ -73,13 +82,59 @@ void compiler_impl::compile_program() {
         std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());
         out_.hoisted_vars.erase(std::unique(out_.hoisted_vars.begin(), out_.hoisted_vars.end()),
                                 out_.hoisted_vars.end());
+        // 19.2.1.3 step 3: a sloppy direct eval's `var` or function may not
+        // share a name with a `let`, `const` or `class` of its caller's
+        // function - hoisting the var would reach through it.
+        if (std::ranges::find(eval_outer_lexical_, true) != eval_outer_lexical_.end()) {
+            std::vector<std::string> var_names;
+            hoist_nested_vars(ast_.root,
+                              [&](std::string name) { var_names.push_back(std::move(name)); });
+            for (const std::int32_t s : kids(root)) {
+                if (at(s).kind == vp::nk::func_decl) { var_names.emplace_back(at(s).text); }
+            }
+            for (const std::string & name : var_names) {
+                const auto it = std::ranges::find(eval_outer_names_, name);
+                const auto at_index = static_cast<std::size_t>(it - eval_outer_names_.begin());
+                if (it != eval_outer_names_.end() && at_index < eval_outer_lexical_.size() &&
+                    eval_outer_lexical_[at_index]) {
+                    fail("Identifier '" + name + "' has already been declared");
+                }
+            }
+        }
         // A direct eval's `var` of a caller's binding is that binding, not a
         // global to create.
         std::erase_if(out_.hoisted_vars, [&](const std::string & name) {
             return std::ranges::find(eval_outer_names_, name) != eval_outer_names_.end();
         });
     }
-    if (top_level_is_scope_) { predeclare_locals(ast_.root); }
+    // AN EVAL'S `let`, `const` and `class` ARE ITS OWN, strict or not
+    // (19.2.1.3 step 17: a new declarative environment) - hoisted like a
+    // function body's, where only its `var`s go the caller's way.
+    if (top_level_is_scope_) {
+        predeclare_locals(ast_.root);
+    } else if (completion_value_) {
+        predeclare_locals(ast_.root, true);
+    }
+    // A CLASSIC SCRIPT'S TOP-LEVEL `const`s are globals here, and immutable
+    // ones - known before the hoisted functions below compile their writes.
+    if (!top_level_is_scope_ && !completion_value_) {
+        for (const std::int32_t s : kids(root)) {
+            if (at(s).kind != vp::nk::var_decl ||
+                declared_immutability(at(s)) == immutability::none) {
+                continue;
+            }
+            for (const std::int32_t d : kids(at(s))) {
+                if (at(d).b >= 0) {
+                    pattern_names(at(d).b, script_consts_);
+                } else {
+                    script_consts_.emplace_back(at(d).text);
+                }
+            }
+        }
+        // Sorted, for binding_immutability's binary search: every write to a
+        // global asks, and a large script has many of both.
+        std::ranges::sort(script_consts_);
+    }
     if (module_scope_) {
         // THEN THE IMPORTS, still at entry: a function declared anywhere in
         // this module closes over them, and the closures are made below.

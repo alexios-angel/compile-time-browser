@@ -21,10 +21,13 @@ std::string compiler_impl::member_key(std::string_view text) {
     std::string key = std::string{private_key_prefix} + std::string{text};
     for (std::size_t i = private_scopes_.size(); i-- > 0;) {
         const private_scope & scope = private_scopes_[i];
-        if (std::find(scope.names.begin(), scope.names.end(), text) != scope.names.end()) {
-            key += ':' + std::to_string(scope.klass);
-            break;
+        const auto found = std::find(scope.names.begin(), scope.names.end(), text);
+        if (found == scope.names.end()) { continue; }
+        if (!scope.keys.empty()) {
+            return std::string{scope.keys[static_cast<std::size_t>(found - scope.names.begin())]};
         }
+        key += ':' + std::to_string(scope.klass);
+        break;
     }
     return key;
 }

@@ -159,32 +159,38 @@ namespace detail {
     return std::nullopt;
 }
 
-// THE COMPUTED `transform` IS A MATRIX. CSS Transforms 1 §9: the resolved value
-// of a 2D transform list is the product of its functions, serialised as
-// `matrix(a, b, c, d, e, f)` - `scale(0.5)` reads back as `matrix(0.5, 0, 0,
-// 0.5, 0, 0)` and `none` stays `none`. Six of css/css-values' serialize files
-// ask for it through `scale()`.
+// THE COMPUTED `transform` IS A MATRIX. CSS Transforms 2 §9: the resolved
+// value of a transform list is the product of its functions, serialised as
+// `matrix(a, b, c, d, e, f)` when that product is 2D - `scale(0.5)` reads back
+// as `matrix(0.5, 0, 0, 0.5, 0, 0)` - and as `matrix3d()` with its sixteen
+// values when it is not; `none` stays `none`. Six of css/css-values'
+// serialize files ask for it through `scale()`, and every 3D interpolation
+// file of css-transforms compares two of them.
 //
-// ONLY WHAT CAN BE MULTIPLIED HERE IS. A function this reader does not model, a
-// percentage (needs the box) and a 3D function (a `matrix3d`) keep the
-// cascade's text, which is what every transform used to read back as.
+// ONLY WHAT CAN BE MULTIPLIED HERE IS. A function this reader does not model
+// and a percentage (needs the box) keep the cascade's text.
 //
-// ponytail: 2D only, lengths in px alone; add `em`/percent against the probe's
-// font size and box when a test asks.
-std::optional<std::array<double, 6>> transform_matrix(std::string_view text) {
+// ponytail: lengths in px alone; add `em`/percent against the probe's font
+// size and box when a test asks.
+std::optional<std::array<double, 16>> transform_matrix3d(std::string_view text) {
     if (text.empty() || ascii_iequals(text, "none")) { return std::nullopt; }
     using style::css::token_type;
     const style::css::token_stream ts = style::css::tokenize(text);
-    // The affine matrix as CSS writes it: x' = a*x + c*y + e, y' = b*x + d*y + f.
-    std::array<double, 6> m{1, 0, 0, 1, 0, 0};
-    const auto multiply = [&m](const double (&n)[6]) {
-        const double a = m[0] * n[0] + m[2] * n[1];
-        const double b = m[1] * n[0] + m[3] * n[1];
-        const double c = m[0] * n[2] + m[2] * n[3];
-        const double d = m[1] * n[2] + m[3] * n[3];
-        const double e = m[0] * n[4] + m[2] * n[5] + m[4];
-        const double f = m[1] * n[4] + m[3] * n[5] + m[5];
-        m[0] = a, m[1] = b, m[2] = c, m[3] = d, m[4] = e, m[5] = f;
+    // Column-major, as matrix3d() lists it: m[c * 4 + r] is row r of column c.
+    const auto identity = [] {
+        return std::array<double, 16>{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    };
+    std::array<double, 16> m = identity();
+    const auto multiply = [&m](const std::array<double, 16> & n) {
+        std::array<double, 16> out{};
+        for (std::size_t c = 0; c < 4; ++c) {
+            for (std::size_t r = 0; r < 4; ++r) {
+                double v = 0;
+                for (std::size_t k = 0; k < 4; ++k) { v += m[k * 4 + r] * n[c * 4 + k]; }
+                out[c * 4 + r] = v;
+            }
+        }
+        m = out;
     };
     std::size_t at = 0;
     bool any = false;
@@ -199,9 +205,11 @@ std::optional<std::array<double, 6>> transform_matrix(std::string_view text) {
         // else is not this reader's.
         std::vector<double> args;
         std::vector<bool> is_length;
+        bool none = false;
         for (;;) {
             while (ts.tokens[at].type == token_type::whitespace) { ++at; }
             const style::css::css_token & t = ts.tokens[at];
+            if (t.type == token_type::eof) { return std::nullopt; }
             if (t.type == token_type::close_paren) {
                 ++at;
                 break;
@@ -210,7 +218,12 @@ std::optional<std::array<double, 6>> transform_matrix(std::string_view text) {
                 ++at;
                 continue;
             }
-            if (t.type == token_type::number) {
+            if (t.type == token_type::ident && name == "perspective" &&
+                ascii_iequals(ts.text_of(t), "none")) {
+                none = true;
+                args.push_back(0);
+                is_length.push_back(true);
+            } else if (t.type == token_type::number) {
                 args.push_back(t.number);
                 is_length.push_back(false);
             } else if (t.type == token_type::dimension) {
@@ -239,44 +252,83 @@ std::optional<std::array<double, 6>> transform_matrix(std::string_view text) {
             ++at;
         }
         const auto radians = [](double deg) { return deg * std::numbers::pi / 180.0; };
-        double n[6] = {1, 0, 0, 1, 0, 0};
         const std::size_t count = args.size();
+        std::array<double, 16> n = identity();
+        // A 2D function writes a, b, c, d, e and f where matrix3d() keeps them.
+        const auto affine = [&n](double a, double b, double c, double d, double e, double f) {
+            n[0] = a, n[1] = b, n[4] = c, n[5] = d, n[12] = e, n[13] = f;
+        };
+        // rotate3d()'s matrix, CSS Transforms 2 §13.2, about the normalised axis.
+        const auto rotation = [&n, &radians](double x, double y, double z, double deg) {
+            const double length = std::hypot(x, y, z);
+            if (length == 0) { return; }
+            x /= length, y /= length, z /= length;
+            const double half = radians(deg) / 2;
+            const double sc = std::sin(half) * std::cos(half);
+            const double sq = std::sin(half) * std::sin(half);
+            n[0] = 1 - 2 * (y * y + z * z) * sq;
+            n[1] = 2 * (x * y * sq + z * sc);
+            n[2] = 2 * (x * z * sq - y * sc);
+            n[4] = 2 * (x * y * sq - z * sc);
+            n[5] = 1 - 2 * (x * x + z * z) * sq;
+            n[6] = 2 * (y * z * sq + x * sc);
+            n[8] = 2 * (x * z * sq + y * sc);
+            n[9] = 2 * (y * z * sq - x * sc);
+            n[10] = 1 - 2 * (x * x + y * y) * sq;
+        };
+        bool lengths = name.starts_with("translate") || name == "perspective";
         if (name == "matrix" && count == 6) {
-            for (std::size_t i = 0; i < 6; ++i) { n[i] = args[i]; }
+            affine(args[0], args[1], args[2], args[3], args[4], args[5]);
+        } else if (name == "matrix3d" && count == 16) {
+            for (std::size_t i = 0; i < 16; ++i) { n[i] = args[i]; }
         } else if (name == "scale" && (count == 1 || count == 2)) {
             n[0] = args[0];
-            n[3] = count == 2 ? args[1] : args[0];
+            n[5] = count == 2 ? args[1] : args[0];
         } else if (name == "scalex" && count == 1) {
             n[0] = args[0];
         } else if (name == "scaley" && count == 1) {
-            n[3] = args[0];
-        } else if (name == "translate" && (count == 1 || count == 2)) {
-            n[4] = args[0];
-            n[5] = count == 2 ? args[1] : 0.0;
-        } else if (name == "translatex" && count == 1) {
-            n[4] = args[0];
-        } else if (name == "translatey" && count == 1) {
             n[5] = args[0];
-        } else if (name == "rotate" && count == 1) {
-            const double r = radians(args[0]);
-            n[0] = std::cos(r), n[1] = std::sin(r), n[2] = -std::sin(r), n[3] = std::cos(r);
+        } else if (name == "scalez" && count == 1) {
+            n[10] = args[0];
+        } else if (name == "scale3d" && count == 3) {
+            n[0] = args[0], n[5] = args[1], n[10] = args[2];
+        } else if (name == "translate" && (count == 1 || count == 2)) {
+            n[12] = args[0];
+            n[13] = count == 2 ? args[1] : 0.0;
+        } else if (name == "translatex" && count == 1) {
+            n[12] = args[0];
+        } else if (name == "translatey" && count == 1) {
+            n[13] = args[0];
+        } else if (name == "translatez" && count == 1) {
+            n[14] = args[0];
+        } else if (name == "translate3d" && count == 3) {
+            n[12] = args[0], n[13] = args[1], n[14] = args[2];
+        } else if ((name == "rotate" || name == "rotatez") && count == 1) {
+            rotation(0, 0, 1, args[0]);
+        } else if (name == "rotatex" && count == 1) {
+            rotation(1, 0, 0, args[0]);
+        } else if (name == "rotatey" && count == 1) {
+            rotation(0, 1, 0, args[0]);
+        } else if (name == "rotate3d" && count == 4) {
+            rotation(args[0], args[1], args[2], args[3]);
+        } else if (name == "perspective" && count == 1) {
+            // `none` is no perspective, and a depth under 1px is 1px (§13.1).
+            if (!none) { n[11] = -1.0 / std::max(args[0], 1.0); }
         } else if (name == "skew" && (count == 1 || count == 2)) {
-            n[2] = std::tan(radians(args[0]));
-            n[1] = count == 2 ? std::tan(radians(args[1])) : 0.0;
+            affine(1, count == 2 ? std::tan(radians(args[1])) : 0.0, std::tan(radians(args[0])), 1,
+                   0, 0);
         } else if (name == "skewx" && count == 1) {
-            n[2] = std::tan(radians(args[0]));
+            affine(1, 0, std::tan(radians(args[0])), 1, 0, 0);
         } else if (name == "skewy" && count == 1) {
-            n[1] = std::tan(radians(args[0]));
+            affine(1, std::tan(radians(args[0])), 0, 1, 0, 0);
         } else {
             return std::nullopt;
         }
         // A LENGTH WHERE A NUMBER BELONGS, or the reverse, is a syntax error the
-        // cascade let through; it is not this reader's to guess at.
+        // cascade let through; it is not this reader's to guess at. The last
+        // argument of rotate3d() is its angle, which reads as a number here.
         for (std::size_t i = 0; i < count; ++i) {
-            const bool translate = name.starts_with("translate");
-            if (is_length[i] != translate && !(translate && args[i] == 0.0)) {
-                return std::nullopt;
-            }
+            if (is_length[i] != lengths && !(lengths && args[i] == 0.0)) { return std::nullopt; }
         }
         multiply(n);
         any = true;
@@ -285,16 +337,46 @@ std::optional<std::array<double, 6>> transform_matrix(std::string_view text) {
     return m;
 }
 
+std::optional<std::array<double, 6>> transform_matrix(std::string_view text) {
+    const auto m = transform_matrix3d(text);
+    if (!m) { return std::nullopt; }
+    const std::array<double, 16> & n = *m;
+    const bool flat = n[2] == 0 && n[3] == 0 && n[6] == 0 && n[7] == 0 && n[8] == 0 && n[9] == 0 &&
+                      n[10] == 1 && n[11] == 0 && n[14] == 0 && n[15] == 1;
+    if (!flat) { return std::nullopt; }
+    return std::array<double, 6>{n[0], n[1], n[4], n[5], n[12], n[13]};
+}
+
 std::string transform_matrix_text(std::string_view text) {
-    const auto matrix = transform_matrix(text);
+    if (const auto matrix = transform_matrix(text)) {
+        const auto & m = *matrix;
+        std::string out{"matrix("};
+        for (std::size_t i = 0; i < 6; ++i) {
+            if (i != 0) { out += ", "; }
+            // TO SIX DECIMALS, as Chrome prints a matrix: `cos(90deg)` is 6e-17 in
+            // a double and `0` on the page.
+            out += number_text(static_cast<float>(std::round(m[i] * 1e6) / 1e6));
+        }
+        out += ')';
+        return out;
+    }
+    const auto matrix = transform_matrix3d(text);
     if (!matrix) { return std::string{text}; }
-    const auto & m = *matrix;
-    std::string out{"matrix("};
-    for (std::size_t i = 0; i < 6; ++i) {
+    std::string out{"matrix3d("};
+    for (std::size_t i = 0; i < 16; ++i) {
         if (i != 0) { out += ", "; }
-        // TO SIX DECIMALS, as Chrome prints a matrix: `cos(90deg)` is 6e-17 in
-        // a double and `0` on the page.
-        out += number_text(static_cast<float>(std::round(m[i] * 1e6) / 1e6));
+        // TO NINE DECIMALS, not six: a perspective term is -1/depth, and six
+        // decimals of -1/450 are not the matrix (the 3D interpolation files
+        // compare to a relative 1e-5).
+        const double v = (*matrix)[i];
+        std::array<char, 64> buffer{};
+        const auto written =
+            std::to_chars(buffer.data(), buffer.data() + buffer.size(),
+                          std::fabs(v) < 5e-10 ? 0.0 : v, std::chars_format::fixed, 9);
+        std::string one{buffer.data(), written.ptr};
+        while (one.size() > 1 && one.back() == '0') { one.pop_back(); }
+        if (one.back() == '.') { one.pop_back(); }
+        out += one == "-0" ? "0" : one;
     }
     out += ')';
     return out;

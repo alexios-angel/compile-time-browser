@@ -315,12 +315,13 @@ int main() {
     js_expect("\"x\\u205f\\u202f\".trimEnd()", "x");
     js_expect("\"\\u1680\\u2003x\".trim()", "x");
     js_expect("\"\\u00a0\\u2000\\ufeff\".trim().length", "0");
-    // U+180E was a space separator in Unicode 6.2 and stopped being one in 6.3.
-    // It is three UTF-8 bytes and must survive untouched.
-    js_expect("\"\\u180ex\\u180e\".trim().length", "7");
+    // U+180E was a space separator in Unicode 6.2 and stopped being one in 6.3,
+    // so it survives untouched.
+    js_expect("\"\\u180ex\\u180e\".trim().length", "3");
     // A byte that is not part of a well-formed sequence is NOT the character it
-    // resembles: a lone 0xA0 is not U+00A0 and must not be trimmed away.
-    js_expect("\"\\u00e9\".trim().length", "2");
+    // resembles: é's second UTF-8 byte is A9, beside U+00A0's A0, and the
+    // character must not be trimmed away.
+    js_expect("\"\\u00e9\".trim().length", "1");
 
     // --- match / search / matchAll take a PATTERN, not only a RegExp --------
     // 22.1.3.13, 22.1.3.21 and 22.1.3.14 each RegExpCreate their argument.
@@ -624,20 +625,60 @@ int main() {
     })())",
               "true");
 
-    // --- the UTF-16 gap: CURRENT BEHAVIOUR, KNOWN WRONG ---------------------
+    // --- the UTF-16 gap, CLOSED ----------------------------------------------
     //
-    // Everything in this block disagrees with V8, and every line says what V8
-    // answers. They are pinned because a silent gap is worse than a recorded
-    // one: this is the acceptance list for a UTF-16 migration, and the day the
-    // representation changes these lines fail and say exactly what to update.
-    js_expect("\"e\\u0301\".length", "3");         // V8: 2 - a combining mark is 2 UTF-8 bytes
-    js_expect("\"\\u00e9\".length", "2");          // V8: 1 - one code unit, two UTF-8 bytes
-    js_expect("\"\\u00e9\".charCodeAt(0)", "195"); // V8: 233
-    js_expect("\"\\ud83d\\ude00\".length", "4");   // V8: 2 - a surrogate pair
-    js_expect("\"\\ud83d\\ude00\".charCodeAt(0)", "240");    // V8: 55357
-    js_expect("\"\\ud83d\\ude00\".split(\"\").length", "4"); // V8: 2
-    js_expect("[...\"\\ud83d\\ude00\"].length", "4");        // V8: 1 - iteration is by code POINT
-    js_expect("\"\\u00e9\".slice(0, 1).length", "1");        // V8: 1, but a DIFFERENT character
+    // Until 2026-09-26 every line here pinned a WRONG answer - the length and
+    // every index counted UTF-8 bytes - with V8's beside it as the acceptance
+    // list. They read V8's answers now: a string is UTF-16 code units over
+    // WTF-8 storage (script/utf16.hpp).
+    js_expect("\"e\\u0301\".length", "2"); // a combining mark is one unit
+    js_expect("\"\\u00e9\".length", "1");
+    js_expect("\"\\u00e9\".charCodeAt(0)", "233");
+    js_expect("\"\\ud83d\\ude00\".length", "2"); // a surrogate pair
+    js_expect("\"\\ud83d\\ude00\".charCodeAt(0)", "55357");
+    js_expect("\"\\ud83d\\ude00\".charCodeAt(1)", "56832");
+    js_expect("\"\\ud83d\\ude00\".codePointAt(0)", "128512");
+    js_expect("\"\\ud83d\\ude00\".codePointAt(1)", "56832"); // the trail alone
+    js_expect("\"\\ud83d\\ude00\".split(\"\").length", "2");
+    js_expect("[...\"\\ud83d\\ude00\"].length", "1"); // iteration is by code POINT
+    js_expect("Array.from(\"a\\u{1F600}b\").length", "3");
+    js_expect("\"\\u00e9\".slice(0, 1) === \"\\u00e9\"", "true");
+    js_expect("\"a\\u00e9b\".substring(1, 2) === \"\\u00e9\"", "true");
+    js_expect("\"a\\u00e9b\".charAt(2)", "b");
+    js_expect("\"a\\u00e9b\"[1] === \"\\u00e9\"", "true");
+    js_expect("\"abc\"[\"1\"]", "b"); // an index spelled as a string
+    js_expect("\"\\u00e9b\".indexOf(\"b\")", "1");
+    js_expect("\"b\\u00e9b\".lastIndexOf(\"b\")", "2");
+    js_expect("\"\\u00e9\\u00e9x\".startsWith(\"x\", 2)", "true");
+    js_expect("\"x\\u00e9\".endsWith(\"x\", 1)", "true");
+    js_expect("\"\\u00e9-\\u00e9\".split(\"-\").join(\"|\") === \"\\u00e9|\\u00e9\"", "true");
+    // A slice through a pair leaves each half as its lone surrogate, and the
+    // halves join again when they meet.
+    js_expect("\"\\u{1F600}\".slice(0, 1) === \"\\ud83d\"", "true");
+    js_expect("\"\\u{1F600}\".at(-1) === \"\\ude00\"", "true");
+    js_expect("\"\\u{1F600}\".slice(0, 1) + \"\\u{1F600}\".slice(1) === \"\\u{1F600}\"", "true");
+    js_expect("\"\\u{1F600}\".indexOf(\"\\ude00\")", "1");
+    js_expect("\"abc\".padEnd(6, \"\\u{1F4A9}\") === \"abc\\u{1F4A9}\\ud83d\"", "true");
+    js_expect("String.fromCharCode(0xFFFF).charCodeAt(0)", "65535");
+    js_expect("String.fromCharCode(0xD83D, 0xDE00).length", "2");
+    js_expect("Object.keys(\"\\u00e9x\").join()", "0,1");
+    // Code UNIT order, which is not code point order: a pair sorts below
+    // U+FFFD because its first unit is D83D.
+    js_expect("\"\\u{1F600}\" < \"\\ufffd\"", "true");
+    js_expect("[\"\\ufffd\", \"\\u{1F600}\"].sort()[0] === \"\\u{1F600}\"", "true");
+    // RegExp positions are units too.
+    js_expect("/b/.exec(\"\\u00e9b\").index", "1");
+    js_expect("(function(){var r=/b/g; r.exec(\"\\u00e9b\"); return r.lastIndex;})()", "2");
+    js_expect("\"\\u00e9b\".search(/b/)", "1");
+    js_expect("\"\\u00e9\\u00e9\".replace(/\\u00e9/g, function(m, i){return i;})", "01");
+    js_expect("\"\\u00e9a\\u00e9a\".split(/a/).length", "3");
+    js_expect("/(?<x>b)/d.exec(\"\\u{1F600}b\").indices[0].join()", "2,3");
+    // A binary string is code units 0-255, one per byte.
+    js_expect("btoa(String.fromCharCode(233))", "6Q==");
+    js_expect("atob(\"6Q==\").charCodeAt(0)", "233");
+    js_expect("atob(\"6Q==\").length", "1");
+    js_expect("btoa(\"\\u0100\")", "THREW");
+    js_expect("atob(\"a\")", "THREW"); // a length leaving a remainder of 1
 
     // --- Unicode's default case conversion ----------------------------------
     // SpecialCasing's unconditional entries, Final_Sigma, and the supplementary

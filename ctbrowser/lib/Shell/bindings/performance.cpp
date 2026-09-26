@@ -43,7 +43,7 @@ script::object_object * dom_bindings::install_performance(context & cx) {
         // prototype's `constructor` have (WebIDL 3.6), as events/interfaces.cpp.
         ctor->define("prototype", value::object(proto), script::attr_none);
         proto->define("constructor", value::object(ctor), script::attr_builtin);
-        cx.define_global(name, value::object(ctor));
+        cx.define_builtin_global(name, value::object(ctor));
     }
     const value paint_prototype = value::object(paint_proto);
 

@@ -386,10 +386,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                     bool owned = false;
                     if (submitter) {
                         const auto txn = b->doc_->read();
-                        is_button = helpers.is(txn, submitter, "button") ||
-                                    (helpers.is(txn, submitter, "input") &&
-                                     (helpers.input_type(txn, b, submitter) == "submit" ||
-                                      helpers.input_type(txn, b, submitter) == "image"));
+                        is_button = form_store::is_submit_button(txn, *b->atoms_, submitter);
                         // "Its form owner is not form": the owner, `form=` and
                         // all, not the nearest form ancestor.
                         owned = helpers.form_owner(txn, b, submitter) == form;
@@ -416,7 +413,7 @@ void dom_bindings::install_control_form_data(context & cx) {
         form_data_ctor->define("prototype", form_data_proto_value, script::attr_none);
         form_data_ctor->define("length", value::number(0), script::attr_configurable);
         form_data_proto->define("constructor", value::object(form_data_ctor), script::attr_builtin);
-        cx.define_global("FormData", value::object(form_data_ctor));
+        cx.define_builtin_global("FormData", value::object(form_data_ctor));
 
         // --- SubmitEvent and FormDataEvent, HTML 4.10.21.2 and 4.10.21.3 -------------
         //
@@ -458,7 +455,7 @@ void dom_bindings::install_control_form_data(context & cx) {
             ctor->define("length", value::number(1), script::attr_configurable);
             proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
             proto->define("constructor", value::object(ctor), script::attr_builtin);
-            cx.define_global(name, value::object(ctor));
+            cx.define_builtin_global(name, value::object(ctor));
         };
         form_event("SubmitEvent", [this](context & c, script::object_object & event, value init) {
             value submitter = dict_object(c, init, "submitter");
@@ -502,9 +499,9 @@ void dom_bindings::install_control_form_data(context & cx) {
     // builds the list unless it was cancelled.
     const auto build_submission = [new_form_data, entry_list, entry_name,
                                    entry_value](context & c, dom_bindings * b, node_id form,
-                                                node_id submitter) {
+                                                node_id submitter) -> bool {
         const value data = new_form_data(c);
-        if (!data.is_object()) { return; }
+        if (!data.is_object()) { return false; }
         // "Picking an encoding for the form" (4.10.21.3): the first label in
         // `accept-charset` that names an encoding - UTF-8 when the attribute
         // names none - else the document's, and UTF-8 for the three an output
@@ -528,7 +525,12 @@ void dom_bindings::install_control_form_data(context & cx) {
                 encoding = "UTF-8";
             }
         }
-        if (!entry_list(c, b, form, submitter, data, encoding) || c.throw_pending()) { return; }
+        if (!entry_list(c, b, form, submitter, data, encoding) || c.throw_pending()) {
+            return false;
+        }
+        // "If form cannot navigate, then return" - a `formdata` listener
+        // that removed the form ended the submission.
+        if (!b->is_connected(form)) { return false; }
         // ...AND THE NAVIGATION, when the form aims a GET at a frame this
         // document names (frames.cpp): the entry list "converted to a list
         // of name-value pairs" (4.10.21.6) - a File by its name, and in the
@@ -560,6 +562,7 @@ void dom_bindings::install_control_form_data(context & cx) {
             }
         }
         (void)b->navigate_form_target(form, pairs);
+        return true;
     };
     // HTML 4.10.21.3 "submit" FROM A SUBMITTER - not from submit(): the form
     // must be connected; interactive validation unless `novalidate` or the
@@ -569,10 +572,11 @@ void dom_bindings::install_control_form_data(context & cx) {
     // cancelable `submit` SubmitEvent carrying the submitter; then the entry
     // list and the navigation. requestSubmit() runs it after its own checks,
     // and a submit button's activation behaviour is the same call
-    // (`submit_from_`, for the browser's default action).
+    // (`submit_from_`, for the browser's default action). True when the
+    // submission went ahead: not refused, invalid or cancelled.
     const auto submit_from = [this, helpers, build_submission](context & c, node_id form,
-                                                               node_id submitter) {
-        if (!is_connected(form)) { return; }
+                                                               node_id submitter) -> bool {
+        if (!is_connected(form)) { return false; }
         bool validate = true;
         {
             const auto txn = doc_->read();
@@ -581,7 +585,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                 validate = false;
             }
         }
-        if (context::truthy(helpers.slot_of(c, this, form, firing_slot))) { return; }
+        if (context::truthy(helpers.slot_of(c, this, form, firing_slot))) { return false; }
         helpers.set_slot(c, this, form, firing_slot, value::boolean(true));
         bool cancelled = validate && !helpers.validate_form(c, this, form);
         if (!cancelled && !c.throw_pending()) {
@@ -595,20 +599,17 @@ void dom_bindings::install_control_form_data(context & cx) {
                              });
         }
         helpers.erase_slot(c, this, form, firing_slot);
-        if (cancelled || c.throw_pending()) { return; }
-        build_submission(c, this, form, submitter);
+        if (cancelled || c.throw_pending()) { return false; }
+        return build_submission(c, this, form, submitter);
     };
     submit_from_ = [this, submit_from](node_id form, node_id submitter) {
-        if (cx_ != nullptr) { submit_from(*cx_, form, submitter); }
-    };
-    submit_form_ = [this, build_submission](node_id form, node_id submitter) {
-        if (cx_ != nullptr) { build_submission(*cx_, this, form, submitter); }
+        return cx_ != nullptr && submit_from(*cx_, form, submitter);
     };
     helpers.operation(cx, "HTMLFormElement", "submit", 0,
                       [this, build_submission](context & c, std::span<value>) {
                           const node_id form = receiver(c);
                           if (!form || !is_connected(form)) { return value::undefined(); }
-                          build_submission(c, this, form, node_id{});
+                          (void)build_submission(c, this, form, node_id{});
                           return value::undefined();
                       });
     helpers.operation(
@@ -624,14 +625,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                 {
                     const auto txn = doc_->read();
                     if (submitter) {
-                        is_button = (helpers.is(txn, submitter, "button") &&
-                                     ascii_lower_copy(txn.attribute_value(
-                                         submitter, atoms_->intern("type"))) != "reset" &&
-                                     ascii_lower_copy(txn.attribute_value(
-                                         submitter, atoms_->intern("type"))) != "button") ||
-                                    (helpers.is(txn, submitter, "input") &&
-                                     (helpers.input_type(txn, this, submitter) == "submit" ||
-                                      helpers.input_type(txn, this, submitter) == "image"));
+                        is_button = form_store::is_submit_button(txn, *atoms_, submitter);
                         // The submitter's FORM OWNER must be this form - so
                         // one inside it with `form=""` (no owner) is refused.
                         owned = helpers.form_owner(txn, this, submitter) == form;
@@ -648,75 +642,77 @@ void dom_bindings::install_control_form_data(context & cx) {
                     return value::undefined();
                 }
             }
-            submit_from(c, form, submitter);
+            (void)submit_from(c, form, submitter);
             return value::undefined();
         });
-    helpers.operation(
-        cx, "HTMLFormElement", "reset", 0, [this, helpers](context & c, std::span<value>) {
-            const node_id form = receiver(c);
-            if (!form) { return value::undefined(); }
-            if (helpers.fire(c, this, form, "reset", true, true, helpers.plain)) {
-                return value::undefined();
-            }
-            // HTML 4.10.21.5: each RESETTABLE element whose form
-            // owner is this form runs its reset algorithm, in
-            // tree order - a control inside the form that names
-            // another with `form=` is not this form's, and one
-            // outside that names this one is.
-            std::vector<std::pair<node_id, std::string>> outputs;
-            std::vector<node_id> custom;
-            {
-                const auto txn = doc_->read();
-                for (const node_id one : helpers.elements_of_form(this, form)) {
-                    if (helpers.is_face(this, one)) {
-                        custom.push_back(one);
-                        continue;
-                    }
-                    // The store forgets the control and reseeds it
-                    // from its attributes - which is the reset -
-                    // but indeterminate is not the reset's to clear, and
-                    // the selection stays where it was, clamped to the
-                    // default value (a changed value moves no cursor).
-                    const control_state * held = forms_->find(one);
-                    if (held == nullptr) {
-                        forms_->reset_form(txn, one);
-                    } else {
-                        const bool indeterminate = held->indeterminate;
-                        const std::size_t caret = held->caret;
-                        const std::size_t anchor = held->selection;
-                        forms_->reset_form(txn, one);
-                        control_state & fresh = forms_->state_of(txn, *atoms_, one);
-                        fresh.indeterminate = indeterminate;
-                        fresh.caret = std::min(caret, fresh.value.size());
-                        fresh.selection = std::min(anchor, fresh.value.size());
-                    }
-                    if (helpers.is(txn, one, "select")) {
-                        helpers.erase_slot(c, this, one, "__syncedValue");
-                        helpers.walk_tree(txn, one, [&](node_id at2) {
-                            if (helpers.is(txn, at2, "option")) {
-                                helpers.erase_slot(c, this, at2, selected_slot);
-                                helpers.erase_slot(c, this, at2, dirty_slot);
-                            }
-                        });
-                    }
-                    // An output goes back to the default value
-                    // mode AND its text to the default value
-                    // (4.10.12, "string replace all").
-                    if (helpers.is(txn, one, "output")) {
-                        const value held_default = helpers.slot_of(c, this, one, "__defaultValue");
-                        if (held_default.is_string()) {
-                            outputs.emplace_back(one, c.to_string(held_default));
+    // "Reset" a form (HTML 4.10.21.5): a cancelable `reset` first, then each
+    // resettable control whose owner it is. reset() and a reset button's
+    // activation behaviour (`reset_form_`, the browser's) are both this.
+    const auto reset_steps = [this, helpers](context & c, node_id form, bool ce_reactions) {
+        if (helpers.fire(c, this, form, "reset", true, true, helpers.plain)) { return; }
+        // HTML 4.10.21.5: each RESETTABLE element whose form
+        // owner is this form runs its reset algorithm, in
+        // tree order - a control inside the form that names
+        // another with `form=` is not this form's, and one
+        // outside that names this one is.
+        std::vector<std::pair<node_id, std::string>> outputs;
+        std::vector<node_id> custom;
+        {
+            const auto txn = doc_->read();
+            for (const node_id one : helpers.elements_of_form(this, form)) {
+                if (helpers.is_face(this, one)) {
+                    custom.push_back(one);
+                    continue;
+                }
+                // The store forgets the control and reseeds it
+                // from its attributes - which is the reset -
+                // but indeterminate is not the reset's to clear, and
+                // the selection stays where it was, clamped to the
+                // default value (a changed value moves no cursor).
+                const control_state * held = forms_->find(one);
+                if (held == nullptr) {
+                    forms_->reset_form(txn, one);
+                } else {
+                    const bool indeterminate = held->indeterminate;
+                    const std::size_t caret = held->caret;
+                    const std::size_t anchor = held->selection;
+                    forms_->reset_form(txn, one);
+                    control_state & fresh = forms_->state_of(txn, *atoms_, one);
+                    fresh.indeterminate = indeterminate;
+                    fresh.caret = std::min(caret, fresh.value.size());
+                    fresh.selection = std::min(anchor, fresh.value.size());
+                }
+                if (helpers.is(txn, one, "select")) {
+                    helpers.erase_slot(c, this, one, "__syncedValue");
+                    helpers.walk_tree(txn, one, [&](node_id at2) {
+                        if (helpers.is(txn, at2, "option")) {
+                            helpers.erase_slot(c, this, at2, selected_slot);
+                            helpers.erase_slot(c, this, at2, dirty_slot);
                         }
-                        helpers.erase_slot(c, this, one, "__defaultValue");
+                    });
+                }
+                // An output goes back to the default value
+                // mode AND its text to the default value
+                // (4.10.12, "string replace all").
+                if (helpers.is(txn, one, "output")) {
+                    const value held_default = helpers.slot_of(c, this, one, "__defaultValue");
+                    if (held_default.is_string()) {
+                        outputs.emplace_back(one, c.to_string(held_default));
                     }
+                    helpers.erase_slot(c, this, one, "__defaultValue");
                 }
             }
-            for (const auto & [one, text] : outputs) { set_text(one, text); }
-            wrote_to_control_ = true;
-            mutated();
-            // A form-associated custom element's reset is its
-            // formResetCallback, a reaction run as reset()
-            // returns - after every built-in control's.
+        }
+        for (const auto & [one, text] : outputs) { set_text(one, text); }
+        wrote_to_control_ = true;
+        mutated();
+        // A form-associated custom element's reset is its
+        // formResetCallback, a reaction - after every built-in control's.
+        // reset() is [CEReactions], so they run as it returns; a reset
+        // button's activation is no such scope, so they wait on the backup
+        // element queue, which a microtask drains (HTML 4.13.6) - the click
+        // returns before any formResetCallback runs.
+        const auto enqueue = [this, custom] {
             const std::size_t from = custom_reactions_.size();
             for (const node_id one : custom) {
                 const auto state = custom_elements_.find(one.key());
@@ -728,8 +724,35 @@ void dom_bindings::install_control_form_data(context & cx) {
                 custom_reactions_.push_back(std::move(reaction));
             }
             if (custom_reactions_.size() > from) { flush_custom_element_reactions(from); }
-            return value::undefined();
-        });
+        };
+        if (ce_reactions) {
+            enqueue();
+        } else if (!custom.empty()) {
+            c.queue_microtask(
+                native(c, "formResetCallback", [enqueue](context &, std::span<value>) {
+                    enqueue();
+                    return value::undefined();
+                }));
+        }
+    };
+    // "LOCKED FOR RESET" (4.10.21.5 steps 1, 2 and 5): a `reset` listener that
+    // resets the same form again - form.reset(), or a click on its reset
+    // button - does nothing, where it recursed until the stack gave out.
+    const auto locked = std::make_shared<std::vector<std::uint64_t>>();
+    const auto reset_form = [reset_steps, locked](context & c, node_id form, bool ce_reactions) {
+        if (std::ranges::find(*locked, form.key()) != locked->end()) { return; }
+        locked->push_back(form.key());
+        reset_steps(c, form, ce_reactions);
+        std::erase(*locked, form.key());
+    };
+    reset_form_ = [this, reset_form](node_id form) {
+        if (cx_ != nullptr && form) { reset_form(*cx_, form, false); }
+    };
+    helpers.operation(cx, "HTMLFormElement", "reset", 0,
+                      [this, reset_form](context & c, std::span<value>) {
+                          if (const node_id form = receiver(c)) { reset_form(c, form, true); }
+                          return value::undefined();
+                      });
 }
 
 } // namespace ctbrowser::shell

@@ -804,7 +804,11 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
         // substitutes to nothing leaves the query false.
         std::string substituted;
         std::string_view condition = e.condition;
-        if (css::may_have_var(condition)) {
+        // ...and never a random() substituted AWAY before the query sees it:
+        // random-item() is a substitution function too, and resolving it here
+        // made `style(--length: random-item(--foo, 30px, 30px))` a plain
+        // 30px that matched (random-item-in-container-query).
+        if (css::may_have_var(condition) && !random(condition)) {
             const css::custom_lookup lookup = [&style](atom n) -> std::optional<std::string_view> {
                 const std::string_view v = style->get(n);
                 if (v.empty() || v == guaranteed_invalid) { return std::nullopt; }

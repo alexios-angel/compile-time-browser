@@ -277,7 +277,7 @@ void browser::run_scripts() {
             result = script_->run(running_program);
         } else {
             for (const std::string & name : running_program.hoisted_vars) {
-                script_->declare_global_var(name);
+                script_->declare_global_var(name, false);
             }
             auto * entry = script_->allocate<script::closure_object>(&running_program.functions[0]);
             entry->owner = &running_program;

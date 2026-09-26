@@ -32,6 +32,8 @@
 #include <string>
 #include <string_view>
 
+#include <ctbrowser/script/compile.hpp>
+
 #include <ctjs/vparse.hpp>
 
 namespace ctbrowser::script::detail {
@@ -54,9 +56,11 @@ struct early_error {
 // `source` must be the buffer the tree was parsed from - not a copy of it - or
 // the offsets are meaningless and are reported as `nowhere` instead of wrong.
 // `strict_root` says the whole program is strict code before any directive
-// is read - a module (16.2.1).
+// is read - a module (16.2.1). `eval` says the source is an eval's, and where
+// the eval was (PerformEval's early errors, and its inherited strictness).
 [[nodiscard]] std::optional<early_error> find_early_error(const ctjs::vp::ast & tree,
                                                           std::string_view source,
-                                                          bool strict_root = false);
+                                                          bool strict_root = false,
+                                                          const eval_site * eval = nullptr);
 
 } // namespace ctbrowser::script::detail

@@ -537,6 +537,10 @@ struct program {
     // undefined rather than throwing. Data on the program, not bytecode, so
     // nothing that reads the instructions sees it. Empty for a module.
     std::vector<std::string> hoisted_vars;
+    // COMPILED FOR eval: its `var`s are bindings a `delete` may remove
+    // (19.2.1.3 step 17: CreateGlobalVarBinding(vn, true)), where a script's
+    // are not (16.1.7 step 17, `false`) - see context::declare_global_var.
+    bool eval_code = false;
     // THE SOURCE THIS WAS COMPILED FROM, kept so a function can be printed.
     // A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
     std::string source;

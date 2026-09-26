@@ -34,6 +34,7 @@ bool dom_bindings::refresh_wrappers() {
 void dom_bindings::observe_focus(node_id id) {
     focused_ = id;
     refresh_document();
+    place_caret_on_focus(id); // an editing host gets a caret - see selection.cpp
 }
 
 void dom_bindings::observe_viewport(int width, int height) {
@@ -156,7 +157,13 @@ bool dom_bindings::dispatch_error_value(std::string_view message, value error,
     object->set("lineno", value::number(0));
     object->set("colno", value::number(0));
     object->set("error", error);
-    return dispatch_event("error", node_id{}, event);
+    // "IN ERROR REPORTING MODE" for the length of the dispatch: an `error`
+    // listener of this window that throws is not reported here again (see
+    // listeners.cpp's report_fault).
+    const bool was = std::exchange(error_reporting_, true);
+    const bool handled = dispatch_event("error", node_id{}, event);
+    error_reporting_ = was;
+    return handled;
 }
 
 // `focus`/`blur` and `focusin`/`focusout` (UI Events 5.4.4): FocusEvents whose
@@ -203,6 +210,9 @@ bool dom_bindings::dispatch_hash_change(const std::string & old_url, const std::
 
 bool dom_bindings::dispatch_key(std::string_view type, node_id target, const input_event & input) {
     if (cx_ == nullptr) { return false; }
+    // An ACTIVATION-TRIGGERING input event (HTML 6.4.3): a keydown that is not
+    // Escape notifies before it is dispatched.
+    if (type == "keydown" && input.key != "Escape") { notify_activation(); }
     value event = make_event(*cx_, type, target);
     auto * object = static_cast<script::object_object *>(event.as_heap());
     object->set("code", cx_->string(input.key));
@@ -310,6 +320,8 @@ value dom_bindings::make_mouse_event(context & cx, std::string_view type, node_i
 bool dom_bindings::dispatch_mouse(std::string_view type, node_id target,
                                   const input_event & input) {
     if (cx_ == nullptr) { return false; }
+    // ...and a mousedown (its pointerdown is a mouse's, which the list names too).
+    if (type == "mousedown") { notify_activation(); }
     // A POINTER EVENT FIRES TOO, and first.
     //
     // pointerdown/move/up are what a modern library listens for - they are the
@@ -374,11 +386,26 @@ bool dom_bindings::click(node_id target) {
             }
         }
     }
+    // THE CLICK IN PROGRESS FLAG, steps 2-4 of `click()`: a click() on an
+    // element whose click() is still running returns without dispatching. A
+    // <label>'s activation behaviour clicks the control it labels, and a
+    // control with none of its own - a <textarea> - hands that click's
+    // activation straight back to the label, which would click it again for
+    // ever: `<label>Notes <textarea>` hung the page on its first click.
+    // ponytail: a thread-local stack of (bindings, element) stands in for the
+    // flag, which only ever lives across one synchronous dispatch; a bit on
+    // the element if that stack ever gets deep.
+    static thread_local std::vector<std::pair<const dom_bindings *, node_id>> clicking;
+    const std::pair<const dom_bindings *, node_id> self{this, target};
+    if (std::ranges::find(clicking, self) != clicking.end()) { return false; }
+    clicking.push_back(self);
     value event = make_mouse_event(*cx_, "click", target, input_event{}, false);
     // "with the not trusted flag set" - it came from script, whoever asked.
     static_cast<script::object_object *>(event.as_heap())
         ->set(std::string{trusted_property}, value::boolean(false));
-    return dispatch_to(event, path_step{target, listen_on::node});
+    const bool result = dispatch_to(event, path_step{target, listen_on::node});
+    clicking.pop_back();
+    return result;
 }
 
 bool dom_bindings::is_connected(node_id target) const {

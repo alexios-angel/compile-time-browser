@@ -77,7 +77,19 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
             for (const attribute & old : state.attributes) {
                 if (same(old, held)) { before = &old.value; }
             }
-            if (quiet || (before != nullptr && *before == held.value)) { continue; }
+            // THE SAME VALUE WRITTEN AGAIN is a change too (HTML 4.13.6, "attribute
+            // changed" runs for every set): the write log said so, the diff
+            // cannot - see note_attribute_writes.
+            bool rewritten = false;
+            if (before != nullptr && *before == held.value) {
+                if (const auto noted = written_attributes_.find(at.key());
+                    noted != written_attributes_.end()) {
+                    const auto name = std::ranges::find(noted->second, held.name);
+                    rewritten = name != noted->second.end();
+                    if (rewritten) { noted->second.erase(name); }
+                }
+            }
+            if (quiet || (before != nullptr && *before == held.value && !rewritten)) { continue; }
             custom_element_reaction reaction;
             reaction.target = at;
             reaction.definition = state.definition;
@@ -162,8 +174,11 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
             const std::uint64_t key = here.at.key();
             const auto found = custom_elements_.find(key);
             if (found == custom_elements_.end() && upgrade) {
-                const std::size_t index = custom_definition_for(txn, here.at);
-                if (index != npos) {
+                // In the element's own registry - and for upgrade(root) and
+                // initialize(root), only when that registry is the caller.
+                const std::size_t index = custom_definition_for(txn, here.at, connected);
+                if (index != npos &&
+                    (upgrade_filter_ == nullptr || defs[index].registry == upgrade_filter_)) {
                     // "Upgrade an element", HTML 4.13.5, queued: its
                     // attributeChangedCallbacks and connectedCallback are
                     // enqueued when it RUNS (run_upgrade), from the element
@@ -243,7 +258,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
 
 void dom_bindings::upgrade_created_subtree(node_id root) {
     if (primary().custom_definitions_.empty() || cx_ == nullptr || doc_ == nullptr || !root ||
-        !has_browsing_context()) {
+        !may_upgrade()) {
         return;
     }
     const std::size_t from = custom_reactions_.size();
@@ -262,7 +277,7 @@ void dom_bindings::scan_custom_elements() {
     const auto txn = doc_->read();
     ++scan_generation_;
     flat_map<std::uint64_t, bool> roots_seen;
-    const bool upgrade = has_browsing_context();
+    const bool upgrade = may_upgrade();
     // THE SHADOW-INCLUDING WALK crosses every shadow tree of a connected host.
     // A shadow tree whose host is detached is a detached subtree: nothing in
     // it is upgraded until it connects, and what is tracked in it is walked
@@ -496,7 +511,8 @@ void dom_bindings::run_upgrade(context & cx, std::size_t index, node_id target, 
                 if (floor > i) { --floor; }
             }
         }
-        report_custom_element_exception(cx, thrown, "custom element upgrade");
+        report_custom_element_exception(cx, thrown, "custom element upgrade",
+                                        reg.custom_definitions_[index].constructor);
         return;
     }
     again->second.state = custom_element_state::status::custom;
@@ -505,6 +521,9 @@ void dom_bindings::run_upgrade(context & cx, std::size_t index, node_id target, 
     // it is disabled.
     const custom_element_definition & def = reg.custom_definitions_[index];
     if (def.form_associated) {
+        // ...and is a form control now: `form.elements` and the other live
+        // collections cached by version must see it (form-elements-namedItem).
+        doc_->note_unversioned_change();
         custom_element_state & state = again->second;
         const auto txn = doc_->read();
         state.form = form_owner_of(txn, target);
@@ -618,7 +637,7 @@ void dom_bindings::flush_custom_element_reactions(std::size_t from) {
         value thrown = value::undefined();
         (void)cx.call_fenced(callback, args, wrapper, threw, thrown);
         if (threw) {
-            report_custom_element_exception(cx, thrown, "custom element callback");
+            report_custom_element_exception(cx, thrown, "custom element callback", callback);
         } else {
             note_callback_fault("custom element");
         }
@@ -626,10 +645,29 @@ void dom_bindings::flush_custom_element_reactions(std::size_t from) {
     reaction_floors_.pop_back();
 }
 
+// THE ATTRIBUTE WRITES OF THIS MUTATION, from the document's write log (the one
+// mutated() drains): which attributes of which tracked element were SET, so
+// that the scan's diff - which sees values, not writes - still enqueues
+// attributeChangedCallback for a value written over itself.
+void dom_bindings::note_attribute_writes(const std::vector<document::write_note> & writes) {
+    if (custom_elements_.empty()) { return; }
+    for (const document::write_note & note : writes) {
+        if (note.kind != document::write_note::edit::attribute || note.removal ||
+            !custom_elements_.contains(note.node.key())) {
+            continue;
+        }
+        written_attributes_[note.node.key()].push_back(note.name);
+    }
+}
+
 void dom_bindings::react_custom_elements() {
-    if (primary().custom_definitions_.empty() || cx_ == nullptr || doc_ == nullptr) { return; }
+    if (primary().custom_definitions_.empty() || cx_ == nullptr || doc_ == nullptr) {
+        written_attributes_.clear();
+        return;
+    }
     const std::size_t from = custom_reactions_.size();
     scan_custom_elements();
+    written_attributes_.clear();
     flush_custom_element_reactions(from);
     // The adopting steps' reactions run in the ADOPTING document's turn, which
     // may have no mutation of its own coming (document.adoptNode alone).

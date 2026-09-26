@@ -160,6 +160,28 @@ void test_interpolation() {
     CHECK(interpolate_text("filter", "blur(6px)", "blur(10px) hue-rotate(180deg)", 0.5, context) ==
           "blur(8px) hue-rotate(90deg)");
     CHECK(interpolate_text("filter", "blur(6px)", "grayscale(1)", 0.5, context) == "grayscale(1)");
+    // Two track lists of one shape, track by track, with the nearer end's
+    // line names (CSS Grid 2 §7.2.5).
+    CHECK(interpolate_text("grid-template-columns", "1fr [a b] 1fr [d] 1fr", "2fr [c] auto 2fr",
+                           0.4, context) == "1.4fr [a b] 1fr [d] 1.4fr");
+    CHECK(interpolate_text("grid-template-columns", "minmax(10px, 1fr) minmax(20px, 2fr)",
+                           "minmax(20px, 2fr) minmax(30px, auto)", 0.6,
+                           context) == "minmax(16px, 1.6fr) minmax(26px, auto)");
+    CHECK(interpolate_text("grid-template-rows", "1fr repeat(2, 2fr auto 30px) 1fr",
+                           "2fr repeat(2, 3fr 30px 40px) 2fr", 0.4,
+                           context) == "1.4fr repeat(2, 2.4fr auto 34px) 1.4fr");
+    // An angle may go negative; a url() makes the pair discrete; accumulation
+    // sums, a 1-based amount as `a + b - 1` (Filter Effects 1 §11.3).
+    CHECK(interpolate_text("filter", "hue-rotate(0deg)", "hue-rotate(180deg)", -0.5, context) ==
+          "hue-rotate(-90deg)");
+    CHECK(interpolate_text("filter", "url(#a) blur(1px)", "url(#a) blur(3px)", 0.25, context) ==
+          "url(#a) blur(1px)");
+    CHECK(composite_text("filter", "blur(10px) saturate(0.75)", "blur(40px)",
+                         composite_op::accumulate, context) == "blur(50px) saturate(0.75)");
+    CHECK(composite_text("filter", "brightness(0.25)", "brightness(0.5)", composite_op::accumulate,
+                         context) == "brightness(-0.25)");
+    CHECK(composite_text("filter", "contrast(0.75)", "blur(40px)", composite_op::accumulate,
+                         context) == "blur(40px)");
     // Colours premultiplied in sRGB, clamped to the gamut when extrapolated.
     CHECK(interpolate_text("color", "rgb(0, 0, 255)", "rgba(255, 0, 0, 0)", 0.5, context) ==
           "rgba(0.0000, 0.0000, 255.0000, 0.5000)");
@@ -272,6 +294,19 @@ void test_composition() {
           "translateY(80%)");
     CHECK(interpolate_text("transform", "translate(12px, 70%)", "translate(13px, 90%)", 0.25,
                            context) == "translate(12.25px, 75%)");
+    // `none` pads a matrix() with the identity matrix, and the pair blends as
+    // matrices; past a pair that does not match, the rest blends as matrices.
+    CHECK(interpolate_text("transform", "none", "matrix(7, 0, 2, 2, 6, 0)", -1, context) ==
+          "matrix(-5, 0, 0, 0, -6, 0)");
+    CHECK(interpolate_text("transform", "rotate(0deg) translate(100px)",
+                           "rotate(720deg) scale(2) translate(200px)", 0.25,
+                           context) == "rotate(180deg) matrix(1.25, 0, 0, 1.25, 175, 0)");
+    CHECK(interpolate_text("transform", "translateY(70%)", "translateY(90%) scaleZ(2)", 0.25,
+                           context) == "translateY(75%) scaleZ(1.25)");
+    CHECK(interpolate_text("transform-origin", "top left", "bottom right", 0.5, context) ==
+          "50% 50%");
+    CHECK(interpolate_text("font-variation-settings", "'bbbb' 10, 'aaaa' 0",
+                           "\"aaaa\" 30, \"bbbb\" 20", 0.5, context) == "\"aaaa\" 15, \"bbbb\" 15");
     CHECK(composite_text("transform", "rotate(30deg)", "scale(2)", composite_op::add, context) ==
           "rotate(30deg) scale(2)");
     CHECK(composite_text("transform", "matrix(0, 1, -1, 0, 100, 0)", "matrix(1, 0, 0, 1, 50, 0)",
@@ -283,6 +318,22 @@ void test_composition() {
     CHECK(interpolate_text("transform", "matrix(1, 0, 0, 1, 0, -6)", "matrix(0, 7, -1, 0, 6, 0)",
                            0.5, context)
               .starts_with("matrix(2.828427, 2.828427, -0.707107, 0.707107, 3, -3)"));
+    // 3D (CSS Transforms 2 §15-16): a perspective interpolates its reciprocal
+    // depth, `none` being zero and what an overshoot past it is; one axis
+    // interpolates the angle; anything else is the decomposed 4x4 matrices.
+    CHECK(interpolate_text("transform", "scaleZ(1) perspective(400px)",
+                           "scaleZ(2) perspective(500px)", 0.5,
+                           context) == "scaleZ(1.5) perspective(444.444444px)");
+    CHECK(interpolate_text("transform", "perspective(none)", "perspective(500px)", -1, context) ==
+          "perspective(none)");
+    CHECK(interpolate_text("transform", "rotateX(0deg)", "rotateX(720deg)", 0.5, context) ==
+          "rotate3d(1, 0, 0, 360deg)");
+    CHECK(interpolate_text("transform", "rotateX(90deg)", "rotateY(90deg)", 0.5, context)
+              .starts_with("matrix3d("));
+    CHECK(interpolate_text("transform", "rotateX(90deg) scaleZ(1)", "scaleZ(1) rotateX(90deg)", 0.5,
+                           context) == "matrix3d(1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1)");
+    CHECK(composite_text("transform", "rotateX(10deg)", "rotateX(20deg)", composite_op::accumulate,
+                         context) == "rotate3d(1, 0, 0, 30deg)");
 }
 
 } // namespace

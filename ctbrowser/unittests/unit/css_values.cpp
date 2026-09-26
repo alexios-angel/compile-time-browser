@@ -95,6 +95,33 @@ void test_the_things_that_must_survive() {
     ok("content", "counters(par-num, \".\", DECIMAL )", "counters(par-num, \".\")");
     ok("content", "counter(par-num, upper-roman)", "counter(par-num, upper-roman)");
     ok("content", "counter(par-num)", "counter(par-num)");
+    // A cubic-bezier() keeps every digit: the curve is evaluated from the text.
+    ok("transition-timing-function", "cubic-bezier(0, 0.23333333333333334, 1, 0.2333333333)",
+       "cubic-bezier(0, 0.23333333333333334, 1, 0.2333333333)");
+    // `content`'s grammar: an alt text is strings, counters and attr() only.
+    ok("content", "counter(n, symbols(symbolic 'a'))", "counter(n, symbols(\"a\"))");
+    ok("content", "open-quote \"a\" / \"alt\" counter(n)", "open-quote \"a\" / \"alt\" counter(n)");
+    CHECK(supports_declaration("content", "counters(n, \".\", symbols(cyclic \"a\"))"));
+    bad("content", "attr()");
+    bad("content", "counter()");
+    bad("content", "counters(n)");
+    bad("content", "open-quote / no-close-quote");
+    bad("content", "\"a\" / url(\"x.svg\")");
+    bad("content", "counter(n, symbols(numeric \"a\"))");
+    bad("content", "counter(n, symbols(a b))");
+    bad("content", "normal \"a\"");
+    bad("content", "counter(n, inherit)");
+    ok("list-style-type", "symbols(cyclic 'a')", "symbols(cyclic \"a\")");
+    bad("list-style-type", "symbols(fixed url(\"x.svg\"))");
+    bad("list-style-type", "\"marker\" none");
+    ok("cursor", "url(\"a.png\") 1 2, pointer", "url(\"a.png\") 1 2, pointer");
+    bad("cursor", "en-resize");
+    bad("cursor", "url(\"a.png\") alias");
+    bad("cursor", "url(\"a.png\") 1px 2px, copy");
+    bad("cursor", "light-dark(linear-gradient(red), none), pointer");
+    ok("text-fit", "GROW consistent 300%", "grow consistent 300%");
+    bad("text-fit", "grow 150% consistent");
+    bad("text-fit", "consistent 100%");
     // AN ARBITRARY SUBSTITUTION FUNCTION IS A VALUE FOR ANY PROPERTY, CSS
     // Values 5: what its arguments mean is decided after parsing, so a length
     // grammar has no business refusing one.
@@ -611,6 +638,17 @@ void test_gap_rule_lists_and_their_neighbours() {
     bad("outline-color", "invert");
     CHECK(supports_declaration("grid-template-columns", "repeat(2, minmax(10px, 1fr))"));
     CHECK(supports_declaration("transform", "skewX(10deg)"));
+    // transform's functions are counted and typed (transform-valid/-invalid).
+    ok("transform", "translateX(-4px) scale(250%, 1) skew(90deg, 0)",
+       "translateX(-4px) scale(2.5, 1) skew(90deg, 0deg)");
+    ok("transform", "perspective(none) rotate3d(1, 0, 0, 0)",
+       "perspective(none) rotate3d(1, 0, 0, 0deg)");
+    bad("transform", "30px");
+    bad("transform", "none scale(2)");
+    bad("transform", "matrix(1, 2)");
+    bad("transform", "rotate(0, 0)");
+    bad("transform", "scaleX(2), scaleY(3)");
+    bad("transform", "perspective(1000)");
 }
 
 // CSS Shapes 1's <basic-shape>, specified: defaults left out, positions and
@@ -648,12 +686,70 @@ void test_basic_shapes() {
                  .value_or(""),
              std::string{"circle(54% at 13% 27%)"});
     CHECK(!blend_basic_shapes("clip-path", "circle(10px)", "inset(10px)", 0.5, 0.5));
+    CHECK(!blend_basic_shapes("clip-path", "circle(farthest-side at 25px 75%)",
+                              "circle(farthest-side at 50px center)", 0.5, 0.5));
     CHECK_EQ(computed_basic_shape("offset-path", "ray(0.25turn closest-corner contain)", ctx),
              std::string{"ray(90deg closest-corner contain)"});
     CHECK_EQ(
         blend_basic_shapes("offset-path", "path(\"M 0 0 H 10\")", "path(\"M 0 0 H 20\")", 0.5, 0.5)
             .value_or(""),
         std::string{"path(\"M 0 0 H 15\")"});
+}
+
+// CSS Shapes 2's shape(): the default fill rule, anchor, sweep, size and
+// rotation left out; computed with its positions resolved; blended command by
+// command, a path() as the shape() it draws.
+void test_the_shape_function() {
+    ok("clip-path", "shape(EvenOdd from 0 0Px, CLOSE)", "shape(evenodd from 0px 0px, close)");
+    ok("clip-path", "shape(nonzero from 1px 2px, line to 10px 10px)",
+       "shape(from 1px 2px, line to 10px 10px)");
+    ok("clip-path", "shape(from 1px 2px, arc to 5px 1pt of 10px small rotate 0deg)",
+       "shape(from 1px 2px, arc to 5px 1pt of 10px)");
+    ok("clip-path", "shape(from 1px 2px, arc by 5px 1pt of 20% 5px rotate 25deg large cw)",
+       "shape(from 1px 2px, arc by 5px 1pt of 20% 5px cw large rotate 25deg)");
+    ok("offset-path", "shape(from 1px 2px, curve to 5px 5px with 1px 2px from origin / 3px 4px)",
+       "shape(from 1px 2px, curve to 5px 5px with 1px 2px / 3px 4px)");
+    ok("offset-path", "shape(from 1px 2px, smooth by 5px 5px with 1px 2px from end)",
+       "shape(from 1px 2px, smooth by 5px 5px with 1px 2px from end)");
+    CHECK(supports_declaration("shape-outside", "shape(from 0px 0px, hline to center, close)"));
+    ok("offset-path", "shape(from calc(10% - 5px) 2px, curve by 1px 2px with 3px 4px /5px 6px)",
+       "shape(from calc(10% - 5px) 2px, curve by 1px 2px with 3px 4px / 5px 6px)");
+    bad("clip-path", "shape(from 0px 0px)");
+    bad("clip-path", "shape(nonzero, from 0px 0px, close)");
+    bad("clip-path", "shape(from 0px 0px, close,)");
+    ok("object-view-box", "INSET(10px)", "inset(10px)");
+    ok("object-view-box", "none", "none");
+    bad("object-view-box", "circle(10px)");
+    bad("object-view-box", "inset(1px) border-box");
+    bad("clip-path", "shape(from 0px 0px, hline to top)");
+    bad("clip-path", "shape(from 0px 0px, arc cw to 5px 5px of 1px)");
+    bad("clip-path", "shape(from 0px 0px, arc to 5px 5px of 1px small large)");
+    bad("clip-path", "shape(from 0px 0px, curve by 1px 1px with center 1px)");
+    using ctbrowser::style::css::blend_basic_shapes;
+    using ctbrowser::style::css::computed_basic_shape;
+    ctbrowser::style::css::length_context ctx;
+    ctx.font_size = 16;
+    CHECK_EQ(computed_basic_shape("clip-path", "shape(from 1em center, smooth to right 20%)", ctx),
+             std::string{"shape(from 16px 50%, smooth to 100% 20%)"});
+    CHECK_EQ(blend_basic_shapes("clip-path", "shape(from 5px 5px, hline to 5px, close)",
+                                "shape(from -5px 5px, hline to 15px, close)", 0.5, 0.5)
+                 .value_or(""),
+             std::string{"shape(from 0px 5px, hline to 10px, close)"});
+    CHECK_EQ(blend_basic_shapes("clip-path", "path(\"M 5 5 a 30 30 30 1 0 15 -5\")",
+                                "shape(from 15px 15px, arc by 25px -15px of 20px cw)", 0.5, 0.5)
+                 .value_or(""),
+             std::string{"shape(from 10px 10px, arc by 20px -10px of 25px 25px cw large rotate "
+                         "15deg)"});
+    // Two paths blend in absolute commands, and come out absolute.
+    CHECK_EQ(blend_basic_shapes("offset-path", "path(\"m 10 20 h 30\")",
+                                "path(\"M 130 140 H 120\")", 0.5, 0.5)
+                 .value_or(""),
+             std::string{"path(\"M 70 80 H 80\")"});
+    CHECK(!blend_basic_shapes("clip-path", "shape(from 0px 0px, move to 1px 1px)",
+                              "shape(from 0px 0px, move by 1px 1px)", 0.5, 0.5));
+    CHECK(!blend_basic_shapes("clip-path", "shape(from 0px 0px, smooth to 1px 1px with 1px 1px)",
+                              "shape(from 0px 0px, smooth to 1px 1px with 2px 2px from start)", 0.5,
+                              0.5));
 }
 
 } // namespace
@@ -687,5 +783,6 @@ int main() {
     test_the_position_grammar();
     test_gap_rule_lists_and_their_neighbours();
     test_basic_shapes();
+    test_the_shape_function();
     REPORT("css_values");
 }

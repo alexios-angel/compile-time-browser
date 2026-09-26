@@ -729,9 +729,40 @@ void tree_builder::insert_comment(const token & t, node_id parent, bool before_r
 // lowercase, so the tables are exact lookups.
 node_id tree_builder::create_element(const std::string & tag,
                                      const std::vector<token_attribute> & attributes, node_ns ns) {
+    // ITS CUSTOM ELEMENT REGISTRY IS ITS INTENDED PARENT'S - read here off the
+    // current node, which is the intended parent everywhere but foster
+    // parenting - unless its own tag says `customelementregistry`, which makes
+    // it null and so every element parsed under it (document.hpp).
+    const node_id parent = open_.empty() ? node_id{} : open_.back().id;
+    const bool own_null = std::ranges::find(attributes, std::string_view{"customelementregistry"},
+                                            &token_attribute::name) != attributes.end();
+    // A DECLARATIVE SHADOW ROOT'S <template> on the stack stands for the root,
+    // whose registry is null only when written with
+    // `shadowrootcustomelementregistry` - whatever the template's own.
+    const document::shadow_tree * shadow = [&]() -> const document::shadow_tree * {
+        if (!parent || open_.back().tag != "template" || !doc_->has_shadow_roots()) {
+            return nullptr;
+        }
+        const node_id contents = doc_->template_content(parent);
+        return contents ? doc_->shadow_tree_of(contents) : nullptr;
+    }();
+    const bool null_registry =
+        own_null || (shadow != nullptr ? shadow->null_registry
+                                       : doc_->has_null_custom_element_registries() && parent &&
+                                             doc_->null_custom_element_registry(parent));
+    // A CUSTOM ELEMENT IS CONSTRUCTED, NOT CREATED - see set_custom_element_hooks.
+    // Asked under a null-registry declarative shadow root too: a script in it
+    // may have initialize()d the root since, which only the shell knows.
+    if (ns == node_ns::html && on_element_ && !own_null && (!null_registry || shadow != nullptr)) {
+        if (const node_id made = on_element_(tag, attributes, parent)) {
+            constructed_ = made;
+            return made;
+        }
+    }
     const node_id element = doc_->create_element(
         ns == node_ns::svg ? atoms_->intern(adjust_svg_tag(tag)) : atoms_->intern_lower(tag), ns);
     if (is_mathml(ns)) { doc_->set_element_namespace(element, atoms_->intern(mathml_namespace)); }
+    if (null_registry) { doc_->set_null_custom_element_registry(element); }
     for (const token_attribute & a : attributes) {
         std::string_view name = a.name;
         if (ns == node_ns::svg) {
@@ -750,9 +781,15 @@ node_id tree_builder::insert_element(const std::string & tag,
     // "If it is not possible to insert element at the adjusted insertion
     // location, abort these steps" (13.2.6.1) - the element is still pushed.
     // The Document is the one such location: it already has an element,
-    // which is how foster parenting reached it (appropriate_place).
-    if (const insertion_point where = appropriate_place(); where.parent != doc_->document_node()) {
+    // which is how foster parenting reached it (appropriate_place). So is a
+    // parent the element already has: a custom element whose own reactions
+    // put it somewhere is left where they put it.
+    const bool constructed = element == constructed_;
+    constructed_ = node_id{};
+    if (const insertion_point where = appropriate_place();
+        where.parent != doc_->document_node() && !(constructed && doc_->read().parent(element))) {
         insert_at(where, element);
+        if (constructed && on_inserted_) { on_inserted_(element); }
     }
     open_.push_back(make_entry(
         element, std::string{ns == node_ns::svg ? adjust_svg_tag(tag) : std::string_view{tag}}, ns,

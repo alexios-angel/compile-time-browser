@@ -44,14 +44,22 @@ part with the Blob it is building in a C++ local. The precise collector
 has no inventory of C++ locals, so every such native was a use-after-free
 once collection could run inside a turn; the first one found was
 `loadBlob`'s result no longer being `instanceof Blob`. Rather than audit
-~1,300 natives for `rooted`, the collector PINS EVERYTHING ALLOCATED
-SINCE THE OUTERMOST NATIVE WAS ENTERED: the heap is a newest-first list,
-so that is the prefix down to the object that was the head at entry.
-Bounded, because a native's own allocations are bounded; what is NOT
-pinned is what testharness.js's per-subtest `apply` was called on, so a
-synchronous script of ten thousand subtests still collects. A collector
-policy, not a root: it is applied in collect(), outside each_root, so the
-escape oracle's notion of "reachable" does not learn it.
+~1,300 natives for `rooted`, the collector PINS WHAT THE NATIVES IN
+PROGRESS ALLOCATED: the heap is a newest-first list, so each native
+called from script opens a RANGE of it at entry, `callout_scope` closes
+the range when the native calls back into script and opens a new one
+when the callee returns, and the ranges die with the native. A native
+called by a native allocates into its caller's range. What the script
+callee allocated is NOT pinned - until 2026-09-26 everything since the
+outermost native's entry was, and testharness.js runs every test body
+through `apply`, so a 250-million-read NodeList loop kept all its garbage
+to the 4 GB cap. What the callee RETURNED is pinned instead
+(`pinned_results_`), because the native holds it in a C++ local. What
+stays unprotected is a value a native read from an object that script,
+run by a LATER callout, made unreachable - root those (see the sort
+snapshot above). A collector policy, not a root: it is applied in
+collect(), outside each_root, so the escape oracle's notion of
+"reachable" does not learn it.
 
 <a id="contract-4"></a>
 

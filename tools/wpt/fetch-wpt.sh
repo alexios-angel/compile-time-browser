@@ -89,6 +89,13 @@ SPARSE_PATHS=(
   /css/*/resources/
   /css/*/support/
   /web-animations/testcommon.js
+  # THE WEBIDL idlharness READS. Seven idlharness tests - url, selection,
+  # css-cascade, css-conditional (two), cssom, cssom-view - were HARNESS_ERROR
+  # "no such resource: /interfaces/<spec>.idl" on 2026-09-25: a missing
+  # fixture, the css/support/ finding again. Only .idl files live here; run-wpt
+  # never collects them. And atob's vectors, which base64.any.js fetches.
+  /interfaces/
+  /fetch/data-urls/resources/
   # WHOLE MODULES THAT ARE MOSTLY testharness AND MOSTLY IMPLEMENTED.
   /css/css-syntax/         # the tokenizer and grammar (style/css/)
   /css/css-variables/      # custom properties and var()
@@ -180,6 +187,11 @@ at=$(git -C "$WPT_DIR" rev-parse HEAD)
   echo "checked out $at, wanted $WPT_COMMIT" >&2
   exit 1
 }
+# WPTSERVE'S ONE ALIAS THE HARNESSES USE: `/resources/WebIDLParser.js` is served
+# from resources/webidl2/lib/webidl2.js (tools/serve's alias table); there is no
+# such file in the tree. Every idlharness test loads it, and without it each one
+# was "WebIDL2 is not defined" before its first subtest.
+ln -sf webidl2/lib/webidl2.js "$WPT_DIR/resources/WebIDLParser.js"
 # ON DISK, not in the index. `git ls-files` lists the whole TREE - 162,834
 # entries here - whatever the sparse checkout materialised, so it reported a
 # number two orders of magnitude larger than the thing it was describing and

@@ -19,8 +19,22 @@ void dom_bindings::install_control_select_options(context & cx) {
     // HTML 4.10.7 "list of options" - the store's walk, so the value the
     // chrome paints and the options this model selects agree.
 
+    // An option's "nearest ancestor select" (HTML 4.10.10): up from its parent,
+    // and none through a datalist, an hr or another option, nor through a
+    // second optgroup - the nestings the list of options leaves out, so an
+    // option outside the list has no select to be indexed in or to take a
+    // form from.
     const auto select_of = [helpers](const read_txn & txn, node_id option) {
+        bool in_optgroup = false;
         for (node_id up = txn.parent(option); up; up = txn.parent(up)) {
+            if (helpers.is(txn, up, "datalist") || helpers.is(txn, up, "hr") ||
+                helpers.is(txn, up, "option")) {
+                return node_id{};
+            }
+            if (helpers.is(txn, up, "optgroup")) {
+                if (in_optgroup) { return node_id{}; }
+                in_optgroup = true;
+            }
             if (helpers.is(txn, up, "select")) { return up; }
         }
         return node_id{};
@@ -234,7 +248,7 @@ void dom_bindings::install_control_select_options(context & cx) {
             option_ctor->define("prototype", proto_value, script::attr_none);
         }
         option_ctor->define("length", value::number(0), script::attr_configurable);
-        cx.define_global("Option", value::object(option_ctor));
+        cx.define_builtin_global("Option", value::object(option_ctor));
     }
 
     // --- HTMLOptionElement --------------------------------------------------------
@@ -599,7 +613,9 @@ void dom_bindings::install_control_select_options(context & cx) {
                 const value select =
                     c.lookup_property(c.current_this(), "@@sym:ctbrowser:options-owner");
                 dom_bindings * b = owner_of(select);
-                if (b == nullptr) { return {nullptr, node_id{}}; }
+                if (b == nullptr) {
+                    return {nullptr, node_id{}};
+                }
                 return {b, b->handle_of(select)};
             };
             on->define_accessor(

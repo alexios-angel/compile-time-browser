@@ -703,6 +703,23 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			class_atom(lo);
 			std::uint32_t hi = lo;
 			if (i + 1 < src.size() && src[i] == '-' && src[i + 1] != ']') {
+				// A CLASS ESCAPE AT THE FAR END is no range: Annex B (B.1.2,
+				// NonemptyClassRangesNoDash) reads `[%-\d]` as `%`, `-` and
+				// the digits - the escape is read by the next pass - where
+				// class_atom took `\d` for the letter d and made `%-d`. Under
+				// u or v it is the SyntaxError.
+				if (src[i + 1] == '\\' && i + 2 < src.size() &&
+				    (std::string_view{"dDwWsS"}.find(src[i + 2]) != std::string_view::npos ||
+				     (unicode_mode && (src[i + 2] == 'p' || src[i + 2] == 'P')))) {
+					if (unicode_mode) {
+						rx_fail(p, src);
+						return pc;
+					}
+					pc.cc.ranges.push_back({lo, lo});
+					pc.cc.ranges.push_back({'-', '-'});
+					++i;
+					continue;
+				}
 				++i;
 				class_atom(hi);
 				// 22.2.1.1: `[b-a]` is a SyntaxError.
@@ -808,6 +825,21 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 				return pc;
 			}
 			rx_class_normalize(pc.cc);
+			return pc;
+		}
+		// Annex B's LegacyOctalEscapeSequence (B.1.2) outside the u and v
+		// modes: `\0` with octal digits after it - `\07` is U+0007 and
+		// `\0111` is U+0009 then "1" (ZeroToThree OctalDigit OctalDigit at
+		// most). A `\1`..`\7` is a backreference first, and falls back to
+		// the same octal in rx_resolve_backrefs.
+		if (e == '0' && !p.unicode && !p.unicode_sets && i < src.size() && src[i] >= '0' &&
+		    src[i] <= '7') {
+			std::uint32_t code = static_cast<std::uint32_t>(src[i++] - '0');
+			if (i < src.size() && src[i] >= '0' && src[i] <= '7') {
+				code = code * 8 + static_cast<std::uint32_t>(src[i++] - '0');
+			}
+			pc.kind = rx_piece::lit;
+			pc.c = static_cast<char>(code);
 			return pc;
 		}
 		std::uint32_t cp = 0;
@@ -1425,12 +1457,17 @@ struct rx_match {
 	std::vector<std::pair<std::ptrdiff_t, std::ptrdiff_t>> caps;
 };
 
-inline bool rx_search(const rx_prog & p, const std::string & s, std::size_t from, rx_match & out) {
+// `anchored` tries `from` alone: a sticky pattern fails where it is not at
+// lastIndex (22.2.7.2 step 13.a), so searching on to discard a later hit made
+// every failed sticky exec walk the rest of the input - a tokenizer fails one
+// per token, and WebIDL2's over html.idl took 21 seconds.
+inline bool rx_search(const rx_prog & p, const std::string & s, std::size_t from, rx_match & out, bool anchored = false) {
 	for (std::size_t start = from; start <= s.size(); ++start) {
 		// A MATCH STARTS ON A CODE POINT, never inside one: a continuation
 		// byte is not a character, and `[^x]` at such a position would
 		// "match" the tail of the very character the class excludes.
 		if (start < s.size() && (static_cast<unsigned char>(s[start]) & 0xC0u) == 0x80u) {
+			if (anchored) { return false; }
 			continue;
 		}
 		rx_state st;
@@ -1450,6 +1487,7 @@ inline bool rx_search(const rx_prog & p, const std::string & s, std::size_t from
 			out.caps = std::move(st.caps);
 			return true;
 		}
+		if (anchored) { return false; }
 	}
 	return false;
 }

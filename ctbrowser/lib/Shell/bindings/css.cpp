@@ -145,7 +145,7 @@ void dom_bindings::install_css_interface(context & cx) {
     });
 
     css_interface_ = value::object(css);
-    cx.define_global("CSS", css_interface_);
+    cx.define_builtin_global("CSS", css_interface_);
 }
 
 } // namespace ctbrowser::shell

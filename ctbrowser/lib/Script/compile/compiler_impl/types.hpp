@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ctbrowser/core/containers.hpp>
+#include <ctbrowser/script/compile.hpp>
 
 #include <boost/container/small_vector.hpp>
 
@@ -32,6 +33,14 @@ struct local {
     // the link between the two.
     static constexpr std::uint32_t no_slot = 0xFFFFFFFFu;
     std::uint32_t debug_slot = no_slot;
+    // WHETHER AN ASSIGNMENT MAY WRITE IT - see immutability and
+    // compiler_impl::binding_immutability. The declaration's own write is
+    // not an assignment and is never refused (compiler_impl::declaring_).
+    immutability readonly = immutability::none;
+    // A `let`, `const`, `using` or `class` - what a sloppy direct eval's `var`
+    // may not redeclare (see eval_binding). Not a parameter, a `var`, a
+    // function or a catch parameter (B.3.4 lets a var share that name).
+    bool lexical = false;
 };
 
 struct interval {
@@ -86,6 +95,11 @@ struct frame {
     // 13.3.7.1 / 9.2.1.2. Empty for every other function. An arrow inside
     // the constructor asks its nearest non-arrow frame (derived_flag()).
     std::string derived_flag;
+    // A FUNCTION WITH A [[HomeObject]] - a method, an accessor, a constructor
+    // or a class's field initialiser (field_initializer) - which is what a
+    // direct eval in it may say `super.x` in (see compiler_impl::eval_site_here).
+    bool has_home = false;
+    bool field_initializer = false;
     // WHERE A NAME OR STRING ALREADY WENT. `function_proto::add_name` and
     // `add_string` deduplicate by LINEAR SCAN, quadratic in the distinct
     // names a function mentions. The index lives HERE rather than on the
@@ -101,7 +115,10 @@ struct reference {
         upvalue,
         global,
         member,
-        index
+        index,
+        // `super.x` / `super[k]`: `reg` the home object's prototype, `key`
+        // the key - read and written with `this` as the receiver.
+        super_property
     };
     kind what = kind::local;
     std::uint16_t reg = 0;  // local/boxed: its register. member/index: the object.
@@ -113,6 +130,9 @@ struct reference {
     bool with = false;
     std::uint16_t with_reg = 0;
     std::uint16_t with_name = 0; // the name, as a property-name operand
+    // A NAME THAT RESOLVED TO AN IMMUTABLE BINDING: emit_store refuses the
+    // write (the `with` object, when one binds the name, still takes it).
+    immutability readonly = immutability::none;
 };
 
 } // namespace ctbrowser::script::detail::compiler_types

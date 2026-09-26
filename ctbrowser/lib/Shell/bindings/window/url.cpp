@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace ctbrowser::shell {
@@ -123,25 +125,6 @@ void store_list(context & c, script::object_object & params, const form_pairs & 
     return out;
 }
 
-// The interface's constructor and prototype, wired the WebIDL way: `prototype`
-// on the constructor, `constructor` and `@@toStringTag` on the prototype, and
-// the constructor a global.
-struct interface_pair {
-    script::native_object * ctor;
-    script::object_object * proto;
-};
-
-[[nodiscard]] interface_pair make_interface(context & cx, const char * name,
-                                            script::native_fn construct) {
-    auto * proto = cx.allocate<script::object_object>();
-    auto * ctor = cx.allocate<script::native_object>(name, std::move(construct));
-    ctor->define("prototype", value::object(proto), script::attr_none);
-    proto->define("constructor", value::object(ctor), script::attr_builtin);
-    proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
-    cx.define_global(name, value::object(ctor));
-    return {ctor, proto};
-}
-
 // --- URLSearchParams -------------------------------------------------------------
 
 // The iterator `entries()`, `keys()`, `values()` and `@@iterator` return: LIVE,
@@ -203,7 +186,7 @@ struct interface_pair {
 }
 
 void install_search_params(context & cx, const value iterator_proto) {
-    const interface_pair made = make_interface(cx, "URLSearchParams", {});
+    const interface_pair made = make_interface(cx, "URLSearchParams");
     auto * ctor = made.ctor;
     // §6.2 "new URLSearchParams(init)": a sequence of pairs, a record, or a
     // string with one leading `?` dropped - the WebIDL union, told apart the
@@ -274,8 +257,16 @@ void install_search_params(context & cx, const value iterator_proto) {
         return self_value;
     };
 
+    // Each operation with its REQUIRED argument count, from §6.2's IDL.
     const auto method = [&](const char * name, script::native_fn fn) {
-        set_method(cx, *made.proto, name, std::move(fn), script::attr_builtin);
+        static constexpr std::pair<std::string_view, unsigned> required[] = {
+            {"append", 2}, {"delete", 1}, {"get", 1},    {"getAll", 1},
+            {"has", 1},    {"set", 2},    {"forEach", 1}};
+        unsigned count = 0;
+        for (const auto & [which, n] : required) {
+            if (which == name) { count = n; }
+        }
+        set_operation(cx, *made.proto, name, count, std::move(fn));
     };
     // Every operation reads the live list, edits it, and writes it back
     // through the update steps.
@@ -447,7 +438,7 @@ script::native_object * install_url(context & cx) {
     install_search_params(cx, iterator_proto);
     const value params_ctor = cx.global("URLSearchParams");
 
-    const interface_pair made = make_interface(cx, "URL", {});
+    const interface_pair made = make_interface(cx, "URL", {}, 1);
     auto * ctor = made.ctor;
     // Captured below, so retained here for the same reason: a page that deletes
     // the `URLSearchParams` global must not take `new URL()`'s query object
@@ -528,14 +519,11 @@ script::native_object * install_url(context & cx) {
         return held == nullptr ? value::undefined() : *held;
     });
     for (const char * name : {"toString", "toJSON"}) {
-        set_method(
-            cx, *made.proto, name,
-            [](context & c, std::span<value>) {
-                script::object_object * self = branded_this(c, href_key, "URL");
-                if (self == nullptr) { return value::undefined(); }
-                return c.string(url_of(*self).serialize());
-            },
-            script::attr_builtin);
+        set_operation(cx, *made.proto, name, 0, [](context & c, std::span<value>) {
+            script::object_object * self = branded_this(c, href_key, "URL");
+            if (self == nullptr) { return value::undefined(); }
+            return c.string(url_of(*self).serialize());
+        });
     }
     // §6.1 `URL.parse` and `URL.canParse`: the constructor's answer without
     // the throw - null, and false.
@@ -547,21 +535,17 @@ script::native_object * install_url(context & cx) {
         }
         return parse_url(usv_arg(c, a, 0), base ? &*base : nullptr);
     };
-    set_method(
-        cx, *ctor, "canParse",
-        [parses](context & c, std::span<value> a) {
-            return value::boolean(parses(c, a).has_value());
-        },
-        script::attr_builtin);
-    set_method(
-        cx, *ctor, "parse",
-        [parses, ctor](context & c, std::span<value> a) {
-            const std::optional<url_record> url = parses(c, a);
-            if (!url) { return value::null(); }
-            const value args[1] = {c.string(url->serialize())};
-            return c.construct(value::object(ctor), args);
-        },
-        script::attr_builtin);
+    set_operation(cx, *ctor, "canParse", 1, [parses](context & c, std::span<value> a) {
+        return value::boolean(parses(c, a).has_value());
+    });
+    set_operation(cx, *ctor, "parse", 1, [parses, ctor](context & c, std::span<value> a) {
+        const std::optional<url_record> url = parses(c, a);
+        if (!url) { return value::null(); }
+        const value args[1] = {c.string(url->serialize())};
+        return c.construct(value::object(ctor), args);
+    });
+    // [LegacyWindowAlias=webkitURL]: the same interface object under a second name.
+    cx.define_builtin_global("webkitURL", value::object(ctor));
     return ctor;
 }
 

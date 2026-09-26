@@ -336,7 +336,7 @@ void dom_bindings::install_dom_interfaces(context & cx) {
             ctor->set("prototype", interface_prototypes_[i]);
             ctor->retained.push_back(keeper);
             ctor_value = value::object(ctor);
-            cx.define_global(name, ctor_value);
+            cx.define_builtin_global(name, ctor_value);
         }
         // `constructor` and `@@toStringTag`, ON AN ADOPTED PROTOTYPE TOO - the
         // interfaces adopted from elsewhere carry neither, so
@@ -493,7 +493,7 @@ void dom_bindings::install_dom_interfaces(context & cx) {
     if (auto * win = window_object()) { win->prototype = interface_prototype("Window"); }
     // "Window objects must also have a ... property named HTMLDocument whose
     // value is the Document interface object" (HTML 3.1.1).
-    cx.define_global("HTMLDocument", cx.global("Document"));
+    cx.define_builtin_global("HTMLDocument", cx.global("Document"));
 
     // EVERY WRAPPER THAT ALREADY EXISTS, RE-LINKED. Two of them are made by
     // install_document before this can run at all, and they are `document.body`

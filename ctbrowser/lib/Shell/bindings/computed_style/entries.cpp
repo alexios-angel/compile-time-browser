@@ -168,7 +168,16 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             if (const layout::fragment * up = fragment_for(fragments_, parent)) {
                 at.basis = up->bounds.width;
                 at.basis_height = up->bounds.height;
-                if (up_box != nullptr) {
+                // A `display: contents` parent has no box, so neither padding
+                // nor border of its own (getComputedStyle-pseudo).
+                bool boxless = false;
+                if (styles_ != nullptr) {
+                    const auto found = styles_->find(style::engine::key_of(parent));
+                    boxless = found != styles_->end() && found->second &&
+                              collapse_keyword(found->second->get(atoms_->intern("display"))) ==
+                                  "contents";
+                }
+                if (up_box != nullptr && !boxless) {
                     const layout::side_lengths & pad = up_box->padding;
                     // A PERCENTAGE PADDING RESOLVES AGAINST THE WIDTH on all four
                     // sides (CSS 2.1 §8.4), so the vertical pair is subtracted
@@ -179,6 +188,15 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                                 pad.right.resolve(at.basis, up_box->font_size);
                     at.basis_height -= pad.top.resolve(at.basis, up_box->font_size) +
                                        pad.bottom.resolve(at.basis, up_box->font_size);
+                    // ...AND THE BORDERS: the fragment is the border box, and
+                    // a 2px border counted into the content height made
+                    // `top: 10%` of a 100px box 10.4px
+                    // (getComputedStyle-insets-relative).
+                    const layout::side_lengths & border = up_box->border;
+                    at.basis -= border.left.resolve(0, up_box->font_size) +
+                                border.right.resolve(0, up_box->font_size);
+                    at.basis_height -= border.top.resolve(0, up_box->font_size) +
+                                       border.bottom.resolve(0, up_box->font_size);
                 }
             }
         }
@@ -691,7 +709,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
         }
         // 4b'. A BASIC SHAPE (lib/Style/css/properties/shapes.cpp).
-        if (property == "clip-path" || property == "shape-outside" || property == "offset-path") {
+        if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
+            property == "object-view-box") {
             style::css::length_context bases;
             bases.font_size = at.font_size;
             bases.root_font_size = at.root_font_size;
@@ -699,6 +718,79 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             bases.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
             std::string computed = style::css::computed_basic_shape(property, text, bases);
             if (!computed.empty()) { return computed; }
+        }
+        // 4f. A BORDER SPACING IS ONE OR TWO ABSOLUTE LENGTHS, never
+        //     negative (CSS Tables 3 §border-spacing): `0` is `0px`, and
+        //     `calc(10px - 0.5em)` under a 40px font is `0px`.
+        if (property == "border-spacing") {
+            style::css::length_context bases;
+            bases.font_size = at.font_size;
+            bases.root_font_size = at.root_font_size;
+            bases.viewport_width = static_cast<float>(viewport_width_);
+            bases.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
+            std::string out;
+            for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+                const std::string_view part = trim(raw, html_whitespace);
+                if (part.empty()) { continue; }
+                const style::css::math_answer answer = style::css::evaluate_math(part, bases);
+                if (answer.outcome != style::css::math_outcome::resolved ||
+                    answer.value.has_percent) {
+                    return collapse_keyword(text);
+                }
+                out += (out.empty() ? "" : " ") +
+                       px_text(static_cast<float>(std::max(answer.value.px, 0.0)));
+            }
+            return out.empty() ? collapse_keyword(text) : out;
+        }
+        // text-fit's default `consistent` is left unwritten (text-fit-computed).
+        if (property == "text-fit") {
+            std::string words = collapse_keyword(text);
+            if (const std::size_t at = words.find(" consistent"); at != std::string::npos) {
+                words.erase(at, 11);
+            }
+            return words;
+        }
+        // 4h. offset-rotate's angle in degrees, `reverse` as `auto 180deg`
+        //     (Motion Path 1 §4.4, offset-rotate-computed).
+        if (property == "offset-rotate") {
+            if (std::string computed = style::css::computed_offset_rotate(text, true);
+                !computed.empty()) {
+                return computed;
+            }
+        }
+        // 4g. A FONT STYLE'S ANGLE IS IN DEGREES, and `oblique 0deg` is
+        //     `normal` (CSS Fonts 4 §2.4, font-style-computed).
+        if (property == "font-style") {
+            const std::string words = collapse_keyword(text);
+            if (words.starts_with("oblique ")) {
+                const style::css::math_answer answer =
+                    style::css::evaluate_math(std::string_view{words}.substr(8), {});
+                if (answer.outcome == style::css::math_outcome::resolved &&
+                    !answer.value.is_number &&
+                    answer.value.type == style::css::numeric_type::angle) {
+                    // ...and within [-90deg, 90deg], where an animation past
+                    // either end stops (font-style-interpolation).
+                    const double angle = std::clamp(answer.value.px, -90.0, 90.0);
+                    if (angle == 0) { return "normal"; }
+                    return "oblique " + number_text(static_cast<float>(angle)) + "deg";
+                }
+            }
+            return words;
+        }
+        // 4b''. A FONT WIDTH IS A PERCENTAGE (CSS Fonts 4 §2.3): a keyword is
+        //     the one it names, and a calc() folds and stops at zero
+        //     (font-width-computed).
+        if (property == "font-width" || property == "font-stretch") {
+            const std::string_view given = trim(text, html_whitespace);
+            if (const auto named = style::css::font_width_percentage(given)) {
+                return std::string{*named};
+            }
+            const style::css::math_answer answer = style::css::evaluate_math(given, {});
+            if (answer.outcome == style::css::math_outcome::resolved && answer.value.has_percent &&
+                answer.value.px == 0) {
+                return number_text(static_cast<float>(std::max(answer.value.percent, 0.0))) + "%";
+            }
+            return collapse_keyword(text);
         }
         // 4c. AN OVERFLOW AXIS BESIDE A SCROLLING ONE: CSS Overflow 3 §3.1 -
         //     when either axis is neither `visible` nor `clip`, `visible`
@@ -788,6 +880,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         std::string text = value_of(physical.empty() ? p.name : physical);
         if (text.empty()) { text = std::string{p.initial}; }
         if (ascii_iequals(text, "currentcolor")) { text = current_color; }
+        // caret-color's initial `auto` is currentcolor as well (CSS UI 4 §6.2.1).
+        if (p.name == "caret-color" && ascii_iequals(text, "auto")) { text = current_color; }
         // ...and inside a shadow list, where it is one shadow's colour.
         if (p.name == "box-shadow" || p.name == "text-shadow") {
             for (std::size_t at = text.find("currentcolor"); at != std::string::npos;

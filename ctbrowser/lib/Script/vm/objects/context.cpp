@@ -30,11 +30,13 @@ realm_record & context::create_realm() {
     realms_.push_back(std::make_unique<realm_record>());
     realm_record & made = *realms_.back();
     made.globals = realm_template_;
+    made.builtin = realm_template_builtin_;
     return made;
 }
 
 void context::set_realm_template(const string_flat_map<value> & globals) {
     realm_template_ = globals;
+    realm_template_builtin_ = current_realm().builtin;
 }
 
 // A bare VM has a global object too. Like Shell's Window view, this proxy
@@ -57,9 +59,12 @@ value context::make_global_object(realm_record & r) {
     const auto trap = [&](const char * name, native_fn fn) {
         handler->set(name, value::object(allocate<native_object>(name, std::move(fn))));
     };
+    // A DECLARED name's own property on the target is a placeholder
+    // (declare_global_var): the table answers it, in every trap below.
     trap("get", [realm](context & cx, std::span<value> args) {
         auto * object = static_cast<object_object *>(args[0].as_heap());
         const std::string name = cx.to_string(args[1]);
+        if (realm->declared.contains(name)) { return realm->globals[name]; }
         if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
             return cx.lookup_property(args[0], name);
         }
@@ -74,7 +79,9 @@ value context::make_global_object(realm_record & r) {
         if (immutable_global(name)) {
             return value::boolean(false); // 19.1: read-only - a TypeError in strict code
         }
-        if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
+        if (realm->declared.contains(name)) {
+            realm->globals[name] = args[2];
+        } else if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
             cx.store_property(args[0], name, args[2]);
         } else {
             realm->globals[name] = args[2];
@@ -89,18 +96,25 @@ value context::make_global_object(realm_record & r) {
                               realm->globals.contains(cx.to_string(args[1])));
     });
     // [[GetOwnProperty]] SEES THE BINDINGS TOO: `Object.getOwnPropertyDescriptor
-    // (this, "Array")` is how test262 verifies every global's attributes, and a
-    // binding in the table is what clause 17 describes - { writable: true,
-    // enumerable: false, configurable: true }. The target's own properties
-    // answer first, as `get` has them.
+    // (this, "Array")` is how test262 verifies every global's attributes. An
+    // intrinsic is clause 19's { writable: true, enumerable: false,
+    // configurable: true } (realm_record::builtin); a script's `var` is
+    // enumerable and not configurable (realm_record::declared); and a plain
+    // assignment's binding is an ordinary [[Set]]'s, all three true.
+    // The target's own properties answer first, as `get` has them.
     trap("getOwnPropertyDescriptor", [realm](context & cx, std::span<value> args) {
         const std::string name = cx.to_string(args[1]);
+        if (realm->declared.contains(name)) {
+            return cx.from_property_descriptor(
+                property_descriptor::data(realm->globals[name], attr_writable | attr_enumerable));
+        }
         property_descriptor found;
         if (cx.own_property(args[0], name, found)) { return cx.from_property_descriptor(found); }
         const auto it = realm->globals.find(name);
         if (it == realm->globals.end()) { return value::undefined(); }
-        return cx.from_property_descriptor(
-            property_descriptor::data(it->second, attr_writable | attr_configurable));
+        return cx.from_property_descriptor(property_descriptor::data(
+            it->second,
+            realm->builtin.contains(name) ? attr_writable | attr_configurable : attr_default));
     });
     // `delete globalThis.x` reaches the binding table the way `set` does;
     // an own property of the target deletes as one.
@@ -111,6 +125,7 @@ value context::make_global_object(realm_record & r) {
             return value::boolean(cx.delete_own_property(args[0], name));
         }
         (void)realm->globals.erase(name);
+        (void)realm->builtin.erase(name);
         return value::boolean(true);
     });
     return value::object(allocate<proxy_object>(target, value::object(handler)));

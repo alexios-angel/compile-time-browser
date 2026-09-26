@@ -105,7 +105,10 @@ void install_using(context & cx) {
         const value v = a[1];
         const bool async = a.size() > 2 && context::truthy(a[2]);
         if (v.is_nullish()) { return v; }
-        if (!v.is_object()) {
+        // AN OBJECT IS ANY OBJECT - a function, an array, a proxy too (9.13.1
+        // step 1.b: "If V is not an Object"); `using f = function () {}` with
+        // a [Symbol.dispose] on it is as good a resource as `{}`.
+        if (!v.is_object_like()) {
             c.throw_error("TypeError",
                           "`using` needs an object, not " + std::string{context::type_of(v)});
             return value::undefined();
@@ -261,6 +264,23 @@ void install_destructuring_iteration(context & cx) {
         }
         return value::undefined();
     });
+    // See set_function_name_name.
+    cx.define_native(std::string{set_function_name_name}, [](context & c, std::span<value> a) {
+        if (a.size() < 2) { return value::undefined(); }
+        detail::set_function_name(c, a[0], a[1],
+                                  a.size() > 2 && a[2].is_string() ? c.to_string(a[2]) : "");
+        return value::undefined();
+    });
+    // See to_property_key_name.
+    cx.define_native(std::string{to_property_key_name}, [](context & c, std::span<value> a) {
+        value key = a.empty() ? value::undefined() : a[0];
+        if (key.is_object_like() && !c.to_primitive_hint(key, "string", key)) {
+            return value::undefined();
+        }
+        if (key.is_kind(heap_kind::symbol)) { return key; }
+        std::string text = c.to_string(key);
+        return c.throw_pending() ? value::undefined() : c.string(std::move(text));
+    });
     // See class_heritage_name.
     cx.define_native(std::string{class_heritage_name}, [](context & c, std::span<value> a) {
         if (a.size() < 3 || !a[0].is_kind(heap_kind::function)) { return value::undefined(); }
@@ -273,7 +293,13 @@ void install_destructuring_iteration(context & cx) {
             return value::undefined();
         }
         if (!is_constructor(parent)) {
-            c.throw_error("TypeError", "Class extends value " + c.to_string(parent) +
+            // NAMED WITHOUT RUNNING ANY OF ITS CODE: stringifying an object
+            // asks its @@toPrimitive and toString - a proxy's `get` trap -
+            // whose throw then replaced this TypeError.
+            const bool opaque = parent.is_object_like() || parent.is_kind(heap_kind::symbol);
+            c.throw_error("TypeError", "Class extends value " +
+                                           (opaque ? std::string{context::type_of(parent)}
+                                                   : c.to_string(parent)) +
                                            " is not a constructor or null");
             return value::undefined();
         }
@@ -289,9 +315,42 @@ void install_destructuring_iteration(context & cx) {
         ctor->proto_link = parent;
         return value::undefined();
     });
+    // See super_set_name.
+    cx.define_native(std::string{super_set_name}, [](context & c, std::span<value> a) {
+        if (a.size() < 4) { return value::undefined(); }
+        value base = a[0];
+        // The implicit Object.prototype, as super_get_name reads it.
+        if (base.is_null()) {
+            if (object_object * table = c.prototype(context::proto_kind::object)) {
+                base = value::object(table);
+            }
+        }
+        if (!base.is_object_like()) {
+            c.throw_error("TypeError", "Cannot set properties of null");
+            return value::undefined();
+        }
+        const std::string key = c.to_string(a[1]);
+        if (c.throw_pending()) { return value::undefined(); }
+        const bool strict = a.size() > 4 && context::truthy(a[4]);
+        if (!set_for_receiver(c, base, key, a[2], a[3]) && strict && !c.throw_pending()) {
+            c.throw_error("TypeError", "Cannot assign to read only property '" + key + "'");
+        }
+        return value::undefined();
+    });
     // See super_get_name.
     cx.define_native(std::string{super_get_name}, [](context & c, std::span<value> a) {
         if (a.size() < 3) { return value::undefined(); }
+        // THE IMPLICIT Object.prototype: op::get_proto reads a plain object's
+        // [[Prototype]] field, which is null when it was never set and
+        // undefined when it was set to null (object_object::prototype) - so
+        // `{ m() { return super.x; } }` arrives here with null, and means
+        // Object.prototype. A home object is an object literal or a class's
+        // prototype or constructor, never an array, so null says nothing else.
+        if (a[0].is_null()) {
+            if (object_object * table = c.prototype(context::proto_kind::object)) {
+                a[0] = value::object(table);
+            }
+        }
         if (a[0].is_nullish()) {
             c.throw_error("TypeError", "Cannot read properties of " +
                                            std::string{a[0].is_null() ? "null" : "undefined"} +
@@ -387,6 +446,9 @@ void install_destructuring_iteration(context & cx) {
         // is the throw of the class definition.
         const std::string key = c.to_string(a[1]);
         if (c.throw_pending()) { return value::undefined(); }
+        // Each half named for its key (15.4.5 step 6 / 15.4.6 step 6).
+        detail::set_function_name(c, a[2], c.key_value(key), "get");
+        detail::set_function_name(c, a[3], c.key_value(key), "set");
         c.define_accessor(a[0], key, a[2], a[3]);
         return value::undefined();
     });

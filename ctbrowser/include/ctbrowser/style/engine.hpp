@@ -130,7 +130,8 @@ public:
           font_family_(atoms.intern_lower("font-family")),
           font_weight_(atoms.intern_lower("font-weight")),
           font_style_(atoms.intern_lower("font-style")),
-          writing_mode_(atoms.intern_lower("writing-mode")) {}
+          writing_mode_(atoms.intern_lower("writing-mode")), before_(atoms.intern_lower("before")),
+          after_(atoms.intern_lower("after")) {}
 
     // HOW WIDE A RUN OF TEXT IS IN A FACE, for the `ch` unit. CSS Values 4
     // §6.1.1: `ch` is the advance of the `0` glyph in the element's font, and
@@ -527,6 +528,15 @@ public:
                     element_facts & facts) const;
 
     [[nodiscard]] static constexpr std::uint64_t key_of(node_id id) noexcept { return id.key(); }
+    // WHERE resolve_all FILES AN ELEMENT'S `::before` OR `::after` STYLE, in the
+    // same map as the elements' own: the element's key with the top bits of its
+    // slot set, which no node reaches (a slot is a node's index, and a document
+    // of 2^30 nodes is not one this engine holds). Present only when a rule for
+    // that pseudo-element matched the element; the box builder generates a box
+    // from it when its `content` says there is one (CSS Pseudo 4 §5.1).
+    [[nodiscard]] static constexpr std::uint64_t pseudo_key_of(node_id id, bool after) noexcept {
+        return id.key() | (after ? 0xC000'0000'0000'0000ull : 0x8000'0000'0000'0000ull);
+    }
 
 private:
     // One element's `style` attribute, split by importance.
@@ -699,25 +709,45 @@ private:
         // ONE BOOL, before any selector work. A false condition is the cheapest
         // possible rejection and it is checked first for that reason.
         if (!condition_truth_[r.condition]) { return; }
-        if (r.container != 0 && !container_holds(txn, r.container, depth)) { return; }
-        if (r.scope == 0) {
-            if (matches(txn, ancestors, selectors_[r.selector], depth)) { matches_.push_back(r); }
+        // A `::before` OR `::after` RULE, met while the element itself is
+        // resolved, contributes nothing to it - but whether it WOULD match the
+        // pseudo-element is what says the element has one to resolve, and it
+        // is asked here, of the buckets this element drew anyway, so an element
+        // no such rule reaches pays nothing more (resolve_subtree).
+        const atom pe = selectors_[r.selector].parts.front().pseudo_element;
+        if (pe != pseudo_wanted_) {
+            if (pseudo_wanted_ || (pe != before_ && pe != after_)) { return; }
+            const std::uint8_t bit = pe == before_ ? 1 : 2;
+            if ((generates_ & bit) != 0) { return; }
+            pseudo_wanted_ = pe;
+            rule found = r;
+            const bool hit = rule_matches(r, txn, ancestors, depth, found);
+            pseudo_wanted_ = atom{};
+            if (hit) { generates_ = static_cast<std::uint8_t>(generates_ | bit); }
             return;
         }
+        rule found = r;
+        if (rule_matches(r, txn, ancestors, depth, found)) { matches_.push_back(found); }
+    }
+    // Does `r` hold for the element at `depth`: its `@container`, its scoping
+    // root - whose proximity goes into `found` - and its selector.
+    [[nodiscard]] bool rule_matches(const rule & r, const read_txn & txn,
+                                    const ancestor_filter & ancestors, std::size_t depth,
+                                    rule & found) {
+        if (r.container != 0 && !container_holds(txn, r.container, depth)) { return false; }
+        if (r.scope == 0) { return matches(txn, ancestors, selectors_[r.selector], depth); }
         std::size_t root_depth = 0;
         if (!scope_root_for(txn, ancestors, r.scope, depth, selectors_[r.selector].explicit_scope,
                             root_depth)) {
-            return;
+            return false;
         }
         // `:scope` in the rule is the root found.
         scope_ = levels_[root_depth][path_[root_depth]].node;
         const bool hit = matches(txn, ancestors, selectors_[r.selector], depth);
         scope_ = node_id{};
-        if (!hit) { return; }
-        rule found = r;
         found.proximity =
             static_cast<std::uint16_t>(std::min<std::size_t>(depth - root_depth, 0xFFFE));
-        matches_.push_back(found);
+        return hit;
     }
     // THE NEAREST SCOPING ROOT of scope `s` that puts the element at `depth` in
     // scope (CSS Cascade 6 §3.2): an ancestor-or-self on the current chain
@@ -878,6 +908,10 @@ private:
     // must name exactly this one - `#t::before` matches nothing in the ordinary
     // cascade and only `#t::before` matches while resolve_pseudo runs.
     atom pseudo_wanted_{};
+    // `::before` and `::after`, interned once, and which of the two had a rule
+    // match the element being resolved (bits 1 and 2), as consider() found.
+    atom before_, after_;
+    std::uint8_t generates_ = 0;
     // THE CURSOR FOR ONE ELEMENT: its chain from the root, the earlier siblings
     // at every step, and the ancestor filter - what element_matches and
     // resolve_pseudo both need before they can run the matcher. Answers the

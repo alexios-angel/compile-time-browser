@@ -537,7 +537,7 @@ void dom_bindings::install_element_internals(context & cx,
         });
     states_ctor->set("prototype", custom_state_set_prototype_);
     states_proto->define("constructor", value::object(states_ctor), script::attr_builtin);
-    cx.define_global("CustomStateSet", value::object(states_ctor));
+    cx.define_builtin_global("CustomStateSet", value::object(states_ctor));
 
     define_getter(cx, *proto, "states", [this, target_of](context & c, std::span<value>) {
         const target at = target_of(c, "states");
@@ -611,7 +611,7 @@ void dom_bindings::install_element_internals(context & cx,
         });
     ctor->set("prototype", element_internals_prototype_);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
-    cx.define_global("ElementInternals", value::object(ctor));
+    cx.define_builtin_global("ElementInternals", value::object(ctor));
 
     // --- HTMLElement.prototype.attachInternals(), HTML 4.13.7.1 -----------
     set_method(

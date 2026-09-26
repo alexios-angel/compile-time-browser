@@ -58,16 +58,26 @@ properties (`Object.keys("abc")` is empty).
 
 ### The UTF-16 gap
 
-**A JS string is a sequence of UTF-16 code units; this engine stores UTF-8
-bytes.** So `"é".length` is 2 here and 1 in V8, a non-BMP emoji is 4 and 2, and
-`charCodeAt` returns a byte. Closing it means changing `string_object`
-engine-wide and touching every method that takes an index.
+**Closed 2026-09-26.** A JS string is a sequence of UTF-16 code units; this
+engine stored UTF-8 bytes and answered every length and index in bytes, so
+`"é".length` was 2 (V8: 1), an emoji 4 (2), and `charCodeAt` returned a byte.
 
-`ctbrowser/unittests/js/string_basics.cpp` **pins the current (wrong) answers** in a labelled
-section rather than omitting them, with V8's answer in each comment. That is the
-acceptance list for a migration: the day the representation changes, those lines
-fail and say exactly what to update.
+The STORAGE stayed WTF-8 - the DOM, the style engine, the asset registry and
+the native backend all speak UTF-8, and converting at each boundary would cost
+more than it fixed - and the SEMANTICS became UTF-16: `script/utf16.hpp` is
+the walk (length, locate a unit, slice by units with a split pair leaving each
+half as its lone surrogate, code-unit order), and `string_object` measures
+itself once - its length on first use and, for a non-ASCII string that is
+indexed, a mark every 32 units, so `s[i]` walks at most 32 code points. An
+ASCII string answers every index from its bytes. Every String method that
+takes or returns a position, the string iterator (by code point), RegExp's
+`index`/`lastIndex`/`indices` and AdvanceStringIndex, relational comparison
+and the default sort (code-unit order), `JSON.stringify`'s gap, btoa/atob
+(isomorphic encode and decode, InvalidCharacterError as a DOMException) and
+`JSON.parse` of a lone surrogate (kept, not U+FFFD) all count units now.
 
+`ctbrowser/unittests/js/string_basics.cpp` pinned the wrong answers, each with
+V8's beside it, as the acceptance list; every one of them flipped.
 
 ## The bugs those suites found, fixed (2026-08-09)
 

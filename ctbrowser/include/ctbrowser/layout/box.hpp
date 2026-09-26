@@ -14,6 +14,8 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
+#include <ctbrowser/style/css/token.hpp>
+#include <ctbrowser/style/engine.hpp>
 #include <ctbrowser/style/style.hpp>
 
 #include <ctbrowser/layout/values.hpp>
@@ -508,13 +510,10 @@ private:
             if (tag_text == "summary") {
                 b.details_open = txn.has_attribute(parent, atoms_->intern("open"));
             }
-            b.width = parse_length(prop(style, width_));
-            // A keyword height is kept as written: the block axis has no
-            // intrinsic size to name, so it behaves as `auto` (CSS Sizing 3
-            // §5.1) - has_definite_height says so - but a calc-size() over it
-            // still runs its calculation over that automatic height.
-            b.height = parse_length(prop(style, height_));
-            b.border_box = trimmed(prop(style, box_sizing_)) == "border-box";
+            // What the style says of the box, the same for an element's box and
+            // for a pseudo-element's (style_box, below).
+            style_box(b, style, d, inherited_font, inherited_face, inherited_underline,
+                      inherited_line_through);
             // PRESENTATIONAL ATTRIBUTES. `<table width=400>` and `<td width=50>`
             // are how a great deal of existing HTML sizes a table, and they mean
             // the CSS property - at the bottom of the cascade, so a sheet still
@@ -528,48 +527,6 @@ private:
                     b.width = parsed.is_auto() && attribute.find('%') == std::string_view::npos
                                   ? length{parse_number(attribute), unit::px}
                                   : parsed;
-                }
-            }
-            // The LONGHANDS, which the style engine expands every shorthand
-            // into. Reading `margin`/`padding` directly meant a sheet that said
-            // `padding-left` was ignored outright - including the UA sheet's own
-            // `ul { padding-left: 40px }` and `summary { padding-left: 18px }`.
-            b.collapse_borders = trimmed(prop(style, border_collapse_)) == "collapse";
-            if (const std::string_view spacing = trimmed(prop(style, border_spacing_));
-                !spacing.empty()) {
-                // The two-value form gives horizontal then vertical; only the
-                // first is read, because this engine has one spacing rather than
-                // two. Recorded as a known difference; no page in the suite
-                // writes the two-value form.
-                const length parsed = parse_length(spacing);
-                if (!parsed.is_auto()) { b.border_spacing = parsed; }
-            }
-            b.position = parse_position(trimmed(prop(style, position_)));
-            b.z_index = parse_z_index(prop(style, z_index_));
-            const auto scrollable_overflow = [&](atom name) {
-                const std::string_view value = trimmed(prop(style, name));
-                return ascii_iequals(value, "hidden") || ascii_iequals(value, "scroll") ||
-                       ascii_iequals(value, "auto") || ascii_iequals(value, "overlay");
-            };
-            b.blocks_margin_collapse =
-                scrollable_overflow(overflow_x_) || scrollable_overflow(overflow_y_);
-            b.scroll_container = b.blocks_margin_collapse;
-            b.clips_overflow = b.scroll_container ||
-                               ascii_iequals(trimmed(prop(style, overflow_x_)), "clip") ||
-                               ascii_iequals(trimmed(prop(style, overflow_y_)), "clip");
-            // Containment does not apply to an inline box or a table (§3.2):
-            // only a box of its own - block-level, or an atomic inline - and
-            // no table part is contained.
-            if (b.kind != box_kind::inline_ && b.kind != box_kind::text &&
-                b.kind != box_kind::table && !trimmed(prop(style, display_)).starts_with("table")) {
-                for (const atom name : {contain_, container_type_}) {
-                    for (const std::string_view word :
-                         split_top_level(prop(style, name), " \t\n")) {
-                        const bool both = ascii_iequals_any(word, {"size", "strict"});
-                        b.contain_block_size = b.contain_block_size || both;
-                        b.contain_inline_size =
-                            b.contain_inline_size || both || ascii_iequals(word, "inline-size");
-                    }
                 }
             }
             // THE BODY'S OVERFLOW PROPAGATES TO THE VIEWPORT when the root's
@@ -588,56 +545,6 @@ private:
                     b.scroll_container = b.clips_overflow = b.blocks_margin_collapse = false;
                 }
             }
-            b.inset = sides_of(style, inset_sides_);
-            // THE LOGICAL INSETS, CSS Logical 1 §4.1: `inset-inline-start` is
-            // `left` in a horizontal-tb, left-to-right document, which is the
-            // only writing mode here. The cascade keeps the logical longhand as
-            // its own declaration, so it is read as the physical one's fallback.
-            if (b.inset.left.is_auto()) {
-                b.inset.left = parse_length(prop(style, inset_inline_.top));
-            }
-            if (b.inset.right.is_auto()) {
-                b.inset.right = parse_length(prop(style, inset_inline_.right));
-            }
-            if (b.inset.top.is_auto()) {
-                b.inset.top = parse_length(prop(style, inset_inline_.bottom));
-            }
-            if (b.inset.bottom.is_auto()) {
-                b.inset.bottom = parse_length(prop(style, inset_inline_.left));
-            }
-            const std::string_view transform = trimmed(prop(style, transform_));
-            b.transformed = !transform.empty() && !ascii_iequals(transform, "none");
-            b.translate = parse_translate(transform);
-            b.margin = sides_of(style, margin_sides_);
-            b.padding = sides_of(style, padding_sides_);
-            b.border = border_of(style);
-            b.min_width = parse_length(prop(style, min_width_));
-            b.max_width = parse_length(prop(style, max_width_));
-            b.min_height = parse_length(prop(style, min_height_));
-            b.max_height = parse_length(prop(style, max_height_));
-            b.flex = flex_of(style);
-            b.margin_left_auto = trimmed(prop(style, margin_sides_.left)) == "auto";
-            b.margin_right_auto = trimmed(prop(style, margin_sides_.right)) == "auto";
-            b.margin_top_auto = trimmed(prop(style, margin_sides_.top)) == "auto";
-            b.margin_bottom_auto = trimmed(prop(style, margin_sides_.bottom)) == "auto";
-            const length fs = parse_length(prop(style, font_size_));
-            b.font_size =
-                fs.is_auto() ? inherited_font : fs.resolve(inherited_font, inherited_font);
-            b.line_height = resolve_line_height(prop(style, line_height_), b.font_size);
-            b.face = face_of(style, inherited_face);
-            b.text_align = parse_text_align(trimmed(prop(style, text_align_)));
-            b.opacity = parse_opacity(prop(style, opacity_));
-            b.list_marker =
-                d == display_kind::list_item && trimmed(prop(style, list_style_type_)) != "none";
-            b.underline = inherited_underline;
-            b.line_through = inherited_line_through;
-            if (const std::string_view decoration = prop(style, text_decoration_);
-                !decoration.empty()) {
-                // `none` CLEARS what was inherited, which is how a link inside
-                // underlined text turns its own underline off.
-                b.underline = decoration.contains("underline");
-                b.line_through = decoration.contains("line-through");
-            }
 
             if (b.kind == box_kind::replaced) {
                 intrinsic_size_of(txn, child, tag_text, b);
@@ -649,11 +556,214 @@ private:
                     white_space.empty() ? preserve_whitespace : white_space.starts_with("pre");
                 build_children(txn, child, b, b.font_size, b.face, b.underline, b.line_through,
                                preserve);
+                generate_pseudo_elements(txn, child, b, preserve);
                 drop_collapsible_spaces(b);
                 normalise(b);
             }
             into.children.push_back(std::move(b));
         }
+    }
+
+    // EVERYTHING THE STYLE SAYS OF A BOX, read once into its fields: the sizes,
+    // edges, insets, overflow, containment, flex, font and decoration. `d` is
+    // the display it was built for and `b.kind` is already set; the element's
+    // own attributes and its parent's overflow are the caller's business.
+    void style_box(box_node & b, const computed_style_ptr & style, display_kind d,
+                   float inherited_font, const text_face & inherited_face, bool inherited_underline,
+                   bool inherited_line_through) {
+        b.width = parse_length(prop(style, width_));
+        // A keyword height is kept as written: the block axis has no
+        // intrinsic size to name, so it behaves as `auto` (CSS Sizing 3
+        // §5.1) - has_definite_height says so - but a calc-size() over it
+        // still runs its calculation over that automatic height.
+        b.height = parse_length(prop(style, height_));
+        b.border_box = trimmed(prop(style, box_sizing_)) == "border-box";
+        // The LONGHANDS, which the style engine expands every shorthand
+        // into. Reading `margin`/`padding` directly meant a sheet that said
+        // `padding-left` was ignored outright - including the UA sheet's own
+        // `ul { padding-left: 40px }` and `summary { padding-left: 18px }`.
+        b.collapse_borders = trimmed(prop(style, border_collapse_)) == "collapse";
+        if (const std::string_view spacing = trimmed(prop(style, border_spacing_));
+            !spacing.empty()) {
+            // The two-value form gives horizontal then vertical; only the
+            // first is read, because this engine has one spacing rather than
+            // two. Recorded as a known difference; no page in the suite
+            // writes the two-value form.
+            const length parsed = parse_length(spacing);
+            if (!parsed.is_auto()) { b.border_spacing = parsed; }
+        }
+        b.position = parse_position(trimmed(prop(style, position_)));
+        b.z_index = parse_z_index(prop(style, z_index_));
+        const auto scrollable_overflow = [&](atom name) {
+            const std::string_view value = trimmed(prop(style, name));
+            return ascii_iequals(value, "hidden") || ascii_iequals(value, "scroll") ||
+                   ascii_iequals(value, "auto") || ascii_iequals(value, "overlay");
+        };
+        b.blocks_margin_collapse =
+            scrollable_overflow(overflow_x_) || scrollable_overflow(overflow_y_);
+        b.scroll_container = b.blocks_margin_collapse;
+        b.clips_overflow = b.scroll_container ||
+                           ascii_iequals(trimmed(prop(style, overflow_x_)), "clip") ||
+                           ascii_iequals(trimmed(prop(style, overflow_y_)), "clip");
+        // Containment does not apply to an inline box or a table (§3.2):
+        // only a box of its own - block-level, or an atomic inline - and
+        // no table part is contained.
+        if (b.kind != box_kind::inline_ && b.kind != box_kind::text && b.kind != box_kind::table &&
+            !trimmed(prop(style, display_)).starts_with("table")) {
+            for (const atom name : {contain_, container_type_}) {
+                for (const std::string_view word : split_top_level(prop(style, name), " \t\n")) {
+                    const bool both = ascii_iequals_any(word, {"size", "strict"});
+                    b.contain_block_size = b.contain_block_size || both;
+                    b.contain_inline_size =
+                        b.contain_inline_size || both || ascii_iequals(word, "inline-size");
+                }
+            }
+        }
+        b.inset = sides_of(style, inset_sides_);
+        // THE LOGICAL INSETS, CSS Logical 1 §4.1: `inset-inline-start` is
+        // `left` in a horizontal-tb, left-to-right document, which is the
+        // only writing mode here. The cascade keeps the logical longhand as
+        // its own declaration, so it is read as the physical one's fallback.
+        if (b.inset.left.is_auto()) { b.inset.left = parse_length(prop(style, inset_inline_.top)); }
+        if (b.inset.right.is_auto()) {
+            b.inset.right = parse_length(prop(style, inset_inline_.right));
+        }
+        if (b.inset.top.is_auto()) {
+            b.inset.top = parse_length(prop(style, inset_inline_.bottom));
+        }
+        if (b.inset.bottom.is_auto()) {
+            b.inset.bottom = parse_length(prop(style, inset_inline_.left));
+        }
+        const std::string_view transform = trimmed(prop(style, transform_));
+        b.transformed = !transform.empty() && !ascii_iequals(transform, "none");
+        b.translate = parse_translate(transform);
+        b.margin = sides_of(style, margin_sides_);
+        b.padding = sides_of(style, padding_sides_);
+        b.border = border_of(style);
+        b.min_width = parse_length(prop(style, min_width_));
+        b.max_width = parse_length(prop(style, max_width_));
+        b.min_height = parse_length(prop(style, min_height_));
+        b.max_height = parse_length(prop(style, max_height_));
+        b.flex = flex_of(style);
+        b.margin_left_auto = trimmed(prop(style, margin_sides_.left)) == "auto";
+        b.margin_right_auto = trimmed(prop(style, margin_sides_.right)) == "auto";
+        b.margin_top_auto = trimmed(prop(style, margin_sides_.top)) == "auto";
+        b.margin_bottom_auto = trimmed(prop(style, margin_sides_.bottom)) == "auto";
+        const length fs = parse_length(prop(style, font_size_));
+        b.font_size = fs.is_auto() ? inherited_font : fs.resolve(inherited_font, inherited_font);
+        b.line_height = resolve_line_height(prop(style, line_height_), b.font_size);
+        b.face = face_of(style, inherited_face);
+        b.text_align = parse_text_align(trimmed(prop(style, text_align_)));
+        b.opacity = parse_opacity(prop(style, opacity_));
+        b.list_marker =
+            d == display_kind::list_item && trimmed(prop(style, list_style_type_)) != "none";
+        b.underline = inherited_underline;
+        b.line_through = inherited_line_through;
+        if (const std::string_view decoration = prop(style, text_decoration_);
+            !decoration.empty()) {
+            // `none` CLEARS what was inherited, which is how a link inside
+            // underlined text turns its own underline off.
+            b.underline = decoration.contains("underline");
+            b.line_through = decoration.contains("line-through");
+        }
+    }
+
+    // `::before` AND `::after` (CSS Pseudo 4 §4.1): the first and the last child
+    // of their element's box, when the cascade filed a style for one
+    // (engine::pseudo_key_of) and its `content` computes to something -
+    // `normal` and `none` make no box. The box has NO SOURCE, as an anonymous
+    // one has none: it is not the element, so a query for the element's box
+    // must not find it, and it has no node of its own.
+    void generate_pseudo_elements(const read_txn & txn, node_id element, box_node & into,
+                                  bool preserve_whitespace) {
+        for (const bool after : {false, true}) {
+            const auto found = styles_->find(style::engine::pseudo_key_of(element, after));
+            if (found == styles_->end() || !found->second) { continue; }
+            const computed_style_ptr & style = found->second;
+            const std::optional<std::string> text =
+                generated_text(txn, element, prop(style, atoms_->intern("content")));
+            if (!text) { continue; }
+            // `inline` is a pseudo-element's initial display, blockified in a
+            // flex container as any child is.
+            display_kind d = parse_display(prop(style, display_), display_kind::inline_level);
+            if (d == display_kind::none) { continue; }
+            if (into.kind == box_kind::flex) { d = blockify(d); }
+            box_node g;
+            g.kind = (d == display_kind::flex || d == display_kind::inline_flex) ? box_kind::flex
+                     : d == display_kind::inline_level                           ? box_kind::inline_
+                                                                                 : box_kind::block;
+            g.inline_level = d == display_kind::inline_flex || d == display_kind::inline_block;
+            g.style = style;
+            style_box(g, style, d, into.font_size, into.face, into.underline, into.line_through);
+            // An EMPTY string is no text at all: `content: ""` is a box with
+            // nothing in it, which is what a clearfix or a sized block wants,
+            // and an empty text run would make a line of it.
+            if (!text->empty()) {
+                const std::string_view white_space = prop(style, white_space_);
+                const bool preserve =
+                    white_space.empty() ? preserve_whitespace : white_space.starts_with("pre");
+                box_node t;
+                t.kind = box_kind::text;
+                t.style = style;
+                t.text = preserve ? *text : collapse_whitespace(*text);
+                t.preformatted = preserve;
+                t.font_size = g.font_size;
+                t.line_height = g.line_height;
+                t.face = g.face;
+                t.underline = g.underline;
+                t.line_through = g.line_through;
+                g.children.push_back(std::move(t));
+            }
+            normalise(g);
+            if (after) {
+                into.children.push_back(std::move(g));
+            } else {
+                into.children.insert(into.children.begin(), std::move(g));
+            }
+        }
+    }
+
+    // THE TEXT A `content` VALUE GENERATES (CSS Generated Content 3 §1.1):
+    // its strings and each `attr()`'s attribute of the element, in order, up
+    // to the `/` that begins the alternative text. nullopt for `normal` and
+    // `none`, which generate no box.
+    // ponytail: counter(), counters(), the quotes and url() generate nothing -
+    // counters need the whole tree's counter scopes; add them when a page
+    // reads a list's numbers off its ::before.
+    [[nodiscard]] std::optional<std::string> generated_text(const read_txn & txn, node_id element,
+                                                            std::string_view content) const {
+        content = trimmed(content);
+        if (content.empty() || ascii_iequals(content, "none") || ascii_iequals(content, "normal")) {
+            return std::nullopt;
+        }
+        namespace css = style::css;
+        const css::token_stream s = css::tokenize(content);
+        std::string out;
+        for (std::size_t i = 0; i < s.tokens.size(); ++i) {
+            const css::css_token & t = s.tokens[i];
+            if (t.type == css::token_type::delim && s.text_of(t) == "/") { break; }
+            if (t.type == css::token_type::string) {
+                out += s.value_of(t);
+                continue;
+            }
+            if (t.type != css::token_type::function) { continue; }
+            const bool attr = ascii_iequals(s.text_of(t), "attr(");
+            bool named = false;
+            std::size_t depth = 1;
+            while (depth > 0 && ++i < s.tokens.size()) {
+                const css::css_token & in = s.tokens[i];
+                if (in.type == css::token_type::function ||
+                    in.type == css::token_type::open_paren) {
+                    ++depth;
+                } else if (in.type == css::token_type::close_paren) {
+                    --depth;
+                } else if (attr && !named && depth == 1 && in.type == css::token_type::ident) {
+                    out += txn.attribute_value(element, atoms_->intern(s.text_of(in)));
+                    named = true;
+                }
+            }
+        }
+        return out;
     }
 
     // Where a replaced element's own size comes from. A <canvas> takes its

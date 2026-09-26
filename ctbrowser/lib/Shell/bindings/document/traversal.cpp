@@ -539,7 +539,7 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
                  {"SHOW_NOTATION", 0x800}}) {
             node_filter->set(name, value::number(bits));
         }
-        cx.define_global("NodeFilter", value::object(node_filter));
+        cx.define_builtin_global("NodeFilter", value::object(node_filter));
     }
 }
 

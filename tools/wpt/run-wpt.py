@@ -231,8 +231,6 @@ def plan_for(path: Path, wpt: Path) -> list[Plan]:
         return [Plan(rel, skip="reftest: needs a reference render, not a harness result")]
     if b"testharness.js" not in head:
         return [Plan(rel, skip="not a testharness test")]
-    if b"testdriver.js" in head:
-        return [Plan(rel, skip="testdriver: needs WebDriver input injection")]
     long_timeout = b'name="timeout" content="long"' in head or b"name=timeout content=long" in head
     # THE VARIANTS, from the whole file rather than its head: html5lib_write.html
     # lists fifty `<meta name=variant>` lines, one .dat fixture each, and the
@@ -258,6 +256,38 @@ PROBE = (
     'console.log(window.__wpt_done ? ("D" + window.__wpt_state) '
     ': ("W" + (typeof add_completion_callback)))'
 )
+# TESTDRIVER. A test's test_driver.click / send_keys / action_sequence is queued
+# on the page by testdriver-vendor.js (installed over the corpus's own, see
+# install_testdriver_vendor); each poll drains the queue, replays every step as
+# ctdrive's own input commands and settles the promise the test waits on.
+TAKE = 'console.log("A" + (window.__ctdrive_take ? window.__ctdrive_take() : "[]"))'
+VENDOR = Path(__file__).resolve().parent / "testdriver-vendor.js"
+
+
+def install_testdriver_vendor(wpt: Path) -> None:
+    """The corpus's resources/testdriver-vendor.js, replaced by ctdrive's."""
+    target = wpt / "resources" / "testdriver-vendor.js"
+    wanted = VENDOR.read_bytes()
+    if not target.exists() or target.read_bytes() != wanted:
+        target.write_bytes(wanted)
+
+
+def drive_actions(sock, deadline) -> None:
+    """Perform what the page queued through testdriver, then settle each."""
+    reply = send_command(sock, {"cmd": "eval", "script": TAKE}, deadline)
+    logged = reply.get("console") or []
+    if not logged or not logged[-1].startswith("A"):
+        return
+    for batch in json.loads(logged[-1][1:]):
+        error = ""
+        for step in batch.get("steps", []):
+            answer = send_command(sock, step, deadline)
+            if not answer.get("ok", False):
+                error = answer.get("error") or f"ctdrive refused {step.get('cmd')}"
+                break
+        settle = f"window.__ctdrive_settle({int(batch['id'])}, {json.dumps(error or None)})"
+        send_command(sock, {"cmd": "eval", "script": settle}, deadline)
+
 
 # RLIMIT_AS, APPLIED BY THE SHELL RATHER THAN BY preexec_fn.
 #
@@ -440,6 +470,12 @@ def run_one(plan: Plan, driver: Path, wpt: Path, memory_mb: int) -> DriverResult
                 last_probe = logged[-1] if logged else ""
                 if last_probe.startswith("D"):
                     return classify(last_probe[1:], output(), time.monotonic() - started)
+                try:
+                    drive_actions(sock, deadline)
+                except (TimeoutError, ConnectionError, OSError):
+                    if gone():
+                        return ended("mid-command")
+                    break
                 # A SCRIPT ERROR THE HARNESS NEVER SAW. testharness.js installs
                 # its own error handler, so a page that reaches this has thrown
                 # somewhere the harness could not catch - during load, most
@@ -684,6 +720,7 @@ SELFTESTS = [
     ("selftest/never-done.html", Outcome.TIMEOUT, None, None),
     ("selftest/throws-on-load.html", Outcome.HARNESS_ERROR, None, None),
     ("selftest/no-harness.html", Outcome.HARNESS_ERROR, 0, {}),
+    ("selftest/testdriver.html", Outcome.PASS, 2, {"PASS": 2}),
 ]
 
 
@@ -781,6 +818,7 @@ def main():
     wpt = args.wpt_dir.expanduser()
     if not (wpt / "resources" / "testharness.js").exists():
         sys.exit(f"no WPT harness at {wpt} - run tools/wpt/fetch-wpt.sh")
+    install_testdriver_vendor(wpt)
     if not args.driver.exists():
         sys.exit(
             f"{args.driver} not built - "

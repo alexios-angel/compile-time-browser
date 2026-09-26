@@ -186,7 +186,9 @@ bool split_gap_rule(std::string_view value, std::vector<std::string> & out) {
     });
     if (!rules) { return false; }
     for (const gap_item & item : *rules) {
-        for (gap_list & list : lists) { list.push_back(gap_item{item.count, {}}); }
+        for (gap_list & list : lists) {
+            list.push_back(gap_item{item.count, {}});
+        }
         for (const std::string & joined : item.values) {
             const std::size_t a = joined.find('\x1f');
             const std::size_t b = joined.find('\x1f', a + 1);

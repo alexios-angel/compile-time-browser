@@ -165,7 +165,7 @@ void dom_bindings::install_window(context & cx) {
         return make_blob(c, bytes, type);
     });
     blob_ctor->set("prototype", blob_prototype_);
-    cx.define_global("Blob", value::object(blob_ctor));
+    cx.define_builtin_global("Blob", value::object(blob_ctor));
 
     // --- the DOM's interface objects -----------------------------------
     //
@@ -192,7 +192,7 @@ void dom_bindings::install_window(context & cx) {
                 return value::undefined();
             });
         ctor->set("prototype", prototype_out);
-        cx.define_global(name, value::object(ctor));
+        cx.define_builtin_global(name, value::object(ctor));
     };
     // `HTMLElement` is the one a page's class EXTENDS, so it is constructible
     // and lives with the registry - bindings/custom_elements.cpp - and it has
@@ -239,7 +239,7 @@ void dom_bindings::install_window(context & cx) {
                 return made;
             });
         file_ctor->set("prototype", blob_prototype_);
-        cx.define_global("File", value::object(file_ctor));
+        cx.define_builtin_global("File", value::object(file_ctor));
 
         // A FileList is array-SHAPED: indices, a length, and item(). Every page
         // walks one with `for (const f of files)` or `files[0]`, and both of those
@@ -611,6 +611,7 @@ void dom_bindings::install_window(context & cx) {
         navigator->set("onLine", value::boolean(network_allowed_));
         navigator->set("maxTouchPoints", value::number(0));
         navigator->set("hardwareConcurrency", value::number(1));
+        install_user_activation(cx, *navigator);
         auto * languages = static_cast<script::array_object *>(cx.make_array().as_heap());
         languages->items.push_back(cx.string("en-US"));
         navigator->set("languages", value::object(languages));
@@ -877,6 +878,9 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
                    if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
                    auto * target = static_cast<script::object_object *>(args[0].as_heap());
                    const std::string name = c.to_string(args[1]);
+                   // A script's `var`: the window's own property of that name is
+                   // a placeholder (context::declare_global_var); the table has it.
+                   if (realm_of->declared.contains(name)) { return realm_of->globals[name]; }
                    if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
                        return c.lookup_property(args[0], name);
                    }
@@ -913,7 +917,9 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
         // An own property of the window keeps its own storage - `innerWidth` is
         // refreshed on the object every frame, and routing it to the globals
         // would leave a read seeing the stale one.
-        if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
+        if (realm_of->declared.contains(name)) {
+            realm_of->globals[name] = args[2];
+        } else if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
             c.store_property(args[0], name, args[2]);
         } else {
             realm_of->globals[name] = args[2];
@@ -939,24 +945,48 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
     // agree with `has`: a global is an own data property of the Window - the
     // globals table IS its property storage here - and a named element or
     // frame is HTML 7.3.3's, enumerable and configurable and not writable.
-    set_method(cx, *window_handler, "getOwnPropertyDescriptor",
-               [named_value, frame_at, realm_of](context & c, std::span<value> args) {
-                   if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
+    set_method(
+        cx, *window_handler, "getOwnPropertyDescriptor",
+        [named_value, frame_at, realm_of](context & c, std::span<value> args) {
+            if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
+            const std::string name = c.to_string(args[1]);
+            // A script's `var` is not configurable (16.1.7), and the
+            // window owns a placeholder of it so the proxy may say so.
+            if (realm_of->declared.contains(name)) {
+                return c.from_property_descriptor(context::property_descriptor::data(
+                    realm_of->globals[name], script::attr_writable | script::attr_enumerable));
+            }
+            context::property_descriptor own;
+            if (c.own_property(args[0], name, own)) { return c.from_property_descriptor(own); }
+            // An interface object or an intrinsic is not enumerable; the
+            // Window's own members and a page's assignments are
+            // (realm_record::builtin).
+            if (const auto it = realm_of->globals.find(name); it != realm_of->globals.end()) {
+                return c.from_property_descriptor(context::property_descriptor::data(
+                    it->second, realm_of->builtin.contains(name)
+                                    ? script::attr_writable | script::attr_configurable
+                                    : script::attr_default));
+            }
+            value held = frame_at(c, name);
+            if (held.is_undefined()) { held = named_value(c, name); }
+            if (held.is_undefined()) { return value::undefined(); }
+            return c.from_property_descriptor(context::property_descriptor::data(
+                held, script::attr_enumerable | script::attr_configurable));
+        });
+    // `delete window.x` reaches the binding table as `set` does - it only
+    // deleted from the object behind the proxy, and the global survived - and
+    // a script's `var` refuses (16.1.7: not configurable).
+    set_method(cx, *window_handler, "deleteProperty",
+               [realm_of](context & c, std::span<value> args) {
+                   if (args.size() < 2 || !args[0].is_object()) { return value::boolean(true); }
                    const std::string name = c.to_string(args[1]);
                    context::property_descriptor own;
                    if (c.own_property(args[0], name, own)) {
-                       return c.from_property_descriptor(own);
+                       return value::boolean(c.delete_own_property(args[0], name));
                    }
-                   if (const auto it = realm_of->globals.find(name);
-                       it != realm_of->globals.end()) {
-                       return c.from_property_descriptor(
-                           context::property_descriptor::data(it->second, script::attr_default));
-                   }
-                   value held = frame_at(c, name);
-                   if (held.is_undefined()) { held = named_value(c, name); }
-                   if (held.is_undefined()) { return value::undefined(); }
-                   return c.from_property_descriptor(context::property_descriptor::data(
-                       held, script::attr_enumerable | script::attr_configurable));
+                   (void)realm_of->globals.erase(name);
+                   (void)realm_of->builtin.erase(name);
+                   return value::boolean(true);
                });
     return value::object(
         cx.allocate<script::proxy_object>(window_target, value::object(window_handler)));

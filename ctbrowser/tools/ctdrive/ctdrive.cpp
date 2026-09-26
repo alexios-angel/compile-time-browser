@@ -303,6 +303,17 @@ private:
             (void)page.handle(ev::key_release(code, shift, ctrl));
             return json::value{{"ok", true}, {"handled", handled}};
         }
+        // A KEY HELD across other input - an action sequence's keyDown, then
+        // its keyUp ticks later (tools/wpt/testdriver-vendor.js).
+        if (cmd == "keydown" || cmd == "keyup") {
+            const std::string code = text_of(o, "code");
+            if (code.empty()) { return fail(cmd + " needs a code"); }
+            const bool shift = flag(o, "shift");
+            const bool ctrl = flag(o, "ctrl");
+            const bool handled = page.handle(cmd == "keydown" ? ev::key_press(code, shift, ctrl)
+                                                              : ev::key_release(code, shift, ctrl));
+            return json::value{{"ok", true}, {"handled", handled}};
+        }
         if (cmd == "type") {
             const std::string text = text_of(o, "text");
             for (const char c : text) {

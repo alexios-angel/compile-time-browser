@@ -366,6 +366,51 @@ int compiler_impl::resolve_upvalue(std::size_t level, std::string_view name) {
     return add_upvalue(level, name, upvalue_desc{false, static_cast<std::uint16_t>(inherited)});
 }
 
+std::pair<std::size_t, std::size_t> compiler_impl::binding_position(std::string_view name) {
+    // INNERMOST FRAME FIRST, which is the order resolve_upvalue settles on:
+    // an enclosing frame's locals do not change while a nested function is
+    // being compiled, so the local found here is the one it captures.
+    for (std::size_t level = frames_.size(); level-- > 0;) {
+        frame & f = frames_[level];
+        if (const local * l = find_local_entry(f, name)) {
+            return {level, static_cast<std::size_t>(l - f.locals.data())};
+        }
+    }
+    return {no_binding, 0};
+}
+
+immutability compiler_impl::binding_immutability(std::string_view name) {
+    const auto [level, position] = binding_position(name);
+    for (const class_binding & c : class_bindings_) {
+        if (c.level == level && c.position == position && c.name == name) {
+            return immutability::strict;
+        }
+    }
+    if (level != no_binding) { return frames_[level].locals[position].readonly; }
+    // A direct eval's program: the caller's binding, as the caller declared it.
+    if (!eval_outer_names_.empty()) {
+        if (const auto it = frames_[0].upvalue_index.find(name);
+            it != frames_[0].upvalue_index.end()) {
+            return it->second < eval_outer_readonly_.size() ? eval_outer_readonly_[it->second]
+                                                            : immutability::none;
+        }
+    }
+    return std::ranges::binary_search(script_consts_, name) ? immutability::strict
+                                                            : immutability::none;
+}
+
+bool compiler_impl::refuse_immutable_write(immutability readonly) {
+    if (readonly == immutability::none) { return false; }
+    if (readonly == immutability::strict || fn().is_strict) {
+        emit_throw("TypeError", "Assignment to constant variable.");
+    }
+    return true;
+}
+
+immutability compiler_impl::declared_immutability(const vp::node & decl) {
+    return decl.text == "const" || is_using_decl(decl) ? immutability::strict : immutability::none;
+}
+
 int compiler_impl::add_upvalue(std::size_t level, std::string_view name, upvalue_desc desc) {
     frame & f = frames_[level];
     function_proto & p = out_.functions[f.proto];

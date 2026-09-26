@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset=utf-8>
+<title>selftest: testdriver's input reaches the page as real input</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script src="/resources/testdriver.js"></script>
+<script src="/resources/testdriver-vendor.js"></script>
+<div id=log></div>
+<button id=button>press</button>
+<input id=field>
+<script>
+    // THE MACHINERY, not the engine: test_driver's actions are queued on the
+    // page by testdriver-vendor.js and replayed by run-wpt.py as ctdrive's own
+    // input commands. A click has to arrive trusted, at the element, and
+    // typed keys have to land in the focused field.
+    promise_test(async function () {
+        const button = document.getElementById("button");
+        let seen = null;
+        button.addEventListener("click", function (e) {
+            seen = e;
+        });
+        await test_driver.click(button);
+        assert_not_equals(seen, null, "the click reached the button");
+        assert_true(seen.isTrusted, "as real input");
+    }, "test_driver.click clicks the element");
+
+    promise_test(async function () {
+        const field = document.getElementById("field");
+        await test_driver.send_keys(field, "ab");
+        assert_equals(field.value, "ab");
+    }, "test_driver.send_keys types into the element");
+
+</script>

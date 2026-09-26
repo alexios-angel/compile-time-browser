@@ -248,6 +248,94 @@ enum class want : std::uint8_t {
     return out;
 }
 
+// `none | <transform-function>+` (CSS Transforms 1 §7, 2 §13): each
+// function's arguments counted and typed - `matrix(1, 2)`, `rotate(0, 0)`,
+// `perspective(1000)` and `scaleX(2), scaleY(3)` are no transforms - and
+// written canonically: a scale's percentage as its number, a zero angle as
+// `0deg`. A function's name keeps the author's spelling.
+[[nodiscard]] std::optional<std::string> transform_list(const token_stream & ts,
+                                                        const std::vector<std::size_t> & at) {
+    if (at.size() == 1 && ts.tokens[at[0]].type == token_type::ident &&
+        ascii_iequals(ts.text_of(ts.tokens[at[0]]), "none")) {
+        return "none";
+    }
+    // Per function, one letter per argument, the last repeating up to `most`:
+    // n a number, p a number or percentage, a an angle or zero, L a length,
+    // l a length-percentage, d a nonnegative length or `none`.
+    struct signature {
+        std::string_view name, kinds;
+        std::size_t least, most;
+    };
+    static constexpr signature signatures[] = {
+        {"matrix", "n", 6, 6},        {"matrix3d", "n", 16, 16},  {"translate", "l", 1, 2},
+        {"translatex", "l", 1, 1},    {"translatey", "l", 1, 1},  {"translatez", "L", 1, 1},
+        {"translate3d", "llL", 3, 3}, {"scale", "p", 1, 2},       {"scalex", "p", 1, 1},
+        {"scaley", "p", 1, 1},        {"scalez", "p", 1, 1},      {"scale3d", "p", 3, 3},
+        {"rotate", "a", 1, 1},        {"rotatex", "a", 1, 1},     {"rotatey", "a", 1, 1},
+        {"rotatez", "a", 1, 1},       {"rotate3d", "nnna", 4, 4}, {"skew", "a", 1, 2},
+        {"skewx", "a", 1, 1},         {"skewy", "a", 1, 1},       {"perspective", "d", 1, 1}};
+    const transform_context none;
+    std::string out;
+    for (std::size_t k = 0; k < at.size();) {
+        const css_token & t = ts.tokens[at[k]];
+        if (t.type != token_type::function) { return std::nullopt; }
+        const std::optional<piece> whole = take(ts, at, k);
+        if (!whole) { return std::nullopt; }
+        const std::string_view written = whole->text.substr(0, whole->text.find('('));
+        const std::string name = ascii_lower_copy(written);
+        const signature * sig = nullptr;
+        for (const signature & s : signatures) {
+            if (s.name == name) { sig = &s; }
+        }
+        if (sig == nullptr) { return std::nullopt; }
+        // The arguments end at the `)`, or at the end of the value that closed it.
+        const bool closed =
+            whole->next - 1 > k && ts.tokens[at[whole->next - 1]].type == token_type::close_paren;
+        const std::size_t end = closed ? whole->next - 1 : whole->next;
+        std::vector<std::string> args;
+        bool want_argument = true;
+        for (std::size_t j = k + 1; j < end;) {
+            if (ts.tokens[at[j]].type == token_type::comma) {
+                if (want_argument) { return std::nullopt; }
+                want_argument = true;
+                ++j;
+                continue;
+            }
+            const std::optional<piece> p = take(ts, at, j);
+            if (!want_argument || !p || args.size() == sig->most) { return std::nullopt; }
+            const char kind = sig->kinds[std::min(args.size(), sig->kinds.size() - 1)];
+            const token_type type = p->token->type;
+            std::optional<std::string> one;
+            if (kind == 'n' && type != token_type::percentage) {
+                one = typed(*p, want::number, none);
+            } else if (kind == 'p') {
+                one = typed(*p, want::number, none);
+            } else if (kind == 'a') {
+                one = typed(*p, want::angle, none);
+            } else if (kind == 'L') {
+                one = typed(*p, want::length, none);
+            } else if (kind == 'l') {
+                one = typed(*p, want::length_percentage, none);
+            } else if (kind == 'd' && type == token_type::ident) {
+                if (ascii_iequals(p->text, "none")) { one = "none"; }
+            } else if (kind == 'd' && !(type == token_type::dimension && p->token->number < 0)) {
+                one = typed(*p, want::length, none);
+            }
+            if (!one) { return std::nullopt; }
+            args.push_back(std::move(*one));
+            want_argument = false;
+            j = p->next;
+        }
+        if ((want_argument && !args.empty()) || args.size() < sig->least) { return std::nullopt; }
+        std::string joined;
+        for (const std::string & one : args) { joined += (joined.empty() ? "" : ", ") + one; }
+        out += (out.empty() ? "" : " ") + std::string{written} + "(" + joined + ")";
+        k = whole->next;
+    }
+    if (out.empty()) { return std::nullopt; }
+    return out;
+}
+
 // The origin: horizontal, vertical and an optional depth, with the keywords
 // placed on their axes.
 struct origin {
@@ -332,6 +420,8 @@ bool match_transform_property(std::string_view property, const token_stream & ts
         answer = scale(ts, at, {});
     } else if (ascii_iequals(property, "translate")) {
         answer = translate(ts, at, {});
+    } else if (ascii_iequals(property, "transform")) {
+        answer = transform_list(ts, at);
     } else if (ascii_iequals(property, "transform-origin")) {
         const std::optional<origin> o = read_origin(ts, at, {});
         if (o) {

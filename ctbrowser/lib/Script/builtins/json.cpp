@@ -439,7 +439,11 @@ struct json_writer {
         if (count >= 1) { state.gap.assign(static_cast<std::size_t>(count), ' '); }
     } else if (space.is_string()) {
         const std::string & text = static_cast<const string_object *>(space.as_heap())->text;
-        state.gap = text.substr(0, std::min<std::size_t>(10, text.size()));
+        // The first ten CODE UNITS (25.5.2.1 step 9.b), a split pair leaving
+        // its lone half.
+        state.gap =
+            utf16::slice(text, utf16::locate(text, 0),
+                         utf16::locate(text, std::min<std::size_t>(10, utf16::length(text))));
     }
     return true;
 }

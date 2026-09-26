@@ -58,6 +58,7 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
         cx.throw_error("TypeError", "attachShadow: the receiver is not an Element");
         return value::undefined();
     }
+    if (!shadow_registry_option(cx, host, init)) { return value::undefined(); }
     // DOM 4.8 step 3: a custom element whose definition (looked up by name
     // and `is`, upgraded or not) lists "shadow" in disabledFeatures cannot
     // host one - checked before the existing-root rules below.

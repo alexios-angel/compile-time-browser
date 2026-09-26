@@ -17,8 +17,6 @@ namespace {
 
 constexpr std::string_view base64_alphabet =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-constexpr std::string_view base64url_alphabet =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 enum class chunk_handling : std::uint8_t {
     loose,
@@ -160,28 +158,9 @@ struct decode_result {
 
 [[nodiscard]] std::string to_base64(const std::vector<std::uint8_t> & bytes, bool url,
                                     bool omit_padding) {
-    const std::string_view alphabet = url ? base64url_alphabet : base64_alphabet;
-    std::string out;
-    out.reserve((bytes.size() + 2) / 3 * 4);
-    for (std::size_t i = 0; i < bytes.size(); i += 3) {
-        const unsigned b0 = bytes[i];
-        const unsigned b1 = i + 1 < bytes.size() ? bytes[i + 1] : 0;
-        const unsigned b2 = i + 2 < bytes.size() ? bytes[i + 2] : 0;
-        const unsigned triple = (b0 << 16) | (b1 << 8) | b2;
-        out += alphabet[(triple >> 18) & 0x3F];
-        out += alphabet[(triple >> 12) & 0x3F];
-        if (i + 1 < bytes.size()) {
-            out += alphabet[(triple >> 6) & 0x3F];
-        } else if (!omit_padding) {
-            out += '=';
-        }
-        if (i + 2 < bytes.size()) {
-            out += alphabet[triple & 0x3F];
-        } else if (!omit_padding) {
-            out += '=';
-        }
-    }
-    return out;
+    return base64_encode(
+        std::string_view{reinterpret_cast<const char *>(bytes.data()), bytes.size()}, url,
+        omit_padding);
 }
 
 // GetOptionsObject: undefined is no options, an object is the options, and

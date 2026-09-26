@@ -792,7 +792,7 @@ void dom_bindings::install_selection(context & cx) {
         });
     ctor->define("prototype", proto_value, script::attr_none);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
-    cx.define_global("Selection", value::object(ctor));
+    cx.define_builtin_global("Selection", value::object(ctor));
 
     // THE PAGE'S SELECTION, made now, of this document.
     auto * selection = cx.allocate<script::object_object>();
@@ -895,6 +895,129 @@ void dom_bindings::install_selection(context & cx) {
         on->set("getSelection", value::object(method));
         on->set_attrs("getSelection", script::attr_builtin);
     }
+}
+
+// AN EDITING HOST THAT GAINS FOCUS GETS A CARET, where every browser puts one
+// (selection/contenteditable/initial-selection-on-focus.tentative.html): if
+// the document's selection is not already inside the host, it collapses at
+// the host's FIRST CARET POSITION - the first text node's first visible
+// character, before the first <br>, or, when an element the caret cannot
+// enter (contenteditable=false, a replaced or form control) comes first, the
+// start of the block it sits in; the host's start when there is none of these.
+//
+// ponytail: "visible" is read from the markup - leading white space of a text
+// node collapses unless an ancestor up to the host is <pre>/<textarea> or says
+// `white-space: pre|pre-wrap|break-spaces` in its style attribute - not from
+// computed style, which may not have been recomputed since the host's content
+// changed.
+void dom_bindings::place_caret_on_focus(node_id element) {
+    if (cx_ == nullptr || !element) { return; }
+    node_id at_node;
+    std::size_t at_offset = 0;
+    {
+        const auto txn = doc_->read();
+        if (txn.kind(element).value_or(node_kind::text) != node_kind::element) { return; }
+        const atom editable = atoms_->intern("contenteditable");
+        const std::string state = ascii_lower_copy(txn.attribute_value(element, editable));
+        if (!txn.has_attribute(element, editable) ||
+            (!state.empty() && state != "true" && state != "plaintext-only")) {
+            return;
+        }
+        const auto named = [&](node_id id, std::initializer_list<std::string_view> names) {
+            if (txn.element_ns(id) != node_ns::html) { return false; }
+            const std::string_view local = txn.local_name(id);
+            return std::ranges::find(names, local) != names.end();
+        };
+        const auto atomic = [&](node_id id) {
+            return ascii_lower_copy(txn.attribute_value(id, editable)) == "false" ||
+                   txn.element_ns(id) != node_ns::html ||
+                   named(id, {"input", "img", "hr", "textarea", "select", "button", "video",
+                              "audio", "iframe", "object", "embed", "canvas", "meter", "progress"});
+        };
+        const auto block_of = [&](node_id id) {
+            for (node_id up = txn.parent(id); up && up != element; up = txn.parent(up)) {
+                if (named(up, {"p",    "div",     "li",      "ul",      "ol",       "h1",
+                               "h2",   "h3",      "h4",      "h5",      "h6",       "blockquote",
+                               "pre",  "section", "article", "table",   "td",       "th",
+                               "dd",   "dt",      "dl",      "address", "header",   "footer",
+                               "main", "nav",     "aside",   "figure",  "fieldset", "form"})) {
+                    return up;
+                }
+            }
+            return element;
+        };
+        const auto preserves_space = [&](node_id text) {
+            for (node_id up = txn.parent(text); up; up = txn.parent(up)) {
+                if (named(up, {"pre", "textarea", "listing", "plaintext"})) { return true; }
+                const std::string style =
+                    ascii_lower_copy(txn.attribute_value(up, atoms_->intern("style")));
+                if (const std::size_t found = style.find("white-space");
+                    found != std::string::npos) {
+                    const std::string_view rest = std::string_view{style}.substr(found);
+                    return rest.find("pre-wrap") != std::string_view::npos ||
+                           rest.find("break-spaces") != std::string_view::npos ||
+                           (rest.find("pre") != std::string_view::npos &&
+                            rest.find("pre-line") == std::string_view::npos);
+                }
+                if (up == element) { break; }
+            }
+            return false;
+        };
+        const auto index_in_parent = [&](node_id id) {
+            const std::span<const node_id> row = txn.children(txn.parent(id));
+            return static_cast<std::size_t>(std::ranges::find(row, id) - row.begin());
+        };
+        const auto first = [&](auto && self, node_id at) -> bool {
+            for (const node_id child : txn.children(at)) {
+                const node_kind kind = txn.kind(child).value_or(node_kind::comment);
+                if (is_text_kind(kind)) {
+                    const std::string_view data = txn.text(child);
+                    std::size_t skip = 0;
+                    if (!preserves_space(child)) {
+                        while (skip < data.size() &&
+                               (data[skip] == ' ' || data[skip] == '\t' || data[skip] == '\n' ||
+                                data[skip] == '\r' || data[skip] == '\f')) {
+                            ++skip;
+                        }
+                    }
+                    if (skip >= data.size()) { continue; }
+                    at_node = child;
+                    at_offset = skip; // ASCII white space: a byte is a code unit
+                    return true;
+                }
+                if (kind != node_kind::element) { continue; }
+                if (named(child, {"br"})) {
+                    at_node = at;
+                    at_offset = index_in_parent(child);
+                    return true;
+                }
+                if (atomic(child)) {
+                    at_node = block_of(child);
+                    at_offset = 0;
+                    return true;
+                }
+                if (self(self, child)) { return true; }
+            }
+            return false;
+        };
+        if (!first(first, element)) {
+            at_node = element;
+            at_offset = 0;
+        }
+    }
+    context & c = *cx_;
+    const value selection = call_on(c, document_, "getSelection", {});
+    if (!selection.is_object()) { return; }
+    // Already inside the host: focus keeps the caret where the page put it.
+    if (context::to_number(c.lookup_property(selection, "rangeCount")) > 0) {
+        const node_id anchor = handle_of(c.lookup_property(selection, "anchorNode"));
+        const auto txn = doc_->read();
+        for (node_id up = anchor; up; up = txn.parent(up)) {
+            if (up == element) { return; }
+        }
+    }
+    (void)call_on(c, selection, "collapse",
+                  {wrap(c, at_node), value::number(static_cast<double>(at_offset))});
 }
 
 } // namespace ctbrowser::shell

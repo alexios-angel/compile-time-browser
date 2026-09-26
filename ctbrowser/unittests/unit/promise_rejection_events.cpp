@@ -56,7 +56,8 @@ void test_events() {
 // "Delayed handling": the notification task is queued at the END of the
 // rejecting script's microtask checkpoint, so a task that script queued - the
 // WPT's queueTask is a <details> toggle - runs first and attaches its handler
-// in time, while a task queued from THAT task is too late.
+// in time, while a task queued from THAT task is too late. Each checkpoint
+// takes the list as it stands into a task of its own.
 void test_task_delayed_handling() {
     browser page{browser_options{400, 300}};
     page.load_html(R"html(<!doctype html><html><body><script>
@@ -71,6 +72,9 @@ void test_task_delayed_handling() {
         }
         addEventListener('unhandledrejection', ev => seen.push('unhandled:' + ev.reason.message));
         const early = Promise.reject(new Error('early'));
+        // An event the script dispatches is no checkpoint: the stack is not
+        // empty (testharness aborts a signal at the end of every test).
+        new AbortController().abort();
         queueTask(() => early.catch(() => {}));
         const late = Promise.reject(new Error('late'));
         queueTask(() => queueTask(() => late.catch(() => {})));

@@ -618,13 +618,21 @@ constexpr pair_grammar pair_grammars[] = {
     return simplify_math(text);
 }
 
-// The comma-separated items of a value, each a run of significant tokens.
+// The comma-separated items of a value, each a run of significant tokens -
+// a comma inside a function's or a block's parentheses is the item's own.
 // `nullopt` for an empty item - a leading, trailing or doubled comma.
 [[nodiscard]] std::optional<std::vector<std::vector<std::size_t>>> comma_items(
     const token_stream & ts, const scan & found) {
     std::vector<std::vector<std::size_t>> items{{}};
+    int depth = 0;
     for (const std::size_t i : found.significant) {
-        if (ts.tokens[i].type == token_type::comma) {
+        const token_type type = ts.tokens[i].type;
+        if (type == token_type::function || type == token_type::open_paren) {
+            ++depth;
+        } else if (type == token_type::close_paren && depth > 0) {
+            --depth;
+        }
+        if (depth == 0 && type == token_type::comma) {
             if (items.back().empty()) { return std::nullopt; }
             items.emplace_back();
             continue;
@@ -726,6 +734,588 @@ constexpr pair_grammar pair_grammars[] = {
         return std::nullopt;
     }
     return out;
+}
+
+// `[ <family-name> | <generic-family> ]#` (CSS Fonts 4 §2.1): a family is a
+// string or a run of identifiers, none of them a generic family or a
+// CSS-wide keyword - `cursive serif` is no family - and a generic family is
+// one identifier, which is ASCII case-insensitive and folds (`Serif` is
+// `serif`). Anything else between the commas - `Red/Black`, `test@foo`, a
+// string with a word after it - is invalid. serialize_font_family writes it.
+[[nodiscard]] std::optional<std::string> font_family(const token_stream & ts, const scan & found) {
+    static constexpr std::string_view generics =
+        "serif sans-serif cursive fantasy monospace system-ui emoji math fangsong ui-serif "
+        "ui-sans-serif ui-monospace ui-rounded";
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return std::nullopt; }
+    std::string out;
+    for (const std::vector<std::size_t> & item : *items) {
+        std::string one;
+        if (item.size() == 1 && ts.tokens[item[0]].type == token_type::string) {
+            one = normalize_value_tokens(ts, ts.text_of(ts.tokens[item[0]]), nullptr, item[0],
+                                         item[0] + 1);
+        } else {
+            for (const std::size_t at : item) {
+                const css_token & t = ts.tokens[at];
+                if (t.type != token_type::ident) { return std::nullopt; }
+                const std::string_view word = ts.text_of(t);
+                if (item.size() == 1 && has_keyword(generics, word)) {
+                    one = ascii_lower_copy(word);
+                    break;
+                }
+                if (has_keyword(generics, word) || is_wide_keyword(word) ||
+                    ascii_iequals(word, "default")) {
+                    return std::nullopt;
+                }
+                one += (one.empty() ? "" : " ") + std::string{word};
+            }
+        }
+        out += (out.empty() ? "" : ", ") + one;
+    }
+    return serialize_font_family(out);
+}
+
+// A four-character ASCII <string>, the OpenType tag of a feature or an axis
+// (CSS Fonts 4 §6.12, §7.2); its canonical spelling, or nullopt.
+[[nodiscard]] std::optional<std::string> opentype_tag(const token_stream & ts,
+                                                      const css_token & t) {
+    if (t.type != token_type::string) { return std::nullopt; }
+    const std::string_view tag = ts.value_of(t);
+    if (tag.size() != 4) { return std::nullopt; }
+    for (const char c : tag) {
+        if (c < 0x20 || c > 0x7e) { return std::nullopt; }
+    }
+    return "\"" + std::string{tag} + "\"";
+}
+
+// `normal | <feature-tag-value>#`, <feature-tag-value> = <opentype-tag>
+// [ <integer [0,∞]> | on | off ]? (CSS Fonts 4 §6.12): a value of 1 - `on`
+// or none at all - is left unwritten, and `off` is 0.
+[[nodiscard]] std::optional<std::string> font_feature_settings(const token_stream & ts,
+                                                               const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.size() == 1 && ts.tokens[at[0]].type == token_type::ident &&
+        ascii_iequals(ts.text_of(ts.tokens[at[0]]), "normal")) {
+        return "normal";
+    }
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return std::nullopt; }
+    std::string out;
+    for (const std::vector<std::size_t> & item : *items) {
+        if (item.empty() || item.size() > 2) { return std::nullopt; }
+        std::optional<std::string> tag = opentype_tag(ts, ts.tokens[item[0]]);
+        if (!tag) { return std::nullopt; }
+        std::string value;
+        if (item.size() == 2) {
+            const css_token & v = ts.tokens[item[1]];
+            if (v.type == token_type::ident && ascii_iequals(ts.text_of(v), "on")) {
+                value.clear();
+            } else if (v.type == token_type::ident && ascii_iequals(ts.text_of(v), "off")) {
+                value = "0";
+            } else if (v.type == token_type::number && (v.flags & flag_integer) != 0 &&
+                       v.number >= 0) {
+                value = v.number == 1 ? std::string{} : serialize_number(v.number);
+            } else {
+                return std::nullopt;
+            }
+        }
+        out += (out.empty() ? "" : ", ") + *tag + (value.empty() ? "" : " " + value);
+    }
+    return out;
+}
+
+// `normal | [ <opentype-tag> <number> ]#` (CSS Fonts 4 §7.2).
+[[nodiscard]] std::optional<std::string> font_variation_settings(const token_stream & ts,
+                                                                 const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.size() == 1 && ts.tokens[at[0]].type == token_type::ident &&
+        ascii_iequals(ts.text_of(ts.tokens[at[0]]), "normal")) {
+        return "normal";
+    }
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return std::nullopt; }
+    std::string out;
+    for (const std::vector<std::size_t> & item : *items) {
+        if (item.size() != 2) { return std::nullopt; }
+        std::optional<std::string> tag = opentype_tag(ts, ts.tokens[item[0]]);
+        const css_token & v = ts.tokens[item[1]];
+        if (!tag || v.type != token_type::number) { return std::nullopt; }
+        out += (out.empty() ? "" : ", ") + *tag + " " + serialize_number(v.number);
+    }
+    return out;
+}
+
+// `normal | light | dark | <palette-identifier> | <palette-mix()>` (CSS
+// Fonts 4 §9.1), a <palette-identifier> being a <dashed-ident>.
+[[nodiscard]] std::optional<std::string> font_palette(const token_stream & ts, const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.empty()) { return std::nullopt; }
+    const css_token & first = ts.tokens[at[0]];
+    if (first.type == token_type::function && ascii_iequals(ts.text_of(first), "palette-mix(")) {
+        return std::string{run_text(ts, at)};
+    }
+    if (at.size() != 1 || first.type != token_type::ident) { return std::nullopt; }
+    const std::string_view word = ts.text_of(first);
+    if (ascii_iequals_any(word, {"normal", "light", "dark"})) { return ascii_lower_copy(word); }
+    if (word.starts_with("--")) { return std::string{word}; }
+    return std::nullopt;
+}
+
+// `symbols( <symbols-type>? <string>+ )` (CSS Counter Styles 3 §6.1, without
+// the <image> alternative engines leave out): two symbols at least for
+// `numeric` and `alphabetic`, and `additive` is no type here. `inner` is the
+// significant tokens between the parentheses.
+[[nodiscard]] bool symbols_valid(const token_stream & ts, std::span<const std::size_t> inner) {
+    std::size_t first = 0;
+    std::size_t least = 1;
+    if (!inner.empty() && ts.tokens[inner[0]].type == token_type::ident) {
+        const std::string kind = ascii_lower_copy(ts.text_of(ts.tokens[inner[0]]));
+        if (!has_keyword("cyclic numeric alphabetic symbolic fixed", kind)) { return false; }
+        if (kind == "numeric" || kind == "alphabetic") { least = 2; }
+        first = 1;
+    }
+    for (std::size_t i = first; i < inner.size(); ++i) {
+        if (ts.tokens[inner[i]].type != token_type::string) { return false; }
+    }
+    return inner.size() - first >= least;
+}
+
+// `<counter-style> | <string> | none` (CSS Lists 3 §3.3): one identifier,
+// one string, or one symbols() - checked only; the freeform path writes it.
+[[nodiscard]] bool list_style_type_valid(const token_stream & ts, const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.size() == 1) {
+        const token_type t = ts.tokens[at[0]].type;
+        return t == token_type::ident || t == token_type::string;
+    }
+    if (at.size() < 2 || ts.tokens[at[0]].type != token_type::function ||
+        !ascii_iequals(ts.text_of(ts.tokens[at[0]]), "symbols(") ||
+        ts.tokens[at.back()].type != token_type::close_paren) {
+        return false;
+    }
+    return symbols_valid(ts, std::span{at}.subspan(1, at.size() - 2));
+}
+
+// `[ <cursor-image> [ <x> <y> ]? , ]* <cursor-predefined>` (CSS UI 4 §4.1),
+// a <cursor-image> being a url(), an image-set(), or a light-dark() of two -
+// no gradient - and <x> <y> two numbers. Only the grammar: the freeform path
+// writes the value.
+[[nodiscard]] bool cursor_valid(const token_stream & ts, const scan & found) {
+    static constexpr std::string_view predefined =
+        "auto default none context-menu help pointer progress wait cell crosshair text "
+        "vertical-text alias copy move no-drop not-allowed grab grabbing e-resize n-resize "
+        "ne-resize nw-resize s-resize se-resize sw-resize w-resize ew-resize ns-resize "
+        "nesw-resize nwse-resize col-resize row-resize all-scroll zoom-in zoom-out";
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return false; }
+    const auto name_of = [&](std::size_t i) {
+        std::string name = ascii_lower_copy(ts.text_of(ts.tokens[i]));
+        if (!name.empty() && name.back() == '(') { name.pop_back(); }
+        return name;
+    };
+    // The index in `item` past the image starting at `k`, or 0 when none is.
+    const auto image_end = [&](const std::vector<std::size_t> & item, std::size_t k) {
+        const css_token & t = ts.tokens[item[k]];
+        if (t.type == token_type::url) { return k + 1; }
+        if (t.type != token_type::function) { return std::size_t{0}; }
+        const std::string name = name_of(item[k]);
+        int depth = 0;
+        std::size_t close = k;
+        for (; close < item.size(); ++close) {
+            const token_type type = ts.tokens[item[close]].type;
+            if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+            if (type == token_type::close_paren && --depth == 0) { break; }
+        }
+        if (close >= item.size()) { return std::size_t{0}; }
+        if (ascii_iequals_any(name, {"url", "image-set", "-webkit-image-set"})) {
+            return close + 1;
+        }
+        if (name != "light-dark") { return std::size_t{0}; }
+        // Each of its two arguments a url() or an image-set() alone.
+        std::size_t at = k + 1, args = 0;
+        while (at < close) {
+            const css_token & a = ts.tokens[item[at]];
+            if (a.type == token_type::url) {
+                ++at;
+            } else if (a.type == token_type::function &&
+                       ascii_iequals_any(name_of(item[at]), {"url", "image-set"})) {
+                int inner = 0;
+                for (; at < close; ++at) {
+                    const token_type type = ts.tokens[item[at]].type;
+                    if (type == token_type::function || type == token_type::open_paren) { ++inner; }
+                    if (type == token_type::close_paren && --inner == 0) { break; }
+                }
+                ++at;
+            } else {
+                return std::size_t{0};
+            }
+            ++args;
+            if (at < close && ts.tokens[item[at]].type == token_type::comma) { ++at; }
+        }
+        return args == 2 ? close + 1 : std::size_t{0};
+    };
+    for (std::size_t n = 0; n < items->size(); ++n) {
+        const std::vector<std::size_t> & item = (*items)[n];
+        if (n + 1 == items->size()) {
+            if (item.size() != 1 || ts.tokens[item[0]].type != token_type::ident) { return false; }
+            const std::string word = ascii_lower_copy(ts.text_of(ts.tokens[item[0]]));
+            return has_keyword(predefined, word) || word.starts_with("-webkit-");
+        }
+        const std::size_t past = image_end(item, 0);
+        if (past == 0) { return false; }
+        const std::size_t rest = item.size() - past;
+        if (rest != 0 && rest != 2) { return false; }
+        for (std::size_t k = past; k < item.size(); ++k) {
+            if (ts.tokens[item[k]].type != token_type::number) { return false; }
+        }
+    }
+    return false;
+}
+
+// `none | [ grow | shrink ] [ consistent | per-line | per-line-all ]?
+// <percentage>?` (CSS Text 4 §10.1).
+[[nodiscard]] std::optional<std::string> text_fit(const token_stream & ts, const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    const auto word = [&](std::size_t i) {
+        const css_token & t = ts.tokens[at[i]];
+        return t.type == token_type::ident ? ascii_lower_copy(ts.text_of(t)) : std::string{};
+    };
+    if (at.empty() || at.size() > 3) { return std::nullopt; }
+    if (at.size() == 1 && word(0) == "none") { return "none"; }
+    if (word(0) != "grow" && word(0) != "shrink") { return std::nullopt; }
+    std::string out = word(0);
+    std::size_t k = 1;
+    if (k < at.size() && !word(k).empty() &&
+        has_keyword("consistent per-line per-line-all", word(k))) {
+        out += " " + word(k++);
+    }
+    if (k < at.size() && ts.tokens[at[k]].type == token_type::percentage) {
+        out += " " + serialize_number(ts.tokens[at[k++]].number) + "%";
+    }
+    if (k != at.size()) { return std::nullopt; }
+    return out;
+}
+
+// A <'position-area'> as position-try-fallbacks lists it (CSS Anchor
+// Positioning 1 §3.1): one or two keywords of one grammar - x with y, block
+// with inline, self-block with self-inline, or two axis-free ones - with
+// `center` and `span-all` fitting any, the horizontal or block keyword
+// written first and a repeated one once. Lowercase words in.
+[[nodiscard]] std::optional<std::string> position_area(std::vector<std::string> words) {
+    const auto family = [](std::string_view w) {
+        if (w == "center" || w == "span-all") { return 0; }
+        static constexpr std::pair<std::string_view, int> sets[] = {
+            {"left right span-left span-right x-start x-end span-x-start span-x-end self-x-start "
+             "self-x-end span-self-x-start span-self-x-end",
+             1},
+            {"top bottom span-top span-bottom y-start y-end span-y-start span-y-end self-y-start "
+             "self-y-end span-self-y-start span-self-y-end",
+             2},
+            {"block-start block-end span-block-start span-block-end", 3},
+            {"inline-start inline-end span-inline-start span-inline-end", 4},
+            {"self-block-start self-block-end span-self-block-start span-self-block-end", 5},
+            {"self-inline-start self-inline-end span-self-inline-start span-self-inline-end", 6},
+            {"start end span-start span-end", 7},
+            {"self-start self-end span-self-start span-self-end", 8}};
+        for (const auto & [set, id] : sets) {
+            if (has_keyword(set, w)) { return id; }
+        }
+        return -1;
+    };
+    if (words.empty() || words.size() > 2) { return std::nullopt; }
+    for (const std::string & w : words) {
+        if (family(w) < 0) { return std::nullopt; }
+    }
+    if (words.size() == 1) { return words[0]; }
+    const int a = family(words[0]), b = family(words[1]);
+    // 1 pairs with 2, 3 with 4, 5 with 6; the axis-free ones with their own.
+    const auto partner = [](int f) {
+        return f >= 1 && f <= 6 ? ((f % 2) != 0 ? f + 1 : f - 1) : f;
+    };
+    if (a != 0 && b != 0 && partner(a) != b) { return std::nullopt; }
+    if (a == 2 || a == 4 || a == 6 || b == 1 || b == 3 || b == 5) { std::swap(words[0], words[1]); }
+    if (words[0] == words[1]) { return words[0]; }
+    return words[0] + " " + words[1];
+}
+
+// `none | [ [ <dashed-ident> || <try-tactic> ] | <'position-area'> ]#` (CSS
+// Anchor Positioning 1 §5.2), a <try-tactic> being flip-block, flip-inline,
+// flip-start, flip-x and flip-y, each once: written with the name first and
+// the tactics in the author's order.
+[[nodiscard]] std::optional<std::string> position_try_fallbacks(const token_stream & ts,
+                                                                const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.size() == 1 && ts.tokens[at[0]].type == token_type::ident &&
+        ascii_iequals(ts.text_of(ts.tokens[at[0]]), "none")) {
+        return "none";
+    }
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return std::nullopt; }
+    std::string out;
+    for (const std::vector<std::size_t> & item : *items) {
+        std::string name;
+        std::vector<std::string> tactics, words;
+        for (const std::size_t i : item) {
+            if (ts.tokens[i].type != token_type::ident) { return std::nullopt; }
+            const std::string_view word = ts.text_of(ts.tokens[i]);
+            if (word.starts_with("--")) {
+                if (!name.empty()) { return std::nullopt; }
+                name = std::string{word};
+                continue;
+            }
+            const std::string lower = ascii_lower_copy(word);
+            if (has_keyword("flip-block flip-inline flip-start flip-x flip-y", lower)) {
+                if (std::ranges::find(tactics, lower) != tactics.end()) { return std::nullopt; }
+                tactics.push_back(lower);
+            } else {
+                words.push_back(lower);
+            }
+        }
+        std::string one;
+        if (!words.empty()) {
+            if (!name.empty() || !tactics.empty()) { return std::nullopt; }
+            const std::optional<std::string> area = position_area(words);
+            if (!area) { return std::nullopt; }
+            one = *area;
+        } else {
+            one = name;
+            for (const std::string & t : tactics) { one += (one.empty() ? "" : " ") + t; }
+        }
+        out += (out.empty() ? "" : ", ") + one;
+    }
+    return out;
+}
+
+// `normal | none | [ <content-replacement> | <content-list> ] [ / [ <string> |
+// <counter> | <attr()> ]+ ]?` (CSS Generated Content 3 §2), with counter() and
+// counters() as CSS Lists 3 §4 writes them and symbols() as CSS Counter Styles 3
+// §6.1 does. Only the grammar: the freeform path writes the value.
+[[nodiscard]] bool content_valid(const token_stream & ts, const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    const auto type_of = [&](std::size_t k) { return ts.tokens[at[k]].type; };
+    const auto name_of = [&](std::size_t k) {
+        std::string name = ascii_lower_copy(ts.text_of(ts.tokens[at[k]]));
+        if (!name.empty() && name.back() == '(') { name.pop_back(); }
+        return name;
+    };
+    // The position in `at` of the `)` closing the block opened at `open` -
+    // `at.size()` when the value ends first, which closes it.
+    const auto close_of = [&](std::size_t open) {
+        int depth = 0;
+        for (std::size_t k = open; k < at.size(); ++k) {
+            const token_type t = type_of(k);
+            if (t == token_type::function || t == token_type::open_paren) {
+                ++depth;
+            } else if (t == token_type::close_paren && --depth == 0) {
+                return k;
+            }
+        }
+        return at.size();
+    };
+    // The comma-separated arguments of the function at `open`, as positions.
+    const auto args_of = [&](std::size_t open, std::size_t close) {
+        std::vector<std::vector<std::size_t>> args{{}};
+        for (std::size_t k = open + 1; k < close; ++k) {
+            if (type_of(k) == token_type::comma) {
+                args.emplace_back();
+                continue;
+            }
+            const std::size_t end = type_of(k) == token_type::function ? close_of(k) : k;
+            for (std::size_t j = k; j <= end && j < close; ++j) { args.back().push_back(j); }
+            k = end;
+        }
+        return args;
+    };
+    const auto single_ident = [&](const std::vector<std::size_t> & arg) {
+        return arg.size() == 1 && type_of(arg[0]) == token_type::ident;
+    };
+    const auto symbols_ok = [&](std::size_t open, std::size_t close) {
+        return symbols_valid(ts, std::span{at}.subspan(open + 1, close - open - 1));
+    };
+    // counter( <counter-name>, <counter-style>? ) and counters( <counter-name>,
+    // <string>, <counter-style>? ).
+    const auto counter_ok = [&](std::size_t open, std::size_t close) {
+        const bool plural = name_of(open) == "counters";
+        const std::vector<std::vector<std::size_t>> args = args_of(open, close);
+        const std::size_t fixed = plural ? 2 : 1;
+        if (args.size() < fixed || args.size() > fixed + 1 || !single_ident(args[0])) {
+            return false;
+        }
+        if (plural && (args[1].size() != 1 || type_of(args[1][0]) != token_type::string)) {
+            return false;
+        }
+        if (args.size() == fixed) { return true; }
+        const std::vector<std::size_t> & style = args[fixed];
+        if (single_ident(style)) {
+            return name_of(style[0]) != "none" && !is_wide_keyword(name_of(style[0]));
+        }
+        return !style.empty() && type_of(style[0]) == token_type::function &&
+               name_of(style[0]) == "symbols" && close_of(style[0]) == style.back() &&
+               symbols_ok(style[0], style.back());
+    };
+    if (at.size() == 1 && type_of(0) == token_type::ident &&
+        ascii_iequals_any(name_of(0), {"normal", "none"})) {
+        return true;
+    }
+    bool alt = false;
+    std::size_t items = 0;
+    for (std::size_t k = 0; k < at.size(); ++k) {
+        const token_type t = type_of(k);
+        if (t == token_type::delim && ts.text_of(ts.tokens[at[k]]) == "/") {
+            if (alt || items == 0) { return false; }
+            alt = true;
+            items = 0;
+            continue;
+        }
+        ++items;
+        if (t == token_type::string) { continue; }
+        if (t == token_type::function) {
+            const std::size_t close = close_of(k);
+            const std::string name = name_of(k);
+            if (name == "counter" || name == "counters") {
+                if (!counter_ok(k, close)) { return false; }
+            } else if (alt && name != "attr") {
+                return false;
+            }
+            k = close;
+            continue;
+        }
+        if (alt) { return false; }
+        if (t == token_type::url) { continue; }
+        if (t != token_type::ident ||
+            !has_keyword("open-quote close-quote no-open-quote no-close-quote contents",
+                         name_of(k))) {
+            return false;
+        }
+    }
+    return items > 0;
+}
+
+// `<easing-function>#` (CSS Easing 1 §2 and 2 §2), each written canonically:
+// `step-start` is `steps(1, start)`, `step-end` and an `end`/`jump-end` step
+// position are left unwritten, a cubic-bezier()'s x values lie in [0, 1], and
+// a steps() count is a positive integer - two or more for `jump-none`.
+// linear() is kept as written. Anything else - `auto`, `ease-in ease-out`,
+// `steps(2, ())` - is invalid (transition-timing-function-invalid).
+[[nodiscard]] std::optional<std::string> easing_list(const token_stream & ts, const scan & found) {
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return std::nullopt; }
+    std::string out;
+    for (const std::vector<std::size_t> & item : *items) {
+        const css_token & first = ts.tokens[item[0]];
+        std::string one;
+        if (item.size() == 1 && first.type == token_type::ident) {
+            const std::string word = ascii_lower_copy(ts.text_of(first));
+            if (word == "step-start") {
+                one = "steps(1, start)";
+            } else if (word == "step-end") {
+                one = "steps(1)";
+            } else if (has_keyword("linear ease ease-in ease-out ease-in-out", word)) {
+                one = word;
+            } else {
+                return std::nullopt;
+            }
+        } else if (first.type == token_type::function) {
+            const std::string name = ascii_lower_copy(ts.text_of(first));
+            // The function's arguments: the tokens after it, up to its `)`.
+            std::vector<std::vector<std::size_t>> args{{}};
+            std::size_t k = 1;
+            int depth = 1;
+            for (; k < item.size(); ++k) {
+                const css_token & t = ts.tokens[item[k]];
+                if (t.type == token_type::function || t.type == token_type::open_paren) {
+                    ++depth;
+                } else if (t.type == token_type::close_paren && --depth == 0) {
+                    break;
+                }
+                if (depth == 1 && t.type == token_type::comma) {
+                    args.emplace_back();
+                    continue;
+                }
+                args.back().push_back(item[k]);
+            }
+            if (k + 1 != item.size() && !(k == item.size() && depth > 0)) { return std::nullopt; }
+            const std::string_view whole = run_text(ts, item);
+            if (name == "linear(") {
+                one = std::string{whole};
+            } else if (name == "cubic-bezier(") {
+                if (args.size() != 4) { return std::nullopt; }
+                std::string numbers;
+                for (std::size_t i = 0; i < 4; ++i) {
+                    if (args[i].size() != 1) { return std::nullopt; }
+                    const css_token & n = ts.tokens[args[i][0]];
+                    if (n.type != token_type::number) { return std::nullopt; }
+                    if ((i == 0 || i == 2) && (n.number < 0 || n.number > 1)) {
+                        return std::nullopt;
+                    }
+                    // Every digit the author gave: the curve is evaluated
+                    // from this text, and `0.233333` for `0.2333333333` moves
+                    // an eased colour channel or a snapped width by one.
+                    std::array<char, 64> digits{};
+                    const double v = n.number == 0 ? 0.0 : n.number;
+                    const auto written = std::to_chars(digits.data(), digits.data() + digits.size(),
+                                                       v, std::chars_format::fixed);
+                    numbers += (i == 0 ? "" : ", ") + std::string(digits.data(), written.ptr);
+                }
+                one = "cubic-bezier(" + numbers + ")";
+            } else if (name == "steps(") {
+                if (args.empty() || args.size() > 2 || args[0].empty()) { return std::nullopt; }
+                std::string position = "end";
+                if (args.size() == 2) {
+                    if (args[1].size() != 1 || ts.tokens[args[1][0]].type != token_type::ident) {
+                        return std::nullopt;
+                    }
+                    position = ascii_lower_copy(ts.text_of(ts.tokens[args[1][0]]));
+                    if (!has_keyword("start end jump-start jump-end jump-none jump-both",
+                                     position)) {
+                        return std::nullopt;
+                    }
+                }
+                std::string count;
+                const css_token & n = ts.tokens[args[0][0]];
+                if (args[0].size() == 1 && n.type == token_type::number) {
+                    const double least = position == "jump-none" ? 2 : 1;
+                    if ((n.flags & flag_integer) == 0 || n.number < least) { return std::nullopt; }
+                    count = serialize_number(n.number);
+                } else if (n.type == token_type::function) {
+                    // A math function or a tree-counting one: its value is the
+                    // computed value's business.
+                    count = std::string{run_text(ts, args[0])};
+                } else {
+                    return std::nullopt;
+                }
+                const bool omitted = position == "end" || position == "jump-end";
+                one = "steps(" + count + (omitted ? "" : ", " + position) + ")";
+            } else {
+                return std::nullopt;
+            }
+        } else {
+            return std::nullopt;
+        }
+        out += (out.empty() ? "" : ", ") + one;
+    }
+    return out;
+}
+
+// `<length [0,∞]>{1,2}` (CSS Tables 3 §border-spacing): the horizontal
+// spacing and the vertical one, which is the horizontal when omitted - kept as
+// written, one value or two (border-spacing-valid).
+[[nodiscard]] std::optional<std::string> border_spacing(const token_stream & ts,
+                                                        const scan & found) {
+    static constexpr property_syntax spacing{"", k::length, "", "", false, true};
+    std::vector<std::string> parts;
+    for (std::size_t k = 0; k < found.significant.size(); ++k) {
+        std::string one;
+        if (match_typed(ts, ts.tokens[found.significant[k]], spacing, one)) {
+            parts.push_back(std::move(one));
+            continue;
+        }
+        std::optional<std::string> math = math_component(ts, found, k, numeric_type::length);
+        if (!math) { return std::nullopt; }
+        parts.push_back(std::move(*math));
+    }
+    if (parts.empty() || parts.size() > 2) { return std::nullopt; }
+    return parts.size() == 1 ? parts[0] : parts[0] + " " + parts[1];
 }
 
 // `auto | rect( [ <length> | auto ]#{4} )` (CSS Masking 1, the CSS 2.1
@@ -936,11 +1526,99 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
         handled = true;
         answer = clip_rect(ts, found);
     }
+    if (!handled && ascii_iequals(property, "border-spacing")) {
+        handled = true;
+        answer = border_spacing(ts, found);
+    }
+    // ...a family list or a tag list with a function in it - `random-item()`,
+    // `"liga" calc(10.1)` - is the function's to check, and the free-form path
+    // below keeps it.
+    const bool has_function = std::ranges::any_of(found.significant, [&ts](std::size_t i) {
+        return ts.tokens[i].type == token_type::function;
+    });
+    if (!handled && ascii_iequals(property, "font-family") && !has_function) {
+        handled = true;
+        answer = font_family(ts, found);
+    }
+    if (!handled &&
+        ascii_iequals_any(property, {"transition-timing-function", "animation-timing-function"})) {
+        handled = true;
+        answer = easing_list(ts, found);
+    }
+    if (!handled && !has_function && ascii_iequals(property, "font-feature-settings")) {
+        handled = true;
+        answer = font_feature_settings(ts, found);
+    }
+    if (!handled && !has_function && ascii_iequals(property, "font-variation-settings")) {
+        handled = true;
+        answer = font_variation_settings(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "font-palette")) {
+        handled = true;
+        answer = font_palette(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "cursor") && !cursor_valid(ts, found)) {
+        handled = true;
+    }
+    if (!handled && ascii_iequals(property, "text-fit")) {
+        handled = true;
+        answer = text_fit(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "position-try-fallbacks")) {
+        handled = true;
+        answer = position_try_fallbacks(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "list-style-type") &&
+        !list_style_type_valid(ts, found)) {
+        handled = true;
+    }
+    // `content` is only checked here; the freeform path writes a valid one.
+    if (!handled && ascii_iequals(property, "content") && !content_valid(ts, found)) {
+        handled = true;
+    }
     if (!handled) { return false; }
     out = answer.value_or(std::string{});
     return true;
 }
 
 } // namespace detail
+
+std::string computed_offset_rotate(std::string_view specified, bool keep_auto) {
+    bool automatic = false;
+    double degrees = 0;
+    for (const std::string_view raw : split_top_level(specified, html_whitespace)) {
+        const std::string_view word = trim(raw, html_whitespace);
+        if (word.empty()) { continue; }
+        if (ascii_iequals(word, "auto")) {
+            automatic = true;
+        } else if (ascii_iequals(word, "reverse")) {
+            automatic = true;
+            degrees += 180;
+        } else {
+            const math_answer answer = evaluate_math(word, length_context{});
+            if (answer.outcome != math_outcome::resolved || answer.value.is_number ||
+                answer.value.type != numeric_type::angle) {
+                return {};
+            }
+            degrees += answer.value.px;
+        }
+    }
+    const std::string angle = serialize_number(degrees) + "deg";
+    if (!automatic) { return angle; }
+    if (keep_auto && degrees == 0) { return "auto"; }
+    return "auto " + angle;
+}
+
+std::optional<std::string_view> font_width_percentage(std::string_view keyword) {
+    static constexpr std::pair<std::string_view, std::string_view> table[] = {
+        {"ultra-condensed", "50%"},  {"extra-condensed", "62.5%"}, {"condensed", "75%"},
+        {"semi-condensed", "87.5%"}, {"normal", "100%"},           {"semi-expanded", "112.5%"},
+        {"expanded", "125%"},        {"extra-expanded", "150%"},   {"ultra-expanded", "200%"}};
+    keyword = trim(keyword, html_whitespace);
+    for (const auto & [name, percentage] : table) {
+        if (ascii_iequals(name, keyword)) { return percentage; }
+    }
+    return std::nullopt;
+}
 
 } // namespace ctbrowser::style::css

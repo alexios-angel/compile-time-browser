@@ -350,45 +350,6 @@ struct decoded {
     return out;
 }
 
-// --- the bytes behind a BufferSource ---------------------------------------
-
-// An ArrayBuffer carries its bytes in `__bytes`; a view answers `buffer`,
-// `byteOffset` and `byteLength`, and ASKING for `buffer` is what moves an
-// owning typed array's elements into a store (see
-// lib/Script/builtins/collections/typed_arrays/internal.hpp), so this one path
-// takes every shape - Uint8Array, Float32Array, DataView, ArrayBuffer.
-[[nodiscard]] bool buffer_source_bytes(context & c, value source, std::vector<std::uint8_t> & out) {
-    if (!source.is_object_like()) { return false; }
-    const auto copy = [&out](script::array_object * store, std::size_t from, std::size_t count) {
-        out.clear();
-        // Reserve only what can actually be copied, never `count`: a view's
-        // byteLength/byteOffset are read off the source OBJECT, so a crafted
-        // `{buffer, byteLength: 2**53}` would otherwise reserve() a huge block
-        // and abort the process. The copy loop below is already store-bounded.
-        const std::size_t available = from < store->items.size() ? store->items.size() - from : 0;
-        out.reserve(std::min(count, available));
-        for (std::size_t i = from; i < from + count && i < store->items.size(); ++i) {
-            out.push_back(static_cast<std::uint8_t>(
-                static_cast<std::uint32_t>(context::to_number(store->items[i])) & 0xFFu));
-        }
-    };
-    if (const value own = c.lookup_property(source, "__bytes"); own.is_array()) {
-        auto * store = static_cast<script::array_object *>(own.as_heap());
-        copy(store, 0, store->items.size());
-        return true;
-    }
-    const value buffer = c.lookup_property(source, "buffer");
-    if (!buffer.is_object_like()) { return false; }
-    const value store_value = c.lookup_property(buffer, "__bytes");
-    if (!store_value.is_array()) { return false; }
-    auto * store = static_cast<script::array_object *>(store_value.as_heap());
-    const double offset = context::to_number(c.lookup_property(source, "byteOffset"));
-    const double length = context::to_number(c.lookup_property(source, "byteLength"));
-    if (!(offset >= 0) || !(length >= 0)) { return false; }
-    copy(store, static_cast<std::size_t>(offset), static_cast<std::size_t>(length));
-    return true;
-}
-
 // --- the two interfaces ------------------------------------------------------
 
 [[nodiscard]] script::object_object * branded(context & c, std::string_view slot,
@@ -400,21 +361,6 @@ struct decoded {
         return nullptr;
     }
     return obj;
-}
-
-struct interface_pair {
-    script::native_object * ctor;
-    script::object_object * proto;
-};
-
-[[nodiscard]] interface_pair make_interface(context & cx, const char * name) {
-    auto * proto = cx.allocate<script::object_object>();
-    auto * ctor = cx.allocate<script::native_object>(name, script::native_fn{});
-    ctor->define("prototype", value::object(proto), script::attr_none);
-    proto->define("constructor", value::object(ctor), script::attr_builtin);
-    proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
-    cx.define_global(name, value::object(ctor));
-    return {ctor, proto};
 }
 
 void install_text_encoder(context & cx) {
@@ -639,6 +585,45 @@ void install_text_decoder(context & cx) {
 void install_encoding(context & cx) {
     install_text_encoder(cx);
     install_text_decoder(cx);
+}
+
+// --- the bytes behind a BufferSource ---------------------------------------
+
+// An ArrayBuffer carries its bytes in `__bytes`; a view answers `buffer`,
+// `byteOffset` and `byteLength`, and ASKING for `buffer` is what moves an
+// owning typed array's elements into a store (see
+// lib/Script/builtins/collections/typed_arrays/internal.hpp), so this one path
+// takes every shape - Uint8Array, Float32Array, DataView, ArrayBuffer.
+bool buffer_source_bytes(context & c, value source, std::vector<std::uint8_t> & out) {
+    if (!source.is_object_like()) { return false; }
+    const auto copy = [&out](script::array_object * store, std::size_t from, std::size_t count) {
+        out.clear();
+        // Reserve only what can actually be copied, never `count`: a view's
+        // byteLength/byteOffset are read off the source OBJECT, so a crafted
+        // `{buffer, byteLength: 2**53}` would otherwise reserve() a huge block
+        // and abort the process. The copy loop below is already store-bounded.
+        const std::size_t available = from < store->items.size() ? store->items.size() - from : 0;
+        out.reserve(std::min(count, available));
+        for (std::size_t i = from; i < from + count && i < store->items.size(); ++i) {
+            out.push_back(static_cast<std::uint8_t>(
+                static_cast<std::uint32_t>(context::to_number(store->items[i])) & 0xFFu));
+        }
+    };
+    if (const value own = c.lookup_property(source, "__bytes"); own.is_array()) {
+        auto * store = static_cast<script::array_object *>(own.as_heap());
+        copy(store, 0, store->items.size());
+        return true;
+    }
+    const value buffer = c.lookup_property(source, "buffer");
+    if (!buffer.is_object_like()) { return false; }
+    const value store_value = c.lookup_property(buffer, "__bytes");
+    if (!store_value.is_array()) { return false; }
+    auto * store = static_cast<script::array_object *>(store_value.as_heap());
+    const double offset = context::to_number(c.lookup_property(source, "byteOffset"));
+    const double length = context::to_number(c.lookup_property(source, "byteLength"));
+    if (!(offset >= 0) || !(length >= 0)) { return false; }
+    copy(store, static_cast<std::size_t>(offset), static_cast<std::size_t>(length));
+    return true;
 }
 
 } // namespace ctbrowser::shell

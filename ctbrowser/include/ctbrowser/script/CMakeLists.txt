@@ -10,6 +10,7 @@ target_sources(ctbrowser-script PUBLIC FILE_SET HEADERS FILES
   script.hpp
   source_lines.hpp
   type_record.hpp
+  utf16.hpp
   value.hpp
   vm.hpp
 )

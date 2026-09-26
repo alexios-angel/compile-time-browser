@@ -14,6 +14,189 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The outage batch: GC pins, UTF-16 strings, testdriver — 2026-09-26
+
+Six pieces of work built and gated on the devbox while `/mnt/c` was
+returning EIO, then committed as `30be59df`..`6011bf8d`. Each row was
+measured at the tree of the commit named in its column heading, against
+the one before it. Same instrument as round eleven: WPT `3f6b09ae`, devbox,
+four workers, 4 GB cap, deterministic GL; test262 four workers, 10 s, 2 GB.
+The corpus was re-fetched between `5ca8e8a1` and `acc14107` ("The
+instrument, widened" below), so that column's subtests include files that
+ran for the first time.
+
+| suite | `5ca8e8a1` | GC + WebIDL `acc14107` | UTF-16 `1a6285ad` | `::before` `6f4d39b8` | DOM `1ba73740` | testdriver `db57406e` | activation `6011bf8d` |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `css` files | 2,168 | 2,169 | 2,169 | 2,170 | 2,170 | 2,187 | **2,187** |
+| `html` files | 835 | 837 | 839 | 839 | 840 | 861 | **869** |
+| `dom` files | 409 | 415 | 422 | 422 | 424 | 436 | **436** |
+| `shadow-dom` files | 100 | 100 | 100 | 100 | 100 | 107 | **107** |
+| `custom-elements` files | 119 | 119 | 119 | 119 | 119 | 119 | **119** |
+| `domparsing` files | 24 | 24 | 24 | 24 | 24 | 24 | **24** |
+| `selection` files | 57 | 57 | 57 | 57 | 57 | 69 | **69** |
+| `url` files | 40 | 41 | 41 | 41 | 41 | 41 | **41** |
+| **WPT files PASS** | 3,752 | 3,762 | 3,771 | 3,772 | 3,775 | 3,844 | **3,852** |
+| **WPT subtests PASS** | 281,702 | 282,861 | 283,232 | 283,295 | 283,308 | 289,613 | **289,748** |
+| runnable files | 5,155 | 5,155 | 5,155 | 5,155 | 5,155 | 5,609 | **5,609** |
+| test262 (ran) | 48,057 | 48,062 | 48,110 | 48,110 | 48,110 | — | — |
+
+**Zero WPT files lost at any step, and no test262 file.** (test262 was not
+re-run for the last two: they touch no script semantics.) Per step:
+
+- **The GC pin** (`a516032e`). `native_scope` pinned everything allocated
+  since the OUTERMOST native began; testharness.js runs each test body
+  through `Function.prototype.apply`, so a body's garbage lived as long as
+  the body - the six `dom/nodes/NodeList-static-length-getter-tampered-*`
+  (4 CRASH, 2 TIMEOUT) reached the 4 GB cap. A native now pins what it
+  allocated itself and what its script callees returned to it
+  (`reference/header-contracts/script-vm-gc.md`); all six pass, and so do
+  `document-write/032.html` and `css/css-values/viewport-units-keyframes`.
+- **Every suite under ASan.** Narrowing the pin exposed C++ holding values
+  across calls into script with nothing rooting them. All eight WPT suites
+  and all of test262 ran on an ASan+UBSan build (`cmake --preset asan`, the
+  ASan `ctdrive` as `run-wpt.py --driver`, `ASAN_OPTIONS=log_path=`). Fixed:
+  `make_generator`'s eager prologue, `iterable_values`' proxy and
+  array-like branches, a frame's CSS animation records (marked nowhere),
+  `apply_canvas_font`'s view of a temporary, the tree builder's
+  `declarative_shadow_root` pointer into the open-element stack (52 pages)
+  and `lone_value` reading past `eof` (257 pages). Afterwards css, html,
+  dom, shadow-dom and custom-elements ran with zero sanitizer reports and
+  test262 48,060 with none. The full ASan tree is 24 GB and filled the
+  devbox once: build only `ctbrowser-tool-ctdrive ctbrowser-tool-ct262`.
+- **WebIDL shapes and the globals** (`1f182f77`, `acc14107`).
+  `url/idlharness.any.js` 77 of 77 (41): operations enumerable with
+  `length` = required arguments and a TypeError for too few
+  (`set_operation`), setters' `length` 1, interface objects' `length`,
+  `webkitURL`; and an interface object or intrinsic is no longer an
+  enumerable global (`realm_record::builtin`). Of this column's +1,159
+  subtests, 540 are the six idlharness files the re-fetch made runnable,
+  496 the six `event-handler-attributes-*` that read
+  `/interfaces/html.idl`.
+- **Strings are UTF-16** (`2b710a0d`, `1a6285ad`). Length and every index
+  a script sees are code units over the same WTF-8 storage
+  (`script/utf16.hpp`). It moved the four `dom/ranges/Range-mutations-*Data`
+  files, `Range-selectNode`, `Node-properties`, `document.title-05.html`
+  and `atob/base64.any.js` (380 of 380: btoa and atob are isomorphic, and
+  throw a DOMException). With the indices right, p5's Friendly Error
+  System walks its 4.5 MB source through `charCodeAt` 5.7 million times
+  (0.42 million before) and each call built two `current_stack()`
+  strings: `p5_ratchet` went 110 s → 338 s. `context::stack_mark` (frame
+  depth + innermost `ip`) replaced them: `p5_ratchet` 72.7 s, `p5_api`
+  1.1 s (6.7), `babylon_ratchet` 5.3 s (11.3), serially on the devbox.
+- **`::before` and `::after` boxes** (`6f4d39b8`): css +1 file, +63
+  subtests; six subtests PASS → FAIL inside files that already failed, each
+  an accidental pass (a `0px` → `auto` transition read 0 when the pseudo
+  box did not exist). Details in `css-conformance.md`.
+- **DOM** (`1ba73740`): submit/reset stop at their form
+  (`Event-dispatch-single-activation-behavior` 132/132), checkbox
+  pre-activation, a spec UTF-8 decoder, `HTMLCollection-as-prototype`.
+- **testdriver** (`db57406e`). `run-wpt.py` skipped every file that loads
+  testdriver.js; they run now, and runnable went 5,155 → 5,609.
+  `tools/wpt/testdriver-vendor.js`, installed over the corpus's at every
+  run, implements `click`, `send_keys` and `action_sequence` by queueing
+  ctdrive input steps that the run loop replays; the rest of testdriver
+  still rejects. Files PASS +69, subtests +6,305 (shadow-dom's alone
+  +6,019); `selftest/testdriver.html` proves the input arrives trusted. **Runnable is 5,609 from here on: compare files
+  PASS across this line, not pass rates.**
+- **User activation** (`6011bf8d`): HTML 6.4.3's transient and sticky
+  activation from trusted mousedown/keydown, `navigator.userActivation`,
+  and `showPicker()` on `<input>`/`<select>` - html +8 files
+  (`show-picker-*`), +135 subtests.
+
+## Round eleven and the root's VM work — 2026-09-26
+
+Round eleven (CSS3, HTML3, DOM3, T262-3; the CSS and DOM agents were cut
+off by a usage limit after their last green gate and their branches merged
+whole) plus the root's commits since `b9c6662e`, measured at `5ca8e8a1`.
+Same instrument: WPT `3f6b09ae`, devbox, four workers, 4 GB cap,
+deterministic GL; test262 four workers, 10 s, 2 GB.
+
+| suite | files PASS `b9c6662e` → `5ca8e8a1` | subtests PASS `b9c6662e` → `5ca8e8a1` |
+|---|---:|---:|
+| `css` | 2,041 → **2,168** | 90,003 → **98,450** |
+| `html` | 814 → **835** | 74,214 → **74,387** |
+| `dom` | 408 → **409** | 52,396 → **52,407** |
+| `shadow-dom` | 98 → **100** | 8,637 → **8,642** |
+| `custom-elements` | 88 → **119** | 3,584 → **3,945** |
+| `domparsing` | 24 → **24** | 704 → **704** |
+| `selection` | 57 → **57** | 33,638 → **33,638** |
+| `url` | 39 → **40** | 9,269 → **9,529** |
+| **WPT total** | 3,569 → **3,752** (+183) | 272,445 → **281,702** |
+| test262 (ran) | 47,425 → **48,057** (+632) | — |
+
+**Zero files lost** in any suite, WPT or test262. What moved it: CSS3's 53
+commits (a frame's style sheets are the frame's, `shape()` and path
+interpolation, 3D transforms computed as `matrix3d`, grid tracks
+interpolated track by track, shorthands split into their longhands, and a
+long tail of grammars - `css-conformance.md`); HTML3's form submission through
+the form algorithm, Fetch's Headers/Request/Response, XHR decoding and
+`<area>`; DOM3's scoped custom element registries and the parser
+constructing custom elements; T262-3's immutable bindings, `super` and
+`new.target` in direct eval, computed class fields and the rest
+(`test262.md`); and the root's event-loop ordering (`promise-rejection-
+events.html` 32 → 40 of 43), `import()` rejecting, module namespaces,
+a script's `var` non-configurable, and strings counting toward collection
+(`document-write/032.html` no longer aborts at the 4 GB cap).
+
+**The instrument, widened (2026-09-26).** `fetch-wpt.sh` now checks out
+`/interfaces/` and `/fetch/data-urls/resources/` and makes wptserve's
+`/resources/WebIDLParser.js` alias. Seven idlharness files that were
+HARNESS_ERROR ran for the first time at `5ca8e8a1`: `css/cssom` 263/497
+subtests, `css/cssom-view` 167/417, `css/css-conditional` 32/45,
+`container-queries` 14/28, `css/css-cascade` 23/34, `url` 41/77 (all
+FAIL), and `selection/idlharness.window.js` TIMEOUT; `html/webappapis/atob/
+base64.any.js` went 285/286 → 317/380. The table above predates the
+re-fetch; the next measurement includes them.
+
+## Rounds eight to ten, Temporal and direct eval — 2026-09-25
+
+Eight suites and the whole of test262, measured at the session's start
+(`c246c9b5`) and at the round-ten merge (`b9c6662e`). Same instrument
+throughout: WPT `3f6b09ae`, the devbox, four workers, a 4 GB cap per
+driver, `CTBROWSER_GL_DRIVER=deterministic`; test262 four workers, 10 s,
+2 GB.
+
+| suite | files PASS `c246c9b5` → `b9c6662e` | of runnable | subtests PASS `c246c9b5` → `b9c6662e` |
+|---|---:|---:|---:|
+| `css` | 1,648 → **2,041** | 2,926 | 71,216 → **90,003** |
+| `html` | 706 → **814** | 1,149 | 73,567 → **74,214** |
+| `dom` | 387 → **408** | 504 | 51,827 → **52,396** |
+| `shadow-dom` | 66 → **98** | 182 | 8,545 → **8,637** |
+| `custom-elements` | 70 → **88** | 180 | 3,471 → **3,584** |
+| `domparsing` | 17 → **24** | 69 | 327 → **704** |
+| `selection` | 41 → **57** | 96 | 33,332 → **33,638** |
+| `url` | 39 → **39** | 49 | 9,269 → **9,269** |
+| **WPT total** | 2,974 → **3,569** (+595) | 5,155 | 251,554 → **272,445** |
+| test262 (ran) | 42,009 → **47,425** (+5,416) | 49,377 | — |
+
+Between them, the round-nine merge (`178a634f`) and its fixes (`42839a4d`)
+measured css 1,882 files / 88,957 subtests, html 777, dom 401, shadow-dom
+95, custom-elements 76, domparsing 21, selection 52 (the `m-m4` run), and
+test262 42,416 at `178a634f`.
+
+What moved it: rounds eight to ten (four worktree agents each: CSS, HTML
+forms, DOM/custom elements/shadow DOM, test262 built-ins and language),
+merged and gated by the root; **Temporal** (0 → 4,603 of 4,603 runnable
+`built-ins/Temporal` files: ISO calendar, UTC and fixed-offset zones,
+exact `__int128` arithmetic, RFC 9557 parsing, relative rounding - see
+`test262.md`); and in the root's own areas a frame realm's `Function` and
+`eval`, `reportError` at the calling window, timer IDL conversions,
+`queueMicrotask` exceptions reported at the callback's window, and
+immutable `NaN`/`Infinity`/`undefined` on every global.
+
+**Files lost, `c246c9b5` → `b9c6662e`, each named:**
+`css/css-values/random-item-in-container-query.tentative.html` (handed to
+round eleven's CSS agent) and `css/cssom/serialize-values.html` (open),
+`dom/events/EventListener-handleEvent-cross-realm.html` and
+`html/.../promise-rejection-events-iframe.html` (frame realms: the
+listener's and the rejection's global), and four test262 files - Array.from
+closing its iterator (fixed at `2f073d06`), two `instanceof` with a
+primitive left side whose right side is `Function.prototype` (it is not
+callable in this engine), and `superclass-static-method-override.js`.
+
+Direct eval (`e764b92c`) took test262 to **47,431**, and the fixes on top
+of it to **47,525 at `2123355a`** (+94, zero lost) - see `test262.md`.
+
 ## Background shorthand and strict String conversion — 2026-09-18
 
 Full `css/` replay at `fd54d8b1`: **1,647/2,926 runnable files PASS,

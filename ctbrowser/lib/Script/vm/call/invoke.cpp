@@ -134,6 +134,7 @@ value context::invoke(value callable, std::span<const value> args, value this_va
     // meant the body was entered as an ordinary frame and its first `yield` had
     // no generator to suspend into.
     if (target.is_generator) { return make_generator(fnobj, this_value, args); }
+    callout_scope callout{*this};
 
     const std::size_t new_base = registers_.size();
     // EVERY argument lands in a register, not just the declared ones. Two
@@ -178,7 +179,7 @@ value context::invoke(value callable, std::span<const value> args, value this_va
             *this, target, callable, registers_.data() + new_base, new_base,
             static_cast<std::uint32_t>(args.size()), this_value, constructing, produced)) {
         if (registers_.size() >= new_base) { registers_.resize(new_base); }
-        return produced;
+        return callout.returned(produced);
     }
     if (frames_.size() > 512) {
         throw_error("RangeError", "Maximum call stack size exceeded");
@@ -204,7 +205,7 @@ value context::invoke(value callable, std::span<const value> args, value this_va
     // Only shrink back if nothing below is still using the space - a nested
     // call that grew the stack further has already returned by now.
     if (registers_.size() >= new_base) { registers_.resize(new_base); }
-    return out;
+    return callout.returned(out);
 }
 
 // Where a plain call's callee CAME FROM. A method call knows its name outright;
@@ -337,12 +338,17 @@ value context::iterable_values(value v) {
     // nothing. Callers must not mutate what they get.
     if (v.is_array()) { return v; }
     if (v.is_string()) {
-        // A string iterates by CHARACTER. The index loop already did this through
-        // `length`, and doing it here too means spread and for-of agree.
+        // A string iterates by CODE POINT (22.1.5.1): a surrogate pair is one
+        // element and a lone surrogate one of its own - exactly the WTF-8
+        // sequences the text is made of, one decode_utf8 step each. Spread and
+        // for-of both come here, so they agree.
         value out = make_array();
         auto * items = static_cast<array_object *>(out.as_heap());
-        for (const char c : static_cast<string_object *>(v.as_heap())->text) {
-            items->items.push_back(string(std::string{c}));
+        const std::string text = static_cast<string_object *>(v.as_heap())->text;
+        for (std::size_t at = 0; at < text.size();) {
+            const std::size_t from = at;
+            (void)decode_utf8(text, at);
+            items->items.push_back(string(text.substr(from, at - from)));
         }
         return out;
     }
@@ -359,6 +365,7 @@ value context::iterable_values(value v) {
         const value length = lookup_property(v, "length");
         if (!length.is_number()) { return make_array(); }
         value out = make_array();
+        const rooted keep{*this, out}; // each `get` trap is page code, and can collect
         auto * items = static_cast<array_object *>(out.as_heap());
         const auto count = static_cast<std::size_t>(std::max(0.0, to_number(length)));
         for (std::size_t i = 0; i < count && i < 1u << 24; ++i) {
@@ -460,6 +467,7 @@ value context::iterable_values(value v) {
     // is what a NodeList, `arguments` and a page's own collection look like.
     if (value * length = obj->find("length"); length != nullptr && length->is_number()) {
         value out = make_array();
+        const rooted keep{*this, out}; // an index can be a getter
         auto * items = static_cast<array_object *>(out.as_heap());
         const auto count = static_cast<std::size_t>(std::max(0.0, to_number(*length)));
         for (std::size_t i = 0; i < count && i < 1u << 24; ++i) {
@@ -529,7 +537,9 @@ value context::get_iterator(value v) {
     }
     const value iterator = call(method, {}, v);
     if (throw_pending()) { return value::undefined(); }
-    if (!iterator.is_object()) {
+    // ANY OBJECT - a proxy, a function, an array - not only an ordinary one
+    // (7.4.2 GetIteratorFromMethod step 3: "is not an Object").
+    if (!iterator.is_object_like()) {
         throw_error("TypeError", "Result of the Symbol.iterator method is not an object");
         return value::undefined();
     }
@@ -544,7 +554,7 @@ value context::iterator_step(value iterator, value next, bool & done) {
     }
     const value result = call(next, {}, iterator);
     if (throw_pending()) { return value::undefined(); }
-    if (!result.is_object()) {
+    if (!result.is_object_like()) {
         throw_error("TypeError", "Iterator result is not an object");
         return value::undefined();
     }

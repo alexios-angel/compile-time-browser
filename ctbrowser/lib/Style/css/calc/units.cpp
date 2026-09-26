@@ -32,6 +32,8 @@ constexpr std::string_view known_units[] = {
 [[nodiscard]] const css_token * lone_value(const token_stream & tokens) {
     std::size_t at = 0;
     while (tokens.tokens[at].type == token_type::whitespace) { ++at; }
+    // Empty text is no value, and there is nothing past its `eof` to read.
+    if (tokens.tokens[at].type == token_type::eof) { return nullptr; }
     std::size_t after = at + 1;
     while (tokens.tokens[after].type == token_type::whitespace) { ++after; }
     if (tokens.tokens[after].type != token_type::eof) { return nullptr; }

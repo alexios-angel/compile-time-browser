@@ -504,7 +504,10 @@ void install_array_iteration(context & cx, native_object * array_ctor,
                     keyed.emplace_back(c.to_string(item), item);
                 }
             }
-            std::ranges::stable_sort(keyed, {}, &std::pair<std::string, value>::first);
+            // CODE UNIT order (23.1.3.30.2 via IsLessThan), not the bytes'.
+            std::ranges::stable_sort(keyed, [](const auto & x, const auto & y) {
+                return utf16::compare(x.first, y.first) < 0;
+            });
             work.clear();
             for (const auto & [key, item] : keyed) { work.push_back(item); }
             work.resize(work.size() + undefined_count, value::undefined());

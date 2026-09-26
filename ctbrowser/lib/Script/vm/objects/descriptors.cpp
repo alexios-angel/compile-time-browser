@@ -328,17 +328,17 @@ bool context::own_property(value target, const std::string & name, property_desc
     }
 
     if (target.is_string()) {
-        const std::string & text = static_cast<string_object *>(target.as_heap())->text;
+        const auto & str = *static_cast<const string_object *>(target.as_heap());
         if (name == "length") {
             // 10.4.3.5: a String exotic object's length is { false, false, false }.
-            out = property_descriptor::data(value::number(static_cast<double>(text.size())),
+            out = property_descriptor::data(value::number(static_cast<double>(str.length())),
                                             attr_none);
             out.virtual_slot = true;
             return true;
         }
         std::uint32_t at = 0;
-        if (object_object::array_index_key(name, at) && at < text.size()) {
-            out = property_descriptor::data(string(std::string{text[at]}), attr_enumerable);
+        if (object_object::array_index_key(name, at) && at < str.length()) {
+            out = property_descriptor::data(string(str.unit_text(at)), attr_enumerable);
             out.virtual_slot = true;
             return true;
         }
@@ -386,6 +386,7 @@ bool context::own_property(value target, const std::string & name, property_desc
             return true;
         }
         if (name == "prototype") {
+            if (method_without_prototype(*closure)) { return false; }
             const value made = ensure_prototype(target);
             if (made.is_undefined()) { return false; } // an arrow has none
             out = property_descriptor::data(made, attr_writable);

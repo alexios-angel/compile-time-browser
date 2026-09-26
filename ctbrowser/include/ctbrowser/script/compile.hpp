@@ -1,6 +1,9 @@
 #pragma once
 #include <span>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include <ctbrowser/script/bytecode.hpp>
 
@@ -42,6 +45,51 @@
 
 namespace ctbrowser::script {
 
+// A BINDING THAT CANNOT BE ASSIGNED, and what an assignment to one does
+// (9.1.1.1.5 SetMutableBinding step 5). Decided where the write is compiled:
+// the compiler knows which binding a name resolves to, so the refusal costs
+// nothing on any other write. A direct eval is handed it for each of its
+// caller's bindings, so `eval("x = 1")` refuses a `const x` as the caller would.
+enum class immutability : std::uint8_t {
+    none,
+    // CreateImmutableBinding(N, true): `const`, `using`, an import, a class's
+    // own name inside its body - every assignment is the TypeError.
+    strict,
+    // CreateImmutableBinding(N, false): a named function expression's own
+    // name (15.2.5) - the TypeError in strict code, and in sloppy code the
+    // assignment does nothing at all.
+    sloppy,
+};
+
+// WHERE AN EVAL'S SOURCE RUNS (19.2.1.1 PerformEval steps 4-7 and 12):
+// what it may say that a program may not, and whether it is strict before
+// any directive of its own. An indirect eval is all false. A direct eval
+// answers for the function whose `this` it shares - the nearest one that is
+// not an arrow - so `new.target` is refused outside a function, `super.x`
+// outside a method, `super()` outside a derived constructor and `arguments`
+// in a class field initialiser.
+struct eval_site {
+    bool strict = false;
+    bool in_function = false;
+    bool in_method = false;
+    bool in_derived_constructor = false;
+    bool in_class_field_initializer = false;
+    // The private names of the classes around the eval (step 7.c's
+    // PrivateEnvironment): each spelling, `#x`, and the key the caller's
+    // compiler gave it - so `eval('this.#x')` reads the caller's field.
+    std::vector<std::pair<std::string, std::string>> private_names;
+};
+
+// ONE BINDING A DIRECT EVAL'S CALLER HANDS IT: the name, whether it can be
+// assigned, and whether it is a `let`, `const` or `class` of the caller's own
+// function - which a sloppy eval's `var` may not share a name with (19.2.1.3
+// step 3: the var would hoist through it).
+struct eval_binding {
+    std::string name;
+    immutability readonly = immutability::none;
+    bool lexical = false;
+};
+
 // WHICH KIND OF SCRIPT THIS IS, which decides where its top-level declarations
 // go.
 //
@@ -65,13 +113,15 @@ public:
     // `eval`'s shape: the program RETURNS the value of a trailing expression
     // statement (its completion value, 16.1.6 step 12 for the common case),
     // so `eval("1 + 1")` is 2. Otherwise the same classic script.
-    [[nodiscard]] static program compile_for_eval(std::string_view source);
+    // `site` is an indirect eval's - all false - unless the caller says.
+    [[nodiscard]] static program compile_for_eval(std::string_view source,
+                                                  const eval_site & site = {});
     // A DIRECT eval's source (19.2.1.1 PerformEval with direct = true): as
     // compile_for_eval, with the caller's bindings `outer` visible as the
-    // entry function's upvalues, in that order, and the caller's strictness.
+    // entry function's upvalues, in that order, and where it was written.
     [[nodiscard]] static program compile_for_direct_eval(std::string_view source,
-                                                         std::span<const std::string> outer,
-                                                         bool strict);
+                                                         std::span<const eval_binding> outer,
+                                                         const eval_site & site);
 };
 
 // WHETHER THIS BUILD FILLS `function_proto::locals` AND `code_offsets`.

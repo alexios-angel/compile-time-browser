@@ -33,9 +33,11 @@ namespace ctbrowser {
 
 // The bytes of a document as UTF-8, decoded by the NAME `prescan_encoding`
 // or the label table gave (13.2.3.1's "decode"): a BOM is dropped, an
-// unmapped byte is U+FFFD, "replacement" is one U+FFFD for the whole stream.
-// A name this engine has no decoder for - the multi-byte legacy encodings -
-// or "UTF-8" itself returns the bytes as they are.
+// unmapped byte is U+FFFD, "replacement" is one U+FFFD for the whole stream,
+// and UTF-8 goes through the Encoding Standard's decoder - each malformed
+// sequence one U+FFFD - so what reaches the tokenizer is well-formed. A name
+// this engine has no decoder for - the multi-byte legacy encodings - returns
+// the bytes as they are.
 [[nodiscard]] std::string decode_document_bytes(std::string_view bytes, std::string_view name);
 
 // "Extract a character encoding from a meta element", HTML 2.7.5: the

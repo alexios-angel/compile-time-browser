@@ -88,11 +88,29 @@ void test_the_prescan_reads_an_xml_declaration() {
 
 void test_the_bytes_are_decoded_by_name() {
     // windows-1251 0xE6 is U+0436; ISO-8859-7 0xE6 is U+03B6; an unmapped
-    // byte is U+FFFD; UTF-8 passes through minus its BOM; UTF-16 pairs up.
+    // byte is U+FFFD; UTF-8 comes through minus its BOM; UTF-16 pairs up.
     CHECK_EQ(decode_document_bytes("a\xE6", "windows-1251"), std::string{"a\xD0\xB6"});
     CHECK_EQ(decode_document_bytes("a\xE6", "ISO-8859-7"), std::string{"a\xCE\xB6"});
     CHECK_EQ(decode_document_bytes("\xAA", "windows-1253"), std::string{"\xEF\xBF\xBD"});
     CHECK_EQ(decode_document_bytes("\xEF\xBB\xBF\xD0\xB6", "UTF-8"), std::string{"\xD0\xB6"});
+    // UTF-8 IS DECODED, not passed through (Encoding 4.2): each malformed
+    // sequence is one U+FFFD and the byte that broke it is read again - so a
+    // surrogate's three bytes are three, a cut-short sequence one.
+    CHECK_EQ(decode_document_bytes("a\xFF"
+                                   "b",
+                                   "UTF-8"),
+             std::string{"a\xEF\xBF\xBD"
+                         "b"});
+    CHECK_EQ(decode_document_bytes("\xE2\x82"
+                                   "A",
+                                   "UTF-8"),
+             std::string{"\xEF\xBF\xBD"
+                         "A"});
+    CHECK_EQ(decode_document_bytes("\xED\xA0\x80", "UTF-8"),
+             std::string{"\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD"});
+    CHECK_EQ(decode_document_bytes("\xC0\xAF", "UTF-8"), std::string{"\xEF\xBF\xBD\xEF\xBF\xBD"});
+    CHECK_EQ(decode_document_bytes("\xF0\x9F\x98", "UTF-8"), std::string{"\xEF\xBF\xBD"});
+    CHECK_EQ(decode_document_bytes("\xF0\x9F\x98\x80", "UTF-8"), std::string{"\xF0\x9F\x98\x80"});
     CHECK_EQ(
         decode_document_bytes(std::string_view{"\xFF\xFE\x36\x04\x3D\xD8\x00\xDC", 8}, "UTF-16LE"),
         std::string{"\xD0\xB6\xF0\x9F\x90\x80"});

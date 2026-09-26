@@ -142,8 +142,19 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
     // module's helpers into one namespace - and, more visibly, make
     // `export function f() {}` unpublishable, because find_local would not
     // know the name.
+    // THE SCRIPT'S VAR, a global - unless this is a direct eval's program
+    // and its caller binds the name: the eval's var-scoped function is that
+    // binding (19.2.1.3 step 8, B.3.2.3), as its `var` is (compile_stmt).
+    const auto write_script_var = [&] {
+        if (const int up = resolve_upvalue(0, n.text); up >= 0) {
+            proto().emit(instruction{op::set_upvalue, static_cast<std::uint16_t>(up), r});
+        } else {
+            proto().emit(
+                instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
+        }
+    };
     if (script_top_level) {
-        proto().emit(instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
+        write_script_var();
     } else {
         emit_write(n.text, r);
         // B.3.3.1 step 1.a.ii.3 / B.3.3.2 step 1.a.ii.3: when the declaration
@@ -155,8 +166,7 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
             std::find(fn().annex_b_decls.begin(), fn().annex_b_decls.end(), idx) !=
                 fn().annex_b_decls.end()) {
             if (script_scope) {
-                proto().emit(
-                    instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
+                write_script_var();
             } else if (const auto it = fn().local_index.find(n.text);
                        it != fn().local_index.end() && it->second.size() >= 2) {
                 const local & outer = fn().locals[it->second.front()];
@@ -186,6 +196,8 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     frames_.emplace_back();
     frames_.back().proto = index;
     frames_.back().is_strict = strict;
+    frames_.back().has_home = method_pending_;
+    method_pending_ = false;
     out_.functions[index].is_strict = strict;
     // A BODY IS NOT THE DECLARATION THAT HOLDS IT: `const f = function () {
     // typo = 1; }` writes `typo` as an assignment, whatever `f` is.
@@ -342,9 +354,24 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     // in register i: taking a register ahead of them would shift every
     // argument by one. A parameter of the same name legitimately shadows
     // this binding, so one is only made when no parameter claimed the name.
-    if (n.kind == vp::nk::func_expr && !out_.functions[index].name.empty() &&
+    if (n.kind == vp::nk::func_expr && idx != default_function_ &&
+        !out_.functions[index].name.empty() &&
         find_local_in_current_scope(out_.functions[index].name) == nullptr) {
         const std::uint16_t self = declare_local(out_.functions[index].name);
+        // CreateImmutableBinding(name, false) (15.2.5 step 4): `me = 1` in
+        // the body is ignored in sloppy code and the TypeError in strict.
+        // A NAME THE NODE DOES NOT CARRY is a class member's: a constructor's
+        // is the class's own name, immutable in its body (class_bindings_).
+        // A method binds no name at all (15.4.4), so ITS local is a known
+        // deviation - `foo` inside method `foo` reads the method - left
+        // mutable, and in place because removing it changes the bytecode of
+        // every class method, which ctcompile's proofs are pinned to.
+        if (!n.text.empty()) {
+            fn().locals.back().readonly = immutability::sloppy;
+        } else if (!class_bindings_.empty() &&
+                   class_bindings_.back().name == out_.functions[index].name) {
+            fn().locals.back().readonly = immutability::strict;
+        }
         proto().emit(instruction{op::load_callee, self});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, self}); }
     }
@@ -358,6 +385,14 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         fn().locals.back().boxed = true;
         proto().emit(instruction{op::load_false, flag});
         proto().emit(instruction{op::new_cell, flag});
+    }
+    // THE new.target ITS ARROWS SEE - see new_target_local.
+    if (!out_.functions[index].is_arrow && is_captured(new_target_local) &&
+        arrow_wants_new_target(n.a, false)) {
+        const std::uint16_t held = declare_local(std::string{new_target_local});
+        fn().locals.back().boxed = true;
+        proto().emit(instruction{op::load_new_target, held});
+        proto().emit(instruction{op::new_cell, held});
     }
     // Declarations are hoisted to the top of the body BEFORE any nested
     // function is compiled. Without this, a nested function DECLARATION

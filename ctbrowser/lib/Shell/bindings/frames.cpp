@@ -545,7 +545,7 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
             });
         ctor->set("prototype", cx.lookup_property(cx.global(name), "prototype"));
         frame_window->set(name, value::object(ctor));
-        cx.define_global(name, value::object(ctor));
+        cx.define_builtin_global(name, value::object(ctor));
     }
     // Listening at THIS window: a frame script's `addEventListener("load", f)`
     // hears the frame's load, not the page's.
@@ -596,11 +596,16 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
         }
         wrapper->define("length", value::number(1), script::attr_configurable);
         wrapper->define("name", cx.string(name), script::attr_configurable);
-        cx.define_global(name, value::object(wrapper));
+        cx.define_builtin_global(name, value::object(wrapper));
     }
 }
 
 dom_bindings & dom_bindings::bindings_of(value window) {
+    dom_bindings * found = find_bindings_of(window);
+    return found != nullptr ? *found : primary();
+}
+
+dom_bindings * dom_bindings::find_bindings_of(value window) {
     const auto find = [window](const auto & self, dom_bindings & at) -> dom_bindings * {
         if (at.window_view_.is_heap() && at.window_view_.as_heap() == window.as_heap()) {
             return &at;
@@ -611,9 +616,7 @@ dom_bindings & dom_bindings::bindings_of(value window) {
         }
         return nullptr;
     };
-    dom_bindings & top = primary();
-    dom_bindings * found = window.is_heap() ? find(find, top) : nullptr;
-    return found != nullptr ? *found : top;
+    return window.is_heap() ? find(find, primary()) : nullptr;
 }
 
 dom_bindings * dom_bindings::bindings_owning(value wrapper) {

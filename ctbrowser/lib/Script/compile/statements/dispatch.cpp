@@ -53,6 +53,13 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             }
             const std::uint32_t mark = reg_mark();
             const std::uint16_t r = alloc_reg();
+            // `export default function f() {}` DECLARES f (16.2.3.7): inside
+            // it, `f` is that module binding, which `f = 2` writes - not the
+            // own name a function expression binds.
+            if (const std::int32_t named = default_export_name(idx);
+                named >= 0 && at(named).kind == vp::nk::func_expr) {
+                default_function_ = named;
+            }
             compile_expr(n.a, r);
             proto().emit(instruction{op::cell_set, static_cast<std::uint16_t>(slot), r});
             // A named default also initialises the binding its name makes
@@ -114,8 +121,10 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         // The local path below boxes it and makes a fresh cell per
         // iteration, exactly as it already did inside a function. `var` is
         // function-scoped, so at any depth it is still the script's.
+        // AN EVAL'S lexical declarations are its own, not globals - see
+        // compile_program's predeclare_locals.
         if (frames_.size() == 1 && !top_level_is_scope_ &&
-            (n.text == "var" || fn().scope_marks.size() <= 1)) {
+            (n.text == "var" || (fn().scope_marks.size() <= 1 && !completion_value_))) {
             // NOT `declaring_` around the loop: an initialiser is an
             // expression, and `'use strict'; var a = b = 1;` must still refuse
             // `b`. The pattern path below sets it for its own writes only.
@@ -157,6 +166,19 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                         proto().emit(
                             instruction{op::set_upvalue, static_cast<std::uint16_t>(up), r});
                     }
+                } else if (!with_scopes_.empty() || find_local_entry(fn(), decl.text) != nullptr) {
+                    // INSIDE A `with` the initialiser is a PutValue on the name
+                    // as the with resolves it (14.3.2.1 step 1: ResolveBinding
+                    // from the running environment) - the object's property
+                    // when it has one - and `var x;` alone writes nothing. So
+                    // inside a `catch (x)`, whose parameter a `var x` may share
+                    // (B.3.4): the initialiser writes the parameter.
+                    if (decl.a >= 0) {
+                        const bool outer_declaring = declaring_;
+                        declaring_ = true;
+                        emit_write(decl.text, r);
+                        declaring_ = outer_declaring;
+                    }
                 } else {
                     const std::uint16_t name = name_operand(std::string{decl.text});
                     proto().emit(instruction::with_bx(op::set_global, r, name));
@@ -173,7 +195,8 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 // free the pattern's own locals with it if they were
                 // allocated inside, leaving the next temporary to overwrite
                 // one. See declare_pattern_names.
-                declare_pattern_names(decl.b, n.text != "var");
+                declare_pattern_names(decl.b, n.text != "var", declared_immutability(n),
+                                      n.text != "var");
                 const std::uint32_t mark = reg_mark();
                 const std::uint16_t r = alloc_reg();
                 if (decl.a >= 0) {
@@ -210,23 +233,33 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             if (was_predeclared(decl.text) &&
                 (function_scoped || find_local_in_current_scope(decl.text) != nullptr)) {
                 // hoisted above: this statement is only the initializer,
-                // and emit_write knows whether it goes through a cell
+                // and emit_write knows whether it goes through a cell - the
+                // declaration's own write, which a `const` takes (declaring_)
                 if (decl.a >= 0) {
                     const std::uint32_t mark = reg_mark();
                     const std::uint16_t tmp = alloc_reg();
                     compile_named_expr(decl.a, tmp, decl.text);
                     if (is_using_decl(n)) { emit_using_add(tmp, n.text == "await using"); }
+                    const bool outer_declaring = declaring_;
+                    declaring_ = true;
                     emit_write(decl.text, tmp);
+                    declaring_ = outer_declaring;
                     release_to(mark);
                 }
                 continue;
             }
             const std::uint16_t r = declare_local(std::string{decl.text});
+            // BY POSITION from here: the initialiser may declare locals of its
+            // own (a class's computed field names, field_key_name), after
+            // which locals.back() is one of those.
+            const std::size_t declared = fn().locals.size() - 1;
             // A lexical binding is in its dead zone until its declarator has
             // run: `let y = y + 1` reads it before that, and compile_ident
             // decides the ReferenceError from this offset (as
             // predeclare_locals records it for a function body's own).
             if (!function_scoped) { fn().locals.back().initialized_at = decl.end; }
+            fn().locals.back().readonly = declared_immutability(n);
+            fn().locals.back().lexical = !function_scoped;
             if (fn().locals.back().boxed && decl.a >= 0 && contains_closure(decl.a)) {
                 // THE CELL FIRST when the initialiser makes a closure: `{ let
                 // y = () => y; }` has the arrow capture `y` while it is being
@@ -253,7 +286,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             if (is_using_decl(n)) { emit_using_add(r, n.text == "await using"); }
             // A captured local is boxed AFTER its initializer runs, so the
             // cell starts out holding the right value.
-            if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
+            if (fn().locals[declared].boxed) { proto().emit(instruction{op::new_cell, r}); }
             // a declared local keeps its register beyond this statement
             if (fn().next_reg <= r) { fn().next_reg = static_cast<std::uint16_t>(r + 1); }
         }

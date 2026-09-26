@@ -95,5 +95,72 @@ int main() {
         CHECK_EQ(cx2.to_string(cx2.global("out")), std::string{"300/100"});
         CHECK(cx2.collections() > 0);
     }
+
+    // A NATIVE'S SCRIPT CALLEE COLLECTS ITS OWN GARBAGE. testharness.js runs
+    // every test body through `Function.prototype.apply`, and pinning all the
+    // callee allocated held a NodeList read loop's garbage to the 4 GB cap
+    // (dom/nodes/NodeList-static-length-getter-tampered-*).
+    {
+        context cx3;
+        install_builtins(cx3);
+        cx3.define_native("live", [](context & c, std::span<value>) {
+            return value::number(static_cast<double>(c.live_objects()));
+        });
+        const program churn = compiler::compile(R"(
+            function body() {
+                var peak = 0;
+                for (var i = 0; i < 200000; i++) {
+                    var junk = { i: i };
+                    if (i % 1000 === 0) { var now = live(); if (now > peak) { peak = now; } }
+                }
+                return { peak: peak };
+            }
+            return body.apply(null, []).peak;
+        )");
+        const run_result r3 = cx3.run(churn);
+        CHECK(r3.ok);
+        CHECK(r3.returned.is_number() && r3.returned.as_number() < 50000);
+        std::printf("  gc: peak %s live under apply\n", cx3.to_string(r3.returned).c_str());
+    }
+
+    // ... AND WHAT THE CALLEE RETURNED SURVIVES, because the native holds it in
+    // a C++ local while later calls collect (every safepoint, under stress).
+    {
+        context stress;
+        install_builtins(stress);
+        stress.set_gc_stress(true);
+        stress.define_native("hold", [](context & c, std::span<value> args) {
+            const value got = c.call(args[0], {}, value::undefined());
+            for (int k = 0; k < 4; ++k) { (void)c.call(args[1], {}, value::undefined()); }
+            return got;
+        });
+        const program held = compiler::compile(R"(
+            var r = hold(function () { return { tag: 7 }; },
+                         function () { var junk = []; for (var i = 0; i < 100; i++) { junk.push({ i: i }); } });
+            return r.tag;
+        )");
+        const run_result got = stress.run(held);
+        CHECK(got.ok);
+        CHECK_EQ(stress.to_string(got.returned), std::string{"7"});
+    }
+
+    // WHAT THE INTERPRETER ITSELF HOLDS ACROSS A CALL is rooted where it is
+    // made, not by a native's pin: a generator whose parameters run a callback
+    // before its object is anywhere else, and a spread through a proxy's `get`
+    // trap. Both were freed once the pin narrowed (ASan, 2026-09-26), and both
+    // were already exposed in a script no native was running.
+    {
+        context stress;
+        install_builtins(stress);
+        stress.set_gc_stress(true);
+        const program held = compiler::compile(R"(
+            function* g(a = [1, 2].map(function (x) { return x * 2; })) { yield a.length; }
+            var spread = [...new Proxy([{ n: 1 }, { n: 2 }], { get: function (t, k) { return t[k]; } })];
+            return g().next().value + spread[0].n + spread[1].n;
+        )");
+        const run_result got = stress.run(held);
+        CHECK(got.ok);
+        CHECK_EQ(stress.to_string(got.returned), std::string{"5"});
+    }
     REPORT("gc_pressure");
 }

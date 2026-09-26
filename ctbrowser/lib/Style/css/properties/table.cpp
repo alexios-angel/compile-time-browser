@@ -175,7 +175,7 @@ constexpr property_syntax table[] = {
     {"border-bottom-right-radius", k::freeform, "", "0px", false, true},
     {"border-bottom-left-radius", k::freeform, "", "0px", false, true},
     {"border-collapse", k::keyword_only, "separate collapse", "separate", true, false},
-    {"border-spacing", k::freeform, "", "0px", true, false},
+    {"border-spacing", k::freeform, "", "0px", true, true}, // keywords.cpp's grammar
     {"outline", k::freeform, "", "medium none currentcolor", false, false, true},
     {"outline-width", k::length, "thin medium thick", "medium", false, true},
     // CSS UI 4 §5: an outline's style is a border style but `hidden`, its
@@ -188,8 +188,8 @@ constexpr property_syntax table[] = {
 
     // --- colour and background ------------------------------------------
     {"color", k::color, "", "rgb(0, 0, 0)", true, false},
-    {"caret-color", k::freeform, "", "auto", true, false}, // declaration.cpp
-    {"accent-color", k::color, "auto", "auto", false, false},
+    {"caret-color", k::freeform, "", "auto", true, false},   // declaration.cpp
+    {"accent-color", k::color, "auto", "auto", true, false}, // inherited, CSS UI 4 §6.1
     {"background", k::freeform, "", "none", false, false, true},
     {"background-color", k::color, "", "rgba(0, 0, 0, 0)", false, false},
     {"background-image", k::freeform, "", "none", false, false},
@@ -220,12 +220,21 @@ constexpr property_syntax table[] = {
     {"font-weight", k::number, "normal bold bolder lighter", "400", true, true},
     // A SHORTHAND of the seven font-variant-* longhands, CSS Fonts 4 §6.11.
     {"font-variant", k::freeform, "", "normal", true, false, true},
-    {"font-stretch", k::freeform, "", "100%", true, true},
+    // CSS Fonts 4 §2.3: `normal`, the eight width keywords, or a
+    // non-negative <percentage> - which each keyword computes to
+    // (font_width_percentage). font-stretch is its legacy name.
+    {"font-stretch", k::percentage,
+     "normal ultra-condensed extra-condensed condensed semi-condensed semi-expanded expanded "
+     "extra-expanded ultra-expanded",
+     "100%", true, true},
     // The rest of CSS Fonts 4's longhands, as freeform text: nothing shapes
     // with them, but each is a real property whose value a page sets and reads
     // back through getComputedStyle, with a math function inside it folded
     // (using-font-relative-units-in-font-properties).
-    {"font-width", k::freeform, "", "normal", true, true},
+    {"font-width", k::percentage,
+     "normal ultra-condensed extra-condensed condensed semi-condensed semi-expanded expanded "
+     "extra-expanded ultra-expanded",
+     "100%", true, true},
     {"font-feature-settings", k::freeform, "", "normal", true, false},
     {"font-variation-settings", k::freeform, "", "normal", true, false},
     {"font-variant-alternates", k::freeform, "", "normal", true, false},
@@ -350,6 +359,14 @@ constexpr property_syntax table[] = {
     {"offset-distance", k::length_percentage, "", "0px", false, false},
     {"offset-path", k::freeform, "", "none", false, false},
     {"shape-margin", k::length_percentage, "", "0px", false, true},
+    // SVG 2 §13.2's paints, which CSS Fill and Stroke 3 keeps: `none`, a
+    // colour, the context paints, or a url() with a fallback - which
+    // declaration.cpp reads beside the colour. They inherit, and a colour
+    // computes and interpolates as one (fill-interpolation). stroke-color is
+    // Fill and Stroke 3's own, a <color> whose initial value is transparent.
+    {"fill", k::color, "none context-fill context-stroke", "rgb(0, 0, 0)", true, false},
+    {"stroke", k::color, "none context-fill context-stroke", "none", true, false},
+    {"stroke-color", k::color, "", "rgba(0, 0, 0, 0)", true, false},
     {"stroke-dasharray", k::freeform, "", "none", true, false},
     {"stroke-dashoffset", k::length_percentage, "", "0px", true, false},
     {"stroke-width", k::length_percentage, "", "1px", true, true},
@@ -374,7 +391,8 @@ constexpr property_syntax table[] = {
     {"resize", k::keyword_only, "none both horizontal vertical block inline", "none", false, false},
     {"object-fit", k::freeform, "", "fill", false, false}, // keywords.cpp's grammar
     {"object-position", k::position, "", "50% 50%", false, false},
-    {"rotate", k::freeform, "", "none", false, false}, // transforms.cpp's grammar
+    {"object-view-box", k::freeform, "", "none", false, false}, // shapes.cpp's grammar
+    {"rotate", k::freeform, "", "none", false, false},          // transforms.cpp's grammar
     {"scale", k::freeform, "", "none", false, false},
     {"translate", k::freeform, "", "none", false, false},
 };

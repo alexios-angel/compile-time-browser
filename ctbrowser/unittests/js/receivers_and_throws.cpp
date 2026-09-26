@@ -156,5 +156,48 @@ int main() {
               " {writable: true, configurable: false}); }, it); } catch (e) {}"
               " return n; })()",
               "1");
+    // `null[k]` is the TypeError BEFORE k's ToPropertyKey (GetValue/PutValue
+    // step 3.a), so a key whose toString throws neither runs nor leaves its
+    // throw pending under the TypeError - which made the pair uncatchable.
+    js_expect("(function(){ var base = null, k = {toString() { throw 1; }};"
+              " try { base[k] ^= 1; } catch (e) { return e instanceof TypeError; } })()",
+              "true");
+    js_expect("(function(){ var base, k = {toString() { throw 1; }};"
+              " try { base[k] = 1; } catch (e) { return e instanceof TypeError; } })()",
+              "true");
+    js_expect("(function(){ var k = {toString() { throw 'key'; }};"
+              " try { return ({})[k]; } catch (e) { return e; } })()",
+              "key");
+    // Object.fromEntries closes the iterator on an entry's throw AND keeps
+    // the throw.
+    js_expect("(function(){ var closed = 0; var it = { [Symbol.iterator]() { return {"
+              " next() { return {done: false, value: { get 0() { throw 'key'; } }}; },"
+              " return() { closed++; return {}; } }; } };"
+              " try { Object.fromEntries(it); } catch (e) { return e + closed; }"
+              " return 'none'; })()",
+              "key1");
+    // A lexical for-of head's names are uninitialised while its operand runs.
+    js_expect("(function(){ let x = 1; try { for (let x of [x]) {} } catch (e) {"
+              " return e.constructor.name; } return 'none'; })()",
+              "ReferenceError");
+    js_expect("(function(){ let x = [1]; for (let y of x) { return y; } })()", "1");
+    // `break`/`continue` to an OUTER loop closes the for-of it leaves.
+    js_expect("(function(){ var closed = 0; var it = { [Symbol.iterator]() { return {"
+              " next() { return {done: false, value: 1}; },"
+              " return() { closed++; return {}; } }; } };"
+              " L: do { for (var x of it) { continue L; } } while (false);"
+              " M: for (;;) { for (var y of it) { break M; } }"
+              " for (var z of it) { break; }"
+              " return closed; })()",
+              "3");
+    // A strict write through a `with` object that lost the binding meanwhile
+    // (9.1.1.2.5 SetMutableBinding) - sloppy code writes it back.
+    js_expect("(function(){ var scope = { get x() { delete this.x; return 2; } };"
+              " with (scope) { return (function(){ 'use strict'; try { x += 1; }"
+              " catch (e) { return e.constructor.name; } return 'none'; })(); } })()",
+              "ReferenceError");
+    js_expect("(function(){ var scope = { get x() { delete this.x; return 2; } };"
+              " with (scope) { x += 1; } return scope.x; })()",
+              "3");
     REPORT("receivers_and_throws");
 }

@@ -256,9 +256,20 @@ void dom_bindings::deliver_mutation_records() {
         const value self = mutation_observers_[i];
         const value args[2] = {records, self};
         // `this` IS THE OBSERVER, and so is the second argument.
-        // MutationObserver-callback-arguments.html asserts both.
-        (void)cx_->call(*callback, args, self);
-        note_callback_fault("MutationObserver");
+        // MutationObserver-callback-arguments.html asserts both. FENCED, and
+        // a throw is REPORTED - an `error` event at the callback's own
+        // global (WebIDL "invoke a callback function" and "notify mutation
+        // observers" step 6.4), not only the embedder's console - and the
+        // next observer still runs.
+        const value function = *callback;
+        bool threw = false;
+        value thrown = value::undefined();
+        (void)cx_->call_fenced(function, args, self, threw, thrown);
+        if (threw) {
+            report_custom_element_exception(*cx_, thrown, "MutationObserver callback", function);
+        } else {
+            note_callback_fault("MutationObserver");
+        }
     }
     sync_mutation_roots();
     // Step 7: this round's signalled slots' `slotchange`, after the callbacks
@@ -682,7 +693,7 @@ void dom_bindings::install_mutation_observer(context & cx) {
         });
     record_ctor->define("prototype", mutation_record_prototype_, script::attr_none);
     record_proto->define("constructor", value::object(record_ctor), script::attr_builtin);
-    cx.define_global("MutationRecord", value::object(record_ctor));
+    cx.define_builtin_global("MutationRecord", value::object(record_ctor));
 
     // --- MutationObserver.prototype ----------------------------------------
     auto * observer_proto = cx.allocate<script::object_object>();
@@ -906,7 +917,7 @@ void dom_bindings::install_mutation_observer(context & cx) {
         });
     ctor->define("prototype", mutation_observer_prototype_, script::attr_none);
     observer_proto->define("constructor", value::object(ctor), script::attr_builtin);
-    cx.define_global("MutationObserver", value::object(ctor));
+    cx.define_builtin_global("MutationObserver", value::object(ctor));
     mutation_interface_ = ctor;
 
     // The delivery trampoline. It is not reachable from script and never

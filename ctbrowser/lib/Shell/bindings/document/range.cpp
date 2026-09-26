@@ -843,7 +843,21 @@ void dom_bindings::install_range(context & cx) {
             tag = std::string{txn.local_name(node.id)};
             if (txn.element_ns(node.id) != node_ns::html || tag == "html") { tag = "body"; }
         }
-        const value scratch = call_on(c, document_node, "createElement", {c.string(tag)});
+        // THE CONTEXT ELEMENT'S CUSTOM ELEMENT REGISTRY for what is parsed (HTML
+        // 13.4: the fragment's root is created with it) - carried by the scratch
+        // element, whose children inherit it (set_inner_html).
+        value options = value::undefined();
+        if (!node.none() && !node.is_attr() && type_of(node) == type_element) {
+            const auto txn = node.owner->doc_->read();
+            const custom_element_registry * registry = node.owner->registry_of_node(txn, node.id);
+            if (registry != node.owner->document_registry() &&
+                (registry == nullptr || registry->document == nullptr)) {
+                options = c.make_object();
+                c.store_property(options, "customElementRegistry",
+                                 registry == nullptr ? value::null() : registry->object);
+            }
+        }
+        const value scratch = call_on(c, document_node, "createElement", {c.string(tag), options});
         if (!scratch.is_object_like()) { return value::null(); }
         c.store_property(scratch, "innerHTML", c.string(markup));
         const value fragment = call_on(c, document_node, "createDocumentFragment", {});
@@ -937,7 +951,7 @@ void dom_bindings::install_range(context & cx) {
         ctor->define(name, value::number(bits), script::attr_enumerable);
         proto->define(name, value::number(bits), script::attr_enumerable);
     }
-    cx.define_global("Range", value::object(ctor));
+    cx.define_builtin_global("Range", value::object(ctor));
 
     // --- StaticRange, DOM 5.4 --------------------------------------------------
     //
@@ -996,7 +1010,7 @@ void dom_bindings::install_range(context & cx) {
         });
     static_ctor->define("prototype", static_proto_value, script::attr_none);
     static_proto->define("constructor", value::object(static_ctor), script::attr_builtin);
-    cx.define_global("StaticRange", value::object(static_ctor));
+    cx.define_builtin_global("StaticRange", value::object(static_ctor));
     // UNDER AbstractRange, when the interface table has already been linked:
     // install_dom_interfaces adopts `Range.prototype` off the global and
     // chains it, but only if it runs after this - and the first wrap() of

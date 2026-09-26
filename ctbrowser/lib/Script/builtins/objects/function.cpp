@@ -429,7 +429,7 @@ void install_dynamic_function(context & cx) {
         bool ok = true;
         if (target.is_string()) {
             std::uint32_t at = 0;
-            const std::size_t n = static_cast<string_object *>(target.as_heap())->text.size();
+            const std::size_t n = static_cast<string_object *>(target.as_heap())->length();
             ok = !(key == "length" || (object_object::array_index_key(key, at) && at < n));
         } else if (target.is_object_like()) {
             ok = c.delete_own_property(target, key);
@@ -451,18 +451,40 @@ void install_dynamic_function(context & cx) {
                 const value source = a.size() > 1 ? a[1] : value::undefined();
                 // Only %eval% makes the call direct (13.3.6.1 step 6.a); any
                 // other function under the name is called as one.
-                if (eval_fn.bits() != intrinsic.bits()) { return c.call(eval_fn, {&source, 1}); }
+                if (eval_fn.bits() != intrinsic.bits()) {
+                    // ...and a value that is not a function is the TypeError a
+                    // call of it is (13.3.6.1 EvaluateCall step 4).
+                    if (!eval_fn.is_callable()) {
+                        c.throw_error("TypeError", "eval is not a function");
+                        return value::undefined();
+                    }
+                    return c.call(eval_fn, {&source, 1});
+                }
                 if (!source.is_string()) { return source; }
                 const value callee = a.size() > 2 ? a[2] : value::undefined();
                 const value self = a.size() > 3 ? a[3] : value::undefined();
                 const std::string descriptor = a.size() > 4 ? c.to_string(a[4]) : std::string{};
-                const auto * caller = callee.is_kind(heap_kind::function)
-                                          ? static_cast<closure_object *>(callee.as_heap())
-                                          : nullptr;
-                std::vector<std::string> names;
+                auto * caller = callee.is_kind(heap_kind::function)
+                                    ? static_cast<closure_object *>(callee.as_heap())
+                                    : nullptr;
+                std::vector<eval_binding> outer;
                 std::vector<value> cells;
-                bool strict = false;
-                std::size_t next = 5;
+                // "... name [strict|sloppy] [lexical]" - see eval_binding.
+                const auto bind = [&](std::string_view rest) {
+                    const std::size_t space = rest.find(' ');
+                    const std::string_view flags =
+                        space == std::string_view::npos ? "" : rest.substr(space);
+                    eval_binding & made = outer.emplace_back();
+                    made.name = std::string{rest.substr(0, space)};
+                    made.readonly =
+                        flags.find(" strict") != std::string_view::npos   ? immutability::strict
+                        : flags.find(" sloppy") != std::string_view::npos ? immutability::sloppy
+                                                                          : immutability::none;
+                    made.lexical = flags.find(" lexical") != std::string_view::npos;
+                };
+                const value new_target = a.size() > 5 ? a[5] : value::undefined();
+                eval_site site;
+                std::size_t next = 6;
                 std::size_t at = 0;
                 bool first = true;
                 while (at <= descriptor.size()) {
@@ -470,11 +492,25 @@ void install_dynamic_function(context & cx) {
                     const std::string_view line{descriptor.data() + at, end - at};
                     at = end + 1;
                     if (first) {
-                        strict = line == "strict";
+                        // "strict|sloppy [function] [method] [field]" - eval_site.
+                        const auto says = [&](std::string_view word) {
+                            return line.find(word) != std::string_view::npos;
+                        };
+                        site.strict = line.starts_with("strict");
+                        site.in_function = says(" function");
+                        site.in_method = says(" method");
+                        site.in_class_field_initializer = says(" field");
                         first = false;
                         continue;
                     }
                     if (line.size() < 3) { continue; }
+                    if (line[0] == 'P') {
+                        const std::size_t space = line.find(' ', 2);
+                        if (space == std::string_view::npos) { continue; }
+                        site.private_names.emplace_back(line.substr(2, space - 2),
+                                                        line.substr(space + 1));
+                        continue;
+                    }
                     if (line[0] == 'U') {
                         const std::size_t space = line.find(' ', 2);
                         if (space == std::string_view::npos || caller == nullptr) { continue; }
@@ -483,12 +519,12 @@ void install_dynamic_function(context & cx) {
                             index = index * 10 + static_cast<std::size_t>(ch - '0');
                         }
                         if (index >= caller->upvalues.size()) { continue; }
-                        names.emplace_back(line.substr(space + 1));
+                        bind(line.substr(space + 1));
                         cells.push_back(caller->upvalues[index]);
                     } else {
                         const value given = next < a.size() ? a[next] : value::undefined();
                         ++next;
-                        names.emplace_back(line.substr(2));
+                        bind(line.substr(2));
                         // "V": a local nothing boxed - the eval sees its value.
                         cells.push_back(line[0] == 'L' && given.is_kind(heap_kind::cell)
                                             ? given
@@ -496,7 +532,7 @@ void install_dynamic_function(context & cx) {
                     }
                 }
                 program compiled =
-                    compiler::compile_for_direct_eval(c.to_string(source), names, strict);
+                    compiler::compile_for_direct_eval(c.to_string(source), outer, site);
                 if (!compiled.ok) {
                     c.throw_error("SyntaxError", compiled.error);
                     return value::undefined();
@@ -508,6 +544,15 @@ void install_dynamic_function(context & cx) {
                 entry->realm = caller != nullptr && caller->realm != nullptr ? caller->realm
                                                                              : &c.current_realm();
                 entry->upvalues = std::move(cells);
+                // `super.x` in the source is the caller's (19.2.1.1 step 7.a:
+                // the eval runs with the caller's this environment, whose
+                // function holds the home object) - see op::load_home.
+                if (caller != nullptr) {
+                    if (const value * home = caller->find("__home")) {
+                        entry->set("__home", *home);
+                    }
+                }
+                c.pass_new_target(new_target);
                 return c.call(value::object(entry), {}, self);
             });
         native->retained.push_back(intrinsic);
@@ -521,9 +566,19 @@ void install_dynamic_function(context & cx) {
             std::string{param_eval_name}, [intrinsic](context & c, std::span<value> a) {
                 const value source = a.empty() ? value::undefined() : a[0];
                 const value current = c.global("eval");
-                if (current.bits() != intrinsic.bits()) { return c.call(current, {&source, 1}); }
+                if (current.bits() != intrinsic.bits()) {
+                    if (!current.is_callable()) {
+                        c.throw_error("TypeError", "eval is not a function");
+                        return value::undefined();
+                    }
+                    return c.call(current, {&source, 1});
+                }
                 if (!source.is_string()) { return source; }
-                program compiled = compiler::compile_for_eval(c.to_string(source));
+                // In a function's parameters - so `new.target` is allowed, as
+                // it always was here.
+                eval_site site;
+                site.in_function = true;
+                program compiled = compiler::compile_for_eval(c.to_string(source), site);
                 if (!compiled.ok) {
                     c.throw_error("SyntaxError", compiled.error);
                     return value::undefined();

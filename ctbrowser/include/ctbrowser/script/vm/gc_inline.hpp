@@ -61,7 +61,7 @@ inline auto context::safepoint() -> void {
 // survivors, so the work is amortised O(1) per allocation and the heap
 // peaks at about twice the live set.
 inline auto context::collect_if_due() -> std::size_t {
-    if (live_objects_ < collect_threshold_) { return 0; }
+    if (live_objects_ < collect_threshold_ && string_bytes_ < string_budget_) { return 0; }
     const std::size_t freed = collect();
     // The next collection waits for the heap to grow again, so a page whose
     // live set is genuinely large does not collect on every tick.

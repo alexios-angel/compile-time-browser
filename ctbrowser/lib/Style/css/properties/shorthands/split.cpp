@@ -420,6 +420,129 @@ split split_animation(std::string_view value, std::vector<std::string> & out) {
     return split::ok;
 }
 
+// `transition`: per comma-separated item, `[ none | <single-transition-property> ]
+// || <time> || <easing-function> || <time> || <transition-behavior-value>`
+// (CSS Transitions 2 §3.5) - the first time the duration, which cannot be
+// negative, the second the delay - each omitted one its longhand's initial
+// value. `none` names no property, so it may stand only in a list of one.
+split split_transition(std::string_view value, std::vector<std::string> & out) {
+    std::array<std::string, 5> lists;
+    const std::vector<std::string_view> items = split_top_level(value, ",");
+    for (const std::string_view item : items) {
+        std::array<std::string, 5> v{"all", "0s", "ease", "0s", "normal"};
+        std::array<bool, 5> given{};
+        const std::vector<std::string_view> parts =
+            split_top_level(trim(item, html_whitespace), " \t\n\r\f");
+        if (parts.empty() || trim(item, html_whitespace).empty()) { return split::invalid; }
+        for (const std::string_view part : parts) {
+            const auto take = [&](std::size_t i, std::string text) {
+                v[i] = std::move(text);
+                given[i] = true;
+            };
+            const value_check time = check_declaration("transition-delay", part, false);
+            if (time.valid && !is_wide_keyword(time.serialized)) {
+                if (!given[1]) {
+                    if (!check_declaration("transition-duration", part, false).valid) {
+                        return split::invalid;
+                    }
+                    take(1, time.serialized);
+                } else if (!given[3]) {
+                    take(3, time.serialized);
+                } else {
+                    return split::invalid;
+                }
+                continue;
+            }
+            if (!given[4] && ascii_iequals_any(part, {"normal", "allow-discrete"})) {
+                take(4, ascii_lower_copy(part));
+                continue;
+            }
+            const value_check easing = check_declaration("transition-timing-function", part, false);
+            if (!given[2] && easing.valid && !is_wide_keyword(easing.serialized)) {
+                take(2, easing.serialized);
+                continue;
+            }
+            if (given[0]) { return split::invalid; }
+            if (ascii_iequals(part, "none")) {
+                if (items.size() != 1) { return split::invalid; }
+                take(0, "none");
+                continue;
+            }
+            const value_check property = check_declaration("transition-property", part, false);
+            if (!property.valid || is_wide_keyword(property.serialized) ||
+                property.serialized.find(',') != std::string::npos) {
+                return split::invalid;
+            }
+            take(0, property.serialized);
+        }
+        for (std::size_t i = 0; i < 5; ++i) { lists[i] += (lists[i].empty() ? "" : ", ") + v[i]; }
+    }
+    if (lists[0].empty()) { return split::invalid; }
+    out.assign(lists.begin(), lists.end());
+    return split::ok;
+}
+
+// `animation-range`: per item a start and an optional end, each `normal`,
+// a <length-percentage>, or a <timeline-range-name> with an optional one. An
+// omitted end is the start's range name at 100% when the start names one,
+// and `normal` otherwise (Scroll-driven Animations 1 §4.2).
+split split_range(std::string_view value, std::vector<std::string> & out) {
+    std::string starts, ends;
+    for (const std::string_view item : split_top_level(value, ",")) {
+        std::vector<std::string_view> words;
+        for (const std::string_view raw :
+             split_top_level(trim(item, html_whitespace), " \t\n\r\f")) {
+            if (!trim(raw, html_whitespace).empty()) {
+                words.push_back(trim(raw, html_whitespace));
+            }
+        }
+        if (words.empty()) { return split::invalid; }
+        const auto named = [](std::string_view w) {
+            const char c = w.front();
+            return (std::isalpha(static_cast<unsigned char>(c)) != 0 || c == '_' ||
+                    (c == '-' && w.size() > 1 &&
+                     std::isdigit(static_cast<unsigned char>(w[1])) == 0 && w[1] != '.')) &&
+                   w.find('(') == std::string_view::npos;
+        };
+        // One component from `at`: a name (and an offset after it), or an offset.
+        const auto component = [&](std::size_t & at) {
+            const std::size_t from = at;
+            if (named(words[at]) && !ascii_iequals(words[at], "normal") && at + 1 < words.size() &&
+                !named(words[at + 1])) {
+                at += 2;
+            } else {
+                at += 1;
+            }
+            std::string text;
+            for (std::size_t k = from; k < at; ++k) {
+                text += (text.empty() ? "" : " ") + std::string{words[k]};
+            }
+            return text;
+        };
+        std::size_t at = 0;
+        const std::string first = component(at);
+        const value_check start = check_declaration("animation-range-start", first, false);
+        if (!start.valid || is_wide_keyword(start.serialized)) { return split::invalid; }
+        std::string end;
+        if (at < words.size()) {
+            const std::string second = component(at);
+            const value_check checked = check_declaration("animation-range-end", second, false);
+            if (!checked.valid || is_wide_keyword(checked.serialized) || at != words.size()) {
+                return split::invalid;
+            }
+            end = checked.serialized;
+        } else {
+            end = named(words[0]) && !ascii_iequals(words[0], "normal") ? ascii_lower_copy(words[0])
+                                                                        : std::string{"normal"};
+        }
+        starts += (starts.empty() ? "" : ", ") + start.serialized;
+        ends += (ends.empty() ? "" : ", ") + end;
+    }
+    if (starts.empty()) { return split::invalid; }
+    out = {starts, ends};
+    return split::ok;
+}
+
 // Each radius axis has the same nonnegative <length-percentage> grammar as padding.
 bool radius_components(std::string_view value, std::size_t maximum,
                        std::vector<std::string> & out) {
@@ -616,6 +739,161 @@ bool split_background(std::string_view value, std::vector<std::string> & out) {
     return true;
 }
 
+// `mask`, CSS Masking 1 §7.1: per comma-separated layer `<mask-reference> ||
+// <position> [ / <bg-size> ]? || <repeat-style> || <geometry-box> || [
+// <geometry-box> | no-clip ] || <compositing-operator> || <masking-mode>`,
+// each part through its longhand's grammar. The boxes need not stand
+// together: one sets the origin and the clip, a second - or `no-clip` - the
+// clip alone.
+bool split_mask(std::string_view value, std::vector<std::string> & out) {
+    const auto names = longhands_of("mask");
+    const auto layers = split_top_level(value, ",");
+    if (layers.empty()) { return false; }
+    const token_stream ts = tokenize(value);
+    int depth = 0;
+    std::size_t commas = 0;
+    for (const css_token & token : ts.tokens) {
+        if (token.type == token_type::function || token.type == token_type::open_paren) { ++depth; }
+        if (token.type == token_type::close_paren) { --depth; }
+        if (depth == 0 && token.type == token_type::comma) { ++commas; }
+    }
+    if (commas + 1 != layers.size()) { return false; }
+    out.assign(names.size(), {});
+    for (std::size_t layer = 0; layer < layers.size(); ++layer) {
+        std::vector<std::string> values;
+        for (const auto name : names) { values.emplace_back(initial_of(name)); }
+        std::array<bool, 8> given{};
+        const std::string spaced = space_slashes(layers[layer]);
+        const auto parts = split_top_level(spaced, html_whitespace);
+        if (parts.empty()) { return false; }
+        std::vector<std::string> boxes;
+        std::size_t at = 0;
+        const auto take = [&](std::size_t component, std::size_t maximum) {
+            if (given[component]) { return false; }
+            for (std::size_t count = std::min(maximum, parts.size() - at); count > 0; --count) {
+                const std::string_view text{parts[at].data(),
+                                            static_cast<std::size_t>(parts[at + count - 1].data() +
+                                                                     parts[at + count - 1].size() -
+                                                                     parts[at].data())};
+                const value_check checked = check_declaration(
+                    component == 0 ? "border-image-source" : names[component], text, false);
+                if (!checked.valid || (component == 0 && checked.uses_unknown_function) ||
+                    is_wide_keyword(checked.serialized)) {
+                    continue;
+                }
+                values[component] = checked.serialized;
+                given[component] = true;
+                at += count;
+                return true;
+            }
+            return false;
+        };
+        const auto keyword = [&](std::size_t component, std::string_view set) {
+            if (given[component] || !has_keyword(set, ascii_lower_copy(parts[at]))) {
+                return false;
+            }
+            values[component] = ascii_lower_copy(parts[at++]);
+            given[component] = true;
+            return true;
+        };
+        while (at < parts.size()) {
+            if (ascii_iequals_any(parts[at], {"content-box", "padding-box", "border-box",
+                                              "fill-box", "stroke-box", "view-box", "no-clip"})) {
+                boxes.push_back(ascii_lower_copy(parts[at++]));
+                continue;
+            }
+            if (keyword(6, "add subtract intersect exclude") ||
+                keyword(7, "alpha luminance match-source") || take(0, 1) || take(3, 2)) {
+                continue;
+            }
+            if (!take(1, 4)) { return false; }
+            if (at < parts.size() && parts[at] == "/") {
+                ++at;
+                if (!take(2, 2)) { return false; }
+            }
+        }
+        const auto clip_only = [](const std::string & box) { return box == "no-clip"; };
+        if (boxes.size() > 2 || (boxes.size() == 2 && clip_only(boxes[0]) && clip_only(boxes[1]))) {
+            return false;
+        }
+        if (boxes.size() == 1) {
+            if (!clip_only(boxes[0])) { values[4] = boxes[0]; }
+            values[5] = boxes[0];
+        } else if (boxes.size() == 2) {
+            const bool swapped = clip_only(boxes[0]);
+            values[4] = boxes[swapped ? 1 : 0];
+            values[5] = boxes[swapped ? 0 : 1];
+        }
+        // ...and mask-border, which the shorthand only resets: one value,
+        // not one per layer (CSS Masking 1 §7.1).
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            out[i] = i < 8 ? out[i] + (layer == 0 ? "" : ", ") + values[i] : values[i];
+        }
+    }
+    return true;
+}
+
+// `position-try`, CSS Anchor Positioning 1 §5.4: an order keyword only when
+// something follows it, and the rest the fallbacks' own grammar.
+split split_position_try(std::string_view value, std::vector<std::string> & out) {
+    const std::string_view text = trim(value, html_whitespace);
+    const std::size_t space = text.find_first_of(" \t\n\r\f");
+    std::string order = "normal";
+    std::string_view rest = text;
+    if (space != std::string_view::npos &&
+        ascii_iequals_any(text.substr(0, space), {"normal", "most-width", "most-height",
+                                                  "most-block-size", "most-inline-size"})) {
+        order = ascii_lower_copy(text.substr(0, space));
+        rest = trim(text.substr(space), html_whitespace);
+    }
+    const value_check fallbacks = check_declaration("position-try-fallbacks", rest, false);
+    if (!fallbacks.valid || is_wide_keyword(fallbacks.serialized)) { return split::invalid; }
+    out = {order, fallbacks.serialized};
+    return split::ok;
+}
+
+// `text-spacing`, CSS Text 4 §8.1: `none` is space-all and no-autospace,
+// `auto` both auto, and otherwise a text-spacing-trim keyword at one end
+// with text-autospace's words - or nothing, its initial - beside it.
+split split_text_spacing(std::string_view value, std::vector<std::string> & out) {
+    std::vector<std::string_view> words;
+    for (const std::string_view raw : split_top_level(value, html_whitespace)) {
+        if (!trim(raw, html_whitespace).empty()) { words.push_back(trim(raw, html_whitespace)); }
+    }
+    if (words.size() == 1 && ascii_iequals(words[0], "none")) {
+        out = {"space-all", "no-autospace"};
+        return split::ok;
+    }
+    if (words.size() == 1 && ascii_iequals(words[0], "auto")) {
+        out = {"auto", "auto"};
+        return split::ok;
+    }
+    for (const std::size_t at : {std::size_t{0}, words.size() - 1}) {
+        if (words.empty()) { break; }
+        const value_check trim_part = check_declaration("text-spacing-trim", words[at], false);
+        if (!trim_part.valid || is_wide_keyword(trim_part.serialized) ||
+            ascii_iequals(trim_part.serialized, "auto")) {
+            continue;
+        }
+        std::string rest;
+        for (std::size_t i = 0; i < words.size(); ++i) {
+            if (i != at) { rest += (rest.empty() ? "" : " ") + std::string{words[i]}; }
+        }
+        if (rest.empty()) {
+            out = {trim_part.serialized, "normal"};
+            return split::ok;
+        }
+        const value_check space = check_declaration("text-autospace", rest, false);
+        if (!space.valid || is_wide_keyword(space.serialized) ||
+            ascii_iequals(space.serialized, "auto")) {
+            continue;
+        }
+        out = {trim_part.serialized, space.serialized};
+        return split::ok;
+    }
+    return split::invalid;
+}
+
 // A value's halves either side of its one top-level `/`, EMPTY ONES KEPT:
 // `/ 10px` is a first half missing, not a value without a slash, which is
 // what split_top_level - skipping empty fields - made of it. The value alone
@@ -763,6 +1041,9 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::pair: return split_positional(e, parts, out);
     case shape::radius: return split_radius(value, out) ? split::ok : split::invalid;
     case shape::background: return split_background(value, out) ? split::ok : split::invalid;
+    case shape::mask: return split_mask(value, out) ? split::ok : split::invalid;
+    case shape::position_try: return split_position_try(value, out);
+    case shape::text_spacing: return split_text_spacing(value, out);
     case shape::border_image: return split_border_image(value, out) ? split::ok : split::invalid;
     case shape::place: {
         std::string align, justify;
@@ -772,6 +1053,8 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     }
     case shape::grid_lines:
         return split_grid_lines(e.syntax->name, value, out) ? split::ok : split::invalid;
+    case shape::grid_template: return split_grid_template(value, out) ? split::ok : split::invalid;
+    case shape::grid: return split_grid(value, out) ? split::ok : split::invalid;
     case shape::slash_pair: return split_slash_pair(e, value, out);
     case shape::bar: return split_bar(e, parts, out);
     case shape::gap_rule: return split_gap_rule(value, out) ? split::ok : split::invalid;
@@ -785,6 +1068,8 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::border_axis: return split_border_axis(e, parts, out);
     case shape::white_space: return split_white_space(parts, out);
     case shape::animation: return split_animation(value, out);
+    case shape::transition: return split_transition(value, out);
+    case shape::range: return split_range(value, out);
     case shape::font: return split_font(parts, out);
     case shape::font_variant: return split_font_variant(e, parts, out);
     case shape::line_clamp: return split_line_clamp(e, parts, out);

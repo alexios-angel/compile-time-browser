@@ -211,7 +211,7 @@ void dom_bindings::install_dom_exception(context & cx) {
     // from the globals, but `dom_exception_prototype_` is a `value` in a C++
     // member and the collector is told about it in register_roots - both, for
     // the reason blob_prototype_ has both: a page can delete the global.
-    cx.define_global("DOMException", value::object(ctor));
+    cx.define_builtin_global("DOMException", value::object(ctor));
 }
 
 } // namespace ctbrowser::shell

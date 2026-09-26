@@ -468,6 +468,15 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_CASE(jump) do {
             vm_frame->ip =
                 static_cast<std::size_t>(static_cast<std::int64_t>(vm_frame->ip) + in.sbx());
+            // A LOOP'S BACK EDGE IS A SAFEPOINT FOR STRINGS: a loop that
+            // concatenates and calls nothing never reaches `invoke`, so its
+            // dead strings were never collected at all (document-write/
+            // 032.html's 100,000-character tag name hit the 4 GB cap). Every
+            // value is in a register here. Only when the string budget is
+            // spent - an object-count collection still waits for a call.
+            if (in.sbx() < 0 && string_bytes_ >= string_budget_) [[unlikely]] {
+                (void)collect_if_due();
+            }
             break;
         }
         while (0);

@@ -79,6 +79,9 @@ public:
     struct private_scope {
         std::vector<std::string_view> names;
         std::size_t klass = 0;
+        // A DIRECT EVAL'S caller's names come with their keys, parallel to
+        // `names` - the caller numbered its classes, not this program.
+        std::vector<std::string_view> keys;
     };
     std::vector<private_scope> private_scopes_;
     std::size_t private_classes_ = 0;
@@ -402,7 +405,9 @@ public:
     // Hoist this body's own `let`/`const`/`var` names into registers before
     // anything is compiled. Nested function declarations hoist too and are
     // compiled first, so the locals they capture have to exist by then.
-    void predeclare_locals(std::int32_t body);
+    // `lexical_only`: an eval's top level, whose `let`/`const`/`class` are its
+    // own (19.2.1.3 step 17's lexEnv) while its `var`s stay the caller's.
+    void predeclare_locals(std::int32_t body, bool lexical_only = false);
     template <typename Hoist> void hoist_nested_vars(std::int32_t index, const Hoist & hoist);
     template <typename Each>
     void each_block_function(std::int32_t index, const Each & each,
@@ -452,6 +457,25 @@ public:
     // Set by compile_class for the constructor it is about to compile; the
     // body consumes it (see frame::derived_flag).
     bool derived_ctor_pending_ = false;
+    // THE FUNCTION NODE of `export default function f() {}`, a declaration
+    // the parser hands over as an expression - so it binds no own name.
+    std::int32_t default_function_ = -1;
+    // Set for a method, accessor or constructor about to be compiled - one
+    // whose home object is wired; the body consumes it (frame::has_home).
+    bool method_pending_ = false;
+    // Does this function (or field initialiser) hold a direct `eval(...)` -
+    // which may say `super` for it - itself or in anything nested (the
+    // capture index's eval ticks, so a nested function's counts too: the
+    // home object it wires is then only unneeded, never missing).
+    [[nodiscard]] bool contains_direct_eval(std::int32_t idx) const;
+    // AN ARROW'S new.target IS ITS ENCLOSING FUNCTION'S (15.3.3: it has none
+    // of its own), and load_new_target reads the running frame's - the
+    // arrow's, undefined. A function whose body has an arrow saying
+    // `new.target` or `eval(` (arrow_wants_new_target) keeps its own in this
+    // hidden boxed local, which the arrow reads as an upvalue (emit_new_target).
+    static constexpr std::string_view new_target_local = "@new.target";
+    [[nodiscard]] bool arrow_wants_new_target(std::int32_t idx, bool in_arrow) const;
+    void emit_new_target(std::uint16_t dst);
     // The flag of the derived constructor `this` resolves to from here, or
     // nothing: this frame's, or through any number of arrows, the nearest
     // non-arrow frame's.
@@ -493,6 +517,9 @@ public:
     // undefined when none does at run time - and answers whether any `with`
     // applies to the name at all (nothing is emitted when none does).
     [[nodiscard]] bool emit_with_object(std::string_view name, std::uint16_t obj);
+    // Before a write through the with-object `obj`: in strict code, the
+    // ReferenceError when it no longer has `name` (see the definition).
+    void emit_with_still_bound(std::uint16_t obj, std::string_view name);
     [[nodiscard]] std::vector<const with_scope *> applicable_with_scopes(std::string_view name);
     // Does this call need a receiver register: a member callee, or a plain
     // name inside a `with` (the object that binds it is the `this`, 13.3.6.2
@@ -502,6 +529,44 @@ public:
     void emit_plain_read(std::string_view name, std::uint16_t dst, bool typeof_lookup = false);
     void emit_plain_write(std::string_view name, std::uint16_t src);
     void emit_global_write(std::string_view name, std::uint16_t src);
+
+    // --- immutable bindings ---------------------------------------------------
+    //
+    // `const x = 1; x = 2` is the TypeError of 9.1.1.1.5 SetMutableBinding
+    // step 5, and a named function expression's own name ignores a sloppy
+    // write. Both are decided HERE, where the write is compiled: the binding a
+    // name resolves to is known statically (the same walk resolve_upvalue
+    // makes), so a refused write compiles to the throw and every other write
+    // is untouched. A declaration's own write is never refused (declaring_).
+    //
+    // What an assignment to `name`, from here, may do.
+    [[nodiscard]] immutability binding_immutability(std::string_view name);
+    // The binding `name` resolves to from here: the frame declaring it and its
+    // position there, or {no_binding, 0} for a global (or a direct eval's
+    // caller's binding).
+    static constexpr std::size_t no_binding = static_cast<std::size_t>(-1);
+    [[nodiscard]] std::pair<std::size_t, std::size_t> binding_position(std::string_view name);
+    // Emits the TypeError when the binding refuses the write in this code;
+    // true when the write must not be emitted at all.
+    [[nodiscard]] bool refuse_immutable_write(immutability readonly);
+    // `const`, `using` and `await using` declare immutable bindings.
+    [[nodiscard]] static immutability declared_immutability(const vp::node & decl);
+    // A CLASS'S OWN NAME INSIDE ITS BODY is a binding of its own, immutable
+    // (15.7.14 steps 4.a and 30.a: CreateImmutableBinding(className, true)),
+    // whichever binding the declaration or expression writes outside. One
+    // entry per open named class: the name and the binding it resolves to in
+    // the class's scope - a write from inside the body resolving to that same
+    // binding is a write to the inner one.
+    struct class_binding {
+        std::string name;
+        std::size_t level = no_binding;
+        std::size_t position = 0;
+    };
+    std::vector<class_binding> class_bindings_;
+    // A CLASSIC SCRIPT'S TOP-LEVEL `const`s, which are globals here rather
+    // than locals (see compile_stmt's var_decl): collected before anything
+    // is compiled, since a hoisted function assigning one compiles first.
+    std::vector<std::string> script_consts_;
 
     // A numeric literal's value. The radix prefixes take the integer overload
     // and then widen; a double is exact up to 2^53, which is further than any
@@ -578,10 +643,13 @@ public:
     //
     // At the top level there is nothing to declare: a declaration there is a
     // global, and emit_write reaches one by falling through to set_global.
-    void declare_pattern_names(std::int32_t pat, bool block_scoped = false);
+    // `readonly`: the names are `const` (or `using`) bindings.
+    void declare_pattern_names(std::int32_t pat, bool block_scoped = false,
+                               immutability readonly = immutability::none, bool lexical = false);
 
     void compile_pattern_binding(std::int32_t pat, std::uint16_t src, bool declaring,
-                                 bool block_scoped = false);
+                                 bool block_scoped = false,
+                                 immutability readonly = immutability::none);
 
     // Bind `pattern` to the value sitting in `src`. Every name it mentions
     // already exists by the time this runs - see compile_pattern_binding.
@@ -683,6 +751,8 @@ public:
     [[nodiscard]] loop_context * loop_for(std::string_view label);
 
     void compile_break(const vp::node & n);
+    // Close the for-of iterators of loops_[first..] - see the definition.
+    [[nodiscard]] std::size_t close_crossed_iterators(std::size_t first);
 
     void compile_continue(const vp::node & n);
 
@@ -698,6 +768,7 @@ public:
     void compile_do_while(const vp::node & n);
 
     void compile_for(const vp::node & n);
+    void compile_for_loop(const vp::node & n);
 
     // for..of and for..in.
     //
@@ -709,6 +780,10 @@ public:
     // dispatches through Symbol.iterator.
     void compile_for_of(const vp::node & n);
     void compile_for_await(const vp::node & n);
+    // The `of`/`in` operand, with a lexical head's names in their dead zone
+    // (14.7.5.6 ForIn/OfHeadEvaluation step 2): `for (let x of [x])` reads the
+    // new, uninitialised `x`.
+    void compile_for_head_source(const vp::node & n, std::uint16_t dst);
 
     // switch.
     //
@@ -774,6 +849,7 @@ public:
     void emit_load(const reference & ref, std::uint16_t dst);
 
     void emit_store(const reference & ref, std::uint16_t src);
+    void emit_super_access(const reference & ref, std::string_view name, std::uint16_t value);
 
     // `+=` and friends. The operator is the assignment's text minus its '='.
     [[nodiscard]] static op compound_op(std::string_view text, bool & ok);
@@ -880,6 +956,12 @@ public:
                                                           std::string brand = {});
     // `__ctbrowser_private_add(target, key, v)` - PrivateFieldAdd, or the brand.
     void emit_private_add(std::uint16_t target, std::string_view key, std::uint16_t v);
+    // THE HIDDEN LOCAL HOLDING A CLASS FIELD'S COMPUTED NAME. The name is
+    // evaluated once, when the class is defined, in member order with the
+    // methods' keys (15.7.10 ClassFieldDefinitionEvaluation step 1) - not by
+    // the initialiser, which runs per instance - and the initialiser reads it
+    // back as an upvalue. Not a name source text can spell.
+    [[nodiscard]] std::string field_key_name(std::int32_t member) const;
 
     // Bind a class's own name to the class value, by whichever route this
     // frame uses. Harmless for a `class Foo {}` DECLARATION, which binds the
@@ -906,6 +988,15 @@ public:
     // parameter or pattern element it initialises. Anything else is
     // compile_expr.
     void compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name);
+    // IsAnonymousFunctionDefinition (8.4.3): a function, arrow or class
+    // expression with no name of its own - what NamedEvaluation names.
+    [[nodiscard]] bool is_anonymous_function_definition(std::int32_t idx) const;
+    // The property name of a string or number literal key, which the parser
+    // routes as computed (`{"a": f}`, `{1: f}`) - or nothing for a real
+    // computed key, whose name is only known at run time.
+    [[nodiscard]] std::optional<std::string> literal_key_name(std::int32_t key) const;
+    // SetFunctionName(fn, key[, prefix]) at run time - set_function_name_name.
+    void emit_set_function_name(std::uint16_t fn, std::uint16_t key, std::string_view prefix = {});
     void emit_call_target_error(std::int32_t call, std::uint16_t dst);
     // `yield* expr` - see the definition.
     void compile_yield_delegate(const vp::node & n, std::uint16_t dst);
@@ -1009,10 +1100,19 @@ public:
     // The enclosing function ticks of every direct eval, sorted - see tour.
     std::vector<std::int32_t> eval_ticks_;
     // COMPILING A DIRECT EVAL'S SOURCE: the caller's bindings, in the order
-    // the entry function's upvalues hold them, and whether the caller was
-    // strict. Empty for every other program.
+    // the entry function's upvalues hold them. Empty for every other program.
     std::vector<std::string> eval_outer_names_;
-    bool eval_outer_strict_ = false;
+    // COMPILING AN EVAL'S SOURCE: where it was written (all false for any
+    // other program) - strictness, and what a direct eval nested at this
+    // program's top level inherits (see eval_site_here).
+    eval_site eval_site_{};
+    // The site a direct eval written HERE has: the function whose `this` it
+    // shares, found through the arrows around it.
+    [[nodiscard]] eval_site eval_site_here();
+    // Parallel to eval_outer_names_: which of them are immutable, and which
+    // are lexical declarations of the caller's function (eval_binding).
+    std::vector<immutability> eval_outer_readonly_;
+    std::vector<bool> eval_outer_lexical_;
     // THE TOP LEVEL IS A SCOPE, not the global one: a module's, and a STRICT
     // eval's, whose `var`s and functions are its own (19.2.1.1 step 17: a new
     // variable environment) - set by compile_program.

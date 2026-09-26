@@ -143,6 +143,25 @@ int main() {
     refused("'use strict'; function f() {} f() = 1;");
     refused("function f() {} f() &&= 1;");
     refused("var a; a?.b() = 1;");
+    // A binding the parser took leniently from a token that is no name.
+    refused("var 1 = 1;");
+    // A module's top level is [~Return], and a default-exported declaration
+    // ends at its `}`; parenthesised it is an expression and may be called.
+    module_refused("return 1;");
+    module_refused("export default function () {}();");
+    module_accepted("export default (function () { return 1; })();");
+    // B.3.1: a label's item may be a (labelled) function declaration in
+    // sloppy code - never in strict code, nor as an `if` body.
+    accepted("label1: label2: function f() {}");
+    refused("'use strict'; label1: label2: function f() {}");
+    refused("if (1) label1: function f() {}");
+    refused("function f(1, 1) {}");
+    // An escaped reserved word is still that word (12.7.1.1).
+    refused("var \\u0069mport = 1;");
+    refused("var \\u{64}efault = 1;");
+    refused("'use strict'; var \\u0070ublic = 1;");
+    accepted("var \\u0070ublic = 1, \\u0061b = 2;");
+    accepted("var $a, _b, \\u0061c, \xc3\xa9t\xc3\xa9;");
 
     // ================================================================
     // 1. DUPLICATE LEXICAL DECLARATIONS - 14.2.1, 15.2.1, 16.1.1
