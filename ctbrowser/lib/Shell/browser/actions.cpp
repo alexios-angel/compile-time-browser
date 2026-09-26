@@ -107,6 +107,23 @@ void browser::activate(node_id target) {
             mark(dirty::paint);
             return;
         }
+        // THE PICKER TYPES' input activation behaviour (HTML 4.10.5.1): "show
+        // the picker, if applicable" - with transient activation, and on a
+        // mutable control, it CONSUMES the activation first (there is no
+        // picker here to show; showPicker() is the same steps).
+        if (txn.local_name(target) == "input" && txn.element_ns(target) == node_ns::html) {
+            const std::string type =
+                input_types::type_state_of(txn.attribute_value(target, atoms_.intern("type")));
+            if (ascii_iequals_any(
+                    type, {"color", "date", "datetime-local", "file", "month", "time", "week"})) {
+                const bool read_only = type != "color" && type != "file" &&
+                                       txn.has_attribute(target, atoms_.intern("readonly"));
+                if (!read_only && bindings_->has_transient_activation()) {
+                    bindings_->consume_activation();
+                }
+                return;
+            }
+        }
         // The kind is read NOW, after the click's listeners: one that made a
         // text field `type=submit` made a submit button, and this click is its.
         // `<input type=image>` is one, with a picture on it (4.10.5.1.20),
