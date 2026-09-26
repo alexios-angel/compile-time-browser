@@ -49,7 +49,7 @@ struct scroll_origin {
     bool right = false, bottom = false;
 };
 [[nodiscard]] scroll_origin origin_of(const fragment & f) noexcept {
-    if (f.box == nullptr || f.box->kind != box_kind::flex) { return {}; }
+    if (f.box == nullptr || f.box->kind != box_kind::flex || f.box->unmodelled_flow) { return {}; }
     const flex_direction d = f.box->flex.direction;
     const bool row = d == flex_direction::row || d == flex_direction::row_reverse;
     const bool main_reversed =

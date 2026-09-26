@@ -141,6 +141,16 @@ struct box_node {
     // ancestor's scrollable overflow rectangle (layout/overflow.hpp).
     bool scroll_container = false;
     bool clips_overflow = false;
+    // A FLOW LAYOUT DOES NOT MODEL: a vertical writing mode or right-to-left
+    // direction on this box. Layout places everything horizontal-tb, left to
+    // right, and a question whose answer turns on the flow - where a
+    // reversed flex container's scrolling starts - is left in that one mode
+    // rather than answered for a flow nothing was laid out in.
+    bool unmodelled_flow = false;
+    // `height: stretch` (CSS Sizing 4 §3.1): the box's margin box fills its
+    // containing block's height when that is definite, and it is `auto` when
+    // it is not. `height` itself reads `auto` for it, as parse_length has it.
+    bool height_stretch = false;
     // SIZE CONTAINMENT (CSS Containment 2 §3.2): the box is sized as if it
     // had no content - on both axes for `contain: size` and `container-type:
     // size`, on the inline axis for `inline-size` - so a query container's
@@ -356,7 +366,8 @@ public:
                        atoms.intern("left")},
           inset_inline_{atoms.intern("inset-inline-start"), atoms.intern("inset-inline-end"),
                         atoms.intern("inset-block-start"), atoms.intern("inset-block-end")},
-          box_sizing_(atoms.intern("box-sizing")),
+          box_sizing_(atoms.intern("box-sizing")), direction_(atoms.intern("direction")),
+          writing_mode_(atoms.intern("writing-mode")),
           flex_{atoms.intern("flex-direction"),  atoms.intern("flex-wrap"),
                 atoms.intern("justify-content"), atoms.intern("align-items"),
                 atoms.intern("align-content"),   atoms.intern("align-self"),
@@ -583,7 +594,14 @@ private:
         // §5.1) - has_definite_height says so - but a calc-size() over it
         // still runs its calculation over that automatic height.
         b.height = parse_length(prop(style, height_));
+        b.height_stretch = ascii_iequals_any(
+            trimmed(prop(style, height_)), {"stretch", "-webkit-fill-available", "-moz-available"});
         b.border_box = trimmed(prop(style, box_sizing_)) == "border-box";
+        {
+            const std::string_view mode = trimmed(prop(style, writing_mode_));
+            b.unmodelled_flow = ascii_iequals(trimmed(prop(style, direction_)), "rtl") ||
+                                (!mode.empty() && !ascii_iequals(mode, "horizontal-tb"));
+        }
         // The LONGHANDS, which the style engine expands every shorthand
         // into. Reading `margin`/`padding` directly meant a sheet that said
         // `padding-left` was ignored outright - including the UA sheet's own
@@ -1096,6 +1114,7 @@ private:
     // in the side_atoms slots top, right, bottom, left respectively.
     side_atoms inset_inline_;
     atom box_sizing_;
+    atom direction_, writing_mode_;
     flex_atoms flex_;
 };
 

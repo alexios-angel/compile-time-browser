@@ -219,7 +219,12 @@ struct inline_flow {
             // atomic inline - an inline-block - is the height it came to, a
             // stated `height: 0` or an empty one's zero included, as its
             // `auto` is (height-interpolation reads both).
-            if (f.bounds.height <= 0 && child.kind == box_kind::inline_) {
+            // ponytail: a REPLACED box keeps the line height it had - an
+            // iframe of zero height would make its document's
+            // `(device-height)` false, because device-* is the frame's
+            // viewport here rather than the screen (test_media_queries);
+            // drop the exception once media_environment has a device size.
+            if (f.bounds.height <= 0 && (child.kind == box_kind::inline_ || child.is_replaced())) {
                 f.bounds.height = line_height;
             }
             pen_x += f.bounds.width + child_edges.horizontal_margin();
