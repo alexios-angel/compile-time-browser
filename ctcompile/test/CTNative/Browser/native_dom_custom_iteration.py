@@ -6,7 +6,13 @@ from CTNative.Browser.native_dom_element_iteration import INTRINSICS as SNAPSHOT
 from CTNative.Browser.native_dom_json import quote
 from CTNative.harness import find_compilers
 
-INTRINSICS = [*SNAPSHOT_INTRINSICS, "Symbol", "Object"]
+INTRINSICS = [
+    *SNAPSHOT_INTRINSICS,
+    "Symbol",
+    "Object",
+    "__ctbrowser_to_property_key",
+    "__ctbrowser_set_function_name",
+]
 SOURCE = """function customElements(anchor) {
   const values = {
     [Symbol.iterator]() { return this; },
@@ -1764,7 +1770,7 @@ def mixed_selectors(args, compilers):
                 name = f"custom-iteration-{label}-{owned}-{optimize}"
                 native = dom.lower(args, ir, manifest, name, optimize=optimize)
                 cpp = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
-                if any(helper in cpp for helper in SNAPSHOT_INTRINSICS[4:]):
+                if any(helper in cpp for helper in INTRINSICS if helper.startswith("__ctbrowser_")):
                     raise RuntimeError(f"{name}: mixed selectors retained the VM protocol")
                 checks = (MIXED_CHECKS + (MIXED_OWNED_CHECKS if owned else "")).replace(
                     "@MATCH_RESULT@",
@@ -8242,7 +8248,7 @@ def main():
                 name = f"custom-iteration-{label}-{owned}-{optimize}"
                 native = dom.lower(args, ir, manifest, name, optimize=optimize)
                 cpp = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
-                if any(helper in cpp for helper in SNAPSHOT_INTRINSICS[4:]):
+                if any(helper in cpp for helper in INTRINSICS if helper.startswith("__ctbrowser_")):
                     raise RuntimeError(f"{name}: custom iteration retained the VM protocol")
                 checks = CHECKS + (OWNED_CHECKS if owned else "")
                 if selecting:
@@ -8315,7 +8321,13 @@ def main():
                 )
                 executions += 2 * len(compilers)
                 controls = [("budget", manifest, 0)]
-                required_intrinsics = ["Symbol", "Object", *SNAPSHOT_INTRINSICS[4:]]
+                required_intrinsics = [
+                    "Symbol",
+                    "Object",
+                    *SNAPSHOT_INTRINSICS[4:],
+                    "__ctbrowser_to_property_key",
+                    "__ctbrowser_set_function_name",
+                ]
                 if selecting and "Element.prototype" in text:
                     required_intrinsics += ["Element", "Function"]
                 for intrinsic in required_intrinsics:

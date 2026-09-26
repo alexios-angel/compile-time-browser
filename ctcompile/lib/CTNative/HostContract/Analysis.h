@@ -25,7 +25,7 @@ mlir::FailureOr<llvm::SmallVector<mlir::Value>> projectInvocationContinuation(
 inline constexpr llvm::StringLiteral classDefinedIntrinsic = "__ctbrowser_class_defined";
 
 // Ordinary DOM identities; class preparation consumes its separate declarations.
-inline constexpr unsigned maxDOMIntrinsicNameLength = 23; // __ctbrowser_for_of_open
+inline constexpr unsigned maxDOMIntrinsicNameLength = 29; // __ctbrowser_set_function_name
 const llvm::StringSet<> & domInitialIntrinsics();
 
 inline bool reservedCallbackBinding(llvm::StringRef name) {

@@ -2892,8 +2892,13 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
         contract.provider = ctcompile::ctnative::HostContract::Provider::ctbrowserDOM;
         contract.entry = "customElements$1";
         contract.elementParameters = {0};
-        contract.initialIntrinsics = {"Object", "Symbol", "__ctbrowser_for_of_open",
-                                      "__ctbrowser_iter_next", "__ctbrowser_iter_close"};
+        contract.initialIntrinsics = {"Object",
+                                      "Symbol",
+                                      "__ctbrowser_for_of_open",
+                                      "__ctbrowser_iter_next",
+                                      "__ctbrowser_iter_close",
+                                      "__ctbrowser_to_property_key",
+                                      "__ctbrowser_set_function_name"};
         contract.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*module);
         if (!structured && !method) { testRawIteratorHelpers(*module, contract); }
         const auto originalModule = printed(*module);
@@ -2922,6 +2927,66 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                       printed(*candidate) == originalModule &&
                       proof.moduleSha256 == contract.moduleSha256,
                   "observing iterator budget refusal rolls back");
+        }
+        // Computed method setup is erasable only with both exact initial
+        // helpers and no observer of its private closure or intermediate values.
+        for (llvm::StringRef helperName :
+             {"__ctbrowser_to_property_key", "__ctbrowser_set_function_name"}) {
+            for (unsigned control = 0; control < 6; ++control) {
+                mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
+                auto entry = candidate->lookupSymbol<ctjs::FuncOp>(contract.entry);
+                ctjs::CallOp setup;
+                unsigned setupCalls = 0;
+                entry.walk([&](ctjs::CallOp call) {
+                    auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+                    if (load && load.getName() == helperName) {
+                        setup = call;
+                        ++setupCalls;
+                    }
+                });
+                if (!check(setupCalls == 1, "computed iterator retains its original setup call")) {
+                    continue;
+                }
+                auto request = contract;
+                auto anchor = entry.getBody().front().getArgument(ctjs::implicit_arguments);
+                const bool naming = helperName == "__ctbrowser_set_function_name";
+                mlir::OpBuilder at(setup);
+                if (control == 0) {
+                    std::erase(request.initialIntrinsics, helperName.str());
+                } else if (control == 1) {
+                    ctjs::StoreGlobalOp::create(at, setup.getLoc(), helperName, anchor);
+                } else if (control == 2) {
+                    setup.getArgsMutable().slice(naming ? 1 : 0, 1).assign(anchor);
+                } else if (control == 3) {
+                    setup.getReceiverMutable().assign(anchor);
+                } else {
+                    at.setInsertionPointAfter(setup);
+                    mlir::Value observed = setup.getResult();
+                    if (control == 5) {
+                        observed = setup.getCallee();
+                        if (naming) {
+                            auto name = ctjs::ConstantOp::create(
+                                at, setup.getLoc(), ctjs::StringAttr::get(&context, "name"));
+                            observed = ctjs::GetPropertyOp::create(at, setup.getLoc(),
+                                                                   setup.getArgs().front(), name);
+                        }
+                    }
+                    ctjs::StoreGlobalOp::create(at, setup.getLoc(), "setup-observer", observed);
+                }
+                check(mlir::succeeded(mlir::verify(*candidate)),
+                      "computed iterator setup controls preserve valid source IR");
+                request.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*candidate);
+                const auto fingerprint = request.moduleSha256;
+                const auto intrinsics = request.initialIntrinsics;
+                const auto snapshot = printed(*candidate);
+                auto failure = ctcompile::ctnative::prepareDOMEntry(*candidate, request, 100000);
+                check(failure && printed(*candidate) == snapshot &&
+                          request.moduleSha256 == fingerprint &&
+                          request.initialIntrinsics == intrinsics,
+                      "computed iterator rejects unproved setup without publishing "
+                      "source edits");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+            }
         }
         const auto checks = countChecks(function);
         mlir::DominanceInfo dominance(function);
