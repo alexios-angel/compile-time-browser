@@ -715,6 +715,8 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 for (auto & region : branch->getRegions()) {
                     if (!region.hasOneBlock() || region.front().getNumArguments() ||
                         !llvm::isa<mlir::scf::YieldOp>(region.front().getTerminator()) ||
+                        region.front().getTerminator()->getNumOperands() !=
+                            branch.getNumResults() ||
                         !self(self, region.front(), depth + 1)) {
                         return false;
                     }
@@ -726,6 +728,16 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                     if (!remaining) { return false; }
                     --remaining;
                     attributes.join(result, left, right);
+                    // Both arms have complete effect proofs. Forward only the
+                    // identical saved SSA value, retaining the branch and its
+                    // effects. Existing result trimming runs before final DOM
+                    // proof; equal callable kinds or names supply no identity.
+                    if (left != right) { continue; }
+                    for (auto & use : llvm::make_early_inc_range(result.getUses())) {
+                        if (!remaining) { return false; }
+                        --remaining;
+                        use.set(left);
+                    }
                 }
                 continue;
             }
