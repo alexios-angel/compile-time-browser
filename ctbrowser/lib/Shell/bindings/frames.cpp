@@ -509,6 +509,10 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
             action = form_store::form_action_of(txn, *made.atoms_, target);
         }
         if (!action.form) { return; }
+        // The submission and reset algorithms are installed WITH the frame
+        // document's operations, which a frame builds on its first operation
+        // call - and a dispatched click calls none.
+        if (made.operations_.empty() && made.cx_ != nullptr) { made.install_operations(*made.cx_); }
         if (action.submits && made.submit_from_) { (void)made.submit_from_(action.form, target); }
         if (action.resets && made.reset_form_) { made.reset_form_(action.form); }
     });
