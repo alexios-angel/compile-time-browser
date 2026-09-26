@@ -240,7 +240,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     const std::span<const std::int32_t> members = kids(n);
     // The body's private names, in scope for every member (a method may
     // read a field declared below it) and gone when the body closes.
-    private_scopes_.push_back(private_scope{{}, ++private_classes_});
+    private_scopes_.push_back(private_scope{{}, ++private_classes_, {}});
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
         if ((m.d & 2) == 0 && m.text.starts_with('#')) {
