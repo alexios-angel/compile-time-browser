@@ -63,6 +63,12 @@ enum class box_kind : std::uint8_t {
 struct box_node {
     box_kind kind = box_kind::block;
     node_id source; // empty for anonymous boxes
+    // A ::before or ::after box's ORIGINATING ELEMENT, and its text's: the
+    // box is not the element, so `source` stays empty and a geometry query
+    // never finds it, but a hit on a pseudo-element is a hit on the element
+    // it belongs to (CSS Pseudo 4 §4.1) - Bootstrap's `.stretched-link::after`
+    // is an overlay whose clicks go to its <a>. Empty everywhere else.
+    node_id origin;
     // The element's tag, for the handful of decisions that are about WHAT an
     // element is rather than about its style - table parts, list items. A view
     // into the atom table, which outlives every box tree built from it.
@@ -694,6 +700,7 @@ private:
                                                                                  : box_kind::block;
             g.inline_level = d == display_kind::inline_flex || d == display_kind::inline_block;
             g.style = style;
+            g.origin = element;
             style_box(g, style, d, into.font_size, into.face, into.underline, into.line_through);
             // An EMPTY string is no text at all: `content: ""` is a box with
             // nothing in it, which is what a clearfix or a sized block wants,
@@ -705,6 +712,7 @@ private:
                 box_node t;
                 t.kind = box_kind::text;
                 t.style = style;
+                t.origin = element;
                 t.text = preserve ? *text : collapse_whitespace(*text);
                 t.preformatted = preserve;
                 t.font_size = g.font_size;

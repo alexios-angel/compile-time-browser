@@ -145,7 +145,8 @@ private:
         const fragment & f = *ref.value;
         const rect box = box_of(ref);
         const computed_style_ptr style = f.box != nullptr ? f.box->style : computed_style_ptr{};
-        into.hit(box, f.source);
+        // A pseudo-element's box hits as its originating element.
+        into.hit(box, f.source ? f.source : f.box != nullptr ? f.box->origin : node_id{});
 
         if (!f.text.empty()) { return; }
 
