@@ -711,6 +711,9 @@ void install_class_defined(context & cx) {
         }
         value * proto = ctor->find("prototype");
         if (proto == nullptr || !proto->is_object()) { return value::undefined(); }
+        // MakeConstructor(F, false, proto) (15.7.14 step 16): a class's
+        // `prototype` is not writable, where a function's is.
+        ctor->set_attrs("prototype", attr_none);
         auto * table = static_cast<object_object *>(proto->as_heap());
         table->defining_class = false;
         std::vector<std::pair<std::string, std::uint8_t>> entries;
