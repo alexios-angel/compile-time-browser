@@ -203,6 +203,31 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-number-boolean-number-return": """function customElements(anchor) {
+  try {
+    const saved = Number(Number(anchor.hasAttribute('flag')));
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-boolean-number-snapshot": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.hasAttribute('flag'));
+    anchor.setAttribute('flag', 'changed');
+    anchor.setAttribute('data-written', Number(saved));
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-number-divide-return": """function customElements(anchor) {
+  try {
+    const saved = 1 / Number(Number(anchor.getAttribute('data-number')));
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -291,6 +316,9 @@ NUMBER_ARITHMETIC_RESULTS["write-number-read-arithmetic-conditional-callee"] = (
 NUMBER_ARITHMETIC_RESULTS["write-number-read-conditional-divide-return"] = (
     NUMBER_ARITHMETIC_RESULTS["write-number-read-protected-divide-return"]
 )
+NUMBER_ARITHMETIC_RESULTS["write-number-read-number-divide-return"] = NUMBER_ARITHMETIC_RESULTS[
+    "write-number-read-protected-divide-return"
+]
 NUMBER_CONDITIONAL_READS = {
     "write-number-read-conditional": ("flag", "0"),
     "write-number-read-conditional-snapshot": ("flag", "0"),
@@ -338,6 +366,10 @@ WRITE_EXPECTED = {
         'result1="true:read:flag=true;write:data-written=Infinity;"\n'
     ),
 }
+WRITE_EXPECTED["write-number-boolean-number-return"] = WRITE_EXPECTED["write-number-boolean-return"]
+WRITE_EXPECTED["write-number-boolean-number-snapshot"] = WRITE_EXPECTED[
+    "write-number-boolean-snapshot"
+]
 
 WRITE_OBSERVER = """function observe(closed) {
   const saved = {};
@@ -671,6 +703,11 @@ def main():
                 "write-number-boolean-conditional-divide-return": [
                     ("data-written", '(closed ? "Infinity" : "1")')
                 ],
+                "write-number-boolean-number-return": [("data-written", '(closed ? "1" : "0")')],
+                "write-number-boolean-number-snapshot": [
+                    ("flag", '"changed"'),
+                    ("data-written", '(closed ? "1" : "0")'),
+                ],
             }[name]
             write_checks = "\n".join(
                 f'assert(writes[{index}].name == target.atoms().intern("{attribute}")); '
@@ -904,6 +941,46 @@ def main():
                     "anchor.hasAttribute('flag')",
                     "anchor.hasAttribute('flag') ? (anchor.unknown(), true) : false",
                 ),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
+    number_body = SOURCES["write-number-boolean-number-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    refusals.update(
+        {
+            "write-number-boolean-number-" + name: number_body.replace(before, after)
+            for name, before, after in (
+                ("without-intrinsic", "Number", "Number"),
+                ("rebound-intrinsic", "try {", "try { Number = anchor;"),
+                ("coercing-input", "anchor.hasAttribute('flag')", "anchor"),
+                ("unknown-getter", "anchor.hasAttribute('flag')", "anchor.unknown"),
+                ("unknown-producer", "anchor.hasAttribute('flag')", "anchor.unknown()"),
+                (
+                    "extra-argument",
+                    "Number(Number(anchor.hasAttribute('flag')))",
+                    "Number(Number(anchor.hasAttribute('flag')), 0)",
+                ),
+                (
+                    "wrong-receiver",
+                    "Number(Number(anchor.hasAttribute('flag')))",
+                    "Number.call(anchor, Number(anchor.hasAttribute('flag')))",
+                ),
+                (
+                    "coercing-branch",
+                    "Number(anchor.hasAttribute('flag'))",
+                    "anchor.hasAttribute('flag') ? 1 : anchor",
+                ),
+                (
+                    "effectful-branch",
+                    "Number(anchor.hasAttribute('flag'))",
+                    "anchor.hasAttribute('flag') ? (anchor.unknown(), 1) : 0",
+                ),
+                (
+                    "different-callee",
+                    "Number(Number(anchor.hasAttribute('flag')))",
+                    "(anchor.hasAttribute('flag') ? Number : anchor)(1)",
+                ),
+                ("bigint-input", "Number(anchor.hasAttribute('flag'))", "1n"),
                 ("invalid-name", "'data-written'", "'bad name'"),
             )
         }
