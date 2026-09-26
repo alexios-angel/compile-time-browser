@@ -545,9 +545,38 @@ void test_string_identity() {
     expect_result("var o = {}; o['x' + 'y'] = 3; return o.xy;", "3");
 }
 
+// context::binary_op answers the six bitwise opcodes as the interpreter's
+// handlers do - ToNumeric first, so an object's valueOf runs and a Symbol is
+// the TypeError - which is what a compiled tier lowering them through
+// ct_aot_binary_op needs.
+void test_binary_op_takes_the_bitwise_six() {
+    context cx;
+    install_builtins(cx);
+    const auto number = [&](op kind, value l, value r) {
+        const value got = cx.binary_op(kind, l, r);
+        return got.is_number() ? got.as_number() : -12345.0;
+    };
+    CHECK(number(op::bit_and, value::number(6), value::number(3)) == 2);
+    CHECK(number(op::bit_or, value::number(4), value::number(1)) == 5);
+    CHECK(number(op::bit_xor, value::number(5), value::number(1)) == 4);
+    CHECK(number(op::shl, value::number(1), value::number(3)) == 8);
+    CHECK(number(op::shr, value::number(-8), value::number(1)) == -4);
+    CHECK(number(op::ushr, value::number(-1), value::number(28)) == 15);
+    const program & made =
+        cx.own_program(compiler::compile("globalThis.four = {valueOf() { return 4; }};"
+                                         "globalThis.sym = Symbol();"));
+    CHECK(cx.run(made).ok);
+    CHECK(number(op::bit_or, cx.global("four"), value::number(1)) == 5);
+    const program & probe = cx.own_program(compiler::compile("try { sym & 1; return 'no'; }"
+                                                             " catch (e) { return e.name; }"));
+    const run_result ran = cx.run(probe);
+    CHECK(ran.ok && cx.to_string(ran.returned) == "TypeError");
+}
+
 } // namespace
 
 int main() {
+    test_binary_op_takes_the_bitwise_six();
     test_arithmetic();
     test_plus_is_overloaded();
     test_comparison_and_logic();

@@ -478,6 +478,17 @@ value context::binary_op(op kind, value lhs, value rhs) {
     // `**` is context::exponentiate, not libm's pow: the specification's edge
     // cases for it do not agree with C's.
     case op::pow: return value::number(exponentiate(to_number_value(l), to_number_value(r)));
+    // THE BITWISE SIX, as VM_CASE(bit_and) and its siblings run them: ToNumeric
+    // of both - a Symbol's TypeError, an object's valueOf - and then the
+    // static operator. Here so that a compiled tier lowering them through
+    // ct_aot_binary_op gets the interpreter's answer, not binary_op_static's,
+    // which converts nothing.
+    case op::bit_and:
+    case op::bit_or:
+    case op::bit_xor:
+    case op::shl:
+    case op::shr:
+    case op::ushr: return binary_op_static(kind, l, r);
     default: break;
     }
     // Same position as binary_op_static's default arm: unreachable from the
