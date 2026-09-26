@@ -523,7 +523,7 @@ void dom_bindings::execute_script_element(context & cx, node_id id, const std::s
                 if (src.empty()) {
                     connect_blank_frame(frame); // its `load` at once (frames.cpp)
                 } else {
-                    frames_.push_back(frame_entry{frame, src, load_frame(cx, frame, src)});
+                    frames_.push_back(frame_entry{frame, src, start_frame(frame, src)});
                 }
             }
         }

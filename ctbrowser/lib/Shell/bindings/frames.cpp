@@ -55,6 +55,7 @@
 //     the frame - but nothing draws that layout into the page's.
 
 #include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/net/url.hpp>
 
@@ -107,6 +108,46 @@ namespace {
 // prefix no URL can spell, so a changed srcdoc re-navigates as a changed src
 // does (frame_source).
 constexpr std::string_view srcdoc_key{"\0srcdoc:", 8};
+// ...and the markup a `javascript:` URL's string result is (run_planned_navigations).
+constexpr std::string_view markup_key{"\0markup:", 8};
+
+// A frame source that is a `javascript:` URL: the scheme, ASCII
+// case-insensitively, after the leading C0 controls and spaces the URL parser
+// strips.
+[[nodiscard]] bool is_javascript_url(std::string_view source) {
+    while (!source.empty() && static_cast<unsigned char>(source.front()) <= 0x20) {
+        source.remove_prefix(1);
+    }
+    return ascii_istarts_with(source, "javascript:");
+}
+
+// `text` as a JavaScript string literal.
+[[nodiscard]] std::string js_string_literal(std::string_view text) {
+    std::string out = "\"";
+    for (const char c : text) {
+        const auto byte = static_cast<unsigned char>(c);
+        if (c == '"' || c == '\\') {
+            out.push_back('\\');
+            out.push_back(c);
+        } else if (byte < 0x20) {
+            constexpr std::string_view hex = "0123456789abcdef";
+            out += "\\x";
+            out.push_back(hex[byte >> 4u]);
+            out.push_back(hex[byte & 0x0Fu]);
+        } else {
+            out.push_back(c);
+        }
+    }
+    // U+2028 and U+2029 end a line inside a string literal before ES2019;
+    // escaped, whichever the compiler implements.
+    for (const auto & [raw, escaped] : {std::pair{std::string_view{"\xE2\x80\xA8"}, "\\u2028"},
+                                        std::pair{std::string_view{"\xE2\x80\xA9"}, "\\u2029"}}) {
+        for (std::size_t at = out.find(raw); at != std::string::npos; at = out.find(raw, at)) {
+            out.replace(at, raw.size(), escaped);
+        }
+    }
+    return out + "\"";
+}
 
 } // namespace
 
@@ -212,7 +253,7 @@ void dom_bindings::reconcile_frames() {
             still.push_back(*seen);
             continue;
         }
-        still.push_back(frame_entry{id, src, load_frame(*cx_, id, src)});
+        still.push_back(frame_entry{id, src, start_frame(id, src)});
     }
     // A FRAME THAT LEFT THE TREE IS FORGOTTEN, and its document is not: the
     // secondary bindings stay in `secondary_documents_` because a page may
@@ -238,6 +279,35 @@ void dom_bindings::reconcile_frames() {
 // inserted script runs (execute_script_element): a later frame of the same
 // insertion has not had its insertion steps yet, and reading its
 // `contentWindow` from this one's `load` must answer null.
+// The queued `load` load_frame left for this document's <iframe> `id`, which
+// its caller announces itself - or, for a javascript: source, not at all.
+void dom_bindings::forget_frame_load(node_id id) {
+    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+    dom_bindings * const owner = &top == this ? nullptr : this;
+    std::erase_if(top.frame_loads_, [&](const pending_frame & waiting) {
+        return !waiting.resource && waiting.id == id && waiting.owner == owner;
+    });
+}
+
+// A frame's FIRST document, for the source it has when it is reconciled. A
+// `javascript:` URL is a navigation of the about:blank the frame starts on
+// (HTML 7.4.2.3.2): that document, announcing nothing, and the URL's script
+// evaluated a task later in its realm (run_planned_navigations) - a string
+// result becomes the frame's document, anything else leaves it as it is. A
+// form a page submits at the frame meanwhile navigates it after the script
+// ran (jsurl-navigation-then-form-submit.html).
+dom_bindings * dom_bindings::start_frame(node_id id, const std::string & source) {
+    if (cx_ == nullptr) { return nullptr; }
+    if (!is_javascript_url(source)) { return load_frame(*cx_, id, source); }
+    dom_bindings * made = load_frame(*cx_, id, std::string{});
+    forget_frame_load(id);
+    form_navigation navigation;
+    navigation.src = source;
+    navigation.request.url = source;
+    navigate_frame(*this, id, std::move(navigation));
+    return made;
+}
+
 void dom_bindings::connect_blank_frame(node_id id) {
     if (cx_ == nullptr) { return; }
     if (std::ranges::any_of(frames_, [id](const frame_entry & e) { return e.element == id; })) {
@@ -245,11 +315,7 @@ void dom_bindings::connect_blank_frame(node_id id) {
     }
     dom_bindings * made = load_frame(*cx_, id, std::string{});
     frames_.push_back(frame_entry{id, std::string{}, made});
-    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
-    dom_bindings * const owner = &top == this ? nullptr : this;
-    std::erase_if(top.frame_loads_, [&](const pending_frame & waiting) {
-        return !waiting.resource && waiting.id == id && waiting.owner == owner;
-    });
+    forget_frame_load(id);
     const bool were_dirty = frames_dirty_;
     frames_dirty_ = false;
     settle_frame(*cx_, pending_frame{id, true, false, nullptr});
@@ -363,9 +429,13 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     std::string href;
     // AN iframe srcdoc DOCUMENT (4.8.5): the attribute's markup is the
     // resource - text/html, UTF-8 - and about:srcdoc its address.
-    const bool srcdoc = src.starts_with(srcdoc_key);
+    // A `javascript:` URL's string result is the same kind of resource, at
+    // the address the frame already had - about:blank, which a frame here
+    // spells as no address at all.
+    const bool markup = src.starts_with(markup_key);
+    const bool srcdoc = markup || src.starts_with(srcdoc_key);
     if (srcdoc) {
-        href = "about:srcdoc";
+        href = markup ? std::string{} : std::string{"about:srcdoc"};
         bytes = src.substr(srcdoc_key.size());
         type = "text/html";
         charset = "UTF-8";
@@ -694,8 +764,32 @@ void dom_bindings::run_planned_navigations() {
         dom_bindings & owner = *plan.navigable;
         if (!owner.is_connected(plan.element)) { continue; }
         owner.reconcile_frames();
+        std::string source = plan.navigation.src;
+        if (is_javascript_url(source)) {
+            // "Evaluate a javascript: URL" (7.4.2.3.2) in the frame's current
+            // document: the percent-decoded body as a script, and its
+            // completion value - a string is the new document's markup, and
+            // anything else navigates nowhere.
+            const auto current = std::ranges::find_if(
+                owner.frames_, [&](const frame_entry & e) { return e.element == plan.element; });
+            if (current == owner.frames_.end() || current->bindings == nullptr) { continue; }
+            const std::size_t colon = source.find(':');
+            script::program compiled = script::compiler::compile(
+                "return eval(" + js_string_literal(percent_decode(source.substr(colon + 1))) +
+                ");");
+            if (!compiled.ok) { continue; }
+            value result = value::undefined();
+            {
+                const auto in_frame = current->bindings->enter_realm(*cx_);
+                result = cx_->run_nested(cx_->own_program(std::move(compiled)));
+            }
+            if (cx_->failed()) { (void)cx_->take_error(); }
+            if (cx_->throw_pending()) { (void)cx_->take_pending_throw(); }
+            if (!result.is_string()) { continue; }
+            source = std::string{markup_key} + cx_->to_string(result);
+        }
         dom_bindings * made =
-            owner.load_frame(*cx_, plan.element, plan.navigation.src, &plan.navigation.request);
+            owner.load_frame(*cx_, plan.element, source, &plan.navigation.request);
         // THE ELEMENT'S `src` IS UNCHANGED, so the entry keeps what it read -
         // the next reconcile must not load it over the navigated document.
         const auto entry = std::ranges::find_if(

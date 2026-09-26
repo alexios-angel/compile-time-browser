@@ -577,6 +577,28 @@ void test_a_srcdoc_frame_is_its_markup() {
        "doc|about:srcdoc|about:srcdoc|text/html|UTF-8|file:///pages/x/y.html");
 }
 
+// HTML 7.4.2.3.2: a `javascript:` source navigates the about:blank a frame
+// starts on - a task later, in its realm - to its string result, and a
+// result that is no string leaves the frame as it was and announces nothing.
+void test_a_javascript_source_is_its_string_result() {
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///pages/the-page.html");
+    page.load_html("<!DOCTYPE html><html><body>"
+                   "<iframe id=f src=\"javascript:'<title>js</title>'\"></iframe>"
+                   "<iframe id=g src='javascript:false'></iframe><script>"
+                   "var heard = [], f = document.getElementById('f'),"
+                   " g = document.getElementById('g');"
+                   "f.onload = function () { heard.push(f.contentDocument.title); };"
+                   "g.onload = function () { heard.push('g'); };"
+                   "setTimeout(function () {"
+                   " console.log(heard.join() + '|' + g.contentDocument.body.childNodes.length);"
+                   "}, 60);</script></body></html>");
+    for (int i = 0; i < 8; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"js|0"}); }
+}
+
 int main() {
     test_a_frame_document_is_laid_out_at_the_size_of_its_box();
     test_the_frames_are_indexed_on_the_window();
@@ -603,5 +625,6 @@ int main() {
     test_the_location_object_navigates();
     test_a_blank_frame_loads_during_its_insertion();
     test_a_srcdoc_frame_is_its_markup();
+    test_a_javascript_source_is_its_string_result();
     REPORT("frames");
 }

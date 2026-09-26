@@ -737,6 +737,8 @@ private:
                               const resource_request * request = nullptr);
     void settle_frame(context & cx, const pending_frame & waiting);
     void connect_blank_frame(node_id id);
+    void forget_frame_load(node_id id);
+    dom_bindings * start_frame(node_id id, const std::string & source);
     [[nodiscard]] std::string frame_source(const read_txn & txn, node_id id) const;
     [[nodiscard]] std::string fallback_base_url();
     void connect_inserted_frames(const std::vector<document::write_note> & writes);
