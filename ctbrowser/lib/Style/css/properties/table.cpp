@@ -422,6 +422,13 @@ std::span<const property_syntax> known_properties() {
     return std::span<const property_syntax>{every_property()};
 }
 
+bool animatable(std::string_view name) {
+    if (name.starts_with("--")) { return true; }
+    return !ascii_istarts_with(name, "animation") && !ascii_istarts_with(name, "transition") &&
+           !ascii_iequals_any(name, {"container", "container-name", "container-type", "direction",
+                                     "unicode-bidi", "will-change", "interpolate-size"});
+}
+
 bool inherited_property(std::string_view name) {
     static const std::unordered_set<std::string_view> inherited = [] {
         std::unordered_set<std::string_view> out;

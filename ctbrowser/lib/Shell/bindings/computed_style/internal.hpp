@@ -83,9 +83,19 @@ namespace ctbrowser::shell::detail {
 [[nodiscard]] std::string used_px_text(float value);
 [[nodiscard]] std::string color_text(color c);
 [[nodiscard]] std::optional<color> system_color(std::string_view text);
-[[nodiscard]] std::optional<std::array<double, 16>> transform_matrix3d(std::string_view text);
-[[nodiscard]] std::optional<std::array<double, 6>> transform_matrix(std::string_view text);
-[[nodiscard]] std::string transform_matrix_text(std::string_view text);
+// What a transform's relative arguments resolve against: the element's font
+// sizes for `em` and `rem`, its reference box - the border box - for a
+// translation's percentage. A negative box leaves a percentage unresolved.
+struct transform_basis {
+    float font_size = 16, root_font_size = 16;
+    float width = -1, height = -1;
+};
+[[nodiscard]] std::optional<std::array<double, 16>> transform_matrix3d(
+    std::string_view text, const transform_basis & basis = {});
+[[nodiscard]] std::optional<std::array<double, 6>> transform_matrix(
+    std::string_view text, const transform_basis & basis = {});
+[[nodiscard]] std::string transform_matrix_text(std::string_view text,
+                                                const transform_basis & basis = {});
 // `keep_case` for a value that names something, whose idents are case-sensitive.
 [[nodiscard]] std::string collapse_keyword(std::string_view text, bool keep_case = false);
 [[nodiscard]] std::string shadow_text(std::string_view text, float font_size, bool box);

@@ -168,11 +168,12 @@ namespace detail {
 // file of css-transforms compares two of them.
 //
 // ONLY WHAT CAN BE MULTIPLIED HERE IS. A function this reader does not model
-// and a percentage (needs the box) keep the cascade's text.
-//
-// ponytail: lengths in px alone; add `em`/percent against the probe's font
-// size and box when a test asks.
-std::optional<std::array<double, 16>> transform_matrix3d(std::string_view text) {
+// keeps the cascade's text, and so does a percentage with no box to be one of.
+// `em` and `rem` are the element's and the root's font sizes, and a
+// translation's percentage is of the border box - x of its width, y of its
+// height (transform-interpolation-004 compares two such lists).
+std::optional<std::array<double, 16>> transform_matrix3d(std::string_view text,
+                                                         const transform_basis & basis) {
     if (text.empty() || ascii_iequals(text, "none")) { return std::nullopt; }
     using style::css::token_type;
     const style::css::token_stream ts = style::css::tokenize(text);
@@ -226,10 +227,25 @@ std::optional<std::array<double, 16>> transform_matrix3d(std::string_view text) 
             } else if (t.type == token_type::number) {
                 args.push_back(t.number);
                 is_length.push_back(false);
+            } else if (t.type == token_type::percentage) {
+                // translatex/translate's first argument is along x, and every
+                // other place a percentage may stand in a translation is y.
+                const bool along_x = name == "translatex" || (name != "translatey" && args.empty());
+                const float box = along_x ? basis.width : basis.height;
+                if (!name.starts_with("translate") || name == "translatez" || box < 0 ||
+                    args.size() >= 2) {
+                    return std::nullopt;
+                }
+                args.push_back(t.number / 100.0 * box);
+                is_length.push_back(true);
             } else if (t.type == token_type::dimension) {
                 const std::string unit = ascii_lower_copy(ts.unit_of(t));
                 if (unit == "px") {
                     args.push_back(t.number);
+                    is_length.push_back(true);
+                } else if (unit == "em" || unit == "rem") {
+                    args.push_back(t.number *
+                                   (unit == "em" ? basis.font_size : basis.root_font_size));
                     is_length.push_back(true);
                 } else if (unit == "deg") {
                     args.push_back(t.number);
@@ -337,8 +353,9 @@ std::optional<std::array<double, 16>> transform_matrix3d(std::string_view text) 
     return m;
 }
 
-std::optional<std::array<double, 6>> transform_matrix(std::string_view text) {
-    const auto m = transform_matrix3d(text);
+std::optional<std::array<double, 6>> transform_matrix(std::string_view text,
+                                                      const transform_basis & basis) {
+    const auto m = transform_matrix3d(text, basis);
     if (!m) { return std::nullopt; }
     const std::array<double, 16> & n = *m;
     const bool flat = n[2] == 0 && n[3] == 0 && n[6] == 0 && n[7] == 0 && n[8] == 0 && n[9] == 0 &&
@@ -347,8 +364,8 @@ std::optional<std::array<double, 6>> transform_matrix(std::string_view text) {
     return std::array<double, 6>{n[0], n[1], n[4], n[5], n[12], n[13]};
 }
 
-std::string transform_matrix_text(std::string_view text) {
-    if (const auto matrix = transform_matrix(text)) {
+std::string transform_matrix_text(std::string_view text, const transform_basis & basis) {
+    if (const auto matrix = transform_matrix(text, basis)) {
         const auto & m = *matrix;
         std::string out{"matrix("};
         for (std::size_t i = 0; i < 6; ++i) {
@@ -360,7 +377,7 @@ std::string transform_matrix_text(std::string_view text) {
         out += ')';
         return out;
     }
-    const auto matrix = transform_matrix3d(text);
+    const auto matrix = transform_matrix3d(text, basis);
     if (!matrix) { return std::string{text}; }
     std::string out{"matrix3d("};
     for (std::size_t i = 0; i < 16; ++i) {

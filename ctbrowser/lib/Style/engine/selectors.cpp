@@ -349,6 +349,7 @@ namespace {
     if ((want & structural_enabled) != 0 && (!f.can_be_disabled || f.is_disabled)) { return false; }
     if ((want & structural_checked) != 0 && !f.is_checked) { return false; }
     if ((want & structural_link) != 0 && !f.is_link) { return false; }
+    if ((want & structural_placeholder_shown) != 0 && !f.is_placeholder_shown) { return false; }
     if ((want & structural_visited) != 0) { return false; } // always, on purpose
     return true;
 }

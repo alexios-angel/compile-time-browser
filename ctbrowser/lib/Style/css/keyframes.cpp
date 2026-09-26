@@ -69,16 +69,9 @@ void engine::file_keyframes(const css::stylesheet & sheet, std::uint8_t origin,
                     }
                     continue;
                 }
-                if (property.starts_with("animation")) { continue; }
                 // ...and a property whose animation type is "not animatable"
-                // is ignored in a keyframe too (CSS Animations 1 §4.1): the
-                // transitions, the container's name and type (CSS Conditional
-                // 5 §4), the bidi pair and will-change.
-                if (property.starts_with("transition") ||
-                    ascii_iequals_any(property, {"container", "container-name", "container-type",
-                                                 "direction", "unicode-bidi", "will-change"})) {
-                    continue;
-                }
+                // is ignored in a keyframe too (CSS Animations 1 §4.1).
+                if (!css::animatable(property)) { continue; }
                 const css::property_syntax * known = css::find_property(property);
                 if (known == nullptr) { continue; }
                 if (known->shorthand) {

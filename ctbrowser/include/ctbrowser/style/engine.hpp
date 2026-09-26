@@ -84,6 +84,8 @@ struct element_facts {
     bool is_checked = false;
     // `:link` / `:any-link` - an <a>, <area> or <link> with an href.
     bool is_link = false;
+    // `:placeholder-shown` - see structural_placeholder_shown.
+    bool is_placeholder_shown = false;
 };
 
 // One element the traversal has already reached, kept so that matching can ask
@@ -260,6 +262,12 @@ public:
     };
     using container_size_query = std::function<std::optional<container_size>(node_id)>;
     void set_container_size(container_size_query query) { container_size_ = std::move(query); }
+    // THE LIVE VALUE OF A FORM CONTROL once a user or a script has edited it,
+    // which the document no longer holds - the shell's form store answers,
+    // and `dir=auto` on a text control reads it (HTML §3.2.6.4). nullopt, or
+    // no hook, and the `value` attribute - a <textarea>'s text - is the value.
+    using control_value_query = std::function<std::optional<std::string>(node_id)>;
+    void set_control_value(control_value_query query) { control_value_ = std::move(query); }
     // DID A LAYOUT MOVE A CONTAINER a query was asked of? Every size the last
     // cascade asked for is asked again - of the layout that has run since -
     // and any answer that differs means the cascade read a stale box and has
@@ -680,6 +688,13 @@ private:
     // answers exactly.
     [[nodiscard]] static bool first_strong_in(std::string_view text, bool & rtl);
 
+    // The value `dir=auto` reads on an AUTO-DIRECTIONALITY FORM-ASSOCIATED
+    // element - an <input> in the Hidden, Text, Search, Telephone, URL, Email,
+    // Password, Submit, Reset or Button state, or a <textarea> - and nullopt
+    // for every other element, whose descendants' text is read instead.
+    [[nodiscard]] std::optional<std::string> auto_direction_value(const read_txn & txn,
+                                                                  node_id node) const;
+
     // Everything up to the first ASCII whitespace, leading whitespace skipped.
     [[nodiscard]] static std::string_view first_word(std::string_view text);
     // The subtag beginning at `at`, advancing `at` past its separator. An `at` of
@@ -894,6 +909,7 @@ private:
     // set_container_size.
     std::vector<css::container_condition> containers_{css::container_condition{}};
     container_size_query container_size_;
+    control_value_query control_value_;
     // What the hook answered for each container since the last resolve_all -
     // asked once per container per cascade, and what container_sizes_changed
     // holds the next layout to.

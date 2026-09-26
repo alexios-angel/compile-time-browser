@@ -313,6 +313,10 @@ void test_composition() {
                          composite_op::accumulate, context) == "matrix(0, 1, -1, 0, 150, 0)");
     CHECK(composite_text("transform", "matrix(1, 1, 0, 0, 0, 100)", "matrix(1, 0, 0, 1, 50, 0)",
                          composite_op::accumulate, context) == "matrix(1, 0, 0, 1, 50, 0)");
+    // A singular matrix makes the whole interpolation discrete.
+    CHECK(interpolate_text("transform", "matrix(1, 1, 0, 0, 0, 100) translate(10px)",
+                           "matrix(1, 1, 0, 0, 0, 100) translate(20px)", 0.25,
+                           context) == "matrix(1, 1, 0, 0, 0, 100) translate(10px)");
     CHECK(composite_text("transform", "translate(10px) scale(2)", "translate(5px) scale(3)",
                          composite_op::accumulate, context) == "translate(15px, 0px) scale(4, 4)");
     CHECK(interpolate_text("transform", "matrix(1, 0, 0, 1, 0, -6)", "matrix(0, 7, -1, 0, 6, 0)",
@@ -336,11 +340,86 @@ void test_composition() {
                          context) == "rotate3d(1, 0, 0, 30deg)");
 }
 
+// CSS Values 5 §calc-size: both sides canonicalized onto one basis - a length
+// basis is `any`, a percentage basis `100%`, a nested calc-size() folded in -
+// and the calculations blended with `size` kept as a term; a keyword meets a
+// length only under `interpolate-size: allow-keywords`.
+void test_calc_size_interpolation() {
+    ctbrowser::style::css::length_context context;
+    // As the cascade writes the same declaration, which is what reads back.
+    const auto sized = [](std::string_view text) {
+        return ctbrowser::style::css::calc_size_text(text, "auto").value_or(std::string{text});
+    };
+    CHECK(interpolate_text("height", "calc-size(auto, size)", "calc-size(auto, size * 2)", 0.5,
+                           context) == sized("calc-size(auto, size * 1.5)"));
+    CHECK(interpolate_text("height", "calc-size(20px, size)", "calc-size(60px, size)", 0.75,
+                           context) == "calc-size(any, 50px)");
+    CHECK(interpolate_text("height", "calc-size(50%, size)", "calc-size(50px, size)", 0, context) ==
+          sized("calc-size(100%, 0px + size * 0.5)"));
+    CHECK(interpolate_text("height", "auto", "calc-size(any, 50px)", 0.75, context) ==
+          sized("calc-size(auto, 37.5px + size * 0.25)"));
+    CHECK(interpolate_text("height", "calc-size(calc-size(auto, size / 2), size * 2)",
+                           "calc-size(auto, size * 5)", 0.75,
+                           context) == sized("calc-size(auto, size * 4)"));
+    CHECK(!interpolable_text("height", "auto", "calc-size(50px, size)"));
+    CHECK(!interpolable_text("height", "calc-size(auto, size)", "calc-size(50%, size)"));
+    CHECK(!interpolable_text("height", "fit-content", "calc-size(min-content, size)"));
+    CHECK(!interpolable_text("width", "auto", "10px"));
+    // A nest that doubles its text at every level is refused, not expanded.
+    std::string nest = "auto";
+    for (int i = 0; i < 20; ++i) { nest = "calc-size(" + nest + ", size / 2 + size / 2)"; }
+    CHECK(!interpolable_text("height", nest, "calc-size(auto, size * 3)"));
+
+    // Two font palettes mix, and each end is itself.
+    CHECK(interpolate_text("font-palette", "light", "dark", 0.3, context) ==
+          "palette-mix(in oklab, light, dark 30%)");
+    CHECK(interpolate_text("font-palette", "normal", "light", 0.5, context) ==
+          "palette-mix(in oklab, normal, light)");
+    CHECK(interpolate_text("font-palette", "light", "dark", -0.25, context) == "light");
+    CHECK(interpolable_text("font-palette", "light", "--custom"));
+
+    context.interpolate_keywords = true;
+    CHECK(interpolable_text("width", "auto", "10px", context));
+    CHECK(!interpolable_text("width", "auto", "min-content", context));
+    CHECK(interpolate_text("min-height", "auto", "20px", 0.3, context) ==
+          sized("calc-size(auto, 6px + size * 0.7)"));
+    CHECK(interpolate_text("min-height", "10px", "min-content", -0.3, context) ==
+          sized("calc-size(min-content, 13px + size * -0.3)"));
+    CHECK(interpolate_text("min-height", "auto", "0px", 0, context) ==
+          sized("calc-size(auto, 0px + size * 1)"));
+}
+
+// Track lists add track by track, inside repeat() too; a transform-origin
+// with no z offset adds as one of zero, and prints without it.
+void test_track_and_origin_composition() {
+    const ctbrowser::style::css::length_context context;
+    CHECK(composite_text("grid-template-columns", "0fr repeat(2, 0fr 10px) 1fr",
+                         "1fr repeat(2, 1fr 20px) 1fr", composite_op::add,
+                         context) == "1fr repeat(2, 1fr 30px) 2fr");
+    CHECK(composite_text("grid-template-columns", "50px 10%", "100px 100px", composite_op::add,
+                         context) == "150px calc(10% + 100px)");
+    CHECK(composite_text("transform-origin", "40px 60px", "160px 140px 40px", composite_op::add,
+                         context) == "200px 200px 40px");
+    CHECK(interpolate_text("transform-origin", "100px 100px", "200px 200px 40px", 0.5, context) ==
+          "150px 150px 20px");
+    CHECK(interpolate_text("transform-origin", "100px 200px 20px", "200px 100px 100px", -0.25,
+                           context) == "75px 225px");
+    // Lists that do not pair accumulate as whole matrices; a shorter list that
+    // pairs as far as it goes is padded with identities.
+    CHECK(composite_text("transform", "rotate(90deg)", "translateX(100px)",
+                         composite_op::accumulate, context) == "matrix(0, 1, -1, 0, 100, 0)");
+    CHECK(composite_text("transform", "translateX(100px) rotate(90deg)", "translateX(100px)",
+                         composite_op::accumulate,
+                         context) == "translate(200px, 0px) rotate(90deg)");
+}
+
 } // namespace
 
 int main() {
+    test_track_and_origin_composition();
     test_easing();
     test_interpolation();
     test_composition();
+    test_calc_size_interpolation();
     REPORT("style_easing");
 }

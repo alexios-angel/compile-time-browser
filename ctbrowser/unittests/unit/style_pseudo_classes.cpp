@@ -337,9 +337,44 @@ void test_focus_within_and_visible() {
     CHECK(f.value_of(f.find_id("p"), "z-index").empty());
 }
 
+// `dir=auto` on a text control reads its VALUE - the attribute until the form
+// store says it was edited - and a date control reads nothing (HTML §3.2.6.4,
+// dir-auto-form-associated).
+void test_dir_auto_reads_a_controls_value() {
+    fixture f;
+    f.load("<input id=t dir=auto value='א'><input id=d type=date dir=auto value='א'>"
+           "<input id=e dir=auto>",
+           "");
+    const auto txn = f.doc.read();
+    CHECK(f.styles.direction_is_rtl(txn, f.find_id("t")));
+    CHECK(!f.styles.direction_is_rtl(txn, f.find_id("d")));
+    CHECK(!f.styles.direction_is_rtl(txn, f.find_id("e")));
+    const node_id edited = f.find_id("e");
+    f.styles.set_control_value([edited](node_id id) -> std::optional<std::string> {
+        if (id == edited) { return std::string{"א"}; }
+        return std::nullopt;
+    });
+    CHECK(f.styles.direction_is_rtl(txn, edited));
+}
+
 } // namespace
 
+// `:placeholder-shown`: a placeholder attribute - empty or not - and an empty
+// value (placeholder-shown).
+void test_placeholder_shown() {
+    fixture f;
+    f.load("<input id=a placeholder><input id=b placeholder value=x><input id=c>"
+           "<textarea id=d placeholder=p></textarea>",
+           ":placeholder-shown { color: #010101 }");
+    expect_value(f, f.find_id("a"), "color", "#010101", "an empty placeholder is shown");
+    CHECK(f.value_of(f.find_id("b"), "color").empty());
+    CHECK(f.value_of(f.find_id("c"), "color").empty());
+    expect_value(f, f.find_id("d"), "color", "#010101", "an empty textarea shows it");
+}
+
 int main() {
+    test_placeholder_shown();
+    test_dir_auto_reads_a_controls_value();
     test_structural_pseudos();
     test_nth_child();
     test_functional_pseudos();

@@ -30,6 +30,10 @@ script::object_object * cssom_interface(context & cx, script::object_object * in
         }
     }
     ctor->define("prototype", value::object(proto), script::attr_none);
+    // ...and a `length`, its constructor's required arguments: none for an
+    // interface that has no constructor, and none for CSSStyleSheet's
+    // optional options (Web IDL §3.7.1, cssom/idlharness).
+    ctor->define("length", value::number(0), script::attr_configurable);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
     // `@@toStringTag`, which is what `Object.prototype.toString` - and so
     // `rule.toString()` - reads: `[object CSSFontFaceRule]`, not

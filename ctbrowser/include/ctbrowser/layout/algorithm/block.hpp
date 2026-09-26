@@ -56,8 +56,12 @@ struct block_flow {
         // height of ZERO, so `height: 50%` had nothing to be a percentage of and
         // silently became `auto`. Bootstrap's `.h-100` is that declaration, and a
         // card with a header, a body and a footer is three of them.
+        // `stretch` against a definite height is the containing block's
+        // height less this box's margins, as a border box.
         const float declared_height =
-            has_definite_height(b, c)
+            b.height_stretch && c.available_height > 0
+                ? std::max(0.0f, c.available_height - edges.margin_top - edges.margin_bottom)
+            : has_definite_height(b, c)
                 ? std::max(0.0f,
                            border_box_size(b, b.height, c.available_height, edges.vertical_inner()))
                 : -1.0f;

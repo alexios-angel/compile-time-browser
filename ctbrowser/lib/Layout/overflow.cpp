@@ -38,6 +38,26 @@ struct edges {
 // and belongs to the viewport's area rather than to any element's.
 [[nodiscard]] edges scrollable_overflow(const fragment & f, bool icb) noexcept;
 
+// WHERE A BOX'S SCROLLING STARTS, per axis: its right and its bottom padding
+// edge for a flex container whose main or cross axis runs backwards - a
+// `row-reverse` fills from the right, a `wrap-reverse` row stacks its lines
+// from the bottom - and its left and top otherwise (CSS Overflow 3 §2.2, the
+// scroll origin; CSS Flexbox 1 §5.1, §5.2). What spills past the origin is
+// unreachable, and what spills the other way is what there is to scroll to
+// (scrollWidthHeight-negative-margin-002).
+struct scroll_origin {
+    bool right = false, bottom = false;
+};
+[[nodiscard]] scroll_origin origin_of(const fragment & f) noexcept {
+    if (f.box == nullptr || f.box->kind != box_kind::flex || f.box->unmodelled_flow) { return {}; }
+    const flex_direction d = f.box->flex.direction;
+    const bool row = d == flex_direction::row || d == flex_direction::row_reverse;
+    const bool main_reversed =
+        d == flex_direction::row_reverse || d == flex_direction::column_reverse;
+    const bool cross_reversed = f.box->flex.wrap == flex_wrap::wrap_reverse;
+    return {row ? main_reversed : cross_reversed, row ? cross_reversed : main_reversed};
+}
+
 void contribute(const fragment & child, const fragment & parent, bool icb, edges & into) noexcept {
     const box_node * box = child.box;
     const bool parent_positioned = parent.box != nullptr && parent.box->is_positioned();
@@ -95,8 +115,18 @@ edges scrollable_overflow(const fragment & f, bool icb) noexcept {
         }
     }
     if (f.box != nullptr && f.box->scroll_container) {
-        out.right = std::max(out.right, inflow.right + e.pad_right);
-        out.bottom = std::max(out.bottom, inflow.bottom + e.pad_bottom);
+        // ...on the END side, which a reversed axis puts at the start.
+        const scroll_origin origin = origin_of(f);
+        if (origin.right) {
+            out.left = std::min(out.left, inflow.left - e.pad_left);
+        } else {
+            out.right = std::max(out.right, inflow.right + e.pad_right);
+        }
+        if (origin.bottom) {
+            out.top = std::min(out.top, inflow.top - e.pad_top);
+        } else {
+            out.bottom = std::max(out.bottom, inflow.bottom + e.pad_bottom);
+        }
     }
     return out;
 }
@@ -118,9 +148,17 @@ rect padding_box_of(const fragment & f) noexcept {
 rect scrolling_area_of(const fragment & f) noexcept {
     const rect padding = padding_box_of(f);
     const edges grown = scrollable_overflow(f, false);
-    // Pinned at the padding edge: whatever spilled up or left is unreachable.
-    return rect{padding.x, padding.y, std::max(padding.width, grown.right - padding.x),
-                std::max(padding.height, grown.bottom - padding.y)};
+    // Pinned at the padding edge the scroll origin is on: whatever spilled
+    // past it is unreachable.
+    const scroll_origin origin = origin_of(f);
+    const float right = padding.x + padding.width;
+    const float bottom = padding.y + padding.height;
+    const float width = origin.right ? right - std::min(padding.x, grown.left)
+                                     : std::max(padding.width, grown.right - padding.x);
+    const float height = origin.bottom ? bottom - std::min(padding.y, grown.top)
+                                       : std::max(padding.height, grown.bottom - padding.y);
+    return rect{origin.right ? right - width : padding.x,
+                origin.bottom ? bottom - height : padding.y, width, height};
 }
 
 rect viewport_scrolling_area(const fragment & document, float viewport_width,

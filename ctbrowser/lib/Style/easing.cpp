@@ -136,9 +136,8 @@ using namespace easing_detail;
 }
 
 [[nodiscard]] bool interpolable_text(std::string_view property, std::string_view from,
-                                     std::string_view to) {
+                                     std::string_view to, const css::length_context & ctx) {
     bool interpolable = true;
-    const css::length_context ctx;
     (void)interpolate_pair(property, computed_shape(property, from, ctx),
                            computed_shape(property, to, ctx), 0.5, ctx, interpolable);
     return interpolable;

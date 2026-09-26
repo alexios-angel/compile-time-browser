@@ -82,6 +82,14 @@ void test_branches_and_else() {
     CHECK_EQ(s.sub("if(style(--x: 1): v1; style(--x: 3): v3; else: v4)"), std::string{"v3"});
     CHECK_EQ(s.sub("if(style(--x: 1): v1; else: v2; style(--x: 3): v3)"), std::string{"v2"});
     CHECK_EQ(s.sub("if(style(--x: 3): a; else: b)if(style(--x): c)"), std::string{"a/**/c"});
+    // CSS Syntax 3 §9.2's pairs: an ident before `(`, `#` before a name, `+`
+    // before a number and `/` before `*` would merge too; `)` before anything
+    // would not.
+    CHECK_EQ(s.sub("if(style(--x: 3): foo)if(style(--x): ())"), std::string{"foo/**/()"});
+    CHECK_EQ(s.sub("if(style(--x: 3): #)if(style(--x): bar)"), std::string{"#/**/bar"});
+    CHECK_EQ(s.sub("if(style(--x: 3): +)if(style(--x): 12)"), std::string{"+/**/12"});
+    CHECK_EQ(s.sub("if(style(--x: 3): /)if(style(--x): *)"), std::string{"//**/*"});
+    CHECK_EQ(s.sub("if(style(--x: 3): ())if(style(--x): a)"), std::string{"()a"});
     // Malformed: no branch colon, a `!` anywhere, nothing at all.
     CHECK_EQ(s.sub("if(style(--x: 3) a; else: b)"), std::string{"<invalid>"});
     CHECK_EQ(s.sub("if(style(--x: 3): a; else: b!)"), std::string{"<invalid>"});

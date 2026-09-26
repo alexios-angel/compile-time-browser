@@ -183,6 +183,8 @@ struct resolved_edges {
 // laid out - which is why its percentage children see no definite height, as
 // calc-size-height's last test asserts.
 [[nodiscard]] inline bool has_definite_height(const box_node & b, const constraints & c) {
+    // `stretch` is the containing block's height, which is definite or not.
+    if (b.height_stretch) { return c.available_height > 0; }
     if (b.height.is_auto() || b.height.is_intrinsic()) { return false; }
     return b.height.u != unit::percent || c.available_height > 0;
 }

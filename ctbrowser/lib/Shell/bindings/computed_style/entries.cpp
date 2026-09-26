@@ -165,6 +165,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             const node_id parent = at.chain[1];
             const layout::box_node * up_box = box_for(boxes_, parent);
             at.flex_item = up_box != nullptr && up_box->kind == layout::box_kind::flex;
+            at.definite_height =
+                up_box == nullptr || !(up_box->height.is_auto() || up_box->height.is_intrinsic());
             if (const layout::fragment * up = fragment_for(fragments_, parent)) {
                 at.basis = up->bounds.width;
                 at.basis_height = up->bounds.height;
@@ -519,9 +521,18 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                                                                  declared("direction"));
             if (!resolved.empty()) { return resolved; }
         }
+        // CSS Text 4 §7.1-7.2: `word-spacing: normal` computes to zero, and a
+        // letter-spacing of zero reads back as `normal` - so an animation's
+        // `0px` end and a declared `normal` agree (letter-spacing-computed,
+        // word-spacing-computed, letter-spacing-interpolation).
+        if (property == "word-spacing" && ascii_iequals(trim(text, html_whitespace), "normal")) {
+            return "0px";
+        }
         if (known != nullptr && (known->kind == style::css::value_kind::length ||
                                  known->kind == style::css::value_kind::length_percentage)) {
-            return computed_length(text);
+            std::string length = computed_length(text);
+            if (property == "letter-spacing" && length == "0px") { return "normal"; }
+            return length;
         }
         // 3c. THE FONT FAMILY LIST, whose case is the author's and whose quoting
         //     is CSSOM's. Answered before the keyword fold below, which would
@@ -530,7 +541,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         // 3d. A TRANSFORM LIST, multiplied out to the `matrix()` CSS Transforms
         //     says its resolved value is - see `transform_matrix_text`.
         if (property == "transform" && !ascii_iequals(trim(text, html_whitespace), "none")) {
-            return transform_matrix_text(trim(text, html_whitespace));
+            transform_basis basis{at.font_size, at.root_font_size, -1, -1};
+            if (at.frag != nullptr && at.has_box) {
+                basis.width = at.frag->bounds.width;
+                basis.height = at.frag->bounds.height;
+            }
+            return transform_matrix_text(trim(text, html_whitespace), basis);
         }
         // 3e. A SHADOW LIST: colour first, resolved, and lengths in px - see
         //     shadow_text. A colour it left as `currentcolor` is substituted
@@ -826,7 +842,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                                                                "font-palette",
                                                                "scroll-timeline-name",
                                                                "view-timeline-name",
-                                                               "timeline-scope"};
+                                                               "timeline-scope",
+                                                               "will-change"};
         return collapse_keyword(text, ascii_iequals_any(property, names_something));
     };
 

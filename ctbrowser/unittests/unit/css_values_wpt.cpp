@@ -500,8 +500,10 @@ void test_what_a_page_reads_back() {
 
 // exp-log-serialize, minmax-number-serialize, progress-serialize and their
 // kin: the computed `transform` is the product of its functions as a
-// `matrix()`, `none` is `none`, and a function this engine cannot multiply
-// out keeps its text rather than guessing.
+// `matrix()`, `none` is `none`, a translation's percentage is of the border
+// box (the div is 384px wide, so `translate(10%)` moves 38.4px), and a
+// function this engine cannot multiply out keeps its text rather than
+// guessing.
 void test_a_transform_computes_to_a_matrix() {
     using ctbrowser::shell::browser;
     using ctbrowser::shell::browser_options;
@@ -523,7 +525,8 @@ void test_a_transform_computes_to_a_matrix() {
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "matrix="),
              std::string{"matrix=matrix(0.5, 0, 0, 0.5, 0, 0)|none|matrix(1, 0, 0, 1, 0, 0)|"
-                         "matrix(2, 0, 0, 3, 20, 15)|matrix(0, 1, -1, 0, 0, 0)|translate(10%)|"
+                         "matrix(2, 0, 0, 3, 20, 15)|matrix(0, 1, -1, 0, 0, 0)|"
+                         "matrix(1, 0, 0, 1, 38.4, 0)|"
                          "matrix(0, 0, 0, 0, 0, 0)"});
 }
 

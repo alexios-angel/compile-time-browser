@@ -57,8 +57,9 @@ private:
 
 // Whether `interpolate_text` would interpolate the pair rather than switch it -
 // which is what decides whether a transition starts (CSS Transitions 1 §3).
+// The context carries the element's `interpolate-size`.
 [[nodiscard]] bool interpolable_text(std::string_view property, std::string_view from,
-                                     std::string_view to);
+                                     std::string_view to, const css::length_context & context = {});
 
 // `currentcolor` in a value replaced by the element's colour text, whole or
 // as a list item: a colour interpolates as the colour it resolves to (CSS

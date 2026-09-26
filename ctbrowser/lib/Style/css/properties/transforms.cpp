@@ -426,7 +426,11 @@ bool match_transform_property(std::string_view property, const token_stream & ts
         const std::optional<origin> o = read_origin(ts, at, {});
         if (o) {
             if (o->y.empty()) {
-                answer = o->x;
+                // A LONE VALUE is one axis with the other `center` (CSS
+                // Transforms 1 §6), and serialises as the pair:
+                // `left center`, `center top` (transform-origin-valid).
+                const bool vertical = ascii_iequals(o->x, "top") || ascii_iequals(o->x, "bottom");
+                answer = vertical ? "center " + o->x : o->x + " center";
             } else {
                 answer = o->x + " " + o->y + (o->z.empty() ? "" : " " + o->z);
             }
@@ -516,7 +520,12 @@ std::string computed_transform_property(std::string_view property, std::string_v
                         : resolve(o->x, false, true) + " " + px_text_of(box_height / 2);
     }
     std::string out = resolve(o->x, false, false) + " " + resolve(o->y, true, false);
-    if (!o->z.empty()) { out += " " + o->z; }
+    // A zero z offset is left out, written or not - `100% 150% 0px` reads
+    // back as the pair an interpolation's zero end does
+    // (transform-origin-interpolation).
+    if (!o->z.empty() && length_text_to_px(o->z, *tc.lengths).value_or(1.0f) != 0.0f) {
+        out += " " + o->z;
+    }
     return out;
 }
 
