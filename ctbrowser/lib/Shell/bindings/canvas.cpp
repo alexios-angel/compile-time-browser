@@ -268,6 +268,33 @@ void canvas_operation(context & cx, script::object_object & proto, const std::st
     return out;
 }
 
+// THE FONT FIELDS of the state, which is all a parsed `font` sets - and all
+// the parse cache keeps. A whole state would hold its clip mask and its
+// patterns' bitmaps alive for as long as the cache holds the entry.
+struct canvas_font {
+    float size = 10;
+    std::string family;
+    bool bold = false;
+    bool italic = false;
+    std::string stretch;
+    std::string variant_caps;
+    std::string spec;
+
+    [[nodiscard]] static canvas_font of(const canvas_context::state & s) {
+        return canvas_font{s.font_size,    s.font_family,       s.font_bold, s.font_italic,
+                           s.font_stretch, s.font_variant_caps, s.font_spec};
+    }
+    void apply(canvas_context::state & s) const {
+        s.font_size = size;
+        s.font_family = family;
+        s.font_bold = bold;
+        s.font_italic = italic;
+        s.font_stretch = stretch;
+        s.font_variant_caps = variant_caps;
+        s.font_spec = spec;
+    }
+};
+
 } // namespace
 
 // A DOMMatrix: the six numbers a page reads, and the methods it composes with.
@@ -727,26 +754,17 @@ void dom_bindings::install_canvas_2d(context & cx) {
             return canvas == nullptr ? value::undefined() : c.string(canvas->current().font_spec);
         },
         [target, canvas_of, computed_of,
-         fonts = std::make_shared<std::unordered_map<std::string, canvas_context::state>>()](
+         fonts = std::make_shared<std::unordered_map<std::string, canvas_font>>()](
             context & c, std::span<value> a) {
             canvas_context * canvas = target(c);
             if (canvas == nullptr) { return value::undefined(); }
             const std::string v = c.to_string(arg(a, 0));
             if (c.throw_pending()) { return value::undefined(); }
             canvas_context::state & s = canvas->current();
-            const auto adopt = [&s](const canvas_context::state & from) {
-                s.font_size = from.font_size;
-                s.font_family = from.font_family;
-                s.font_bold = from.font_bold;
-                s.font_italic = from.font_italic;
-                s.font_stretch = from.font_stretch;
-                s.font_variant_caps = from.font_variant_caps;
-                s.font_spec = from.font_spec;
-            };
             // A page sets the same few fonts again and again - p5 before
             // every text() - so an absolute one is parsed once.
             if (const auto hit = fonts->find(v); hit != fonts->end()) {
-                adopt(hit->second);
+                hit->second.apply(s);
                 return value::undefined();
             }
             // A relative size - `2em`, `50%`, `larger` - is relative to the
@@ -757,15 +775,16 @@ void dom_bindings::install_canvas_2d(context & cx) {
                 const layout::length length = layout::parse_length(text);
                 return length.is_auto() ? 10.0f : length.resolve(10, 10);
             };
-            canvas_context::state candidate = s;
+            canvas_context::state candidate;
             bool relative = false;
             if (const std::optional<std::string> serialized =
                     apply_font(candidate, v, base, &relative)) {
                 candidate.font_spec = *serialized;
-                adopt(candidate);
+                const canvas_font font = canvas_font::of(candidate);
+                font.apply(s);
                 if (!relative) {
                     if (fonts->size() > 256) { fonts->clear(); }
-                    fonts->emplace(v, std::move(candidate));
+                    fonts->emplace(v, font);
                 }
             }
             return value::undefined();
