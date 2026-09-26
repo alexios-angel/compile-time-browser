@@ -160,6 +160,16 @@ void test_interpolation() {
     CHECK(interpolate_text("filter", "blur(6px)", "blur(10px) hue-rotate(180deg)", 0.5, context) ==
           "blur(8px) hue-rotate(90deg)");
     CHECK(interpolate_text("filter", "blur(6px)", "grayscale(1)", 0.5, context) == "grayscale(1)");
+    // Two track lists of one shape, track by track, with the nearer end's
+    // line names (CSS Grid 2 §7.2.5).
+    CHECK(interpolate_text("grid-template-columns", "1fr [a b] 1fr [d] 1fr", "2fr [c] auto 2fr",
+                           0.4, context) == "1.4fr [a b] 1fr [d] 1.4fr");
+    CHECK(interpolate_text("grid-template-columns", "minmax(10px, 1fr) minmax(20px, 2fr)",
+                           "minmax(20px, 2fr) minmax(30px, auto)", 0.6,
+                           context) == "minmax(16px, 1.6fr) minmax(26px, auto)");
+    CHECK(interpolate_text("grid-template-rows", "1fr repeat(2, 2fr auto 30px) 1fr",
+                           "2fr repeat(2, 3fr 30px 40px) 2fr", 0.4,
+                           context) == "1.4fr repeat(2, 2.4fr auto 34px) 1.4fr");
     // An angle may go negative; a url() makes the pair discrete; accumulation
     // sums, a 1-based amount as `a + b - 1` (Filter Effects 1 §11.3).
     CHECK(interpolate_text("filter", "hue-rotate(0deg)", "hue-rotate(180deg)", -0.5, context) ==
