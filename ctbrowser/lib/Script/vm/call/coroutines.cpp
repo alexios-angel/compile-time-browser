@@ -785,7 +785,13 @@ void context::resume(value coroutine, value with, bool rejected) {
     bool failed_outcome = false;
     if (returned.is_object()) {
         auto * obj = static_cast<object_object *>(returned.as_heap());
-        if (obj->find("__settled") != nullptr) {
+        // SETTLED, not merely a promise: a pending one carries `__settled`
+        // too, as false, and reading its absent value fulfilled this promise
+        // with undefined at once - `async () => { await x; return p; }`
+        // finished before `p` did (select-event.html's "a second time"). A
+        // pending promise goes to the settler below, whose resolve ADOPTS it.
+        if (const value * settled = obj->find("__settled");
+            settled != nullptr && truthy(*settled)) {
             value * held = obj->find("__value");
             value * state = obj->find("__rejected");
             outcome = held == nullptr ? value::undefined() : *held;
