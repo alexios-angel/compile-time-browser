@@ -3825,7 +3825,121 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
     }
 }
 
+static void testNumberAttributeOrigins(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    const std::string source = R"js(function guarded(element) {
+        const saved = Number(element.getAttribute('data-number'));
+        try { element.setAttribute('data-written', saved); throw element; }
+        catch (error) { return error === element; }
+    })js";
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 18; ++control) {
+            auto text = source;
+            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
+                text.replace(text.find(from.str()), from.size(), to.str());
+            };
+            if (control == 1) {
+                replace("try {", "try { element.setAttribute('data-number', '99');");
+            }
+            if (control == 2 || control == 16) {
+                replace("Number(element.getAttribute('data-number'))",
+                        control == 2 ? "element.hasAttribute('flag') ? "
+                                       "Number(element.getAttribute('data-number')) : 7.5"
+                                     : "element.hasAttribute('flag') ? "
+                                       "Number(element.getAttribute('data-number')) : element");
+            }
+            if (control == 10) {
+                replace("try {", "");
+                replace("const saved", "try { const saved");
+            }
+            if (control == 11) { replace("const saved", "unknown(); const saved"); }
+            if (control == 12) { replace("data-written", "bad name"); }
+            if (control == 17) { replace("saved); throw", "saved + 1); throw"); }
+            auto candidate = import(context, text, true);
+            if (!candidate) { continue; }
+            ctjs::LoadGlobalOp number;
+            ctjs::CallOp conversion;
+            candidate->walk([&](ctjs::LoadGlobalOp load) {
+                if (load.getName() == "Number") { number = load; }
+            });
+            candidate->walk([&](ctjs::CallOp call) {
+                if (number && call.getCallee() == number.getResult()) { conversion = call; }
+            });
+            // Inside try, status edges forward the callee through block arguments.
+            if (!check(number && (conversion || control == 10),
+                       "saved Number source retains its original call")) {
+                continue;
+            }
+            auto element = guarded(*candidate).getBody().front().getArgument(3);
+            mlir::Builder builder(&context);
+            if (control == 4) { number.setName("Other"); }
+            if (control == 5) { conversion.getReceiverMutable().assign(element); }
+            if (control == 6) { conversion.getArgsMutable().append(element); }
+            if (control == 7) { conversion.getArgsMutable().clear(); }
+            if (control == 8) { conversion.getArgsMutable().assign(element); }
+            if (control == 9) {
+                mlir::OpBuilder at(number);
+                ctjs::StoreGlobalOp::create(at, number.getLoc(), "Number", element);
+            }
+            number->setAttr("ctnative.host_intrinsic", builder.getStringAttr("Number"));
+            if (conversion) {
+                conversion->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+            }
+            HostContract request;
+            request.provider = provider;
+            request.entry = guarded(*candidate).getSymName().str();
+            request.elementParameters = {0};
+            if (control != 3) { request.initialIntrinsics = {"Number"}; }
+            request.moduleSha256 = hostContractFingerprint(*candidate);
+            const auto originalContract = request;
+            if (control == 15) { number.setName("Other"); }
+            const auto original = printed(*candidate);
+            auto error = prepareDOMEntry(*candidate, request,
+                                         control == 13   ? 0
+                                         : control == 14 ? 500
+                                                         : 100000);
+            if (control >= 3) {
+                check(static_cast<bool>(error) && printed(*candidate) == original &&
+                          request.moduleSha256 == originalContract.moduleSha256 &&
+                          request.initialIntrinsics == originalContract.initialIntrinsics &&
+                          request.elementParameters == originalContract.elementParameters &&
+                          request.provider == originalContract.provider &&
+                          request.entry == originalContract.entry,
+                      "Number origin grants no binding, coercion, effect or budget authority");
+                if (error) { llvm::consumeError(std::move(error)); }
+                continue;
+            }
+            if (!check(!error, "saved Number origin completes the original protected write")) {
+                llvm::errs() << llvm::toString(std::move(error)) << '\n';
+                continue;
+            }
+            DOMEntryAnalysis proof(*candidate, request);
+            check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                  "saved Number origin requires fresh complete DOM proof");
+            llvm::SmallVector<ctjs::CallOp> calls;
+            candidate->walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            if (control < 2 && check(calls.size() == (control == 1 ? 4u : 3u),
+                                     "saved read and Number conversion execute exactly once")) {
+                const auto * read = proof.call(calls[0]);
+                const auto * numeric = proof.call(calls[1]);
+                const auto * write = proof.call(calls.back());
+                check(read && read->kind == HostDOMMethod::getAttribute && numeric &&
+                          numeric->kind == HostDOMMethod::number && write &&
+                          write->kind == HostDOMMethod::setAttribute &&
+                          calls[1].getArgs()[0] == calls[0].getResult() &&
+                          calls.back().getArgs()[1] == calls[1].getResult() &&
+                          calls[0]->isBeforeInBlock(calls[1]) &&
+                          calls[1]->isBeforeInBlock(calls[2]) &&
+                          (control != 1 || calls[2]->isBeforeInBlock(calls[3])),
+                      "write uses the pre-mutation Number snapshot after the ordered read");
+            }
+        }
+    }
+}
+
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    testNumberAttributeOrigins(context);
     testInvocationCallableReads(context);
     testInvocationCellReads(context);
     testObservedIteratorRecovery(context);

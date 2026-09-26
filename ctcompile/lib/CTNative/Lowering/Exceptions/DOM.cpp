@@ -437,6 +437,16 @@ struct DOMAttributeProof {
         if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
             return llvm::isa<ctjs::NumberAttr>(constant.getValue());
         }
+        if (auto call = value.getDefiningOp<ctjs::CallOp>()) {
+            auto callee = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+            auto receiver = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
+            // A successful initial Number call produces a Number. Final DOM
+            // proof still validates its binding and input; this grants no
+            // effect authority to the call or its argument producers.
+            return callee && callee.getName() == "Number" && receiver &&
+                   llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) &&
+                   call.getArgs().size() == 1;
+        }
         // Only immutable Number origins prove conversion cannot invoke user code.
         // This does not discharge the producers' effects or protected status edges.
         if (auto unary = value.getDefiningOp<ctjs::UnaryOp>()) {
