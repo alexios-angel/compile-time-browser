@@ -297,6 +297,20 @@ constexpr std::string_view geometry_boxes =
 }
 
 [[nodiscard]] std::optional<std::string> canonical_position(std::string_view text) {
+    // A MATH FUNCTION in a position - `from calc(10% - 5px) 2px`, which is how
+    // an interpolated one computes. match_position reads single tokens, so one
+    // or two <length-percentage>s with one among them are written here.
+    if (text.find('(') != std::string_view::npos) {
+        const std::vector<std::string_view> words = words_of(text);
+        if (words.empty() || words.size() > 2) { return std::nullopt; }
+        std::string out;
+        for (const std::string_view word : words) {
+            const std::optional<std::string> one = length_percentage(word, false);
+            if (!one) { return std::nullopt; }
+            out += (out.empty() ? "" : " ") + *one;
+        }
+        return words.size() == 1 ? out + " center" : out;
+    }
     const token_stream ts = tokenize(text);
     const scan found = scan_tokens(ts);
     std::string out;
@@ -433,7 +447,14 @@ constexpr std::string_view geometry_boxes =
 }
 
 [[nodiscard]] std::optional<shape_command> parse_shape_command(std::string_view item) {
-    const std::vector<std::string_view> words = words_of(item);
+    // A `/` is a word of its own however it is spaced: `53px /34% 61px`.
+    std::string spaced;
+    int depth = 0;
+    for (const char ch : item) {
+        depth += ch == '(' ? 1 : ch == ')' ? -1 : 0;
+        spaced += depth == 0 && ch == '/' ? std::string{" / "} : std::string{ch};
+    }
+    const std::vector<std::string_view> words = words_of(spaced);
     if (words.empty()) { return std::nullopt; }
     shape_command c;
     c.verb = ascii_lower_copy(words[0]);

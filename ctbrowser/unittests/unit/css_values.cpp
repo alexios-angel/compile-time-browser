@@ -684,6 +684,8 @@ void test_the_shape_function() {
     ok("offset-path", "shape(from 1px 2px, smooth by 5px 5px with 1px 2px from end)",
        "shape(from 1px 2px, smooth by 5px 5px with 1px 2px from end)");
     CHECK(supports_declaration("shape-outside", "shape(from 0px 0px, hline to center, close)"));
+    ok("offset-path", "shape(from calc(10% - 5px) 2px, curve by 1px 2px with 3px 4px /5px 6px)",
+       "shape(from calc(10% - 5px) 2px, curve by 1px 2px with 3px 4px / 5px 6px)");
     bad("clip-path", "shape(from 0px 0px)");
     bad("clip-path", "shape(nonzero, from 0px 0px, close)");
     bad("clip-path", "shape(from 0px 0px, close,)");
