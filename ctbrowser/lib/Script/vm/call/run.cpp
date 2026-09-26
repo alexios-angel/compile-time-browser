@@ -187,8 +187,9 @@ bool context::eval_declaration_instantiation(const program & prog) {
             return false;
         }
     }
-    for (const std::string & name : prog.hoisted_vars) { realm.var_names[name] = true; }
-    for (const std::string & name : prog.function_names) { realm.var_names[name] = true; }
+    // NOT recorded as var names: an eval's bindings are configurable, and a
+    // later script's `let` of the same name shadows them (16.1.7 step 3.c's
+    // NOTE - only a restricted, non-configurable global property collides).
     return true;
 }
 

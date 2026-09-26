@@ -54,6 +54,11 @@ int main() {
     expect({"let x;", "(0, eval)('function x() {}');"}, "SyntaxError");
     // ...but not from a function, whose own variables they are.
     expect({"let x;", "(function () { eval('var x;'); })();"}, "ok");
+    // An eval's bindings are configurable, so a later script's `let` shadows
+    // them rather than colliding (16.1.7 step 3.c's NOTE).
+    expect({"eval('var ev; function ef() {}');", "let ev = 1; const ef = 2;"
+                                                 "if (ev !== 1 || ef !== 2) { throw 0; }"},
+           "ok");
     // Steps 8-10: NaN is not configurable and not writable.
     expect({"eval('function NaN() {}');"}, "TypeError");
     expect({"try { eval('var fresh; function NaN() {}'); } catch (e) {}"
