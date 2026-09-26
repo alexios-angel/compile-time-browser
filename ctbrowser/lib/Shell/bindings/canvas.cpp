@@ -1334,18 +1334,19 @@ void dom_bindings::install_canvas_2d(context & cx) {
                     trim(txn.attribute_value(id, atoms_->intern("src")), html_whitespace);
                 if (src.empty()) { return nullptr; }
             }
-            // A load still in flight is not broken either: the image is not
-            // yet "fully decodable", and draws nothing
-            // (2d.drawImage.incomplete.immediate).
+            // The pixels are available the moment `src` is set - this engine
+            // decodes synchronously, which is why `img.complete` is already
+            // true - so an image that decodes draws, load event or not. One
+            // that does not is broken only once its load has been
+            // delivered: while that is still queued it is merely not yet
+            // "fully decodable", and draws nothing (2d.drawImage.incomplete.*).
+            const auto pixels = image_argument(v);
+            if (pixels) { return pixels; }
             for (const pending_image & loading : image_loads_) {
                 if (loading.id == id) { return nullptr; }
             }
-            const auto pixels = image_argument(v);
-            if (!pixels) {
-                throw_dom(c, "InvalidStateError", "The image is broken");
-                return nullptr;
-            }
-            return pixels;
+            throw_dom(c, "InvalidStateError", "The image is broken");
+            return nullptr;
         }
         if (tag == "video") { return nullptr; }
         c.throw_error("TypeError", "The argument is not a CanvasImageSource");
