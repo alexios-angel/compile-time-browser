@@ -57,6 +57,25 @@ void test_a_child_past_the_padding_edge_grows_the_area() {
     expect_near(a.height, 201, "scrollHeight: to the child's bottom border edge (1+1-100+300 - 1)");
 }
 
+// ...and in a flex container whose axis runs backwards the origin is the
+// right or bottom padding edge, so what spills left or up is what scrolls:
+// `row-reverse` reaches from 104 back to the item's left border edge at -80,
+// `wrap-reverse` from 90 up to its top one at -118.
+void test_a_reversed_flex_container_scrolls_from_its_end() {
+    for (const char * flow : {"row-reverse", "row wrap-reverse"}) {
+        laid_out page;
+        page.run(R"(<div id=w><div id=i></div></div>)",
+                 std::string{reset} + "#w { display: flex; flex-flow: " + flow +
+                     "; width: 80px; height: 80px; padding: 1px 4px 8px 16px; border-style: solid;"
+                     " border-width: 1px 50px 40px 4px } #i { margin: -100px; height: 300px;"
+                     " width: 300px }");
+        const rect a = page.area("w");
+        const bool wrap = std::string_view{flow}.ends_with("wrap-reverse");
+        expect_near(a.width, wrap ? 196 : 184, std::string{"scrollWidth, "} + flow);
+        expect_near(a.height, wrap ? 208 : 201, std::string{"scrollHeight, "} + flow);
+    }
+}
+
 // scrollWidthHeight-flex-column-padding-001: a scroll container keeps its
 // end padding past its overflowing in-flow content.
 void test_a_scroll_container_keeps_its_end_padding() {
@@ -106,6 +125,7 @@ void test_clipping_and_containing_blocks() {
 int main() {
     test_a_child_ending_at_the_padding_edge_adds_nothing();
     test_a_child_past_the_padding_edge_grows_the_area();
+    test_a_reversed_flex_container_scrolls_from_its_end();
     test_a_scroll_container_keeps_its_end_padding();
     test_clipping_and_containing_blocks();
     REPORT("layout_overflow");

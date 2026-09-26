@@ -15,7 +15,9 @@
 //
 // One writing mode: the overflow directions are rightward and downward, so
 // the scrolling area's origin is the box's top-left padding edge and only the
-// right and bottom edges grow.
+// right and bottom edges grow - except in a flex container whose main or cross
+// axis runs backwards, where the origin is the right or bottom edge and the
+// area grows the other way (overflow.cpp's origin_of).
 
 namespace ctbrowser::layout {
 
