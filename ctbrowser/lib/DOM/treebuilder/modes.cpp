@@ -215,20 +215,23 @@ bool tree_builder::declarative_shadow_root(const token & t) {
         !doc_->allow_declarative_shadow_roots()) {
         return false;
     }
-    const entry * host = adjusted_current();
-    if (host == nullptr || !host->id || host->id == open_.front().id) { return false; }
+    const entry * current = adjusted_current();
+    if (current == nullptr || !current->id || current->id == open_.front().id) { return false; }
+    // The host's ID, not the entry: the push below can move `open_`, and the
+    // entry with it (ASan: heap-use-after-free, 2026-09-26).
+    const node_id host = current->id;
     const insertion_point where = appropriate_place();
     const node_id element = create_element(t.name, t.attributes);
     open_.push_back(make_entry(element, t.name, node_ns::html, t.attributes));
     const token_attribute * slots = attribute("shadowrootslotassignment");
     const bool null_registry = attribute("shadowrootcustomelementregistry") != nullptr;
     const auto root =
-        doc_->shadow_disabled(host->id)
+        doc_->shadow_disabled(host)
             ? std::expected<node_id, dom_error>{std::unexpected{dom_error::invalid_shadow_host}}
             : doc_->attach_shadow(
-                  host->id,
+                  host,
                   document::shadow_tree{
-                      .host = host->id,
+                      .host = host,
                       .open = ascii_iequals(mode->value, "open"),
                       .delegates_focus = attribute("shadowrootdelegatesfocus") != nullptr,
                       .manual_slots = slots != nullptr && ascii_iequals(slots->value, "manual"),
