@@ -168,6 +168,14 @@ int main() {
     js_expect("(function(){ var k = {toString() { throw 'key'; }};"
               " try { return ({})[k]; } catch (e) { return e; } })()",
               "key");
+    // Object.fromEntries closes the iterator on an entry's throw AND keeps
+    // the throw.
+    js_expect("(function(){ var closed = 0; var it = { [Symbol.iterator]() { return {"
+              " next() { return {done: false, value: { get 0() { throw 'key'; } }}; },"
+              " return() { closed++; return {}; } }; } };"
+              " try { Object.fromEntries(it); } catch (e) { return e + closed; }"
+              " return 'none'; })()",
+              "key1");
     // A lexical for-of head's names are uninitialised while its operand runs.
     js_expect("(function(){ let x = 1; try { for (let x of [x]) {} } catch (e) {"
               " return e.constructor.name; } return 'none'; })()",
