@@ -22,6 +22,111 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected Number attributes and recovered DOM prefixes, 2026-09-26 UTC
+
+Resumed **ddf06584** and its protected numeric `setAttribute` boundary. Iteration
+42 was complete; the old WIP branch was already an ancestor. Saved candidates
+from service cutoffs were retained, reviewed and finished with focused checks.
+
+**847718fb** admits exact Number attribute values. The runtime overload delegates
+to the existing public Core Number formatter and DOM setter. Ordinary DOM scalar
+arithmetic requires exact Number operands; every String-index consumer retains its
+own bounds proof. Protected completion separately proves Number origins through
+literals, arithmetic and both If yields. That tag proof never discharges producer
+effects. Receiver identity, valid literal names, complete continuations and saved
+exceptions remain required. Direct controls cover both providers, special Number
+bits, arithmetic, supplied Number conversion, joins, stale fingerprints, forged
+markers and every incomplete proof budget.
+
+**9d806c3b** fixes the complete conditional snapshot witness without changing its
+source. Recovery intentionally left its pre-try CFG intact, but DOM completion
+required one block before lifting that prefix. A DOM-only helper now reuses the
+existing charged CFG structurer after recovery. Generic recovery still preserves
+its prefix verbatim. Fresh DOM proof follows the lift; seven transaction controls
+cover the snapshot, zero/insufficient budgets, early exits, mixed Number/object
+values, unknown prefix calls and changed receivers. Independent review passes.
+
+**b073feaf** lets strict-comparison keys match separate Number constants only when
+their exact IEEE-754 bits match. The two original same/reversed-literal refusal
+bodies are promoted unchanged. Different bits/tags, signed-zero equivalence and
+separate mutable snapshots gain no authority. Shared charged census/current replay
+still proves finite retained values, guards, every effect and exit. Thirteen new
+retention rows and 23 new live mutation states cover stale solvers, forged markers
+and incomplete budgets; no ownership or shorter-lifetime authority is added.
+
+**79e711e3** adds three complete Number-write sources: normal return,
+-0/NaN/infinities/exponent spelling, and a saved conditional Number across mutation
+and a caught node throw. All 32 previous direct and two outer source bodies remain
+unchanged. Four new refusal bodies cover invalid names, mixed object joins,
+coercing inputs and throwing producers. Node and interpreter oracles agree on the
+ordered observations. Native checks use both documents, both snapshot outcomes,
+write ordering and 16 lifetimes through the existing harness.
+
+Seven explicit targets initially built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. The prefix fix rebuilt only exception
+recovery, host contract and ctjs-opt. Final relevant exact CTests passed, each 1/1
+(total elapsed): `ctcompile_exception_recovery` **19.23 s**,
+`ctcompile_host_contract` **2.79 s**, `ctcompile_escape_analysis_arrays` **5.45 s**,
+and `ctcompile_escape_analysis_completion` **0.05 s**.
+
+A focused selector over `native_dom_caught_node.py` ran `write-number-return`,
+`write-number-corners`, `write-number-snapshot`, `write-throw` and
+`write-boolean-snapshot`, all 28 direct refusal bodies and the three Number cases'
+zero budgets. Across the two source runs: **80 GCC/Clang native executions,
+20 admitted provider/optimization combinations and 124 refusals**. This is a
+selected harness pass, not the full caught-node lit case. The first four sources'
+64 binaries were retained; only the failed snapshot and unrun refusals continued.
+All **40 generated C++ files** were retrieved, with Script/AOT source and linked
+symbol checks passing. Representative explicit/deduced entries show ordinary
+Number locals, borrowed element_ref values, ordered public DOM calls and document
+RAII. The snapshot keeps its Number before either write. All **11** final
+source/code hashes match the devbox.
+
+The first exception CTest caught unchanged numeric control 44 still expecting
+refusal; its expectation was promoted. The first host CTest caught a malformed
+two-call Invoke fixture passed to a valid-IR helper; the same input now explicitly
+asserts verifier rejection. Both test-only corrections were independently reviewed.
+The source gate then exposed the prefix gap fixed above. Passing checks were
+repeated only where that production change affected them; escape checks and the
+four earlier source cases were not replayed.
+
+Repository formatting was run after the final code change and still reports six
+diagnostics in three untouched browser files: `select_and_options.cpp:602`,
+`node_methods.cpp:63` and `Style/css/properties/gaps.cpp:189`. Scoped formatting and
+diff checks pass. Active Claude claims were respected; no browser file was edited.
+
+**Next measured boundary:** with the initial Number intrinsic declared, this
+complete source still refuses with `native DOM source: DOM caught throw protected
+effect lacks a nonthrowing proof`:
+
+```javascript
+function customElements(anchor) {
+  const saved = Number(anchor.getAttribute('data-number'));
+  try {
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+```
+
+Ordinary DOM proof already accepts that conversion. The recovery Number-origin
+query does not follow its original CallOp. Extend that bounded origin proof while
+preserving the pre-try read/conversion, their order and snapshot, intrinsic identity
+and complete reproof. Number result typing must not authorize dropping producer
+effects or unwind state. Broader protected arithmetic and call origins, differing mutable snapshots,
+repeated allocations, escaping owners, the native application driver and full
+Bootstrap remain unfinished. No full-Bootstrap admission or raw escape-oracle gain
+is claimed.
+
+Full CTest/compiler lit, other source fixtures and outer catches, broad
+corpus/matrices, raw escape oracle, full Bootstrap, WPT/test262, sanitizers,
+Windows/macOS and performance were skipped. Linux actual Claude loop PID 2333739
+was running; Windows process inspection succeeded (363 processes, no Claude
+identities), so concurrent rules applied. No browser/shared implementation edits,
+local builds, push or history rewrite. Evidence: `/tmp/ctcompile-iteration43/`.
+
 ## Checked Bootstrap document roots and sibling comparison predicates, 2026-09-26 UTC
 
 Resumed **45ef90b8** and its original `unguarded-default` boundary. Iteration 41
