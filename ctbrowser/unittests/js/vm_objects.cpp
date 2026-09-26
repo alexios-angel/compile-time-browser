@@ -89,6 +89,9 @@ void test_class_fields_are_per_instance() {
         "C.prototype, 'g'); return ['prototype' in C.prototype.m, 'prototype' in d.get,"
         " 'prototype' in C.prototype.gen, typeof C.prototype].join();",
         "false,false,true,object");
+    // a string spreads (and rests) as the String object it is ToObject'd to
+    expect_result("var r; ({...r} = 'xy'); return JSON.stringify({...'ab'}) + JSON.stringify(r);",
+                  "{\"0\":\"a\",\"1\":\"b\"}{\"0\":\"x\",\"1\":\"y\"}");
     // a `for (using ...)` head's resources are disposed as the loop completes
     expect_result("var log = [], n = 0; var r = { [Symbol.dispose]() { log.push('d'); } };"
                   " for (using x = r; n < 2; n++) log.push(n); log.push('after');"

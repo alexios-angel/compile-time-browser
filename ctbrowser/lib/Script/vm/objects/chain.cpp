@@ -252,6 +252,15 @@ void context::copy_own_properties(value target, value source) {
             if (threw()) { return; }
             into->set(key, item);
         }
+    } else if (source.is_string()) {
+        // ToObject(source) (7.3.25 CopyDataProperties step 3): a String
+        // object, whose own enumerable properties are its indices - `{...
+        // "ab"}` is {0: "a", 1: "b"} - counted in the unit `length` and
+        // charAt count here (lookup_index answers the same one-unit strings).
+        const std::string text = static_cast<string_object *>(source.as_heap())->text;
+        for (std::size_t i = 0; i < text.size(); ++i) {
+            into->set(std::to_string(i), string(std::string{text[i]}));
+        }
     }
 }
 
