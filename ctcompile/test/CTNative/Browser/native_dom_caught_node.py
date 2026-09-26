@@ -321,6 +321,23 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-boolean-read-conditional-prefix-return": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : false;
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-boolean-read-conditional-prefix-snapshot": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : false;
+  try {
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -427,6 +444,8 @@ NUMBER_CONDITIONAL_READS = {
     "write-number-read-arithmetic-conditional-callee": ("data-closed", "1"),
     "write-string-read-conditional-prefix-return": ("flag", "null"),
     "write-string-read-conditional-prefix-snapshot": ("flag", "null"),
+    "write-boolean-read-conditional-prefix-return": ("flag", "false"),
+    "write-boolean-read-conditional-prefix-snapshot": ("flag", "false"),
 }
 
 
@@ -550,6 +569,8 @@ def main():
     includes, libraries = dom.link_options(args)
     for name, source in SOURCES.items():
         string_read = name.startswith("write-string-read-")
+        boolean_read = name.startswith("write-boolean-read-conditional-prefix-")
+        attribute_read = string_read or boolean_read
         number_inputs = (
             tuple(
                 zip(
@@ -565,6 +586,8 @@ def main():
             number_inputs = tuple(
                 (value, "null" if value is None else value) for value, _ in NUMBER_READ_INPUTS
             )
+        if boolean_read:
+            number_inputs = ((None, "false"), ("", "true"))
         script = (
             source
             + "function observe(closed) { let reads = 0; "
@@ -574,7 +597,7 @@ def main():
         )
         if name.startswith("write-"):
             script = source + WRITE_OBSERVER
-        if name.startswith("write-number-") or string_read:
+        if name.startswith("write-number-") or attribute_read:
             script = source + NUMBER_WRITE_OBSERVER
         number_boolean = name.startswith("write-number-boolean-")
         if number_boolean:
@@ -585,13 +608,13 @@ def main():
                 "saved['data-closed'] = 'yes'", f"saved[{condition[0]!r}] = 'yes'"
             )
         number_read = name.startswith("write-number-read")
-        if number_read or string_read:
+        if number_read or attribute_read:
             script = script.replace(
                 "var result0 = observe(false), result1 = observe(true);",
                 "\n".join(
                     f"var result{index} = ["
                     + ", ".join(
-                        f"observe({closed}, {json.dumps(value)})" for value, _ in NUMBER_READ_INPUTS
+                        f"observe({closed}, {json.dumps(value)})" for value, _ in number_inputs
                     )
                     + "].join('|');"
                     for index, closed in enumerate(("false", "true"))
@@ -658,14 +681,17 @@ def main():
                 )
         if name in WRITE_EXPECTED:
             expected = WRITE_EXPECTED[name]
-        if number_read or string_read:
+        if number_read or attribute_read:
             expected = ""
             for index in (0, 1):
                 trace = "|".join(
                     "true:"
                     + (f"read:{condition[0]}={'true' if index else 'false'};" if condition else "")
                     + (
-                        "get:data-number=" + ("null" if value is None else value) + ";"
+                        ("read" if boolean_read else "get")
+                        + ":data-number="
+                        + (result if boolean_read else ("null" if value is None else value))
+                        + ";"
                         if not condition or index
                         else ""
                     )
@@ -844,7 +870,7 @@ def main():
             )
             if number_boolean:
                 checks = checks.replace('"data-closed"', '"flag"')
-        if number_read or string_read:
+        if number_read or attribute_read:
             inputs = ",\n".join(
                 "{"
                 + ("nullptr" if value is None else json.dumps(value, ensure_ascii=False))
@@ -916,7 +942,11 @@ def main():
                 if "throw " in source_cpp or "catch (" in source_cpp:
                     raise RuntimeError("confined node escaped into a native exception")
                 dom.standalone(args, native, label, checks, compilers, includes, libraries)
-                if name == "helper-next-record" or name.startswith("write-number-") or string_read:
+                if (
+                    name == "helper-next-record"
+                    or name.startswith("write-number-")
+                    or attribute_read
+                ):
                     dom.lower(
                         args,
                         ir,
@@ -1238,6 +1268,49 @@ def main():
                     "getAttribute('data-number')",
                     "getAttribute(anchor)",
                 ),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
+    conditional_boolean_body = (
+        SOURCES["write-boolean-read-conditional-prefix-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    )
+    refusals.update(
+        {
+            "write-boolean-read-conditional-prefix-"
+            + name: conditional_boolean_body.replace(before, after)
+            for name, before, after in (
+                ("unknown-condition", "anchor.hasAttribute('flag')", "anchor.unknown"),
+                (
+                    "condition-effect",
+                    "anchor.hasAttribute('flag')",
+                    "(anchor.unknown(), anchor.hasAttribute('flag'))",
+                ),
+                (
+                    "then-effect",
+                    "anchor.hasAttribute('data-number')",
+                    "(anchor.unknown(), anchor.hasAttribute('data-number'))",
+                ),
+                ("else-effect", ": false;", ": (anchor.unknown(), false);"),
+                ("then-coercion", "anchor.hasAttribute('data-number')", "anchor"),
+                ("else-coercion", ": false;", ": anchor;"),
+                (
+                    "wrong-receiver",
+                    "anchor.hasAttribute('data-number')",
+                    "(0, anchor.hasAttribute)('data-number')",
+                ),
+                (
+                    "rebound-predicate",
+                    "const saved =",
+                    "anchor.hasAttribute = anchor.setAttribute; const saved =",
+                ),
+                ("missing-argument", "hasAttribute('data-number')", "hasAttribute()"),
+                (
+                    "extra-argument",
+                    "hasAttribute('data-number')",
+                    "hasAttribute('data-number', 'extra')",
+                ),
+                ("coercing-name", "hasAttribute('data-number')", "hasAttribute(anchor)"),
                 ("invalid-name", "'data-written'", "'bad name'"),
             )
         }
