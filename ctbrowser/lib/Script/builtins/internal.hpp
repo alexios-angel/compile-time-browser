@@ -145,6 +145,9 @@ inline constexpr double max_array_length = 4294967295.0; // 2^32 - 1
 // beside the write that asks it; the fast paths that ADD elements (push,
 // unshift) ask it too before they skip the [[Set]] they stand in for.
 [[nodiscard]] bool array_chain_holds_indices(context & cx, const array_object & arr);
+// OrdinarySet(o, name, v, receiver) - vm/objects/store.cpp. False is a
+// refusal (strict code's TypeError); a throw answers true.
+bool set_for_receiver(context & cx, value o, const std::string & name, value v, value receiver);
 
 namespace detail {
 

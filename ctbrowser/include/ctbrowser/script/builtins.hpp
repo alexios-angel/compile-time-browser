@@ -125,6 +125,11 @@ inline constexpr std::string_view to_property_key_name = "__ctbrowser_to_propert
 // prefix]) - a symbol names `[description]`, and "get"/"set" go in front. A
 // function that already has an own `name` (a class's static member) keeps it.
 inline constexpr std::string_view set_function_name_name = "__ctbrowser_set_function_name";
+// `super.x = v` and `super[k] = v`: (base, key, v, this, strict) - PutValue
+// of a Super Reference (6.2.5.6), which is [[Set]] on the home object's
+// prototype with `this` as the receiver, so a setter up there runs on `this`
+// and a data property lands on `this`. A refusal is strict code's TypeError.
+inline constexpr std::string_view super_set_name = "__ctbrowser_super_set";
 
 // Install the standard library into a context.
 //

@@ -306,6 +306,28 @@ void install_destructuring_iteration(context & cx) {
         ctor->proto_link = parent;
         return value::undefined();
     });
+    // See super_set_name.
+    cx.define_native(std::string{super_set_name}, [](context & c, std::span<value> a) {
+        if (a.size() < 4) { return value::undefined(); }
+        value base = a[0];
+        // The implicit Object.prototype, as super_get_name reads it.
+        if (base.is_null()) {
+            if (object_object * table = c.prototype(context::proto_kind::object)) {
+                base = value::object(table);
+            }
+        }
+        if (!base.is_object_like()) {
+            c.throw_error("TypeError", "Cannot set properties of null");
+            return value::undefined();
+        }
+        const std::string key = c.to_string(a[1]);
+        if (c.throw_pending()) { return value::undefined(); }
+        const bool strict = a.size() > 4 && context::truthy(a[4]);
+        if (!set_for_receiver(c, base, key, a[2], a[3]) && strict && !c.throw_pending()) {
+            c.throw_error("TypeError", "Cannot assign to read only property '" + key + "'");
+        }
+        return value::undefined();
+    });
     // See super_get_name.
     cx.define_native(std::string{super_get_name}, [](context & c, std::span<value> a) {
         if (a.size() < 3) { return value::undefined(); }

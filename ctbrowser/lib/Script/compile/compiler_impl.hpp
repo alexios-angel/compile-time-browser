@@ -838,6 +838,7 @@ public:
     void emit_load(const reference & ref, std::uint16_t dst);
 
     void emit_store(const reference & ref, std::uint16_t src);
+    void emit_super_access(const reference & ref, std::string_view name, std::uint16_t value);
 
     // `+=` and friends. The operator is the assignment's text minus its '='.
     [[nodiscard]] static op compound_op(std::string_view text, bool & ok);

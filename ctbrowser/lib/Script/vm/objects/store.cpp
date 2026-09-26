@@ -19,8 +19,6 @@ namespace ctbrowser::script {
 // ArraySetLength's shrink, defined beside [[DefineOwnProperty]] in descriptors.cpp.
 bool array_set_length(array_object & arr, double n);
 
-namespace {
-
 // OrdinarySet(O, P, V, Receiver), 10.1.9.2, for a Receiver that is NOT O: a
 // write that reaches a PROXY on an object's prototype chain, or an array's
 // fresh named property asking its prototypes. A setter found on the way runs
@@ -28,7 +26,8 @@ namespace {
 // property lands through the receiver's own [[GetOwnProperty]] and
 // [[DefineOwnProperty]]. store_property's own walk carries no receiver; this
 // one does. False is a refusal, for strict code to throw; a throw answers
-// true, so that it is not a second one.
+// true, so that it is not a second one. External linkage: `super.x = v` is
+// this with the home object's prototype as O (builtins/internal.hpp).
 bool set_for_receiver(context & cx, value o, const std::string & name, value v, value receiver) {
     const std::size_t before = cx.unwinds();
     const auto threw = [&] { return cx.throw_pending() || cx.unwinds() != before; };
@@ -89,8 +88,6 @@ bool set_for_receiver(context & cx, value o, const std::string & name, value v, 
     }
     return cx.define_own_property(receiver, name, wanted);
 }
-
-} // namespace
 
 // COULD ANYTHING ON AN ORDINARY ARRAY'S CHAIN ANSWER AN INDEX? A write to an
 // index the array does not have - a hole, or past the end, which is every

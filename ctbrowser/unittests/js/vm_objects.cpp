@@ -59,6 +59,16 @@ void test_class_fields_are_per_instance() {
         "const o = { m() { return super.hasOwnProperty === Object.prototype.hasOwnProperty; } };"
         " o.hasOwnProperty = null; return o.m();",
         "true");
+    // `super.x = v` is [[Set]] on the parent with `this` as the receiver: the
+    // parent's setter runs, not this class's own of the same name
+    expect_result("class P { set x(v) { this._x = v; } get x() { return this._x; } }"
+                  " class C extends P { set x(v) { super.x = v * 2; } get x() { return super.x; } }"
+                  " const c = new C(); c.x = 2; return c.x;",
+                  "4");
+    expect_result("const proto = { set p(v) { this.r = 'ok'; } };"
+                  " const o = { __proto__: proto, m() { super.p = 1; super['q'] = 2;"
+                  " return this.r + ':' + Object.keys(this).join(); } }; return o.m();",
+                  "ok:m,r,q");
     // `super[k]()` calls the parent's method with `this`
     expect_result(
         "class P { m() { return 'p' + this.t; } }"

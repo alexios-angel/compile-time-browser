@@ -115,7 +115,10 @@ struct reference {
         upvalue,
         global,
         member,
-        index
+        index,
+        // `super.x` / `super[k]`: `reg` the home object's prototype, `key`
+        // the key - read and written with `this` as the receiver.
+        super_property
     };
     kind what = kind::local;
     std::uint16_t reg = 0;  // local/boxed: its register. member/index: the object.

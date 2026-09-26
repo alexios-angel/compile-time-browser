@@ -613,15 +613,27 @@ compiler_impl::reference compiler_impl::prepare_reference(const vp::node & targe
         out.name = name_operand(std::string{target.text});
         return out;
     }
-    // `super.x = v` and `super[k] = v`: a Super Reference is PUT with `this`
-    // as the receiver (13.3.7.1 MakeSuperPropertyReference, 6.2.5.6 step
-    // 4), so a data property lands on `this` and a frozen prototype is the
-    // TypeError. The store goes to `this` - which also finds an inherited
-    // setter, since `this` sits below the home object. (A read starts above
-    // the home object; a compound assignment reads from `this`, a deviation
-    // that only a setter or shadowing property on the home object itself can
-    // observe.)
+    // `super.x = v` and `super[k] = v`: a Super Reference (13.3.7.1): the
+    // this binding checked first - the ReferenceError before a derived
+    // constructor's super() - then the key, then GetSuperBase; and it is
+    // read and PUT on that base with `this` as the receiver (6.2.5.5/6.2.5.6),
+    // so a setter on the parent runs on `this` rather than `this`'s own
+    // setter of the same name, which is how `set x(v) { super.x = v; }`
+    // recursed until the stack ran out.
     const bool on_super = target.a >= 0 && at(target.a).kind == vp::nk::super_lit;
+    if (on_super && (target.kind == vp::nk::member || target.kind == vp::nk::index)) {
+        if (const std::string * flag = derived_flag()) { emit_super_check(*flag, false); }
+        out.what = reference::kind::super_property;
+        out.key = alloc_reg();
+        if (target.kind == vp::nk::member) {
+            emit_string(out.key, std::string{target.text});
+        } else {
+            compile_expr(target.b, out.key);
+        }
+        out.reg = alloc_reg();
+        emit_super_base(out.reg);
+        return out;
+    }
     if (target.kind == vp::nk::member) {
         out.what = reference::kind::member;
         out.reg = alloc_reg();
@@ -674,7 +686,36 @@ void compiler_impl::emit_load(const reference & ref, std::uint16_t dst) {
     case reference::kind::index:
         proto().emit(instruction{op::get_index, dst, ref.reg, ref.key});
         break;
+    case reference::kind::super_property: emit_super_access(ref, super_get_name, dst); break;
     }
+}
+
+// `name(base, key, [value,] this[, strict])` for a Super Reference - see
+// reference::kind::super_property. `value` is the store's source, or the
+// load's destination.
+void compiler_impl::emit_super_access(const reference & ref, std::string_view name,
+                                      std::uint16_t value) {
+    const bool store = name == super_set_name;
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(instruction::with_bx(op::get_global, callee, intern_name(std::string{name})));
+    const std::uint16_t base = alloc_reg();
+    proto().emit(instruction{op::move, base, ref.reg});
+    const std::uint16_t key = alloc_reg();
+    proto().emit(instruction{op::move, key, ref.key});
+    if (store) {
+        const std::uint16_t v = alloc_reg();
+        proto().emit(instruction{op::move, v, value});
+    }
+    const std::uint16_t self = alloc_reg();
+    proto().emit(instruction{op::load_this, self});
+    if (store) {
+        const std::uint16_t strict = alloc_reg();
+        proto().emit(instruction{fn().is_strict ? op::load_true : op::load_false, strict});
+    }
+    proto().emit(instruction{op::call, callee, static_cast<std::uint16_t>(store ? 5 : 3)});
+    if (!store) { proto().emit(instruction{op::move, value, callee}); }
+    release_to(mark);
 }
 
 void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
@@ -710,6 +751,7 @@ void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
     case reference::kind::index:
         proto().emit(instruction{op::set_index, ref.reg, ref.key, src});
         break;
+    case reference::kind::super_property: emit_super_access(ref, super_set_name, src); break;
     }
 }
 
