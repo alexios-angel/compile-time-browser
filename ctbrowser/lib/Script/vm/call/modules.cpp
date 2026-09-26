@@ -202,7 +202,25 @@ value context::dynamic_import(value specifier, const std::string & referrer) {
     // the page's own toString, which can throw and can re-enter - so a tier that
     // converted at its call site instead would be a second conversion with a
     // second set of effects.
-    return module_loader_(*this, to_string(specifier), referrer);
+    //
+    // BOTH BEHIND A FENCE (13.3.10.1 EvaluateImportCall): a ToString that
+    // throws, and a module whose evaluation throws, REJECT the promise the
+    // import answers (IfAbruptRejectPromise; a rejected evaluation promise).
+    // Called bare, the throw landed on the IMPORTER's handler, synchronously -
+    // `import(x).catch(...)` never saw it and a script with no try died.
+    auto * step =
+        allocate<native_object>("import()", [referrer](context & c, std::span<value> args) {
+            const std::string text = c.to_string(args.empty() ? value::undefined() : args[0]);
+            if (c.throw_pending()) { return value::undefined(); }
+            return c.module_loader_(c, text, referrer);
+        });
+    const rooted keep{*this, value::object(step)};
+    bool threw = false;
+    value thrown = value::undefined();
+    const value arg[1] = {specifier};
+    const value promise = call_fenced(value::object(step), arg, value::undefined(), threw, thrown);
+    if (failed_) { return value::undefined(); }
+    return threw ? make_promise(thrown, true) : promise;
 }
 
 // A MODULE IS RUN LIKE ANY OTHER PROGRAM, with two differences: it knows which
