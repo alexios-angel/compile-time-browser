@@ -146,7 +146,6 @@ inline constexpr shorthand_syntax table[] = {
     {"flex", shape::flex, "flex-grow flex-shrink flex-basis", ""},
     {"flex-flow", shape::bar, "flex-direction flex-wrap", "row"},
     {"list-style", shape::bar, "list-style-position list-style-image list-style-type", "outside"},
-    {"size", shape::pair, "width height", ""},
     {"font-synthesis", shape::font_synthesis,
      "font-synthesis-weight font-synthesis-style font-synthesis-small-caps "
      "font-synthesis-position",

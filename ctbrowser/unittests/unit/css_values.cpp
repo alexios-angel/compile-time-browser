@@ -754,8 +754,8 @@ void test_the_shape_function() {
 
 // An <opacity-value>'s percentage is the number it is, and a math function
 // over percentages alone has an answer; font-synthesis's style slot takes
-// `oblique-only`; `size` is width then height.
-void test_opacity_font_synthesis_and_size() {
+// `oblique-only`.
+void test_opacity_and_font_synthesis() {
     ok("opacity", "50%", "0.5");
     ok("opacity", "-100%", "-1");
     ok("opacity", "min(50%, 0%)", "calc(0%)");
@@ -765,10 +765,6 @@ void test_opacity_font_synthesis_and_size() {
     ok("opacity", "progress(1%, (10% - 10%), 100%)", "calc(0.01)");
     ok("font-synthesis", "oblique-only weight", "weight oblique-only");
     bad("font-synthesis", "style oblique-only");
-    CHECK(supports_declaration("size", "100px 200px"));
-    CHECK(supports_declaration("size", "auto"));
-    CHECK(!supports_declaration("size", "a4"));
-    CHECK(!supports_declaration("size", "100px 200px 300px"));
 }
 
 } // namespace
@@ -803,6 +799,6 @@ int main() {
     test_gap_rule_lists_and_their_neighbours();
     test_basic_shapes();
     test_the_shape_function();
-    test_opacity_font_synthesis_and_size();
+    test_opacity_and_font_synthesis();
     REPORT("css_values");
 }
