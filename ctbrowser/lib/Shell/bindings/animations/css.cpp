@@ -492,10 +492,15 @@ void dom_bindings::update_css_transitions(
 
         // Each side's `currentcolor` is that side's `color` (CSS Color 4
         // §7.1), for every property but `color` itself.
+        // ...and a shadow with no colour is in that colour too, so it pairs
+        // with a coloured one (box-shadow-interpolation).
         const auto resolved = [&](const style::computed_style & style, std::string_view text) {
-            return property == "color"
-                       ? std::string{text}
-                       : style::with_currentcolor(text, value_on(style, *atoms_, "color"));
+            if (property == "color") { return std::string{text}; }
+            const std::string_view color = value_on(style, *atoms_, "color");
+            if (property == "box-shadow" || property == "text-shadow") {
+                return animation_detail::shadows_in_color(text, color);
+            }
+            return style::with_currentcolor(text, color);
         };
         std::string before_value = resolved(before, value_on(before, *atoms_, property));
         for (const auto & [name, text] : current) {

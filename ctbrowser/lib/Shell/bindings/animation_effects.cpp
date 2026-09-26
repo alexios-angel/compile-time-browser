@@ -93,21 +93,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 // ...AND SO IS A SHADOW'S (CSS Backgrounds 3 §7.1): `-15px
                 // -10px 25px` pairs with `black 15px 10px 5px` as the colour
                 // it draws in (box-shadow-interpolation).
-                if ((property == "box-shadow" || property == "text-shadow") &&
-                    !ascii_iequals(trim(value, html_whitespace), "none")) {
-                    std::string shadows;
-                    for (const std::string_view shadow : split_top_level(value, ",")) {
-                        bool coloured = false;
-                        for (const std::string_view part :
-                             split_top_level(shadow, html_whitespace)) {
-                            coloured = coloured || ascii_iequals(part, "currentcolor") ||
-                                       style::css::resolve_color(part, {}).has_value();
-                        }
-                        shadows += (shadows.empty() ? "" : ", ") +
-                                   (coloured ? "" : current_color + " ") +
-                                   std::string{trim(shadow, html_whitespace)};
-                    }
-                    return style::with_currentcolor(shadows, current_color);
+                if (property == "box-shadow" || property == "text-shadow") {
+                    return shadows_in_color(value, current_color);
                 }
                 return style::with_currentcolor(value, current_color);
             };
