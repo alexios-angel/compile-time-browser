@@ -14,6 +14,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <ctbrowser/script/vm.hpp>
@@ -623,7 +624,21 @@ std::vector<value> context::spread_arguments(value arg_array) {
     return static_cast<array_object *>(arg_array.as_heap())->items;
 }
 
+bool context::refuse_class_call(value callee, bool super_call) {
+    if (super_call || !callee.is_kind(heap_kind::function) || !pending_new_target_.is_undefined()) {
+        return false;
+    }
+    const auto * closure = static_cast<const closure_object *>(callee.as_heap());
+    if (!closure->class_constructor) { return false; }
+    const std::string name = closure->proto != nullptr ? closure->proto->display_name() : "";
+    throw_error("TypeError", "Class constructor " +
+                                 (name.empty() ? std::string{"(anonymous)"} : name) +
+                                 " cannot be invoked without 'new'");
+    return true;
+}
+
 value context::call_spread(value callee, value arg_array, value receiver) {
+    if (refuse_class_call(callee, std::exchange(super_call_, false))) { return callee; }
     const std::vector<value> args = spread_arguments(arg_array);
     if (!callee.is_callable()) {
         // AND THE DESTINATION IS LEFT ALONE, which is why this answers the

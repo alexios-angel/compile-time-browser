@@ -263,6 +263,7 @@ void install_proxy(context & cx) {
             c.throw_error("TypeError", "Reflect.apply: target is not a function");
             return value::undefined();
         }
+        if (c.refuse_class_call(a[0])) { return value::undefined(); }
         std::vector<value> args;
         if (!list_from(c, arg_at(a, 2), args, "apply")) { return value::undefined(); }
         const context::rooted_values keep{c, args};

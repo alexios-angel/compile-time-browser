@@ -60,5 +60,15 @@ int main() {
               " + b; }.bind({k: 10}, 1); var q = new Proxy(new Proxy(sum, {}), {apply: null});"
               " return [p(1), p.call(null, 2), typeof seen, q(2)].join(); })()",
               "2,3,object,13");
+    // A CLASS CONSTRUCTOR HAS NO [[Call]] (10.2.1 step 2): called directly,
+    // through call/apply, Reflect.apply or a spread it is the TypeError, while
+    // `super()` - a call with a new.target - still reaches it.
+    js_expect("(function () { class A {} class B extends A {} var out = [];"
+              " [function () { A(); }, function () { B.call({}); },"
+              " function () { A.apply(null, []); }, function () { Reflect.apply(B, null, []); },"
+              " function () { A(...[1]); }].forEach(function (f) {"
+              " try { f(); out.push('no'); } catch (e) { out.push(e.constructor === TypeError); }"
+              " }); return out.join() + ',' + (new B() instanceof A); })()",
+              "true,true,true,true,true,true");
     REPORT("is_constructor");
 }

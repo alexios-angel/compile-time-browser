@@ -287,6 +287,14 @@ struct closure_object final : heap_object {
     // flag above has the same story.
     bool name_erased = false;
     bool length_erased = false;
+    // A DERIVED CLASS'S CONSTRUCTOR WHILE ITS BODY IS BEING EVALUATED: a
+    // static method is defined on it, not [[Set]] through the parent class's
+    // statics - see object_object::defining_class.
+    bool defining_class = false;
+    // A CLASS'S CONSTRUCTOR (15.7.14 step 12: [[IsClassConstructor]]), set
+    // by the class_defined native once the class exists: it has no [[Call]]
+    // (10.2.1 step 2), which context::refuse_class_call enforces.
+    bool class_constructor = false;
 
     const function_proto * proto = nullptr;
     // WHICH PROGRAM ITS NESTED FUNCTIONS LIVE IN. `op::closure` names a

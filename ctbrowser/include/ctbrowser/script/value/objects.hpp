@@ -161,6 +161,14 @@ struct object_object final : heap_object {
     // that every for-in performs a straight line.
     bool indexed = false;
 
+    // A DERIVED CLASS'S PROTOTYPE WHILE ITS BODY IS BEING EVALUATED - set by
+    // the class_heritage native, cleared by class_defined. A method is
+    // installed with DefineMethodProperty (15.4.4), not [[Set]], and the
+    // compiler spells it set_prop: this is what makes store_property define
+    // it own rather than hand it to a setter or a read-only property up the
+    // parent's chain (`class S extends Set { size() {} }`).
+    bool defining_class = false;
+
     object_object() : heap_object(heap_kind::object) {}
 
     void normalise() {

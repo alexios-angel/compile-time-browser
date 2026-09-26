@@ -313,6 +313,12 @@ void install_destructuring_iteration(context & cx) {
         }
         c.set_prototype(a[2], proto_parent.is_null() ? value::undefined() : proto_parent);
         ctor->proto_link = parent;
+        // UNTIL class_defined: the body's methods are DEFINED on these two,
+        // whatever the parent's chain holds (object_object::defining_class).
+        ctor->defining_class = true;
+        if (a[2].is_object()) {
+            static_cast<object_object *>(a[2].as_heap())->defining_class = true;
+        }
         return value::undefined();
     });
     // See super_set_name.

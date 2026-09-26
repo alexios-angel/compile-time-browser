@@ -51,14 +51,14 @@ void install_function(context & cx) {
     method(cx, function_proto, "call", 1,
            [this_function, bind_this](context & c, std::span<value> a) {
                const value self = this_function(c, "call");
-               if (!self.is_callable()) { return value::undefined(); }
+               if (!self.is_callable() || c.refuse_class_call(self)) { return value::undefined(); }
                const std::vector<value> rest(a.begin() + (a.empty() ? 0 : 1), a.end());
                return c.call(self, rest, bind_this(c, self, arg_at(a, 0)));
            });
     method(cx, function_proto, "apply", 2,
            [this_function, bind_this](context & c, std::span<value> a) {
                const value self = this_function(c, "apply");
-               if (!self.is_callable()) { return value::undefined(); }
+               if (!self.is_callable() || c.refuse_class_call(self)) { return value::undefined(); }
                // CreateListFromArrayLike, 7.3.18, which this did not do: it read
                // `items` off a real Array and passed NO arguments for anything else,
                // so `f.apply(o, arguments)` and `f.apply(o, {length: 1, 0: x})` both
@@ -692,6 +692,8 @@ void install_class_defined(context & cx) {
     cx.define_native(std::string{class_defined_name}, [](context &, std::span<value> a) {
         if (a.empty() || !a[0].is_kind(heap_kind::function)) { return value::undefined(); }
         auto * ctor = static_cast<closure_object *>(a[0].as_heap());
+        ctor->class_constructor = true;
+        ctor->defining_class = false; // see class_heritage_name
         for (std::size_t i = 0; i < ctor->props.size(); ++i) {
             const std::string & key = ctor->props[i].first;
             ctor->set_attrs(key, static_cast<std::uint8_t>(ctor->attrs_of(key) & ~attr_enumerable));
@@ -702,6 +704,7 @@ void install_class_defined(context & cx) {
         value * proto = ctor->find("prototype");
         if (proto == nullptr || !proto->is_object()) { return value::undefined(); }
         auto * table = static_cast<object_object *>(proto->as_heap());
+        table->defining_class = false;
         std::vector<std::pair<std::string, std::uint8_t>> entries;
         table->each_own_entry(
             [&](const std::string & key, std::uint8_t attrs) { entries.emplace_back(key, attrs); });
