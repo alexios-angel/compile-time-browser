@@ -22,6 +22,106 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected Number formatting and saved String writes, 2026-09-26 UTC
+
+Continued **79613a6e** and its complete protected `Number(getAttribute).toString()`
+normal-return refusal. The checkout began clean, the prior interrupted work was
+fully committed, and `codex-wip-20260907` was already an ancestor. Three saved
+candidate files survived service interruptions. Parent completed transaction
+checks after a child rate limit; source and independent review agents finished
+separately.
+
+**ea738bec** extends the shared protected-effect proof to an exact Number
+`toString` lookup and zero-argument call, retaining the identical receiver and
+charged Number origin. Successful calls record their saved String result.
+Attribute writes reuse existing String/null evidence, including owning nullable
+attribute snapshots. Producer effects and all branch arms remain independently
+checked. Final DOM admission and typed lowering already supported the method and
+are unchanged; the complete private candidate still needs fresh proof before
+publication. Bare literal null, altered intrinsics/methods/receivers, explicit
+radix arguments, unknown effects, invalid names and incomplete budgets refuse.
+The 38 transaction controls cover 10 admissions and 28 unchanged refusals.
+
+**e8ea1b54** executes four complete sources: the exact HANDOFF witness,
+String saved before DOM mutation, reciprocal Number formatting, and raw nullable
+String saved before mutation. Ten new complete refusals retain trust boundaries.
+All 55 prior direct sources, two outer sources, 44 raw helper sources, 143 literal
+entries and 109 generated refusal bodies remain unchanged.
+
+The first exact CTest failed (20.15 s) because original control 45 expected
+protected `setAttribute(getAttribute(...))` to refuse. Its complete source is
+unchanged; only its admission expectation was promoted after review. All new
+controls passed in that diagnostic run. Only the changed test target and failed
+CTest were retried; host/source checks had not yet run.
+
+Five explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate` and
+`ctcompile-test-native-reference`. The changed exception test target was rebuilt
+after the expectation correction. Final exact CTests each passed 1/1 (total
+elapsed): `ctcompile_exception_recovery` **20.51 s** and
+`ctcompile_host_contract` **2.81 s**.
+
+The four selected source cases passed **32 generated C++ files, 64 GCC/Clang
+executions, 16 admitted configurations and 72 refusals** (14 selected bodies
+across four configurations, plus 16 zero budgets). Both providers, printers and
+optimization settings, all 13 inputs, both flag states, ordered Node/interpreter
+observations, two documents and 16 lifetimes pass. Source and linked-symbol
+checks reject Script/AOT. All 32 files were retrieved; inspected explicit
+formatting and deduced nullable snapshots retain owning String values before
+mutation. Reciprocal/session output uses typed Number arithmetic, the public
+Core formatter, borrowed element_ref and document RAII. All three final
+local/devbox hashes match. This is selected harness validation, not a full
+caught-node lit run. The first two queued gates were killed by service
+interruptions before acquiring the lock; the detached gate preserved its queue
+position through the remaining wait.
+
+Local checks pass: four ordered Node oracles, 18 JavaScript syntax checks,
+Python syntax/Black, both changed C++ files with the pinned formatter, and diff
+checks. Independent native/source/test review found no actionable issue.
+Repository `tools/format.sh --check` exits 1 with the same six existing diagnostics
+in untouched `select_and_options.cpp:602`, `node_methods.cpp:63` and
+`Style/css/properties/gaps.cpp:189`. Passing checks were not replayed.
+
+**Next measured boundary:** a String formatted before `try` still refuses when
+used by the protected write:
+
+```javascript
+function customElements(anchor) {
+  const saved = Number(anchor.getAttribute('data-number')).toString();
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+```
+
+The complete source was imported and refused with `ctbrowser-dom-v1`, Number
+in the initial-intrinsic contract and optimization disabled. Its diagnostic is
+`native DOM source: DOM URI requires its fingerprinted initial provider binding`.
+No native execution is claimed for this probe. Continue the saved String-origin
+proof across the prefix/protected-body boundary, retaining the original read,
+formatting and mutation order and complete final DOM admission. Do not add URI
+intrinsics or drop the handler to bypass this refusal.
+
+A parallel read-only escape assessment identified distinct equal Boolean
+literals produced in both `scf.if` arms as a candidate for the strict Boolean
+literal proof. Existing identity forwarding requires the same SSA value.
+This is static evidence only: measure the preserved raw fixture before editing;
+retain complete census/replay, arm effects and budgets. No escape implementation,
+CTest, native lifetime improvement or oracle gain is claimed this iteration.
+
+Full CTest/compiler lit, other fixtures/outer catches, broad corpus/matrices,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance were skipped. The native application driver, full Bootstrap and
+broader escape work remain unfinished.
+
+Linux executable/script checks found live Claude loop 3319 and wrapper 3318;
+corrected Windows Get-CimInstance succeeded with 338 processes and no Claude
+identities. Concurrent rules applied. Claude's pending UTF-16/GC/global changes
+on `ctbrowser-wpt` are not included. No browser/shared implementation edits,
+local builds, push or history rewrite. Durable evidence:
+`../ctcompile-plan/evidence/2026-09-26-number-strings/`.
+
 ## Number identity conversions and carried Boolean literals, 2026-09-26 UTC
 
 Continued **046fd654** and its exact nested `Number(Number(hasAttribute))`
