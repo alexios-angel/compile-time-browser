@@ -390,10 +390,16 @@ struct size_form {
 // may not become `any`. A keyword is calc-size(keyword, size), and any other
 // <length-percentage> calc-size(any, it). nullopt past the expansion limit.
 [[nodiscard]] std::optional<size_form> canonical_size(std::string_view text,
-                                                      const css::length_context & ctx) {
-    // ponytail: a fixed text budget is the UA's expansion limit; the
-    // specification leaves its size to the UA.
+                                                      const css::length_context & ctx,
+                                                      int depth = 0) {
+    // ponytail: a fixed text budget and a nesting depth are the UA's
+    // expansion limit; the specification leaves its measure to the UA. The
+    // depth is the one that holds, because the cascade has already folded
+    // each level's `size / 2 + size / 2` to `size`: a twenty-deep nest of
+    // those would expand a million-fold as written (csswg-drafts#10369).
     constexpr std::size_t expansion_limit = 4096;
+    constexpr int depth_limit = 16;
+    if (depth > depth_limit) { return std::nullopt; }
     text = trim(text, html_whitespace);
     const auto args = calc_size_args(text);
     if (!args) {
@@ -403,7 +409,7 @@ struct size_form {
     const std::string_view basis = args->first;
     const std::string_view calc = args->second;
     if (calc_size_args(basis)) {
-        std::optional<size_form> inner = canonical_size(basis, ctx);
+        std::optional<size_form> inner = canonical_size(basis, ctx, depth + 1);
         if (!inner) { return std::nullopt; }
         std::optional<std::string> folded = substitute_size(calc, inner->calc, expansion_limit);
         if (!folded) { return std::nullopt; }
@@ -631,6 +637,40 @@ struct size_sum_reader {
     return out.empty() ? std::string{"0px"} : out;
 }
 
+// A calc-size() as the cascade writes the same declaration (calc_size_text),
+// so an animated size reads back as a declared one does: `size * 0.7` is
+// `(0.7 * size)` in both (interpolate-size-min-height-interpolation).
+[[nodiscard]] std::string sized_text(std::string_view basis, std::string_view calc) {
+    std::string text = "calc-size(" + std::string{basis} + ", " + std::string{calc} + ")";
+    std::optional<std::string> canonical = css::calc_size_text(text, "auto");
+    return canonical ? std::move(*canonical) : text;
+}
+
+// TWO CALCULATIONS OVER ONE BASIS, ADDED - calc-size() is additive (CSS
+// Values 5 §calc-size): the lengths summed and `size`'s factors summed, so
+// `max-content` with `100px` added is `calc-size(max-content, 100px + size)`
+// (interpolate-size-*-composition).
+[[nodiscard]] std::string sum_calcs(std::string_view a, std::string_view b,
+                                    const css::length_context & ctx) {
+    const std::optional<size_sum> x = size_sum_of(a, ctx);
+    const std::optional<size_sum> y = size_sum_of(b, ctx);
+    if (!x || !y) { return "(" + std::string{a} + ") + (" + std::string{b} + ")"; }
+    std::string out;
+    if (x->has_lengths || y->has_lengths) {
+        std::string text = css::serialize_calc(sum(x->lengths, y->lengths));
+        if (ascii_istarts_with(text, "calc(") && text.ends_with(')')) {
+            text = text.substr(5, text.size() - 6);
+        }
+        out = std::move(text);
+    }
+    if (x->has_size || y->has_size) {
+        const double k = x->size + y->size;
+        out += out.empty() ? "" : " + ";
+        out += k == 1 ? std::string{"size"} : "size * " + css::serialize_number(k);
+    }
+    return out.empty() ? std::string{"0px"} : out;
+}
+
 // CSS Values 4 §4.1: two values interpolate when they are one number, length
 // or percentage each; two colours; or LISTS of the same shape -
 // comma-separated, then space-separated - whose items pair off as one of
@@ -790,8 +830,7 @@ struct size_sum_reader {
     if (sizing_property(property)) {
         bool sized = false;
         if (const std::optional<size_pair_forms> pair = size_pair(from, to, ctx, sized)) {
-            return "calc-size(" + pair->basis + ", " +
-                   blend_calcs(pair->calc_a, pair->calc_b, p, ctx) + ")";
+            return sized_text(pair->basis, blend_calcs(pair->calc_a, pair->calc_b, p, ctx));
         }
         if (sized) {
             interpolable = false;
@@ -871,6 +910,15 @@ struct size_sum_reader {
     // repeat()s too (grid-template-columns-composition).
     if (property == "grid-template-columns" || property == "grid-template-rows") {
         return interpolate_tracks(underlying, value, 1, 1, ctx).value_or(std::string{value});
+    }
+    // Two sizes calc-size() puts on one basis add as calc-size()s; a keyword
+    // it cannot is not additive, and the added value replaces.
+    if (sizing_property(property)) {
+        bool sized = false;
+        if (const std::optional<size_pair_forms> pair = size_pair(underlying, value, ctx, sized)) {
+            return sized_text(pair->basis, sum_calcs(pair->calc_a, pair->calc_b, ctx));
+        }
+        if (sized) { return std::string{value}; }
     }
     const bool single = comma_items(underlying).size() == 1 && comma_items(value).size() == 1;
     if (const auto a = single ? css::resolve_color(underlying, {}) : std::nullopt,
