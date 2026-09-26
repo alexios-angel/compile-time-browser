@@ -121,9 +121,22 @@ void engine::resolve_subtree(const read_txn & txn, node_id node, ancestor_filter
     path_[depth] = levels_[depth].size() - 1;
     const element_facts & self = levels_[depth].back().facts;
 
+    generates_ = 0;
     const computed_style_ptr resolved = resolve(txn, node, self, ancestors, depth, parent);
     out[key_of(node)] = resolved;
     note_chain(depth, node, resolved);
+    // ITS `::before` AND `::after`, when a rule for one matched it: cascaded as
+    // resolve_pseudo does, inheriting from the element, from this same cursor.
+    // The facts are read again - resolve() may have grown levels_.
+    if (const std::uint8_t generates = generates_; generates != 0) {
+        for (const bool after : {false, true}) {
+            if ((generates & (after ? 2 : 1)) == 0) { continue; }
+            pseudo_wanted_ = after ? after_ : before_;
+            const element_facts & facts = levels_[depth][path_[depth]].facts;
+            out[pseudo_key_of(node, after)] = resolve(txn, node, facts, ancestors, depth, resolved);
+            pseudo_wanted_ = atom{};
+        }
+    }
 
     // The tag, id and classes are read from the stored facts rather than from
     // `self`, because resolve() may have grown levels_ and reallocated it.
