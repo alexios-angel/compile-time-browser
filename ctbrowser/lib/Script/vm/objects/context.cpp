@@ -65,7 +65,8 @@ value context::make_global_object(realm_record & r) {
         auto * object = static_cast<object_object *>(args[0].as_heap());
         const std::string name = cx.to_string(args[1]);
         if (realm->declared.contains(name)) { return realm->globals[name]; }
-        if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
+        if (object->find(name) != nullptr || object->find_accessor(name) != nullptr ||
+            realm->lexical.contains(name)) {
             return cx.lookup_property(args[0], name);
         }
         if (const auto it = realm->globals.find(name); it != realm->globals.end()) {
@@ -92,8 +93,9 @@ value context::make_global_object(realm_record & r) {
     // in every engine, and global_or_named asks this before it decides a
     // bare identifier is unresolvable.
     trap("has", [realm](context & cx, std::span<value> args) {
+        const std::string name = cx.to_string(args[1]);
         return value::boolean(cx.has_property(args[0], args[1]) ||
-                              realm->globals.contains(cx.to_string(args[1])));
+                              (realm->globals.contains(name) && !realm->lexical.contains(name)));
     });
     // [[GetOwnProperty]] SEES THE BINDINGS TOO: `Object.getOwnPropertyDescriptor
     // (this, "Array")` is how test262 verifies every global's attributes. An
@@ -111,7 +113,9 @@ value context::make_global_object(realm_record & r) {
         property_descriptor found;
         if (cx.own_property(args[0], name, found)) { return cx.from_property_descriptor(found); }
         const auto it = realm->globals.find(name);
-        if (it == realm->globals.end()) { return value::undefined(); }
+        if (it == realm->globals.end() || realm->lexical.contains(name)) {
+            return value::undefined();
+        }
         return cx.from_property_descriptor(property_descriptor::data(
             it->second,
             realm->builtin.contains(name) ? attr_writable | attr_configurable : attr_default));

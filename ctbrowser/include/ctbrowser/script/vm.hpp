@@ -43,6 +43,12 @@ public:
     // A SCRIPT's `var` (`configurable` false) is also enumerable and cannot be
     // deleted; an eval's (true) can.
     void declare_global_var(std::string name, bool configurable = true);
+    // GlobalDeclarationInstantiation's refusals (16.1.7 steps 3-6): a
+    // classic script whose lexical name is already a var, a lexical or a
+    // non-configurable global property, or whose var or function name is
+    // already lexical, is a SyntaxError and creates no binding. False with
+    // the SyntaxError thrown; true once the script's names are recorded.
+    bool global_declaration_instantiation(const program & prog);
 
     // THE THREE VALUE PROPERTIES OF THE GLOBAL OBJECT (19.1): NaN, Infinity
     // and undefined are { writable: false, enumerable: false, configurable:
