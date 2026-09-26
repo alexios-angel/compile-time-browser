@@ -342,7 +342,9 @@ inline auto context::set_module_evaluator(std::function<bool(context &, module_r
     if (!global_declaration_instantiation(prog)) { return value::undefined(); }
     // Its `var`s exist before it starts, as run() gives a script's
     // (19.2.1.3 EvalDeclarationInstantiation binds them the same way).
-    for (const std::string & name : prog.hoisted_vars) { declare_global_var(name, prog.eval_code); }
+    for (const std::string & name : prog.hoisted_vars) {
+        if (!annex_b_skipped(prog, name)) { declare_global_var(name, prog.eval_code); }
+    }
     for (const std::string & name : prog.function_names) {
         declare_global_function(name, prog.eval_code);
     }

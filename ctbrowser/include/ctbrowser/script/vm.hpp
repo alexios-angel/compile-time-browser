@@ -90,6 +90,11 @@ public:
     // already lexical, is a SyntaxError and creates no binding. False with
     // the SyntaxError thrown; true once the script's names are recorded.
     bool global_declaration_instantiation(const program & prog);
+    // True when `name` is one of the program's Annex B block-function names
+    // (program::annex_b_names) that the global environment cannot take as a
+    // var - a global lexical of it, or CanDeclareGlobalVar false - and so is
+    // not created (B.3.2.2, B.3.2.3). Whoever declares hoisted_vars asks.
+    [[nodiscard]] bool annex_b_skipped(const program & prog, const std::string & name);
 
     // THE THREE VALUE PROPERTIES OF THE GLOBAL OBJECT (19.1): NaN, Infinity
     // and undefined are { writable: false, enumerable: false, configurable:

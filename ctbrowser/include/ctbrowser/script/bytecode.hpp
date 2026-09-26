@@ -555,6 +555,14 @@ struct program {
     // functions (and no lexical names - those are the eval's own).
     std::vector<std::string> lexical_names;
     std::vector<std::string> function_names;
+    // THE NAMES IN hoisted_vars THAT ONLY A BLOCK'S FUNCTION DECLARATION PUT
+    // THERE - no `var` and no top-level function declares them (B.3.2.2,
+    // B.3.2.3: a sloppy script's or eval's block function is also a var).
+    // Sorted. Such a name is never a refusal: one the global environment has
+    // as a lexical binding, or cannot take as a var (CanDeclareGlobalVar), is
+    // simply not created - context::annex_b_skipped - where a real `var` of
+    // it is the SyntaxError or TypeError. Data, like hoisted_vars.
+    std::vector<std::string> annex_b_names;
     // THE SOURCE THIS WAS COMPILED FROM, kept so a function can be printed.
     // A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
     std::string source;

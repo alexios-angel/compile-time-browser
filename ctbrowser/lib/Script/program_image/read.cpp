@@ -248,6 +248,7 @@ load_result load_image(std::span<const std::byte> bytes,
     read_list(result.hoisted_vars, "hoisted var");
     read_list(result.lexical_names, "lexical name");
     read_list(result.function_names, "function name");
+    read_list(result.annex_b_names, "Annex B name");
     result.source = in.text();
     result.kind = out.kind;
 

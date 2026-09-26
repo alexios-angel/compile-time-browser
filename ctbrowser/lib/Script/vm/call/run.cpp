@@ -7,6 +7,7 @@
 // include/ctbrowser/script/vm.hpp - so they split across translation units
 // with nothing to declare.
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 
@@ -95,8 +96,13 @@ bool context::global_declaration_instantiation(const program & prog) {
             return refuse(name);
         }
     }
+    // An Annex B name is not a VarName (B.3.2.2): a collision skips it
+    // instead (annex_b_skipped).
+    const auto annex_b = [&](const std::string & name) {
+        return std::ranges::binary_search(prog.annex_b_names, name);
+    };
     for (const std::string & name : prog.hoisted_vars) {
-        if (realm.lexical.contains(name)) { return refuse(name); }
+        if (realm.lexical.contains(name) && !annex_b(name)) { return refuse(name); }
     }
     for (const std::string & name : prog.function_names) {
         if (realm.lexical.contains(name)) { return refuse(name); }
@@ -132,12 +138,15 @@ bool context::global_declaration_instantiation(const program & prog) {
         }
     }
     for (const std::string & name : prog.hoisted_vars) {
-        if (property_descriptor existing; !extensible && !global_own(name, existing)) {
+        if (property_descriptor existing;
+            !extensible && !annex_b(name) && !global_own(name, existing)) {
             return cannot(name);
         }
     }
     for (const std::string & name : prog.lexical_names) { realm.lexical[name] = true; }
-    for (const std::string & name : prog.hoisted_vars) { realm.var_names[name] = true; }
+    for (const std::string & name : prog.hoisted_vars) {
+        if (!annex_b_skipped(prog, name)) { realm.var_names[name] = true; }
+    }
     for (const std::string & name : prog.function_names) { realm.var_names[name] = true; }
     return true;
 }
@@ -145,10 +154,15 @@ bool context::global_declaration_instantiation(const program & prog) {
 bool context::eval_declaration_instantiation(const program & prog) {
     realm_record & realm = current_realm();
     // Step 3.a: a var or function name the global environment has as a
-    // lexical binding - a `let x` of a script, and then `eval('var x')`.
+    // lexical binding - a `let x` of a script, and then `eval('var x')`. Not
+    // an Annex B block function's, which is skipped instead (B.3.2.3,
+    // annex_b_skipped).
+    const auto annex_b = [&](const std::string & name) {
+        return std::ranges::binary_search(prog.annex_b_names, name);
+    };
     for (const auto * names : {&prog.hoisted_vars, &prog.function_names}) {
         for (const std::string & name : *names) {
-            if (realm.lexical.contains(name)) {
+            if (realm.lexical.contains(name) && (names == &prog.function_names || !annex_b(name))) {
                 throw_error("SyntaxError", "Identifier '" + name + "' has already been declared");
                 return false;
             }
@@ -182,7 +196,8 @@ bool context::eval_declaration_instantiation(const program & prog) {
         }
     }
     for (const std::string & name : prog.hoisted_vars) {
-        if (property_descriptor existing; !extensible && !global_own(name, existing)) {
+        if (property_descriptor existing;
+            !extensible && !annex_b(name) && !global_own(name, existing)) {
             throw_error("TypeError", "Cannot declare global variable '" + name + "'");
             return false;
         }
@@ -191,6 +206,32 @@ bool context::eval_declaration_instantiation(const program & prog) {
     // later script's `let` of the same name shadows them (16.1.7 step 3.c's
     // NOTE - only a restricted, non-configurable global property collides).
     return true;
+}
+
+// B.3.2.2 step 12.b.i / B.3.2.3 step 11.b.ii: an Annex B block function's
+// name becomes a global var only when the global environment has no lexical
+// binding of it and CanDeclareGlobalVar(F) - an own property of the global
+// object (the target's or the table's), or an extensible one - allows it.
+// Otherwise it is fnDefinable false, and skipped without an error.
+//
+// KNOWN WRONG: the declaration's evaluation still copies the function into
+// the global of that name (compile_function_decl emits the set_global
+// whatever this decides), so `let f = 1` and then `{ function f() {} }` in
+// another script or an eval leaves f the function rather than 1. Skipping
+// that write needs the copy's instruction told apart from a `f = x`, which
+// is the same op::set_global.
+bool context::annex_b_skipped(const program & prog, const std::string & name) {
+    if (!std::ranges::binary_search(prog.annex_b_names, name)) { return false; }
+    realm_record & realm = current_realm();
+    if (realm.lexical.contains(name)) { return true; }
+    value holder = realm.global_this;
+    if (holder.is_kind(heap_kind::proxy)) {
+        holder = static_cast<proxy_object *>(holder.as_heap())->target;
+    }
+    if (!holder.is_heap() || is_extensible(holder)) { return false; }
+    property_descriptor own;
+    if (holder.is_object() && own_property(holder, name, own)) { return false; }
+    return !realm.globals.contains(name);
 }
 
 run_result context::run(const program & prog) {
@@ -210,7 +251,7 @@ run_result context::run(const program & prog) {
     handlers_.clear();
     if (global_declaration_instantiation(prog)) {
         for (const std::string & name : prog.hoisted_vars) {
-            declare_global_var(name, prog.eval_code);
+            if (!annex_b_skipped(prog, name)) { declare_global_var(name, prog.eval_code); }
         }
         for (const std::string & name : prog.function_names) {
             declare_global_function(name, prog.eval_code);

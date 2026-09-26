@@ -545,7 +545,9 @@ void install_dynamic_function(context & cx) {
                 if (kept.eval_global && !c.eval_declaration_instantiation(kept)) {
                     return value::undefined();
                 }
-                for (const std::string & name : kept.hoisted_vars) { c.declare_global_var(name); }
+                for (const std::string & name : kept.hoisted_vars) {
+                    if (!c.annex_b_skipped(kept, name)) { c.declare_global_var(name); }
+                }
                 for (const std::string & name : kept.function_names) {
                     c.declare_global_function(name, true);
                 }

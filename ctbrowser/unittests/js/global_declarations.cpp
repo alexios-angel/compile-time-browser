@@ -98,6 +98,17 @@ int main() {
             "d = 2; var o = Object.getOwnPropertyDescriptor(globalThis, 'd');"
             "if (o.value !== 2 || o.enumerable || d !== 2) { throw 0; }"},
            "ok");
+    // AN ANNEX B BLOCK FUNCTION'S NAME IS NOT A VarName (B.3.2.2): a global
+    // `let` of it, or a global object that cannot take it, skips it - no
+    // SyntaxError, no TypeError, and no binding.
+    expect({"let f = 1;", "if (false) { function f() {} } if (f !== 1) { throw 0; }"}, "ok");
+    expect({"Object.preventExtensions(globalThis);", "if (false) { function g() {} }"}, "ok");
+    expect({"Object.preventExtensions(globalThis);", "if (false) { function g() {} }", "g;"},
+           "ReferenceError");
+    // ...but a `var` of the name beside it is a var, and collides as one.
+    expect({"let f = 1;", "var f; { function f() {} }"}, refused);
+    // A block function a script did declare is a var name a later `let` meets.
+    expect({"{ function t() {} }", "let t;"}, refused);
     // A Script (compile_script) refuses a top-level `return` and `new.target`;
     // the embedder's program (compile) keeps its `return`.
     check(!compiler::compile_script("return 1;").ok, "a Script's top-level return is refused");

@@ -75,13 +75,24 @@ void compiler_impl::compile_program() {
                 ast_.root,
                 [&](std::string n, std::int32_t decl) {
                     fn().annex_b_decls.push_back(decl);
-                    out_.hoisted_vars.push_back(std::move(n));
+                    out_.annex_b_names.push_back(std::move(n));
                 },
                 lexical, true);
         }
         std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());
         out_.hoisted_vars.erase(std::unique(out_.hoisted_vars.begin(), out_.hoisted_vars.end()),
                                 out_.hoisted_vars.end());
+        // A block function's name is a var either way; it is an Annex B name
+        // (program::annex_b_names) only when no `var` declares it too.
+        std::ranges::sort(out_.annex_b_names);
+        out_.annex_b_names.erase(std::ranges::unique(out_.annex_b_names).begin(),
+                                 out_.annex_b_names.end());
+        std::erase_if(out_.annex_b_names, [&](const std::string & name) {
+            return std::ranges::binary_search(out_.hoisted_vars, name);
+        });
+        out_.hoisted_vars.insert(out_.hoisted_vars.end(), out_.annex_b_names.begin(),
+                                 out_.annex_b_names.end());
+        std::ranges::sort(out_.hoisted_vars);
         // 19.2.1.3 step 3: a sloppy direct eval's `var` or function may not
         // share a name with a `let`, `const` or `class` of its caller's
         // function - hoisting the var would reach through it.
@@ -103,9 +114,11 @@ void compiler_impl::compile_program() {
         }
         // A direct eval's `var` of a caller's binding is that binding, not a
         // global to create.
-        std::erase_if(out_.hoisted_vars, [&](const std::string & name) {
+        const auto caller_binds = [&](const std::string & name) {
             return std::ranges::find(eval_outer_names_, name) != eval_outer_names_.end();
-        });
+        };
+        std::erase_if(out_.hoisted_vars, caller_binds);
+        std::erase_if(out_.annex_b_names, caller_binds);
     }
     // AN EVAL'S `let`, `const` and `class` ARE ITS OWN, strict or not
     // (19.2.1.3 step 17: a new declarative environment) - hoisted like a
