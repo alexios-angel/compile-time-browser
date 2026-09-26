@@ -253,6 +253,31 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-number-read-string-prefix-return": """function customElements(anchor) {
+  const saved = Number(anchor.getAttribute('data-number')).toString();
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-string-prefix-snapshot": """function customElements(anchor) {
+  const saved = Number(anchor.getAttribute('data-number')).toString();
+  try {
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-string-prefix-divide-return": """function customElements(anchor) {
+  const saved = (1 / Number(anchor.getAttribute('data-number'))).toString();
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "write-string-read-snapshot": """function customElements(anchor) {
   try {
     const saved = anchor.getAttribute('data-number');
@@ -356,6 +381,9 @@ NUMBER_ARITHMETIC_RESULTS["write-number-read-number-divide-return"] = NUMBER_ARI
 NUMBER_ARITHMETIC_RESULTS["write-number-read-string-divide-return"] = NUMBER_ARITHMETIC_RESULTS[
     "write-number-read-protected-divide-return"
 ]
+NUMBER_ARITHMETIC_RESULTS["write-number-read-string-prefix-divide-return"] = (
+    NUMBER_ARITHMETIC_RESULTS["write-number-read-protected-divide-return"]
+)
 NUMBER_CONDITIONAL_READS = {
     "write-number-read-conditional": ("flag", "0"),
     "write-number-read-conditional-snapshot": ("flag", "0"),
@@ -1052,6 +1080,38 @@ def main():
                     "rebound-method",
                     "try {",
                     "try { Number.prototype.toString = anchor;",
+                ),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
+    prefix_body = (
+        SOURCES["write-number-read-string-prefix-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    )
+    refusals.update(
+        {
+            "write-number-read-string-prefix-" + name: prefix_body.replace(before, after)
+            for name, before, after in (
+                ("without-intrinsic", "Number", "Number"),
+                ("rebound-intrinsic", "const saved =", "Number = anchor; const saved ="),
+                ("coercing-input", "anchor.getAttribute('data-number')", "anchor"),
+                (
+                    "wrong-receiver",
+                    "const saved = Number(anchor.getAttribute('data-number')).toString()",
+                    "const number = Number(anchor.getAttribute('data-number')); const stringify = number.toString; const saved = stringify()",
+                ),
+                ("different-callee", ".toString()", ".toFixed()"),
+                ("radix", ".toString()", ".toString(16)"),
+                ("coercing-radix", ".toString()", ".toString(anchor)"),
+                (
+                    "effectful-branch",
+                    "Number(anchor.getAttribute('data-number'))",
+                    "(anchor.hasAttribute('flag') ? (anchor.unknown(), 1) : Number(anchor.getAttribute('data-number')))",
+                ),
+                (
+                    "rebound-method",
+                    "const saved =",
+                    "Number.prototype.toString = anchor; const saved =",
                 ),
                 ("invalid-name", "'data-written'", "'bad name'"),
             )
