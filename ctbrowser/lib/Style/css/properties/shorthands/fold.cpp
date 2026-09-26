@@ -186,6 +186,29 @@ namespace ctbrowser::style::css::shorthand_detail {
     return parts.empty() ? std::string{"normal"} : join(parts);
 }
 
+// `animation-range`, folded: per item the start, and the end only when it is
+// not the one the start implies - its range name, or `normal` (or the
+// `100%` that means the same) after a start that names none.
+[[nodiscard]] std::string fold_range(std::span<const std::string> v) {
+    const std::vector<std::string_view> starts = split_top_level(v[0], ",");
+    const std::vector<std::string_view> ends = split_top_level(v[1], ",");
+    if (starts.size() != ends.size()) { return {}; }
+    std::string out;
+    for (std::size_t i = 0; i < starts.size(); ++i) {
+        const std::string_view start = trim(starts[i], html_whitespace);
+        const std::string_view end = trim(ends[i], html_whitespace);
+        const std::string_view first = start.substr(0, start.find(' '));
+        const bool named =
+            !first.empty() && std::isalpha(static_cast<unsigned char>(first.front())) != 0 &&
+            first.find('(') == std::string_view::npos && !ascii_iequals(first, "normal");
+        const bool implied =
+            named ? ascii_iequals(end, first) : ascii_iequals(end, "normal") || end == "100%";
+        out += (out.empty() ? "" : ", ") + std::string{start} +
+               (implied ? "" : " " + std::string{end});
+    }
+    return out;
+}
+
 // `transition`, folded: per item, the property then the components that are
 // not their defaults - a delay carries the duration before it - and the
 // property alone, `all` included, when nothing else is; "" when the lists
@@ -319,6 +342,7 @@ namespace ctbrowser::style::css::shorthand_detail {
     case shape::white_space: return fold_white_space(v);
     case shape::animation: return fold_animation(v);
     case shape::transition: return fold_transition(v);
+    case shape::range: return fold_range(v);
     case shape::border: {
         // Four equal sides per component, and border-image at its initial
         // values - CSS Backgrounds 3 §5.3: `border` resets it, so a block that

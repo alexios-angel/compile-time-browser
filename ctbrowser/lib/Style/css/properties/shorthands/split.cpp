@@ -482,6 +482,67 @@ split split_transition(std::string_view value, std::vector<std::string> & out) {
     return split::ok;
 }
 
+// `animation-range`: per item a start and an optional end, each `normal`,
+// a <length-percentage>, or a <timeline-range-name> with an optional one. An
+// omitted end is the start's range name at 100% when the start names one,
+// and `normal` otherwise (Scroll-driven Animations 1 §4.2).
+split split_range(std::string_view value, std::vector<std::string> & out) {
+    std::string starts, ends;
+    for (const std::string_view item : split_top_level(value, ",")) {
+        std::vector<std::string_view> words;
+        for (const std::string_view raw :
+             split_top_level(trim(item, html_whitespace), " \t\n\r\f")) {
+            if (!trim(raw, html_whitespace).empty()) {
+                words.push_back(trim(raw, html_whitespace));
+            }
+        }
+        if (words.empty()) { return split::invalid; }
+        const auto named = [](std::string_view w) {
+            const char c = w.front();
+            return (std::isalpha(static_cast<unsigned char>(c)) != 0 || c == '_' ||
+                    (c == '-' && w.size() > 1 &&
+                     std::isdigit(static_cast<unsigned char>(w[1])) == 0 && w[1] != '.')) &&
+                   w.find('(') == std::string_view::npos;
+        };
+        // One component from `at`: a name (and an offset after it), or an offset.
+        const auto component = [&](std::size_t & at) {
+            const std::size_t from = at;
+            if (named(words[at]) && !ascii_iequals(words[at], "normal") && at + 1 < words.size() &&
+                !named(words[at + 1])) {
+                at += 2;
+            } else {
+                at += 1;
+            }
+            std::string text;
+            for (std::size_t k = from; k < at; ++k) {
+                text += (text.empty() ? "" : " ") + std::string{words[k]};
+            }
+            return text;
+        };
+        std::size_t at = 0;
+        const std::string first = component(at);
+        const value_check start = check_declaration("animation-range-start", first, false);
+        if (!start.valid || is_wide_keyword(start.serialized)) { return split::invalid; }
+        std::string end;
+        if (at < words.size()) {
+            const std::string second = component(at);
+            const value_check checked = check_declaration("animation-range-end", second, false);
+            if (!checked.valid || is_wide_keyword(checked.serialized) || at != words.size()) {
+                return split::invalid;
+            }
+            end = checked.serialized;
+        } else {
+            end = named(words[0]) && !ascii_iequals(words[0], "normal") ? ascii_lower_copy(words[0])
+                                                                        : std::string{"normal"};
+        }
+        starts += (starts.empty() ? "" : ", ") + start.serialized;
+        ends += (ends.empty() ? "" : ", ") + end;
+    }
+    if (starts.empty()) { return split::invalid; }
+    out = {starts, ends};
+    return split::ok;
+}
+
 // Each radius axis has the same nonnegative <length-percentage> grammar as padding.
 bool radius_components(std::string_view value, std::size_t maximum,
                        std::vector<std::string> & out) {
@@ -850,6 +911,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::white_space: return split_white_space(parts, out);
     case shape::animation: return split_animation(value, out);
     case shape::transition: return split_transition(value, out);
+    case shape::range: return split_range(value, out);
     case shape::font: return split_font(parts, out);
     case shape::font_variant: return split_font_variant(e, parts, out);
     case shape::line_clamp: return split_line_clamp(e, parts, out);

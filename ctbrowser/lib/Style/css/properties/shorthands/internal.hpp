@@ -49,6 +49,8 @@ enum class shape : std::uint8_t {
                      // color applied to the axis's two sides (CSS Logical 1 §4.4)
     white_space,     // CSS Text 4 §3: one of six keywords, or `<'white-space-collapse'>
                      // || <'text-wrap-mode'> || <'white-space-trim'>`
+    range,           // `animation-range`: `[ <'animation-range-start'>
+                     // <'animation-range-end'>? ]#`, Scroll-driven Animations 1 §4.2
     transition,      // `<single-transition>#`, CSS Transitions 2 §3.5: per item a
                      // property, two times, an easing and a behaviour, in any order
     animation,       // `<single-animation>#`, CSS Animations 1 §5.9: per item, the
@@ -257,6 +259,7 @@ inline constexpr shorthand_syntax table[] = {
      "text-decoration-line text-decoration-thickness text-decoration-style "
      "text-decoration-color",
      "none"},
+    {"animation-range", shape::range, "animation-range-start animation-range-end", ""},
     {"transition", shape::transition,
      "transition-property transition-duration transition-timing-function transition-delay "
      "transition-behavior",
@@ -371,6 +374,10 @@ inline constexpr std::array<std::pair<std::string_view, std::string_view>, 8> an
 split split_animation(std::string_view value, std::vector<std::string> & out);
 
 split split_transition(std::string_view value, std::vector<std::string> & out);
+
+split split_range(std::string_view value, std::vector<std::string> & out);
+
+[[nodiscard]] std::string fold_range(std::span<const std::string> v);
 
 [[nodiscard]] std::string fold_transition(std::span<const std::string> v);
 
