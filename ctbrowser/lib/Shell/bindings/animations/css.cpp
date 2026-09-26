@@ -412,8 +412,11 @@ void dom_bindings::update_css_transitions(
                                              after.get(atoms_->intern("direction")));
         return physical.empty() ? std::string{name} : physical;
     };
+    // A property that is not animatable never transitions, allow-discrete or
+    // not (interpolate-size-interpolation).
     const auto consider = [&](std::string_view logical) {
         const std::string name = physical_of(logical);
+        if (!style::css::animatable(name)) { return; }
         if (std::ranges::find(candidates, name) == candidates.end()) {
             candidates.emplace_back(name);
         }

@@ -406,7 +406,7 @@ bool dom_bindings::read_keyframes(context & cx, value keyframes,
             return;
         }
         const style::css::property_syntax * known = style::css::find_property(property);
-        if (known == nullptr) { return; }
+        if (known == nullptr || !style::css::animatable(property)) { return; }
         // A SHORTHAND IS ITS LONGHANDS (§5.4.5 "process a keyframe-like
         // object"), as a `@keyframes` block already stores it: `borderWidth:
         // '20px 40px'` animates border-top-width and the rest.
