@@ -334,6 +334,16 @@ std::size_t dom_bindings::load_imported_sheet(std::size_t rule, std::string_view
     return at;
 }
 
+namespace {
+
+// HOW DEEP INSIDE A STYLE RULE the rule being parsed is: a nested style rule's
+// selector may be relative - `> .bar` - and may use `&`, where a top-level
+// one may not (CSS Nesting 1 §2.1). Per thread, because a parse re-enters
+// itself for every nested rule and nothing else shares it.
+thread_local int nested_style_depth = 0;
+
+} // namespace
+
 std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view text,
                                          std::string & error) {
     const std::string_view trimmed = trim(text, html_whitespace);
@@ -410,7 +420,11 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             flush();
             first = false;
             std::string ignored;
+            const bool in_style = css_rule_store_[owner]->type == style_rule ||
+                                  nested_in_style(css_rule_store_, owner);
+            if (in_style) { ++nested_style_depth; }
             const std::size_t child = parse_one_rule(sheet, span, ignored);
+            if (in_style) { --nested_style_depth; }
             if (child == no_index) { return; }
             css_rule_store_[child]->parent = owner;
             css_rule_store_[owner]->children.push_back(child);
@@ -855,8 +869,12 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         return no_index;
     }
     const std::vector<style::css::namespace_declaration> namespaces = sheet_namespaces(sheet);
-    const style::css::stylesheet selectors =
-        style::css::parse_selector_text(prelude, *atoms_, bad, &namespaces);
+    // Inside a style rule, against a stand-in parent: the selector may be
+    // relative, which only a nesting context accepts.
+    const std::vector<style::compiled_selector> placeholder(1);
+    const style::css::nesting_context nesting{placeholder, false};
+    const style::css::stylesheet selectors = style::css::parse_selector_text(
+        prelude, *atoms_, bad, &namespaces, nested_style_depth > 0 ? &nesting : nullptr);
     if (bad || selectors.selectors.empty()) {
         css_rule_store_.pop_back();
         error = "SyntaxError";
