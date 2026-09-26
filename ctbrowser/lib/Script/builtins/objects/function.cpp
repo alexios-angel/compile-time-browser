@@ -459,18 +459,20 @@ void install_dynamic_function(context & cx) {
                 auto * caller = callee.is_kind(heap_kind::function)
                                     ? static_cast<closure_object *>(callee.as_heap())
                                     : nullptr;
-                std::vector<std::string> names;
-                std::vector<immutability> readonly;
+                std::vector<eval_binding> outer;
                 std::vector<value> cells;
-                // "... name" or "... name strict|sloppy" - see immutability.
+                // "... name [strict|sloppy] [lexical]" - see eval_binding.
                 const auto bind = [&](std::string_view rest) {
                     const std::size_t space = rest.find(' ');
-                    names.emplace_back(rest.substr(0, space));
-                    const std::string_view mode =
-                        space == std::string_view::npos ? "" : rest.substr(space + 1);
-                    readonly.push_back(mode == "strict"   ? immutability::strict
-                                       : mode == "sloppy" ? immutability::sloppy
-                                                          : immutability::none);
+                    const std::string_view flags =
+                        space == std::string_view::npos ? "" : rest.substr(space);
+                    eval_binding & made = outer.emplace_back();
+                    made.name = std::string{rest.substr(0, space)};
+                    made.readonly =
+                        flags.find(" strict") != std::string_view::npos   ? immutability::strict
+                        : flags.find(" sloppy") != std::string_view::npos ? immutability::sloppy
+                                                                          : immutability::none;
+                    made.lexical = flags.find(" lexical") != std::string_view::npos;
                 };
                 const value new_target = a.size() > 5 ? a[5] : value::undefined();
                 eval_site site;
@@ -522,7 +524,7 @@ void install_dynamic_function(context & cx) {
                     }
                 }
                 program compiled =
-                    compiler::compile_for_direct_eval(c.to_string(source), names, site, readonly);
+                    compiler::compile_for_direct_eval(c.to_string(source), outer, site);
                 if (!compiled.ok) {
                     c.throw_error("SyntaxError", compiled.error);
                     return value::undefined();

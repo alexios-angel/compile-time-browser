@@ -25,8 +25,7 @@ namespace {
 namespace {
 // `site` is null for a program an embedder runs, and an eval's otherwise.
 program compile_source(std::string_view source, script_kind kind, const eval_site * site,
-                       std::span<const std::string> outer = {},
-                       std::span<const immutability> outer_readonly = {});
+                       std::span<const eval_binding> outer = {});
 } // namespace
 
 program compiler::compile(std::string_view source, script_kind kind) {
@@ -38,16 +37,14 @@ program compiler::compile_for_eval(std::string_view source, const eval_site & si
 }
 
 program compiler::compile_for_direct_eval(std::string_view source,
-                                          std::span<const std::string> outer,
-                                          const eval_site & site,
-                                          std::span<const immutability> readonly) {
-    return compile_source(source, script_kind::classic, &site, outer, readonly);
+                                          std::span<const eval_binding> outer,
+                                          const eval_site & site) {
+    return compile_source(source, script_kind::classic, &site, outer);
 }
 
 namespace {
 program compile_source(std::string_view source, script_kind kind, const eval_site * site,
-                       std::span<const std::string> outer,
-                       std::span<const immutability> outer_readonly) {
+                       std::span<const eval_binding> outer) {
     const vp::ast tree = vp::parse(source);
     program out;
     out.kind = kind;
@@ -98,9 +95,12 @@ program compile_source(std::string_view source, script_kind kind, const eval_sit
     // compiler_impl::offset_of.
     c.source_view_ = source;
     c.completion_value_ = site != nullptr;
-    c.eval_outer_names_.assign(outer.begin(), outer.end());
+    for (const eval_binding & binding : outer) {
+        c.eval_outer_names_.push_back(binding.name);
+        c.eval_outer_readonly_.push_back(binding.readonly);
+        c.eval_outer_lexical_.push_back(binding.lexical);
+    }
     if (site != nullptr) { c.eval_site_ = *site; }
-    c.eval_outer_readonly_.assign(outer_readonly.begin(), outer_readonly.end());
     c.compile_program();
     return out;
 }

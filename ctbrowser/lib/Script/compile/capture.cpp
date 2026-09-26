@@ -251,11 +251,13 @@ void compiler_impl::predeclare_locals(std::int32_t body, bool lexical_only) {
         return l != nullptr && l->readonly != immutability::sloppy;
     };
     const auto hoist = [this, &bound](std::string name, std::uint32_t initialized_at = 0,
-                                      immutability readonly = immutability::none) {
+                                      immutability readonly = immutability::none,
+                                      bool lexical = false) {
         if (name.empty() || bound(name)) { return; }
         const std::uint16_t r = declare_local(name);
         fn().locals.back().initialized_at = initialized_at;
         fn().locals.back().readonly = readonly;
+        fn().locals.back().lexical = lexical;
         proto().emit(instruction{op::load_undef, r});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
         fn().predeclared.push_back(std::move(name));
@@ -300,9 +302,11 @@ void compiler_impl::predeclare_locals(std::int32_t body, bool lexical_only) {
                     // single offset cannot say.
                     std::vector<std::string> names;
                     pattern_names(at(d).b, names);
-                    for (std::string & name : names) { hoist(std::move(name), 0, readonly); }
+                    for (std::string & name : names) {
+                        hoist(std::move(name), 0, readonly, lexical);
+                    }
                 } else {
-                    hoist(std::string{at(d).text}, ready, readonly);
+                    hoist(std::string{at(d).text}, ready, readonly, lexical);
                 }
             }
         } else if (at(stmt).kind == vp::nk::import_decl) {
@@ -331,7 +335,7 @@ void compiler_impl::predeclare_locals(std::int32_t body, bool lexical_only) {
             // the next statement's temporaries reuse the slot. `class S {}`
             // followed by two `new S()` therefore worked once and then
             // found an object in the register the second time.
-            hoist(std::string{at(stmt).text}, at(stmt).end);
+            hoist(std::string{at(stmt).text}, at(stmt).end, immutability::none, true);
         }
     }
     if (lexical_only) { return; }

@@ -27,7 +27,7 @@ void compiler_impl::pattern_names(std::int32_t pat, std::vector<std::string> & o
 }
 
 void compiler_impl::declare_pattern_names(std::int32_t pat, bool block_scoped,
-                                          immutability readonly) {
+                                          immutability readonly, bool lexical) {
     // A DECLARATION AT A SCRIPT'S TOP LEVEL IS A GLOBAL - unless it is
     // BLOCK-scoped, which a catch parameter always is and a `let`/`const`
     // inside a block of a script is too. Withholding the local there bound
@@ -48,6 +48,7 @@ void compiler_impl::declare_pattern_names(std::int32_t pat, bool block_scoped,
         if (find_local_in_current_scope(name) != nullptr) { continue; }
         const std::uint16_t reg = declare_local(name);
         fn().locals.back().readonly = readonly;
+        fn().locals.back().lexical = lexical;
         proto().emit(instruction{op::load_undef, reg});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, reg}); }
     }

@@ -80,6 +80,16 @@ struct eval_site {
     std::vector<std::pair<std::string, std::string>> private_names;
 };
 
+// ONE BINDING A DIRECT EVAL'S CALLER HANDS IT: the name, whether it can be
+// assigned, and whether it is a `let`, `const` or `class` of the caller's own
+// function - which a sloppy eval's `var` may not share a name with (19.2.1.3
+// step 3: the var would hoist through it).
+struct eval_binding {
+    std::string name;
+    immutability readonly = immutability::none;
+    bool lexical = false;
+};
+
 // WHICH KIND OF SCRIPT THIS IS, which decides where its top-level declarations
 // go.
 //
@@ -109,10 +119,9 @@ public:
     // A DIRECT eval's source (19.2.1.1 PerformEval with direct = true): as
     // compile_for_eval, with the caller's bindings `outer` visible as the
     // entry function's upvalues, in that order, and where it was written.
-    // `readonly` is parallel to `outer` (empty: every binding is mutable).
-    [[nodiscard]] static program compile_for_direct_eval(
-        std::string_view source, std::span<const std::string> outer, const eval_site & site,
-        std::span<const immutability> readonly = {});
+    [[nodiscard]] static program compile_for_direct_eval(std::string_view source,
+                                                         std::span<const eval_binding> outer,
+                                                         const eval_site & site);
 };
 
 // WHETHER THIS BUILD FILLS `function_proto::locals` AND `code_offsets`.

@@ -26,6 +26,18 @@ int main() {
     // ...and so is a function it declares, at its top or (B.3.2.3) in a block.
     js_expect("(function(){ var g = 1; eval('function g() { return 2; }'); return g(); })()", "2");
     js_expect("(function(f){ eval('{ function f() {} }'); return typeof f; })(1)", "function");
+    // A sloppy eval's `var` may not reach through a `let`, `const` or `class`
+    // of its caller's function (19.2.1.3 step 3) - a catch parameter is fine.
+    js_expect("(function(){ let x; try { eval('var x;'); } catch (e) {"
+              " return e.constructor.name; } return 'none'; })()",
+              "SyntaxError");
+    js_expect("(function(){ { class K {} try { eval('function K() {}'); } catch (e) {"
+              " return e.constructor.name; } } return 'none'; })()",
+              "SyntaxError");
+    js_expect("(function(){ try { throw 1; } catch (c) { eval('var c = 2;'); return c; } })()",
+              "2");
+    js_expect("(function(){ let x; eval('\"use strict\"; var x = 1;'); return typeof x; })()",
+              "undefined");
     // `this` and `arguments` are the caller's.
     js_expect("(function(){ return eval('this.tag'); }).call({tag: 'me'})", "me");
     js_expect("(function(){ return eval('arguments.length'); })(1, 2, 3)", "3");

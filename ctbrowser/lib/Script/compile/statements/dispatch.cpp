@@ -182,7 +182,8 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 // free the pattern's own locals with it if they were
                 // allocated inside, leaving the next temporary to overwrite
                 // one. See declare_pattern_names.
-                declare_pattern_names(decl.b, n.text != "var", declared_immutability(n));
+                declare_pattern_names(decl.b, n.text != "var", declared_immutability(n),
+                                      n.text != "var");
                 const std::uint32_t mark = reg_mark();
                 const std::uint16_t r = alloc_reg();
                 if (decl.a >= 0) {
@@ -241,6 +242,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             // predeclare_locals records it for a function body's own).
             if (!function_scoped) { fn().locals.back().initialized_at = decl.end; }
             fn().locals.back().readonly = declared_immutability(n);
+            fn().locals.back().lexical = !function_scoped;
             if (fn().locals.back().boxed && decl.a >= 0 && contains_closure(decl.a)) {
                 // THE CELL FIRST when the initialiser makes a closure: `{ let
                 // y = () => y; }` has the arrow capture `y` while it is being

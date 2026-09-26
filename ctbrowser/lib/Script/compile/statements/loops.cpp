@@ -404,7 +404,10 @@ void compiler_impl::compile_for_of(const vp::node & n) {
                                    : alloc_reg();
     // `for (const x of xs)` and the `using` heads bind immutable names.
     const immutability head_readonly = (n.d & 49) != 0 ? immutability::strict : immutability::none;
-    if (declares && !is_shape && !var_global) { fn().locals.back().readonly = head_readonly; }
+    if (declares && !is_shape && !var_global) {
+        fn().locals.back().readonly = head_readonly;
+        fn().locals.back().lexical = (n.d & 57) != 0;
+    }
 
     const std::size_t top = proto().code.size();
     loops_.push_back(loop_context{label, {}, {}, handler_depth_});

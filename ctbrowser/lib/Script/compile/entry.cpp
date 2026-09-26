@@ -82,6 +82,25 @@ void compiler_impl::compile_program() {
         std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());
         out_.hoisted_vars.erase(std::unique(out_.hoisted_vars.begin(), out_.hoisted_vars.end()),
                                 out_.hoisted_vars.end());
+        // 19.2.1.3 step 3: a sloppy direct eval's `var` or function may not
+        // share a name with a `let`, `const` or `class` of its caller's
+        // function - hoisting the var would reach through it.
+        if (std::ranges::find(eval_outer_lexical_, true) != eval_outer_lexical_.end()) {
+            std::vector<std::string> var_names;
+            hoist_nested_vars(ast_.root,
+                              [&](std::string name) { var_names.push_back(std::move(name)); });
+            for (const std::int32_t s : kids(root)) {
+                if (at(s).kind == vp::nk::func_decl) { var_names.emplace_back(at(s).text); }
+            }
+            for (const std::string & name : var_names) {
+                const auto it = std::ranges::find(eval_outer_names_, name);
+                const auto at_index = static_cast<std::size_t>(it - eval_outer_names_.begin());
+                if (it != eval_outer_names_.end() && at_index < eval_outer_lexical_.size() &&
+                    eval_outer_lexical_[at_index]) {
+                    fail("Identifier '" + name + "' has already been declared");
+                }
+            }
+        }
         // A direct eval's `var` of a caller's binding is that binding, not a
         // global to create.
         std::erase_if(out_.hoisted_vars, [&](const std::string & name) {

@@ -204,6 +204,7 @@ void compiler_impl::declare_class_name(std::string name, bool force) {
     if ((force || frames_.size() > 1) && !was_predeclared(name) &&
         find_local_in_current_scope(name) == nullptr) {
         const std::uint16_t reg = declare_local(name);
+        fn().locals.back().lexical = true;
         proto().emit(instruction{op::load_undef, reg});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, reg}); }
     }

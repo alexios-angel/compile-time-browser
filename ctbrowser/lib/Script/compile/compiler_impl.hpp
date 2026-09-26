@@ -635,7 +635,7 @@ public:
     // global, and emit_write reaches one by falling through to set_global.
     // `readonly`: the names are `const` (or `using`) bindings.
     void declare_pattern_names(std::int32_t pat, bool block_scoped = false,
-                               immutability readonly = immutability::none);
+                               immutability readonly = immutability::none, bool lexical = false);
 
     void compile_pattern_binding(std::int32_t pat, std::uint16_t src, bool declaring,
                                  bool block_scoped = false,
@@ -1095,8 +1095,10 @@ public:
     // The site a direct eval written HERE has: the function whose `this` it
     // shares, found through the arrows around it.
     [[nodiscard]] eval_site eval_site_here();
-    // Parallel to eval_outer_names_ (or empty): which of them are immutable.
+    // Parallel to eval_outer_names_: which of them are immutable, and which
+    // are lexical declarations of the caller's function (eval_binding).
     std::vector<immutability> eval_outer_readonly_;
+    std::vector<bool> eval_outer_lexical_;
     // THE TOP LEVEL IS A SCOPE, not the global one: a module's, and a STRICT
     // eval's, whose `var`s and functions are its own (19.2.1.1 step 17: a new
     // variable environment) - set by compile_program.

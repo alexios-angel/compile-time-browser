@@ -37,6 +37,10 @@ struct local {
     // compiler_impl::binding_immutability. The declaration's own write is
     // not an assignment and is never refused (compiler_impl::declaring_).
     immutability readonly = immutability::none;
+    // A `let`, `const`, `using` or `class` - what a sloppy direct eval's `var`
+    // may not redeclare (see eval_binding). Not a parameter, a `var`, a
+    // function or a catch parameter (B.3.4 lets a var share that name).
+    bool lexical = false;
 };
 
 struct interval {

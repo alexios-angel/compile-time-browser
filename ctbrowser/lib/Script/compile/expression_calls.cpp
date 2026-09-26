@@ -444,8 +444,9 @@ bool compiler_impl::compile_param_eval(const vp::node & n, std::uint16_t dst) {
 // %eval% (step 6 of 13.3.6.1), which the native checks - `callee` the running
 // closure, whose upvalues carry the enclosing functions' bindings, and the
 // descriptor names each binding: "L name" a cell argument, "V name" a value
-// argument (a local nothing boxed), "U index name" the callee's upvalue, "P #x
-// key" a private name in scope - after
+// argument (a local nothing boxed) - " lexical" after one that is a `let`,
+// `const` or `class` - "U index name" the callee's upvalue, "P #x key" a
+// private name in scope - after
 // a first line saying "strict" or "sloppy" and where the eval is - each
 // followed by " strict" or " sloppy" when the binding is immutable (see
 // immutability), so the eval'd code refuses the writes the caller would.
@@ -522,6 +523,7 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
         const local & l = fn().locals[fn().local_index.find(name)->second.back()];
         descriptor += std::string{"\n"} + (l.boxed ? "L " : "V ") + name;
         descriptor += readonly(name);
+        if (l.lexical) { descriptor += " lexical"; }
         seen.push_back(name);
         handed.push_back(&l);
     }
