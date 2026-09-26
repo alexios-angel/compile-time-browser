@@ -222,8 +222,8 @@ private:
     // is what makes an outline font look like one.
     static void blit(const glyph & g, float pen_x, float baseline, color fill,
                      const pixel_rect & clip, surface & into) {
-        const int left = static_cast<int>(pen_x + 0.5f) + g.left;
-        const int top = static_cast<int>(baseline + 0.5f) - g.top;
+        const int left = round_to_pixel(pen_x) + g.left;
+        const int top = round_to_pixel(baseline) - g.top;
         for (int y = 0; y < g.height; ++y) {
             const int py = top + y;
             if (py < clip.top || py >= clip.bottom) { continue; }

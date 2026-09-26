@@ -395,8 +395,10 @@ public:
 private:
     void touch() { ++revision_; }
     void draw_text(std::string_view text, float x, float y, bool stroke);
+    // The glyphs as a coverage mask over the canvas rectangle (left, top, w,
+    // h), painted - or, for a stroke, traced `reach` either side and painted.
     void paint_glyphs(const std::string & text, point origin, float ascent, float advance,
-                      double reach, int left, int top, int w, int h, bool stroke);
+                      double reach, int pad, int left, int top, int w, int h, bool stroke);
     void concat(const transform & t) { state_.matrix = t.then(state_.matrix); }
 
     // Walk a path a scanline at a time and hand each inside-span, as the

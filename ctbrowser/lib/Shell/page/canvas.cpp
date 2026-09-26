@@ -1,6 +1,7 @@
 #include <ctbrowser/shell/page/canvas.hpp>
 
 #include <charconv>
+#include <limits>
 
 // canvas: the method bodies - the pixel half. canvas_path.cpp is the geometry.
 // The header says what these do; this says how.
@@ -602,37 +603,46 @@ void canvas_context::draw_text(std::string_view text_in, float x, float y, bool 
         shift_y = -descent;
     }
     const point origin = state_.matrix.apply(x + shift_x, y + shift_y); // the BASELINE
-    // A pixel of margin each side for antialiasing and any overhang, and an
-    // integral left/top so the fraction stays in `where` and sub-pixel
-    // positioning survives the round trip.
-    // A stroke reaches half the line width past the glyphs' edges.
+    if (!std::isfinite(origin.x) || !std::isfinite(origin.y)) { return; }
+    // THE RUN'S BOX: a pixel of margin each side for antialiasing and any
+    // overhang, an integral left/top so the fraction stays in `where` and
+    // sub-pixel positioning survives the round trip, and for a stroke the
+    // half line width it reaches past the glyphs' edges. In double: a page
+    // may put text a long way off the canvas.
     const double reach = stroke ? state_.line_width / 2 * state_.matrix.scale_bound() : 0.0;
     const int pad = stroke ? static_cast<int>(std::ceil(std::min(reach, 256.0))) + 1 : 0;
-    const int left = static_cast<int>(std::floor(origin.x)) - 1 - pad;
-    const int top = static_cast<int>(std::floor(origin.y - ascent)) - 1 - pad;
-    const int w = static_cast<int>(std::ceil(width)) + 3 + 2 * pad;
-    const int h = static_cast<int>(std::ceil(ascent + descent)) + 3 + 2 * pad;
-
-    // Clipped to the canvas, so a run drawn mostly off the edge costs only the
-    // part that lands - and an entirely off-canvas run costs nothing.
-    const int from_x = std::max(0, left);
-    const int from_y = std::max(0, top);
-    const int to_x = std::min(pixels_->width, left + w);
-    const int to_y = std::min(pixels_->height, top + h);
-    if (from_x >= to_x || from_y >= to_y) { return; }
+    const double box_left = std::floor(static_cast<double>(origin.x)) - 1 - pad;
+    const double box_top = std::floor(static_cast<double>(origin.y - ascent)) - 1 - pad;
+    const double box_right = box_left + std::ceil(width) + 3 + 2 * pad;
+    const double box_bottom = box_top + std::ceil(ascent + descent) + 3 + 2 * pad;
+    // ONLY THE PART THAT CAN LAND is rasterised: the box clipped to the canvas
+    // - grown by the pad for a stroke, whose band at the edge depends on the
+    // glyphs that far beyond it. A run drawn mostly off the edge costs only
+    // the part that lands, and an entirely off-canvas run costs nothing.
+    if (box_right <= 0 || box_bottom <= 0 || box_left >= pixels_->width ||
+        box_top >= pixels_->height) {
+        return;
+    }
+    const int left = static_cast<int>(std::max(box_left, -static_cast<double>(pad)));
+    const int top = static_cast<int>(std::max(box_top, -static_cast<double>(pad)));
+    const int w =
+        static_cast<int>(std::min(box_right, static_cast<double>(pixels_->width + pad))) - left;
+    const int h =
+        static_cast<int>(std::min(box_bottom, static_cast<double>(pixels_->height + pad))) - top;
 
     // The glyphs as a coverage MASK, painted through the drawing model like
     // any shape, for everything the direct path below cannot do: an outline,
     // a gradient or pattern, an operator other than source-over.
     if (stroke || !state_.fill.is_solid() || state_.composite_mode != composite::source_over) {
-        paint_glyphs(text, origin, ascent, width, reach, left, top, w, h, stroke);
+        paint_glyphs(text, origin, ascent, width, reach, pad, left, top, w, h, stroke);
         return;
     }
+    // With no pad the box is all on the canvas.
     raster::surface scratch{w, h};
-    for (int sy = from_y; sy < to_y; ++sy) {
-        const std::span<std::uint32_t> row = scratch.row(sy - top);
-        for (int sx = from_x; sx < to_x; ++sx) {
-            row[static_cast<std::size_t>(sx - left)] = pixels_->at(sx, sy);
+    for (int sy = 0; sy < h; ++sy) {
+        const std::span<std::uint32_t> row = scratch.row(sy);
+        for (int sx = 0; sx < w; ++sx) {
+            row[static_cast<std::size_t>(sx)] = pixels_->at(left + sx, top + sy);
         }
     }
 
@@ -653,17 +663,102 @@ void canvas_context::draw_text(std::string_view text_in, float x, float y, bool 
 
     backend.draw_run(where, run, raster::pixel_rect{0, 0, w, h}, scratch);
 
-    for (int sy = from_y; sy < to_y; ++sy) {
-        const std::span<const std::uint32_t> row = scratch.row(sy - top);
-        for (int sx = from_x; sx < to_x; ++sx) {
+    for (int sy = 0; sy < h; ++sy) {
+        const std::span<const std::uint32_t> row = scratch.row(sy);
+        for (int sx = 0; sx < w; ++sx) {
             // Text is clipped like everything else - a clip that let glyphs
             // through would be visible on the first label drawn near an edge.
-            if (clipped_out(sx, sy)) { continue; }
-            pixels_->put(sx, sy, row[static_cast<std::size_t>(sx - left)]);
+            if (clipped_out(left + sx, top + sy)) { continue; }
+            pixels_->put(left + sx, top + sy, row[static_cast<std::size_t>(sx)]);
         }
     }
     touch();
 }
+
+namespace {
+
+// THE SQUARED DISTANCE FROM EVERY CELL TO THE NEAREST ONE HOLDING 0, in place,
+// over a w x h grid whose other cells hold `far_away`: Felzenszwalb and
+// Huttenlocher's exact Euclidean distance transform ("Distance Transforms of
+// Sampled Functions") - the lower envelope of a parabola per cell, down every
+// column and then along every row. O(w * h), however far the distances run.
+constexpr double far_away = 1e12;
+void squared_distances(std::vector<double> & grid, std::size_t w, std::size_t h) {
+    const std::size_t longest = std::max(w, h);
+    std::vector<double> f(longest);
+    std::vector<double> z(longest + 1);
+    std::vector<std::size_t> v(longest);
+    constexpr double infinity = std::numeric_limits<double>::infinity();
+    const auto line = [&](std::size_t start, std::size_t stride, std::size_t n) {
+        for (std::size_t i = 0; i < n; ++i) { f[i] = grid[start + i * stride]; }
+        // Where the parabolas rooted at q and p cross.
+        const auto meet = [&](std::size_t q, std::size_t p) {
+            const auto dq = static_cast<double>(q);
+            const auto dp = static_cast<double>(p);
+            return ((f[q] + dq * dq) - (f[p] + dp * dp)) / (2 * dq - 2 * dp);
+        };
+        std::size_t k = 0;
+        v[0] = 0;
+        z[0] = -infinity;
+        z[1] = infinity;
+        for (std::size_t q = 1; q < n; ++q) {
+            double s = meet(q, v[k]);
+            while (s <= z[k]) { s = meet(q, v[--k]); }
+            ++k;
+            v[k] = q;
+            z[k] = s;
+            z[k + 1] = infinity;
+        }
+        k = 0;
+        for (std::size_t q = 0; q < n; ++q) {
+            while (z[k + 1] < static_cast<double>(q)) { ++k; }
+            const double d = static_cast<double>(q) - static_cast<double>(v[k]);
+            grid[start + q * stride] = d * d + f[v[k]];
+        }
+    };
+    for (std::size_t x = 0; x < w; ++x) { line(x, w, h); }
+    for (std::size_t y = 0; y < h; ++y) { line(y * w, 1, w); }
+}
+
+// THE STROKE OF A COVERAGE MASK: the cells within reach of the glyphs' edge -
+// an inside one (coverage at least half) with an outside one no further than
+// `in_reach`, or an outside one with an inside one no further than
+// `out_reach`. Beyond the mask counts as outside.
+[[nodiscard]] std::vector<std::uint8_t> stroke_band(const raster::surface & mask, int in_reach,
+                                                    int out_reach) {
+    const auto w = static_cast<std::size_t>(mask.width());
+    const auto h = static_cast<std::size_t>(mask.height());
+    // One cell of outside all round.
+    const std::size_t gw = w + 2;
+    const std::size_t gh = h + 2;
+    std::vector<std::uint8_t> inside(gw * gh, 0);
+    for (std::size_t y = 0; y < h; ++y) {
+        const std::span<const std::uint32_t> row = mask.row(static_cast<int>(y));
+        for (std::size_t x = 0; x < w; ++x) {
+            inside[(y + 1) * gw + x + 1] = static_cast<std::uint8_t>((row[x] >> 24) >= 128);
+        }
+    }
+    std::vector<std::uint8_t> band(w * h, 0);
+    std::vector<double> grid(gw * gh);
+    for (const bool to_inside : {false, true}) {
+        const int reach = to_inside ? out_reach : in_reach;
+        if (reach <= 0) { continue; }
+        for (std::size_t i = 0; i < grid.size(); ++i) {
+            grid[i] = (inside[i] != 0) == to_inside ? 0.0 : far_away;
+        }
+        squared_distances(grid, gw, gh);
+        const double limit = static_cast<double>(reach) * static_cast<double>(reach);
+        for (std::size_t y = 0; y < h; ++y) {
+            for (std::size_t x = 0; x < w; ++x) {
+                const std::size_t at = (y + 1) * gw + x + 1;
+                if ((inside[at] != 0) != to_inside && grid[at] <= limit) { band[y * w + x] = 1; }
+            }
+        }
+    }
+    return band;
+}
+
+} // namespace
 
 // Text through the mask. The font backend gives glyph COVERAGE, not outlines,
 // so a fill is that coverage and a stroke is traced on it: a pixel is on the
@@ -672,8 +767,8 @@ void canvas_context::draw_text(std::string_view text_in, float x, float y, bool 
 // mask-traced outline is a pixel coarse at the corners; glyph outlines from
 // the backend would make strokeText exact.
 void canvas_context::paint_glyphs(const std::string & text, point origin, float ascent,
-                                  float advance, double reach, int left, int top, int w, int h,
-                                  bool stroke) {
+                                  float advance, double reach, int pad, int left, int top, int w,
+                                  int h, bool stroke) {
     const raster::font_backend & backend = fonts();
     raster::surface scratch{w, h};
     ctbrowser::paint::paint_command run;
@@ -688,23 +783,15 @@ void canvas_context::paint_glyphs(const std::string & text, point origin, float 
         ctbrowser::paint::font_face{state_.font_family, state_.font_bold, state_.font_italic};
     run.fill = color::rgba(255, 255, 255);
     backend.draw_run(run.bounds, run, raster::pixel_rect{0, 0, w, h}, scratch);
-    const auto coverage = [&](int sx, int sy) -> std::uint32_t {
-        if (sx < 0 || sy < 0 || sx >= w || sy >= h) { return 0; }
-        return scratch.row(sy)[static_cast<std::size_t>(sx)] >> 24;
-    };
     // The inner half of the band reaches ceil(reach) in, the outer half
-    // floor(reach) out, so a one-pixel line is one pixel and not two.
-    const int in_reach = std::max(1, static_cast<int>(std::ceil(reach)));
-    const int out_reach = static_cast<int>(std::floor(reach));
-    const auto near = [&](int sx, int sy, int radius, bool want) {
-        for (int dy = -radius; dy <= radius; ++dy) {
-            for (int dx = -radius; dx <= radius; ++dx) {
-                if (dx * dx + dy * dy > radius * radius) { continue; }
-                if ((coverage(sx + dx, sy + dy) >= 128) == want) { return true; }
-            }
-        }
-        return false;
-    };
+    // floor(reach) out, so a one-pixel line is one pixel and not two - and
+    // neither past the pad, the most of the glyphs the scratch holds beyond
+    // the canvas.
+    std::vector<std::uint8_t> band;
+    if (stroke) {
+        band = stroke_band(scratch, std::min(pad, std::max(1, static_cast<int>(std::ceil(reach)))),
+                           std::min(pad, static_cast<int>(std::floor(reach))));
+    }
     const canvas_paint & paint = stroke ? state_.stroke : state_.fill;
     const pass composited{*this};
     std::vector<std::uint32_t> colors;
@@ -714,12 +801,11 @@ void canvas_context::paint_glyphs(const std::string & text, point origin, float 
         for (int sx = 0; sx < w; ++sx) {
             const int x = left + sx;
             if (x < 0 || x >= width() || clipped_out(x, y)) { continue; }
-            std::uint32_t cover = coverage(sx, sy);
-            if (stroke) {
-                const bool in = cover >= 128;
-                cover =
-                    (in ? near(sx, sy, in_reach, false) : near(sx, sy, out_reach, true)) ? 255 : 0;
-            }
+            const auto at = static_cast<std::size_t>(sy) * static_cast<std::size_t>(w) +
+                            static_cast<std::size_t>(sx);
+            const std::uint32_t cover = stroke
+                                            ? (band[at] != 0 ? 255u : 0u)
+                                            : scratch.row(sy)[static_cast<std::size_t>(sx)] >> 24;
             if (cover == 0) { continue; }
             color source = paint.solid;
             if (!paint.is_solid()) {
