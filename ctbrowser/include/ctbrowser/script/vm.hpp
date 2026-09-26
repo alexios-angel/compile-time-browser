@@ -256,6 +256,20 @@ public:
 
     [[nodiscard]] std::size_t unwinds() const noexcept;
 
+    // WHERE THE LAST THROW HAPPENED: the program whose `source` the byte
+    // `offset` indexes, taken from the innermost interpreted frame's
+    // instruction (function_proto::code_offsets) as the throw began to unwind.
+    // What "report an exception" needs for an ErrorEvent's lineno and colno
+    // (HTML 8.1.4.7) - line_table turns it into both. `source` is null when
+    // nothing was recorded: a compiled frame, a build without the offset
+    // table, a throw with no frame at all. A parked throw rethrown at a
+    // native's call site keeps the site it was thrown at.
+    struct throw_site {
+        const program * source = nullptr;
+        std::uint32_t offset = 0;
+    };
+    [[nodiscard]] throw_site last_throw_site() const noexcept { return throw_site_; }
+
     [[nodiscard]] value last_thrown() const noexcept;
 
     [[nodiscard]] std::string take_error();
@@ -882,6 +896,7 @@ private:
     // The program being executed, so a call from C++ can find the string
     // tables a nested frame needs.
     const program * program_ = nullptr;
+    throw_site throw_site_; // see last_throw_site
     std::vector<std::unique_ptr<program>> owned_programs_;
     flat_map<const void *, flat_map<std::uint32_t, value>> string_cache_;
     // The same for BigInt literals, keyed and swept the same way.

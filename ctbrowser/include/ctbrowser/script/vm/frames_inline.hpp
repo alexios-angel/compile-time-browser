@@ -23,11 +23,32 @@ inline auto context::raise(std::string message) -> void {
     error_ = std::move(message) + current_stack();
 }
 
+// THE INSTRUCTION A THROW LEAVES, before a frame goes: the innermost frame's
+// `ip` is already past it (the loop's fetch increments first), and a native
+// pushes no frame, so a throw from inside one names its call site. A frame
+// whose proto keeps no offset table - a compiled body, a build without
+// CTBROWSER_SCRIPT_DEBUG_NAMES - leaves no site rather than a caller's.
+inline auto context::note_throw_site() noexcept -> void {
+    throw_site_ = {};
+    if (frames_.empty()) { return; }
+    const call_frame & f = frames_.back();
+    const function_proto * fp = f.proto;
+    if (fp == nullptr || fp->aot_entry != nullptr || f.ip == 0 || f.ip > fp->code_offsets.size()) {
+        return;
+    }
+    const std::uint32_t offset = fp->code_offsets[f.ip - 1];
+    if (offset == function_proto::no_offset) { return; }
+    throw_site_.source =
+        f.closure != nullptr && f.closure->owner != nullptr ? f.closure->owner : program_;
+    throw_site_.offset = offset;
+}
+
 // Find the innermost live handler and jump to it, discarding every call
 // frame between here and the one that owns it. Returning false means
 // nothing caught it, which is an uncaught exception.
 [[nodiscard]] inline auto context::unwind_to_handler() -> bool {
     ++unwinds_;
+    note_throw_site();
     while (!handlers_.empty()) {
         const handler h = handlers_.back();
         handlers_.pop_back();

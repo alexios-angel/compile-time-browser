@@ -14,10 +14,15 @@ namespace {
 // with. Shared by the parser's failure and the early errors' - they are the
 // same kind of answer about the same source and there is no reason for them to
 // be spelled differently.
-[[nodiscard]] std::string position_in(std::string_view source, std::size_t offset) {
+// Also kept as numbers on the program (program::error_line), for an embedder
+// that reports the SyntaxError with a position of its own - an ErrorEvent's
+// lineno and colno.
+[[nodiscard]] std::string position_in(std::string_view source, std::size_t offset, program & out) {
     const line_table lines{source};
     const auto at = static_cast<std::uint32_t>(std::min(offset, source.size()));
-    return " - at " + std::to_string(lines.line_of(at)) + ":" + std::to_string(lines.column_of(at));
+    out.error_line = lines.line_of(at);
+    out.error_column = lines.column_of(at);
+    return " - at " + std::to_string(out.error_line) + ":" + std::to_string(out.error_column);
 }
 
 } // namespace
@@ -77,7 +82,7 @@ program compile_source(std::string_view source, script_kind kind, const eval_sit
         // convenient form. The shape matches what the ratchets' tooling already
         // greps for - `<name>:<line>:<column>`.
         out.error =
-            "parse error: " + std::string{tree.error} + position_in(source, tree.error_offset);
+            "parse error: " + std::string{tree.error} + position_in(source, tree.error_offset, out);
         return out;
     }
     // THE EARLY ERRORS, BEFORE A SINGLE INSTRUCTION IS EMITTED. Clause 17 says
@@ -96,7 +101,7 @@ program compile_source(std::string_view source, script_kind kind, const eval_sit
         out.ok = false;
         out.error = "parse error: " + early->message;
         if (early->offset != detail::early_error::nowhere) {
-            out.error += position_in(source, early->offset);
+            out.error += position_in(source, early->offset, out);
         }
         return out;
     }

@@ -425,7 +425,11 @@ inline auto context::rethrow_pending() -> bool {
     has_pending_throw_ = false;
     thrown_ = pending_throw_;
     pending_throw_ = value::undefined();
-    if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
+    // Thrown where `call` caught it, not at this native's call site.
+    const throw_site began = throw_site_;
+    const bool landed = unwind_to_handler();
+    throw_site_ = began;
+    if (!landed) { raise("uncaught " + describe_thrown(thrown_)); }
     return true;
 }
 

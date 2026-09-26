@@ -555,6 +555,10 @@ struct program {
     script_kind kind = script_kind::classic;
     bool ok = true;
     std::string error;
+    // WHERE THE SOURCE FAILED TO PARSE, 1-based as `error`'s " - at L:C"
+    // spells it; 0 when the failure has no position.
+    std::uint32_t error_line = 0;
+    std::uint32_t error_column = 0;
 };
 
 } // namespace ctbrowser::script
