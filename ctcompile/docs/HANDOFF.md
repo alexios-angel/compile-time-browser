@@ -22,6 +22,101 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected attribute conversions and Boolean literal predicates, 2026-09-26 UTC
+
+Resumed **c87d671c** and its exact protected `Number(getAttribute)` boundary.
+Iteration 44 was fully committed, the working tree was clean, and the old WIP
+branch was already an ancestor. Child service interruptions resumed saved work.
+
+**6a716af2** independently proves exact entry Element `getAttribute` calls
+and initial Number calls with proved String/null inputs before selecting normal
+completion. Normal payloads and both If yields carry separate nullable String and
+Number facts; unwind padding grants none. Read/conversion/write order and saved
+snapshots remain intact. Every path still completes fresh DOM proof on a private
+candidate before publication. Missing/rebound intrinsics, coercing input, wrong
+receivers/arity, effects, stale fingerprints and incomplete budgets remain refused.
+The old protected conversion source is promoted unchanged. There are 48 new
+transaction controls across both providers, including normal-return, literal
+String/null inputs and a refused conditional callee case. Independent production/test review found no correctness defect.
+
+**a0aef89d** correlates strict tests against Boolean literals only when the
+other operand is already exactly Boolean from StrictEq, ToBoolean or Not. False
+reverses the existing predicate polarity. Shared charged census/current replay
+still validate guards, finite retained values, every effect and exit. Opaque
+values and separate mutable reads gain no Boolean, ownership or lifetime authority.
+There are 23 added retention rows and 14 added live mutation states, including
+fresh/stale solvers, forged markers and incomplete budgets.
+
+**99c07ca2** preserves the exact complete HANDOFF witness and adds protected
+snapshot and normal-return witnesses. Each uses the existing 13 Number conversion
+inputs and ordered Node/interpreter/native observations. All 37 previous direct
+and two outer source bodies remain unchanged. Fourteen new complete refusal bodies
+cover intrinsic/getter identity, receiver/arity, coercion, names and mixed joins.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Final exact CTests passed, each 1/1
+(total elapsed): `ctcompile_exception_recovery` **19.22 s**,
+`ctcompile_host_contract` **2.76 s**, `ctcompile_escape_analysis_arrays`
+**5.50 s** and `ctcompile_escape_analysis_completion` **0.02 s**.
+
+The selected `native_dom_caught_node.py` gate passed **48 GCC/Clang native
+executions, 12 admitted provider/optimization combinations and 108 refusals**:
+24 selected refusal bodies times four plus 12 zero budgets. Both printers,
+providers and optimization modes, two documents, ordered writes and 16 lifetimes
+pass. All **24 generated C++ files** were retrieved; source and linked-symbol
+checks reject Script/AOT. Inspected explicit and deduced session entries retain
+typed Number snapshots, public DOM calls, borrowed element_ref and document RAII.
+All six final local/devbox hashes match. This is a selected harness pass, not a
+full caught-node lit run.
+
+The first exception CTest rejected only the new exploratory conditional argument
+control 5. That source also transports the Number callee through an If result;
+it needs independent callable-origin and final DOM kind proofs. Its original
+body remains as a measured refusal. The initial test correction matched an older
+numbered block by mistake; that block was restored byte-for-byte and the new
+expectation corrected with exact context. The first retry retained the same
+failure; the final retry rebuilt/reran only exception recovery. No production,
+source checks or passing CTests were replayed. Failed logs are retained.
+
+Final repository formatting still reports six existing diagnostics in untouched
+`select_and_options.cpp:602`, `node_methods.cpp:63` and
+`Style/css/properties/gaps.cpp:189`; all five changed C++ files and the Python
+source pass scoped formatting, syntax and diff checks.
+
+**Next measured boundary:** protected arithmetic after the conversion still
+refuses `native DOM source: DOM caught throw protected effect lacks a nonthrowing
+proof` with the initial Number declared:
+
+```javascript
+function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number')) + 1;
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+```
+
+Prove those exact Number operations independently before suppressing their status
+edges. Conditional Number callees remain refused too: control 5 in
+`testProtectedNumberReads` preserves `Number(hasAttribute(...) ? getAttribute(...)
+: null)`. A possible next step is to forward identical If yields only after both
+arms' complete effect proof, retaining both arms and their order, then trim unused
+results before final DOM proof. No mutable/differing callee identity may be merged.
+
+Full CTest/compiler lit, other source fixtures/outer catches, broad corpus/matrices,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance were skipped. The native application driver, full Bootstrap and
+broader escape work remain unfinished. No full-Bootstrap admission, new raw
+escape-oracle result or shortened lifetime is claimed.
+
+Linux /proc identity checks found live Claude loop PID 2333739; Windows
+Get-CimInstance succeeded with 364 processes and no Claude identities. Concurrent
+rules applied; no browser/shared implementation edits, local builds, push or
+history rewrite. Evidence: `/tmp/ctcompile-iteration45/`.
+
 ## Saved Number read origins and exact primitive predicates, 2026-09-26 UTC
 
 Resumed **e1547d2c** and its saved `Number(getAttribute)` boundary. Iteration
