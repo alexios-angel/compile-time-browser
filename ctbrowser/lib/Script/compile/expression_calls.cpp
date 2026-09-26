@@ -454,15 +454,14 @@ bool compiler_impl::compile_param_eval(const vp::node & n, std::uint16_t dst) {
 // `eval` is the binding's current value - the call is only direct if it is
 // %eval% (step 6 of 13.3.6.1), which the native checks - `callee` the running
 // closure, whose upvalues carry the enclosing functions' bindings, and the
-// descriptor names each binding: "L name" a cell argument, "V name" a value
-// argument (a local nothing boxed) - " lexical" after one that is a `let`,
-// `const` or `class` - "U index name" the callee's upvalue, "P #x key" a
-// private name in scope - after
-// a first line saying "strict" or "sloppy" and where the eval is - each
-// followed by " strict" or " sloppy" when the binding is immutable (see
-// immutability), so the eval'd code refuses the writes the caller would.
-// The shape changes only in functions that contain `eval(`, which no native
-// pipeline compiles anyway.
+// descriptor says where the eval is on its first line ("strict" or "sloppy",
+// then the eval_site words) and names each binding on one of its own: "L
+// name" a cell argument, "V name" a value argument (a local nothing boxed),
+// "U index name" the callee's upvalue - each followed by " strict" or
+// " sloppy" when the binding is immutable (see immutability), and an L or V
+// by " lexical" when it is a `let`, `const` or `class` - and "P #x key" a
+// private name in scope. The shape changes only in functions that contain
+// `eval(`, which no native pipeline compiles anyway.
 eval_site compiler_impl::eval_site_here() {
     std::size_t level = frames_.size() - 1;
     while (level > 0 && out_.functions[frames_[level].proto].is_arrow) { --level; }
