@@ -648,7 +648,7 @@ void dom_bindings::install_control_form_data(context & cx) {
     // "Reset" a form (HTML 4.10.21.5): a cancelable `reset` first, then each
     // resettable control whose owner it is. reset() and a reset button's
     // activation behaviour (`reset_form_`, the browser's) are both this.
-    const auto reset_form = [this, helpers](context & c, node_id form) {
+    const auto reset_form = [this, helpers](context & c, node_id form, bool ce_reactions) {
         if (helpers.fire(c, this, form, "reset", true, true, helpers.plain)) { return; }
         // HTML 4.10.21.5: each RESETTABLE element whose form
         // owner is this form runs its reset algorithm, in
@@ -707,26 +707,40 @@ void dom_bindings::install_control_form_data(context & cx) {
         wrote_to_control_ = true;
         mutated();
         // A form-associated custom element's reset is its
-        // formResetCallback, a reaction run as reset()
-        // returns - after every built-in control's.
-        const std::size_t from = custom_reactions_.size();
-        for (const node_id one : custom) {
-            const auto state = custom_elements_.find(one.key());
-            if (state == custom_elements_.end()) { continue; }
-            custom_element_reaction reaction;
-            reaction.target = one;
-            reaction.definition = state->second.definition;
-            reaction.what = custom_element_reaction::kind::form_reset;
-            custom_reactions_.push_back(std::move(reaction));
+        // formResetCallback, a reaction - after every built-in control's.
+        // reset() is [CEReactions], so they run as it returns; a reset
+        // button's activation is no such scope, so they wait on the backup
+        // element queue, which a microtask drains (HTML 4.13.6) - the click
+        // returns before any formResetCallback runs.
+        const auto enqueue = [this, custom] {
+            const std::size_t from = custom_reactions_.size();
+            for (const node_id one : custom) {
+                const auto state = custom_elements_.find(one.key());
+                if (state == custom_elements_.end()) { continue; }
+                custom_element_reaction reaction;
+                reaction.target = one;
+                reaction.definition = state->second.definition;
+                reaction.what = custom_element_reaction::kind::form_reset;
+                custom_reactions_.push_back(std::move(reaction));
+            }
+            if (custom_reactions_.size() > from) { flush_custom_element_reactions(from); }
+        };
+        if (ce_reactions) {
+            enqueue();
+        } else if (!custom.empty()) {
+            c.queue_microtask(
+                native(c, "formResetCallback", [enqueue](context &, std::span<value>) {
+                    enqueue();
+                    return value::undefined();
+                }));
         }
-        if (custom_reactions_.size() > from) { flush_custom_element_reactions(from); }
     };
     reset_form_ = [this, reset_form](node_id form) {
-        if (cx_ != nullptr && form) { reset_form(*cx_, form); }
+        if (cx_ != nullptr && form) { reset_form(*cx_, form, false); }
     };
     helpers.operation(cx, "HTMLFormElement", "reset", 0,
                       [this, reset_form](context & c, std::span<value>) {
-                          if (const node_id form = receiver(c)) { reset_form(c, form); }
+                          if (const node_id form = receiver(c)) { reset_form(c, form, true); }
                           return value::undefined();
                       });
 }
