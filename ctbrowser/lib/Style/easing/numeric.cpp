@@ -368,6 +368,17 @@ namespace ctbrowser::style::easing_detail {
             return computed;
         }
     }
+    // An <absolute-size> is the length it names (CSS Fonts 4 §2.5's table
+    // at the 16px medium): `large` adds to `100px` as 18px
+    // (font-size-composition).
+    if (property == "font-size") {
+        static constexpr std::pair<std::string_view, std::string_view> sizes[] = {
+            {"xx-small", "9px"}, {"x-small", "10px"}, {"small", "13px"},    {"medium", "16px"},
+            {"large", "18px"},   {"x-large", "24px"}, {"xx-large", "32px"}, {"xxx-large", "48px"}};
+        for (const auto & [word, length] : sizes) {
+            if (ascii_iequals(text, word)) { return std::string{length}; }
+        }
+    }
     // offset-rotate's keywords are angles too: `reverse` is `auto 180deg`, so
     // it pairs with `auto 100deg` (offset-rotate-interpolation).
     if (property == "offset-rotate") {
