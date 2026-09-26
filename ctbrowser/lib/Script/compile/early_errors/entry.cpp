@@ -30,6 +30,13 @@ void checker::run() {
                               : eval_->in_function              ? frame_kind::function
                                                                 : frame_kind::script;
         frames_.back().super_call_ok = eval_->in_derived_constructor;
+        // ...and the private names of the classes around it are in scope.
+        if (!eval_->private_names.empty()) {
+            private_names_.emplace_back();
+            for (const auto & [name, key] : eval_->private_names) {
+                private_names_.back().push_back(name);
+            }
+        }
     }
     // A module's top level is [+Await] (16.2.1): `await` is not a name there.
     frames_.back().is_async = strict_root_;

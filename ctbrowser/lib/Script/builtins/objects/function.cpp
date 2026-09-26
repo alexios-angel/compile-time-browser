@@ -494,6 +494,13 @@ void install_dynamic_function(context & cx) {
                         continue;
                     }
                     if (line.size() < 3) { continue; }
+                    if (line[0] == 'P') {
+                        const std::size_t space = line.find(' ', 2);
+                        if (space == std::string_view::npos) { continue; }
+                        site.private_names.emplace_back(line.substr(2, space - 2),
+                                                        line.substr(space + 1));
+                        continue;
+                    }
                     if (line[0] == 'U') {
                         const std::size_t space = line.find(' ', 2);
                         if (space == std::string_view::npos || caller == nullptr) { continue; }

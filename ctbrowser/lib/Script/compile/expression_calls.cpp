@@ -444,7 +444,8 @@ bool compiler_impl::compile_param_eval(const vp::node & n, std::uint16_t dst) {
 // %eval% (step 6 of 13.3.6.1), which the native checks - `callee` the running
 // closure, whose upvalues carry the enclosing functions' bindings, and the
 // descriptor names each binding: "L name" a cell argument, "V name" a value
-// argument (a local nothing boxed), "U index name" the callee's upvalue - after
+// argument (a local nothing boxed), "U index name" the callee's upvalue, "P #x
+// key" a private name in scope - after
 // a first line saying "strict" or "sloppy" and where the eval is - each
 // followed by " strict" or " sloppy" when the binding is immutable (see
 // immutability), so the eval'd code refuses the writes the caller would.
@@ -488,6 +489,16 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
     if (site.in_function) { descriptor += " function"; }
     if (site.in_method) { descriptor += " method"; }
     if (site.in_class_field_initializer) { descriptor += " field"; }
+    // "P #x key": a private name in scope, innermost class first, and the key
+    // it compiles to here (member_key).
+    std::vector<std::string_view> privates;
+    for (std::size_t i = private_scopes_.size(); i-- > 0;) {
+        for (const std::string_view name : private_scopes_[i].names) {
+            if (std::ranges::find(privates, name) != privates.end()) { continue; }
+            privates.push_back(name);
+            descriptor += "\nP " + std::string{name} + " " + member_key(name);
+        }
+    }
     std::vector<std::string> seen;
     std::vector<const local *> handed; // this frame's, in descriptor order
     const auto taken = [&](std::string_view name) {

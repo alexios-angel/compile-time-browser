@@ -30,6 +30,15 @@ void compiler_impl::compile_program() {
         (void)add_upvalue(0, eval_outer_names_[i],
                           upvalue_desc{false, static_cast<std::uint16_t>(i)});
     }
+    // A DIRECT EVAL SEES ITS CALLER'S PRIVATE NAMES, under the caller's keys.
+    if (!eval_site_.private_names.empty()) {
+        private_scope outer;
+        for (const auto & [name, key] : eval_site_.private_names) {
+            outer.names.emplace_back(name);
+            outer.keys.emplace_back(key);
+        }
+        private_scopes_.push_back(std::move(outer));
+    }
     build_capture_index();
     fn().captures = range_of(ast_.root);
     collect_declared_names(ast_.root);

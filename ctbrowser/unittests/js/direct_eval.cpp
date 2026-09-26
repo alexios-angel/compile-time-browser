@@ -80,6 +80,13 @@ int main() {
               " return e.constructor.name; } return 'none'; })()",
               "ReferenceError");
     js_expect("(function(){ return eval('let v = 3; (() => v)()'); })()", "3");
+    // ...the private names of the classes around it are its too...
+    js_expect("(function(){ class C { #m = 44; v = eval('this.#m'); } return new C().v; })()",
+              "44");
+    js_expect("(function(){ class C { #x = 1; static #s() { return 2; }"
+              " m() { return eval('this.#x + C.#s() + (#x in this)'); } }"
+              " return new C().m(); })()",
+              "4");
     // ...and a class field initialiser may not say `arguments`.
     js_expect("(function(){ class C { x = eval('arguments'); } try { new C(); } catch (e) {"
               " return e.constructor.name; } return 'none'; })()",

@@ -1,6 +1,9 @@
 #pragma once
 #include <span>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include <ctbrowser/script/bytecode.hpp>
 
@@ -71,6 +74,10 @@ struct eval_site {
     bool in_method = false;
     bool in_derived_constructor = false;
     bool in_class_field_initializer = false;
+    // The private names of the classes around the eval (step 7.c's
+    // PrivateEnvironment): each spelling, `#x`, and the key the caller's
+    // compiler gave it - so `eval('this.#x')` reads the caller's field.
+    std::vector<std::pair<std::string, std::string>> private_names;
 };
 
 // WHICH KIND OF SCRIPT THIS IS, which decides where its top-level declarations

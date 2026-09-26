@@ -79,6 +79,9 @@ public:
     struct private_scope {
         std::vector<std::string_view> names;
         std::size_t klass = 0;
+        // A DIRECT EVAL'S caller's names come with their keys, parallel to
+        // `names` - the caller numbered its classes, not this program.
+        std::vector<std::string_view> keys;
     };
     std::vector<private_scope> private_scopes_;
     std::size_t private_classes_ = 0;
