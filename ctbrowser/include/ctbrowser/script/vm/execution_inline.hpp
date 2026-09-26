@@ -29,6 +29,7 @@ template <typename T, typename... Args>
     // '\uDC00'`, String.fromCharCode(0xD800, 0xDC00) - are one code
     // point, as they would be in UTF-16 (core's join_surrogates).
     ctbrowser::join_surrogates(s);
+    string_bytes_ += s.size();
     return value::object(allocate<string_object>(std::move(s)));
 }
 

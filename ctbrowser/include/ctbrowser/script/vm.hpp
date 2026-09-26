@@ -883,6 +883,14 @@ private:
     std::size_t allocations_ = 0;
     static constexpr std::size_t minimum_collect_threshold = 4096;
     std::size_t collect_threshold_ = minimum_collect_threshold;
+    // STRING BYTES MADE SINCE THE LAST COLLECTION, against a budget of what
+    // survived the last one (at least 64 MB). The object count alone let a
+    // loop of `s += c` - 100,000 objects, five gigabytes - run into the
+    // address-space cap without ever being due. See collect_if_due and the
+    // interpreter's backward jump.
+    static constexpr std::size_t minimum_string_budget = std::size_t{64} << 20;
+    std::size_t string_bytes_ = 0;
+    std::size_t string_budget_ = minimum_string_budget;
     std::function<void(const root_visitor &)> external_roots_;
     bool failed_ = false;
     std::string error_;

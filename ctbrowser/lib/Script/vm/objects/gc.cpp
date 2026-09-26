@@ -150,6 +150,7 @@ std::size_t context::collect() {
     // exactly like one that works: every answer is the same either way. A test
     // that forces GC asserts this number, not the answer.
     ++collections_;
+    string_bytes_ = 0;
     // THE ALLOCATION CEILING IS PER COLLECTION, not per lifetime: it exists to
     // refuse a loop that allocates without ever reaching a safepoint, and a
     // page that collects on schedule - a game making a few thousand objects
@@ -205,11 +206,15 @@ void context::mark_roots(std::size_t register_limit) {
 
 std::size_t context::sweep() {
     std::size_t freed = 0;
+    std::size_t live_string_bytes = 0;
     heap_object ** link = &heap_;
     while (*link != nullptr) {
         heap_object * o = *link;
         if (o->marked) {
             o->marked = false; // clear for the next cycle
+            if (o->kind == heap_kind::string) {
+                live_string_bytes += static_cast<const string_object *>(o)->text.size();
+            }
             link = &o->next;
         } else {
             *link = o->next;
@@ -226,6 +231,9 @@ std::size_t context::sweep() {
             --live_objects_;
         }
     }
+    // The next budget is what survived: the heap's strings peak at about
+    // twice their live size, as its objects do.
+    string_budget_ = std::max(minimum_string_budget, live_string_bytes);
     return freed;
 }
 
