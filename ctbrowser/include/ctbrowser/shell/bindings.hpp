@@ -77,8 +77,8 @@ public:
     void reconcile_frames();
     bool navigate_form_target(node_id form,
                               const std::vector<std::pair<std::string, std::string>> & entries);
-    std::function<void(node_id form, node_id submitter)> submit_form_;
-    std::function<void(node_id form, node_id submitter)> submit_from_;
+    std::function<bool(node_id form, node_id submitter)> submit_from_;
+    std::function<void(node_id form)> reset_form_;
     void record_first_paint();
 
     void announce_load(node_id id, bool ok);

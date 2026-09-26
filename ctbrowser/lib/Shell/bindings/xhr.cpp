@@ -16,6 +16,7 @@
 // `overrideMimeType`, `abort()`, `timeout`. Request headers and bodies are
 // taken and not sent: nothing here opens a socket for a POST.
 
+#include <ctbrowser/dom/encoding.hpp>
 #include <ctbrowser/shell/bindings.hpp>
 
 #include "events/internal.hpp"
@@ -65,7 +66,83 @@ constexpr int done = 4;
     return held == nullptr || !held->is_string() ? std::string{} : cx.to_string(*held);
 }
 
+// "Get a final encoding" (XHR 3.6.8): the `charset` parameter of a final MIME
+// type, by the Encoding Standard's label table - empty when there is none or
+// it names no encoding. ponytail: the parameter is found the way a <meta>
+// content's is, not by a full MIME type parse; a quoted `;` in an earlier
+// parameter would confuse it.
+[[nodiscard]] std::string final_encoding(std::string_view mime) {
+    const std::size_t semicolon = mime.find(';');
+    if (semicolon == std::string_view::npos) { return {}; }
+    return std::string{encoding_from_label(encoding_from_meta_content(mime.substr(semicolon + 1)))};
+}
+
 } // namespace
+
+namespace detail {
+
+// "Decode" (Encoding 6) a body by the encoding `name`, UTF-8 when it is empty:
+// a BOM decides first, and UTF-8 is its decoder (4.2) - each ill-formed
+// subsequence one U+FFFD - so a page reads scalar values, never raw bytes
+// taken for Latin-1.
+[[nodiscard]] std::string decode_body(std::string_view bytes, std::string_view name) {
+    if (bytes.starts_with("\xEF\xBB\xBF")) {
+        name = "UTF-8";
+        bytes.remove_prefix(3);
+    } else if (bytes.starts_with("\xFE\xFF")) {
+        name = "UTF-16BE";
+    } else if (bytes.starts_with("\xFF\xFE")) {
+        name = "UTF-16LE";
+    }
+    if (!name.empty() && name != "UTF-8") { return decode_document_bytes(bytes, name); }
+    std::string out;
+    out.reserve(bytes.size());
+    std::uint32_t code_point = 0;
+    std::size_t needed = 0;
+    unsigned lower = 0x80;
+    unsigned upper = 0xBF;
+    for (std::size_t i = 0; i < bytes.size(); ++i) {
+        const auto byte = static_cast<unsigned char>(bytes[i]);
+        if (needed == 0) {
+            if (byte < 0x80) {
+                out += static_cast<char>(byte);
+            } else if (byte >= 0xC2 && byte <= 0xDF) {
+                needed = 1;
+                code_point = byte & 0x1Fu;
+            } else if (byte >= 0xE0 && byte <= 0xEF) {
+                lower = byte == 0xE0 ? 0xA0 : 0x80;
+                upper = byte == 0xED ? 0x9F : 0xBF;
+                needed = 2;
+                code_point = byte & 0x0Fu;
+            } else if (byte >= 0xF0 && byte <= 0xF4) {
+                lower = byte == 0xF0 ? 0x90 : 0x80;
+                upper = byte == 0xF4 ? 0x8F : 0xBF;
+                needed = 3;
+                code_point = byte & 0x07u;
+            } else {
+                append_utf8(out, 0xFFFD);
+            }
+            continue;
+        }
+        if (byte < lower || byte > upper) {
+            // The sequence ends before this byte, which starts afresh.
+            needed = 0;
+            lower = 0x80;
+            upper = 0xBF;
+            append_utf8(out, 0xFFFD);
+            --i;
+            continue;
+        }
+        lower = 0x80;
+        upper = 0xBF;
+        code_point = (code_point << 6) | (byte & 0x3Fu);
+        if (--needed == 0) { append_utf8(out, static_cast<char32_t>(code_point)); }
+    }
+    if (needed != 0) { append_utf8(out, 0xFFFD); }
+    return out;
+}
+
+} // namespace detail
 
 void dom_bindings::install_xhr(context & cx) {
     // XMLHttpRequestEventTarget.prototype, then XMLHttpRequest.prototype on it.
@@ -150,8 +227,14 @@ void dom_bindings::install_xhr(context & cx) {
         const bool failed = !loaded.failure.empty() && loaded.status != 404;
         s->set(status_slot, value::number(failed ? 0 : loaded.status));
         s->set(type_slot, c.string(loaded.type));
-        s->set(text_slot, c.string(std::string{reinterpret_cast<const char *>(loaded.body.data()),
-                                               loaded.body.size()}));
+        // THE TEXT RESPONSE (3.6.9): the bytes decoded by the final MIME
+        // type's charset, else as UTF-8.
+        std::string mime = string_slot(c, *s, override_slot);
+        if (mime.empty()) { mime = loaded.type; }
+        s->set(text_slot, c.string(decode_body(
+                              std::string_view{reinterpret_cast<const char *>(loaded.body.data()),
+                                               loaded.body.size()},
+                              final_encoding(mime))));
         s->set(bytes_slot, make_u8_array(c, loaded.body));
         s->set(error_slot, value::boolean(failed));
         if (failed) {
@@ -191,7 +274,13 @@ void dom_bindings::install_xhr(context & cx) {
                                         given.starts_with("blob:") || given.starts_with("data:")
                                     ? given
                                     : resolve(location_href_, given);
-        if (url.empty()) {
+        // "Encoding-parse" it (4.5.1 steps 7-8): a URL the parser refuses
+        // against the document's address - `http://user@/`, `file://a%/` -
+        // is a SyntaxError, not a request for the string as written. A page
+        // with no address has nothing to parse against, and its relative
+        // paths are the asset registry's.
+        if (url.empty() ||
+            (!location_href_.empty() && !parse_url(given, std::string_view{location_href_}))) {
             throw_dom_exception(c, "SyntaxError", "XMLHttpRequest.open: invalid URL " + given);
             return value::undefined();
         }
@@ -308,9 +397,14 @@ void dom_bindings::install_xhr(context & cx) {
     // text/xml - as XML for an XML type, as HTML only when `responseType`
     // is "document" (an empty one never parses HTML), and null for anything
     // else. Parsed once and kept: `responseXML` is the same Document every
-    // time. Through the page's DOMParser, the one parser for a string.
-    const auto document_response = [](context & c, script::object_object & s,
-                                      bool html_allowed) -> value {
+    // time. By the parser DOMParser runs, not by the page's `DOMParser`.
+    //
+    // AN HTML DOCUMENT HAS ITS OWN ENCODING: the final MIME type's charset,
+    // else what a prescan of the first 1024 bytes finds, else UTF-8 - and
+    // `characterSet` says which. Not the text response's, and not the
+    // page's: a response is never decoded by the document that asked.
+    const auto document_response = [this](context & c, script::object_object & s,
+                                          bool html_allowed) -> value {
         if (const value * held = s.find(document_slot); held != nullptr) { return *held; }
         std::string type = string_slot(c, s, override_slot);
         if (type.empty()) { type = string_slot(c, s, type_slot); }
@@ -322,17 +416,33 @@ void dom_bindings::install_xhr(context & cx) {
             essence == "text/xml" || essence == "application/xml" || essence.ends_with("+xml");
         const bool html = essence == "text/html";
         value made = value::null();
-        if (xml || (html && html_allowed)) {
-            const value parser_ctor = c.global("DOMParser");
-            if (!parser_ctor.is_callable()) { return value::null(); }
-            const value parser = c.construct(parser_ctor, {});
-            const value parse = c.lookup_property(parser, "parseFromString");
-            if (!parse.is_callable()) { return value::null(); }
-            const value args[2] = {c.string(string_slot(c, s, text_slot)),
-                                   c.string(xml ? "application/xml" : "text/html")};
-            made = c.call(parse, args, parser);
-            if (c.throw_pending()) { return value::null(); }
+        if (xml) {
+            made = parse_from_string(c, string_slot(c, s, text_slot), "application/xml");
+        } else if (html && html_allowed) {
+            std::string raw;
+            if (const value * bytes = s.find(bytes_slot); bytes != nullptr && bytes->is_array()) {
+                for (const value & one :
+                     static_cast<script::array_object *>(bytes->as_heap())->items) {
+                    raw += static_cast<char>(static_cast<unsigned char>(context::to_number(one)));
+                }
+            }
+            std::string charset = final_encoding(type);
+            if (charset.empty()) {
+                charset = prescan_encoding(std::string_view{raw}.substr(0, 1024));
+            }
+            if (charset.empty()) { charset = "UTF-8"; }
+            made = parse_from_string(c, decode_body(raw, charset), "text/html");
+            for (const auto & owner : primary().secondary_documents_) {
+                if (owner->document_ != made) { continue; }
+                owner->doc_->set_encoding(charset);
+                if (auto * target = object_of(owner->document_target_)) {
+                    for (const char * name : {"characterSet", "charset", "inputEncoding"}) {
+                        target->set(name, c.string(charset));
+                    }
+                }
+            }
         }
+        if (c.throw_pending()) { return value::null(); }
         s.define(document_slot, made, script::attr_none);
         return made;
     };

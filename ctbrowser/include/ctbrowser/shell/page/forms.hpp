@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/shell/page/input_types.hpp>
@@ -42,10 +43,12 @@ enum class control_kind : std::uint8_t {
     if (tag == "select") { return control_kind::select; }
     if (tag == "button") { return control_kind::button; }
     if (tag != "input") { return control_kind::none; }
-    if (type == "checkbox") { return control_kind::checkbox; }
-    if (type == "radio") { return control_kind::radio; }
-    if (type == "button" || type == "submit" || type == "reset") { return control_kind::button; }
-    if (type == "hidden") { return control_kind::none; }
+    // The type is an enumerated attribute, so ASCII case-insensitive:
+    // `type=CHECKBOX` is a checkbox.
+    if (ascii_iequals(type, "checkbox")) { return control_kind::checkbox; }
+    if (ascii_iequals(type, "radio")) { return control_kind::radio; }
+    if (ascii_iequals_any(type, {"button", "submit", "reset"})) { return control_kind::button; }
+    if (ascii_iequals(type, "hidden")) { return control_kind::none; }
     return control_kind::text;
 }
 
@@ -262,10 +265,46 @@ public:
         return out;
     }
 
-    // The <form> an element is inside, if any.
+    // A SUBMIT BUTTON (HTML 4.10.2): an <input> whose type is submit or image,
+    // or a <button> in the Submit Button state - `type=submit`, or the Auto
+    // state (no type, or one that is not a keyword) without a `command` or a
+    // `commandfor`, which make it a plain button (4.10.6).
+    [[nodiscard]] static bool is_submit_button(const read_txn & txn, atom_table & atoms,
+                                               node_id id) {
+        if (txn.element_ns(id) != node_ns::html) { return false; }
+        const std::string_view type = txn.attribute_value(id, atoms.intern("type"));
+        if (txn.local_name(id) == "input") { return ascii_iequals_any(type, {"submit", "image"}); }
+        if (txn.local_name(id) != "button") { return false; }
+        if (ascii_iequals_any(type, {"submit", "reset", "button"})) {
+            return ascii_iequals(type, "submit");
+        }
+        return !txn.has_attribute(id, atoms.intern("command")) &&
+               !txn.has_attribute(id, atoms.intern("commandfor"));
+    }
+
+    // A control's FORM OWNER (HTML 4.10.18.3): with a `form` attribute, the
+    // first element in its tree whose id is the value - when that is a
+    // <form>, and none at all otherwise - else the <form> it is inside. A
+    // button outside its form that names it submits it.
     [[nodiscard]] static node_id owning_form(const read_txn & txn, atom_table & atoms,
                                              node_id from) {
         const atom form_tag = atoms.intern_lower("form");
+        if (const atom named = atoms.intern("form"); txn.has_attribute(from, named)) {
+            const std::string_view id = txn.attribute_value(from, named);
+            if (id.empty()) { return node_id{}; }
+            const atom id_attribute = atoms.intern("id");
+            std::vector<node_id> pending{txn.root_of_tree(from)};
+            while (!pending.empty()) {
+                const node_id at = pending.back();
+                pending.pop_back();
+                if (txn.attribute_value(at, id_attribute) == id) {
+                    return txn.tag(at).value_or(atom{}) == form_tag ? at : node_id{};
+                }
+                const std::span<const node_id> children = txn.children(at);
+                for (std::size_t i = children.size(); i-- > 0;) { pending.push_back(children[i]); }
+            }
+            return node_id{};
+        }
         for (node_id at = from; at; at = txn.parent(at)) {
             if (txn.tag(at).value_or(atom{}) == form_tag) { return at; }
         }

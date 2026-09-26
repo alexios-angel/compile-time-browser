@@ -660,7 +660,7 @@ private:
     // past the bottom.
     void scroll_to_fragment(std::string_view id);
 
-    void submit(node_id form);
+    void submit(node_id form, node_id submitter = {});
     // "Reset the form": fire a cancelable `reset` event and, only if it is not
     // cancelled, clear the controls. A reset button's activation used to skip
     // the event, so `onreset` never ran.

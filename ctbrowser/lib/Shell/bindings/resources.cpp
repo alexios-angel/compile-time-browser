@@ -4,7 +4,10 @@
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/net/url.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <numbers>
+#include <optional>
 
 // dom_bindings' method bodies - the API a page's script actually calls.
 //
@@ -15,7 +18,329 @@ namespace ctbrowser::shell {
 namespace detail {
 // ToUint32 - defined in element/reflection.cpp beside the rows that use it.
 [[nodiscard]] long long to_uint32(double x);
+// A body's bytes decoded, BOM and all - defined in xhr.cpp beside the
+// response decoding that needed it first.
+[[nodiscard]] std::string decode_body(std::string_view bytes, std::string_view name);
 } // namespace detail
+
+namespace {
+
+// --- Fetch: Headers, Request, Response and the Body mixin (Fetch 5) -------------------
+//
+// State in private slots, the way XMLHttpRequest keeps its own: a Headers
+// object's list as a script array of [name, value] pairs (the case kept,
+// compared without it) and its guard; a Request's or a Response's Headers, its
+// body as a string cell of the raw bytes - absent for a null body - and
+// whether that has been read.
+const std::string header_list_slot = std::string{script::private_key_prefix} + "fetch:headers";
+const std::string header_guard_slot = std::string{script::private_key_prefix} + "fetch:guard";
+const std::string headers_object_slot = std::string{script::private_key_prefix} + "fetch:owner";
+const std::string body_slot = std::string{script::private_key_prefix} + "fetch:body";
+const std::string body_used_slot = std::string{script::private_key_prefix} + "fetch:used";
+// The prototypes make_response builds on, kept where a later fetch finds them
+// whatever the page did to its `Response` and `Headers` globals.
+const std::string headers_proto_global = std::string{script::private_key_prefix} + "Headers";
+const std::string response_proto_global = std::string{script::private_key_prefix} + "Response";
+
+using header_list = std::vector<std::pair<std::string, std::string>>;
+
+[[nodiscard]] script::object_object * object_of(value v) {
+    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
+}
+
+// A header NAME is a token (RFC 9110 5.6.2).
+[[nodiscard]] bool is_header_name(std::string_view name) {
+    constexpr std::string_view marks = "!#$%&'*+-.^_`|~";
+    return !name.empty() && std::ranges::all_of(name, [&](char ch) {
+        return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+               marks.find(ch) != std::string_view::npos;
+    });
+}
+
+// A header value NORMALIZED - leading and trailing HTTP whitespace off - and
+// then refused when it still holds a NUL, CR or LF (Fetch 2.2.2).
+[[nodiscard]] std::optional<std::string> header_value(std::string_view text) {
+    text = trim(text, "\t\n\r ");
+    if (text.find_first_of(std::string_view{"\0\r\n", 3}) != std::string_view::npos) {
+        return std::nullopt;
+    }
+    return std::string{text};
+}
+
+[[nodiscard]] header_list headers_of(context & c, value headers) {
+    header_list out;
+    script::object_object * self = object_of(headers);
+    const value * held = self == nullptr ? nullptr : self->find(header_list_slot);
+    if (held == nullptr || !held->is_array()) { return out; }
+    for (const value & pair : static_cast<script::array_object *>(held->as_heap())->items) {
+        const auto & two = static_cast<script::array_object *>(pair.as_heap())->items;
+        out.emplace_back(c.to_string(two.at(0)), c.to_string(two.at(1)));
+    }
+    return out;
+}
+
+void store_headers(context & c, script::object_object & self, const header_list & list) {
+    const value array = c.make_array();
+    auto & items = static_cast<script::array_object *>(array.as_heap())->items;
+    for (const auto & [name, text] : list) {
+        const value pair = c.make_array();
+        auto & two = static_cast<script::array_object *>(pair.as_heap())->items;
+        two.push_back(c.string(name));
+        two.push_back(c.string(text));
+        items.push_back(pair);
+    }
+    self.define(header_list_slot, array, script::attr_none);
+}
+
+// "Get" a header: every value under the name, joined by ", "; nullopt for none.
+[[nodiscard]] std::optional<std::string> get_header(const header_list & list,
+                                                    std::string_view name) {
+    std::optional<std::string> out;
+    for (const auto & [held, text] : list) {
+        if (!ascii_iequals(held, name)) { continue; }
+        out = out ? *out + ", " + text : text;
+    }
+    return out;
+}
+
+// "Sort and combine": lowercased names in byte order, one entry per name with
+// its values combined - except `set-cookie`, one entry per value.
+[[nodiscard]] header_list sort_and_combine(const header_list & list) {
+    std::vector<std::string> names;
+    for (const auto & [name, text] : list) {
+        std::string lower = ascii_lower_copy(name);
+        if (std::ranges::find(names, lower) == names.end()) { names.push_back(std::move(lower)); }
+    }
+    std::ranges::sort(names);
+    header_list out;
+    for (const std::string & name : names) {
+        if (name != "set-cookie") {
+            out.emplace_back(name, get_header(list, name).value_or(std::string{}));
+            continue;
+        }
+        for (const auto & [held, text] : list) {
+            if (ascii_iequals(held, name)) { out.emplace_back(name, text); }
+        }
+    }
+    return out;
+}
+
+// A Headers object over `list`, under `guard`: "immutable" for a fetched
+// response's, "none" for the rest. ponytail: the request and response
+// guards' forbidden-name lists are not applied - nothing here sends a request
+// or keeps a cookie for them to protect.
+[[nodiscard]] value make_headers(context & c, const header_list & list, std::string_view guard) {
+    auto * made = c.allocate<script::object_object>();
+    if (const value proto = c.global(headers_proto_global); proto.is_object()) {
+        made->prototype = proto;
+    }
+    store_headers(c, *made, list);
+    made->define(header_guard_slot, c.string(std::string{guard}), script::attr_none);
+    return value::object(made);
+}
+
+// "Fill" a header list from a HeadersInit: a sequence of pairs - a Headers is
+// one, being iterable - or a record. False, with the TypeError thrown, when a
+// pair is not a pair or a name or value is not one.
+bool fill_headers(context & c, header_list & list, value init, const char * where) {
+    if (init.is_undefined()) { return true; }
+    if (!init.is_object_like()) {
+        c.throw_error("TypeError", std::string{where} + ": headers is not a HeadersInit");
+        return false;
+    }
+    const context::rooted keep{c, init};
+    const auto add = [&](std::string name, std::string_view text) {
+        const std::optional<std::string> normalized = header_value(text);
+        if (!is_header_name(name) || !normalized) {
+            c.throw_error("TypeError", std::string{where} + ": invalid header '" + name + "'");
+            return false;
+        }
+        list.emplace_back(std::move(name), *normalized);
+        return true;
+    };
+    if (const value method = c.lookup_property(init, "@@iterator"); method.is_callable()) {
+        const value items = c.iterable_values(init);
+        if (c.throw_pending()) { return false; }
+        const context::rooted keep_items{c, items};
+        for (const value & item : static_cast<script::array_object *>(items.as_heap())->items) {
+            const value pair = c.iterable_values(item);
+            if (c.throw_pending()) { return false; }
+            const auto & parts = static_cast<script::array_object *>(pair.as_heap())->items;
+            if (parts.size() != 2) {
+                c.throw_error("TypeError",
+                              std::string{where} + ": a header pair must have two elements");
+                return false;
+            }
+            if (!add(c.to_string(parts[0]), c.to_string(parts[1]))) { return false; }
+        }
+        return true;
+    }
+    if (c.throw_pending()) { return false; }
+    const value keys = c.own_keys(init);
+    const context::rooted keep_keys{c, keys};
+    for (const value & key : static_cast<script::array_object *>(keys.as_heap())->items) {
+        const std::string name = c.to_string(key);
+        const value held = c.lookup_property(init, name);
+        if (c.throw_pending()) { return false; }
+        if (!add(name, c.to_string(held))) { return false; }
+    }
+    return true;
+}
+
+// The bytes of a u8 array, or of anything carrying one in `__bytes` - a Blob,
+// an ArrayBuffer, a File.
+[[nodiscard]] std::string bytes_of(context & c, value source) {
+    value held = source;
+    if (source.is_object()) { held = c.lookup_property(source, "__bytes"); }
+    std::string out;
+    if (!held.is_array()) { return out; }
+    for (const value & b : static_cast<script::array_object *>(held.as_heap())->items) {
+        out += static_cast<char>(static_cast<int>(context::to_number(b)) & 0xFF);
+    }
+    return out;
+}
+
+[[nodiscard]] value u8_of(context & c, std::string_view bytes) {
+    return make_u8_array(c, std::as_bytes(std::span{bytes.data(), bytes.size()}));
+}
+
+// "Extract a body" (Fetch 5.1) from a BodyInit: its bytes, and the Content-Type
+// it implies - empty for none. A string is UTF-8 text/plain, URLSearchParams
+// urlencoded, a Blob its own type, a BufferSource none, and FormData
+// multipart/form-data under a boundary of its own.
+struct extracted_body {
+    std::string bytes;
+    std::string type;
+};
+
+[[nodiscard]] extracted_body extract_body(context & c, value body) {
+    const auto is = [&](const char * name) {
+        return c.has_global(name) && c.instance_of(body, c.global(name));
+    };
+    if (body.is_object() && is("Blob")) {
+        return {bytes_of(c, body), c.to_string(c.lookup_property(body, "type"))};
+    }
+    if (body.is_object() && is("URLSearchParams")) {
+        return {c.to_string(body), "application/x-www-form-urlencoded;charset=UTF-8"};
+    }
+    if (body.is_object() && is("FormData")) {
+        // "multipart/form-data encoding algorithm" (HTML 4.10.21.8): each entry
+        // a part, a name's `"`, CR and LF escaped, a File with its filename and
+        // type.
+        const std::string boundary = "----ctbrowserFormBoundary7MA4YWxkTrZu0gW";
+        const auto escape = [](const std::string & text) {
+            std::string out;
+            for (const char ch : text) {
+                if (ch == '"') {
+                    out += "%22";
+                } else if (ch == '\r') {
+                    out += "%0D";
+                } else if (ch == '\n') {
+                    out += "%0A";
+                } else {
+                    out += ch;
+                }
+            }
+            return out;
+        };
+        const value entries = c.iterable_values(body);
+        if (c.throw_pending() || !entries.is_array()) { return {}; }
+        const context::rooted keep{c, entries};
+        std::string out;
+        for (const value & pair : static_cast<script::array_object *>(entries.as_heap())->items) {
+            const auto & two = static_cast<script::array_object *>(pair.as_heap())->items;
+            if (two.size() != 2) { continue; }
+            out += "--" + boundary + "\r\nContent-Disposition: form-data; name=\"" +
+                   escape(c.to_string(two[0])) + "\"";
+            if (two[1].is_object()) {
+                const std::string type = c.to_string(c.lookup_property(two[1], "type"));
+                out += "; filename=\"" + escape(c.to_string(c.lookup_property(two[1], "name"))) +
+                       "\"\r\nContent-Type: " +
+                       (type.empty() ? std::string{"application/octet-stream"} : type) +
+                       "\r\n\r\n" + bytes_of(c, two[1]) + "\r\n";
+            } else {
+                out += "\r\n\r\n" + c.to_string(two[1]) + "\r\n";
+            }
+        }
+        out += "--" + boundary + "--\r\n";
+        return {out, "multipart/form-data; boundary=" + boundary};
+    }
+    // An ArrayBuffer or a view onto one: its bytes, and no type. A byte view
+    // is its own bytes; a wider one is read through its buffer. ponytail: the
+    // whole buffer, a view's offset and length not applied. A plain array is
+    // no BufferSource - it is stringified, below, as WebIDL's union says.
+    if (body.is_array()) {
+        const auto kind = static_cast<script::array_object *>(body.as_heap())->elements;
+        if (kind == script::element_kind::u8 || kind == script::element_kind::i8 ||
+            kind == script::element_kind::u8_clamped) {
+            return {bytes_of(c, body), {}};
+        }
+        if (kind != script::element_kind::none) {
+            return {bytes_of(c, c.lookup_property(body, "buffer")), {}};
+        }
+    } else if (body.is_object() && !c.lookup_property(body, "__bytes").is_undefined()) {
+        return {bytes_of(c, body), {}};
+    }
+    return {c.to_string(body), "text/plain;charset=UTF-8"};
+}
+
+// A Body method's receiver: a Request or a Response - whatever carries its
+// Headers in the private slot - else the TypeError WebIDL gives a method
+// called on the wrong kind of object.
+[[nodiscard]] script::object_object * body_this(context & c, const char * what) {
+    script::object_object * self = object_of(c.current_this());
+    if (self == nullptr || self->find(headers_object_slot) == nullptr) {
+        c.throw_error("TypeError", std::string{what} + ": illegal invocation");
+        return nullptr;
+    }
+    return self;
+}
+
+// The Content-Type in a Request's or a Response's header list, "" for none.
+[[nodiscard]] std::string content_type_of(context & c, script::object_object & self) {
+    const value * headers = self.find(headers_object_slot);
+    return headers == nullptr
+               ? std::string{}
+               : get_header(headers_of(c, *headers), "content-type").value_or(std::string{});
+}
+
+// A body's bytes: a string cell holding them verbatim - made directly, not by
+// context::string, whose surrogate joining would rewrite binary data.
+[[nodiscard]] std::string body_text(value held) {
+    return held.is_string() ? static_cast<script::string_object *>(held.as_heap())->text
+                            : std::string{};
+}
+
+// The Body mixin's "consume body": the bytes, or nullopt when they have been
+// read already. A null body reads as empty and is never "used".
+[[nodiscard]] std::optional<std::string> consume_body(script::object_object & self) {
+    const value * used = self.find(body_used_slot);
+    if (used != nullptr && context::truthy(*used)) { return std::nullopt; }
+    const value * held = self.find(body_slot);
+    if (held == nullptr || !held->is_string()) { return std::string{}; }
+    self.define(body_used_slot, value::boolean(true), script::attr_none);
+    return body_text(*held);
+}
+
+// A Request or a Response gets its Headers and its body: the extracted type
+// goes into the list when the list has no Content-Type of its own.
+void attach_body(context & c, script::object_object & self, value headers,
+                 const std::optional<extracted_body> & body) {
+    self.define(headers_object_slot, headers, script::attr_none);
+    self.set("headers", headers);
+    if (!body) { return; }
+    if (script::object_object * list = object_of(headers); list != nullptr && !body->type.empty()) {
+        header_list held = headers_of(c, headers);
+        if (!get_header(held, "content-type")) {
+            held.emplace_back("Content-Type", body->type);
+            store_headers(c, *list, held);
+        }
+    }
+    self.define(body_slot, value::object(c.allocate<script::string_object>(body->bytes)),
+                script::attr_none);
+}
+
+} // namespace
 
 void dom_bindings::observe_resources(asset_registry & assets, image_store & images) {
     assets_ = &assets;
@@ -277,42 +602,540 @@ void dom_bindings::install_resources(context & cx) {
         return value::number(image ? image->height : 0);
     });
 
+    // --- Headers, Request and Response (Fetch 5.2-5.5) -------------------------------
+    //
+    // WebIDL-shaped over the private slots above. Headers is the whole
+    // interface; a Request and a Response carry their attributes as data
+    // properties, as fetch()'s responses always have, with the Body mixin -
+    // text, json, arrayBuffer, bytes, blob, formData, bodyUsed - on both
+    // prototypes. Babylon.js builds `new Response(xhr.response, {status,
+    // statusText, headers: new Headers()})` whenever the two exist, so these
+    // are the objects its loader reads back.
+    const auto make_ctor = [&cx](const char * name, script::object_object * proto) {
+        auto * ctor = cx.allocate<script::native_object>(name, script::native_fn{});
+        ctor->define("prototype", value::object(proto), script::attr_none);
+        proto->define("constructor", value::object(ctor), script::attr_builtin);
+        proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+        cx.define_global(name, value::object(ctor));
+        return ctor;
+    };
+    // `this` for a constructor: the object `new` made, else a TypeError.
+    const auto constructed = [](context & c, script::native_object * ctor, value proto,
+                                const char * name) -> script::object_object * {
+        const value self_value = c.current_this();
+        script::object_object * self = object_of(self_value);
+        if (self == nullptr || !c.instance_of(self_value, value::object(ctor))) {
+            c.throw_error("TypeError", std::string{"Failed to construct '"} + name +
+                                           "': please use the 'new' operator.");
+            return nullptr;
+        }
+        if (!self->prototype.is_object()) { self->prototype = proto; }
+        return self;
+    };
+
+    auto * headers_proto = cx.allocate<script::object_object>();
+    const value headers_proto_value = value::object(headers_proto);
+    cx.define_global(headers_proto_global, headers_proto_value);
+    script::native_object * headers_ctor = make_ctor("Headers", headers_proto);
+    headers_ctor->fn = [headers_ctor, headers_proto_value, constructed](context & c,
+                                                                        std::span<value> a) {
+        script::object_object * self = constructed(c, headers_ctor, headers_proto_value, "Headers");
+        if (self == nullptr) { return value::undefined(); }
+        header_list list;
+        if (!fill_headers(c, list, arg(a, 0), "Headers")) { return value::undefined(); }
+        store_headers(c, *self, list);
+        self->define(header_guard_slot, c.string("none"), script::attr_none);
+        return c.current_this();
+    };
+    // Each operation: the receiver branded, the name a token, and - for the
+    // three that write - a TypeError under the immutable guard.
+    const auto headers_this = [](context & c, const char * what,
+                                 bool writes) -> script::object_object * {
+        script::object_object * self = object_of(c.current_this());
+        if (self == nullptr || self->find(header_list_slot) == nullptr) {
+            c.throw_error("TypeError", std::string{"Headers."} + what + ": illegal invocation");
+            return nullptr;
+        }
+        const value * guard = self->find(header_guard_slot);
+        if (writes && guard != nullptr && c.to_string(*guard) == "immutable") {
+            c.throw_error("TypeError",
+                          std::string{"Headers."} + what + ": the headers are immutable");
+            return nullptr;
+        }
+        return self;
+    };
+    const auto header_name_arg = [](context & c, std::span<value> a,
+                                    const char * what) -> std::optional<std::string> {
+        std::string name = c.to_string(arg(a, 0));
+        if (!is_header_name(name)) {
+            c.throw_error("TypeError",
+                          std::string{"Headers."} + what + ": invalid header name '" + name + "'");
+            return std::nullopt;
+        }
+        return name;
+    };
+    const auto header_value_arg = [](context & c, std::span<value> a,
+                                     const char * what) -> std::optional<std::string> {
+        std::optional<std::string> text = header_value(c.to_string(arg(a, 1)));
+        if (!text) {
+            c.throw_error("TypeError", std::string{"Headers."} + what + ": invalid header value");
+        }
+        return text;
+    };
+    set_method(cx, *headers_proto, "append",
+               [headers_this, header_name_arg, header_value_arg](context & c, std::span<value> a) {
+                   script::object_object * self = headers_this(c, "append", true);
+                   if (self == nullptr) { return value::undefined(); }
+                   const std::optional<std::string> name = header_name_arg(c, a, "append");
+                   if (!name) { return value::undefined(); }
+                   const std::optional<std::string> text = header_value_arg(c, a, "append");
+                   if (!text) { return value::undefined(); }
+                   header_list list = headers_of(c, c.current_this());
+                   list.emplace_back(*name, *text);
+                   store_headers(c, *self, list);
+                   return value::undefined();
+               });
+    set_method(cx, *headers_proto, "delete",
+               [headers_this, header_name_arg](context & c, std::span<value> a) {
+                   script::object_object * self = headers_this(c, "delete", true);
+                   if (self == nullptr) { return value::undefined(); }
+                   const std::optional<std::string> name = header_name_arg(c, a, "delete");
+                   if (!name) { return value::undefined(); }
+                   header_list list = headers_of(c, c.current_this());
+                   std::erase_if(list,
+                                 [&](const auto & p) { return ascii_iequals(p.first, *name); });
+                   store_headers(c, *self, list);
+                   return value::undefined();
+               });
+    set_method(cx, *headers_proto, "get",
+               [headers_this, header_name_arg](context & c, std::span<value> a) {
+                   if (headers_this(c, "get", false) == nullptr) { return value::undefined(); }
+                   const std::optional<std::string> name = header_name_arg(c, a, "get");
+                   if (!name) { return value::undefined(); }
+                   const std::optional<std::string> found =
+                       get_header(headers_of(c, c.current_this()), *name);
+                   return found ? c.string(*found) : value::null();
+               });
+    set_method(cx, *headers_proto, "getSetCookie", [headers_this](context & c, std::span<value>) {
+        if (headers_this(c, "getSetCookie", false) == nullptr) { return value::undefined(); }
+        const value out = c.make_array();
+        auto & items = static_cast<script::array_object *>(out.as_heap())->items;
+        for (const auto & [name, text] : headers_of(c, c.current_this())) {
+            if (ascii_iequals(name, "set-cookie")) { items.push_back(c.string(text)); }
+        }
+        return out;
+    });
+    set_method(cx, *headers_proto, "has",
+               [headers_this, header_name_arg](context & c, std::span<value> a) {
+                   if (headers_this(c, "has", false) == nullptr) { return value::undefined(); }
+                   const std::optional<std::string> name = header_name_arg(c, a, "has");
+                   if (!name) { return value::undefined(); }
+                   return value::boolean(
+                       get_header(headers_of(c, c.current_this()), *name).has_value());
+               });
+    // set(): the first of the name's entries takes the value and the rest go.
+    set_method(cx, *headers_proto, "set",
+               [headers_this, header_name_arg, header_value_arg](context & c, std::span<value> a) {
+                   script::object_object * self = headers_this(c, "set", true);
+                   if (self == nullptr) { return value::undefined(); }
+                   const std::optional<std::string> name = header_name_arg(c, a, "set");
+                   if (!name) { return value::undefined(); }
+                   const std::optional<std::string> text = header_value_arg(c, a, "set");
+                   if (!text) { return value::undefined(); }
+                   header_list list = headers_of(c, c.current_this());
+                   header_list out;
+                   bool placed = false;
+                   for (auto & [held, was] : list) {
+                       if (!ascii_iequals(held, *name)) {
+                           out.emplace_back(std::move(held), std::move(was));
+                       } else if (!placed) {
+                           out.emplace_back(std::move(held), *text);
+                           placed = true;
+                       }
+                   }
+                   if (!placed) { out.emplace_back(*name, *text); }
+                   store_headers(c, *self, out);
+                   return value::undefined();
+               });
+    set_method(cx, *headers_proto, "forEach", [headers_this](context & c, std::span<value> a) {
+        if (headers_this(c, "forEach", false) == nullptr) { return value::undefined(); }
+        const value callback = arg(a, 0);
+        if (!callback.is_callable()) {
+            c.throw_error("TypeError", "Headers.forEach: the callback is not a function");
+            return value::undefined();
+        }
+        const value self = c.current_this();
+        for (const auto & [name, text] : sort_and_combine(headers_of(c, self))) {
+            const value args[3] = {c.string(text), c.string(name), self};
+            (void)c.call(callback, args, arg(a, 1));
+            if (c.throw_pending()) { break; }
+        }
+        return value::undefined();
+    });
+    // The pair iterator over the sorted and combined list, as of the call.
+    // ponytail: an Array Iterator over a snapshot, not a live "Headers
+    // Iterator" - a header set mid-iteration is not seen.
+    for (const char * kind : {"entries", "keys", "values"}) {
+        set_method(cx, *headers_proto, kind, [headers_this, kind](context & c, std::span<value>) {
+            if (headers_this(c, kind, false) == nullptr) { return value::undefined(); }
+            const value out = c.make_array();
+            auto & items = static_cast<script::array_object *>(out.as_heap())->items;
+            for (const auto & [name, text] : sort_and_combine(headers_of(c, c.current_this()))) {
+                if (std::string_view{kind} == "keys") {
+                    items.push_back(c.string(name));
+                } else if (std::string_view{kind} == "values") {
+                    items.push_back(c.string(text));
+                } else {
+                    const value pair = c.make_array();
+                    auto & two = static_cast<script::array_object *>(pair.as_heap())->items;
+                    two.push_back(c.string(name));
+                    two.push_back(c.string(text));
+                    items.push_back(pair);
+                }
+            }
+            const context::rooted keep{c, out};
+            return c.call(c.lookup_property(out, "@@iterator"), {}, out);
+        });
+    }
+    if (const value * entries = headers_proto->find("entries"); entries != nullptr) {
+        headers_proto->define("@@iterator", *entries, script::attr_builtin);
+    }
+
+    // The Body mixin, on both prototypes. blob() is the one that needs the
+    // bindings - make_blob - so the mixin is built here.
+    const auto body_mixin = [this, &cx](script::object_object & proto) {
+        const auto read = [&cx, &proto](const char * name, auto finish) {
+            set_method(cx, proto, name, [name, finish](context & c, std::span<value>) {
+                script::object_object * self = body_this(c, name);
+                if (self == nullptr) { return value::undefined(); }
+                const std::optional<std::string> bytes = consume_body(*self);
+                if (!bytes) {
+                    return c.make_promise(
+                        c.make_error("TypeError", std::string{name} + ": the body has been read"),
+                        true);
+                }
+                return finish(c, *self, *bytes);
+            });
+        };
+        read("text", [](context & c, script::object_object &, const std::string & bytes) {
+            return c.make_promise(c.string(detail::decode_body(bytes, "UTF-8")), false);
+        });
+        read("json", [](context & c, script::object_object &, const std::string & bytes) {
+            const value parse = c.lookup_property(c.global("JSON"), "parse");
+            const value text = c.string(detail::decode_body(bytes, "UTF-8"));
+            const value parsed = c.call(parse, std::span<const value>{&text, 1});
+            if (c.throw_pending()) { return c.make_promise(c.take_pending_throw(), true); }
+            return c.make_promise(parsed, false);
+        });
+        read("arrayBuffer", [](context & c, script::object_object &, const std::string & bytes) {
+            return c.make_promise(
+                make_array_buffer(c, std::as_bytes(std::span{bytes.data(), bytes.size()})), false);
+        });
+        read("bytes", [](context & c, script::object_object &, const std::string & bytes) {
+            return c.make_promise(u8_of(c, bytes), false);
+        });
+        read("blob", [this](context & c, script::object_object & self, const std::string & bytes) {
+            return c.make_promise(
+                make_blob(c, u8_of(c, bytes), ascii_lower_copy(content_type_of(c, self))), false);
+        });
+        // formData(): the urlencoded parser over the bytes for an
+        // application/x-www-form-urlencoded body - its charset ignored, as
+        // Fetch says - and a TypeError for any other type. ponytail: a
+        // multipart/form-data body is not parsed; it rejects as another type.
+        read("formData", [](context & c, script::object_object & self, const std::string & bytes) {
+            const std::string type = content_type_of(c, self);
+            const std::string essence = ascii_lower_copy(
+                trim(std::string_view{type}.substr(0, std::min(type.find(';'), type.size())),
+                     "\t\n\r "));
+            if (essence != "application/x-www-form-urlencoded") {
+                return c.make_promise(
+                    c.make_error("TypeError", "formData: the body is not form data"), true);
+            }
+            const value form_data = c.construct(c.global("FormData"), {});
+            if (c.throw_pending()) { return c.make_promise(c.take_pending_throw(), true); }
+            const context::rooted keep{c, form_data};
+            const value append = c.lookup_property(form_data, "append");
+            for (const auto & [name, text] : parse_form_urlencoded(bytes)) {
+                const value args[2] = {c.string(name), c.string(text)};
+                (void)c.call(append, args, form_data);
+            }
+            return c.make_promise(form_data, false);
+        });
+        define_getter(cx, proto, "bodyUsed", [](context & c, std::span<value>) {
+            script::object_object * self = body_this(c, "bodyUsed");
+            if (self == nullptr) { return value::undefined(); }
+            const value * used = self->find(body_used_slot);
+            return value::boolean(used != nullptr && context::truthy(*used));
+        });
+    };
+    // clone(): a copy with its own Headers and the same bytes - a TypeError
+    // once the body has been read (Fetch 5.4/5.5).
+    const auto clone_of = [](context & c, const char * what) -> value {
+        script::object_object * self = body_this(c, what);
+        if (self == nullptr) { return value::undefined(); }
+        if (const value * used = self->find(body_used_slot);
+            used != nullptr && context::truthy(*used)) {
+            c.throw_error("TypeError", std::string{what} + ": the body has been read");
+            return value::undefined();
+        }
+        auto * copy = c.allocate<script::object_object>();
+        copy->prototype = self->prototype;
+        self->each_own_enumerable_key([&](const std::string & key) {
+            if (key != "headers") { copy->set(key, *self->find(key)); }
+        });
+        const value headers = *self->find(headers_object_slot);
+        const value * guard = object_of(headers)->find(header_guard_slot);
+        std::optional<extracted_body> body;
+        if (const value * held = self->find(body_slot); held != nullptr) {
+            body = extracted_body{body_text(*held), {}};
+        }
+        attach_body(c, *copy,
+                    make_headers(c, headers_of(c, headers),
+                                 guard == nullptr ? std::string{"none"} : c.to_string(*guard)),
+                    body);
+        return value::object(copy);
+    };
+
+    // `new Request(input, init)` (Fetch 5.4). THE URL IS KEPT AS GIVEN, not
+    // serialised: fetch() takes a relative path to the asset registry by that
+    // name, and p5 hands every loader's path through a Request first. It is
+    // refused when it cannot parse against the document's address, or carries
+    // credentials. The method is a token, not a forbidden one, normalised; a
+    // body is refused for GET and HEAD.
+    auto * request_proto = cx.allocate<script::object_object>();
+    const value request_proto_value = value::object(request_proto);
+    script::native_object * request_ctor = make_ctor("Request", request_proto);
+    request_ctor->fn = [this, request_ctor, request_proto_value, constructed](context & c,
+                                                                              std::span<value> a) {
+        script::object_object * self = constructed(c, request_ctor, request_proto_value, "Request");
+        if (self == nullptr) { return value::undefined(); }
+        const value input = arg(a, 0);
+        const value init = arg(a, 1);
+        std::string url;
+        std::string method = "GET";
+        header_list list;
+        std::optional<extracted_body> body;
+        script::object_object * from = object_of(input);
+        if (from != nullptr && from->find(headers_object_slot) != nullptr) {
+            url = c.to_string(c.lookup_property(input, "url"));
+            method = c.to_string(c.lookup_property(input, "method"));
+            list = headers_of(c, *from->find(headers_object_slot));
+            if (const value * held = from->find(body_slot); held != nullptr) {
+                body = extracted_body{body_text(*held), {}};
+            }
+        } else {
+            url = c.to_string(input);
+            if (c.throw_pending()) { return value::undefined(); }
+            if (!location_href_.empty()) {
+                const std::optional<url_record> parsed =
+                    parse_url(url, std::string_view{location_href_});
+                if (!parsed || parsed->has_credentials()) {
+                    c.throw_error("TypeError", "Failed to construct 'Request': invalid URL " + url);
+                    return value::undefined();
+                }
+            }
+        }
+        for (const char * name : {"mode", "credentials", "cache", "redirect", "referrer",
+                                  "referrerPolicy", "integrity"}) {
+            const value given = from != nullptr && from->find(headers_object_slot) != nullptr
+                                    ? c.lookup_property(input, name)
+                                    : value::undefined();
+            if (!given.is_undefined()) { self->set(name, given); }
+        }
+        if (init.is_object_like()) {
+            if (const value given = c.lookup_property(init, "method"); !given.is_undefined()) {
+                method = c.to_string(given);
+                if (!is_header_name(method) ||
+                    ascii_iequals_any(method, {"CONNECT", "TRACE", "TRACK"})) {
+                    c.throw_error("TypeError", "Failed to construct 'Request': '" + method +
+                                                   "' is not a valid method");
+                    return value::undefined();
+                }
+                for (const std::string_view normal :
+                     {"DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT"}) {
+                    if (ascii_iequals(method, normal)) { method = std::string{normal}; }
+                }
+            }
+            if (const value given = c.lookup_property(init, "mode");
+                !given.is_undefined() && c.to_string(given) == "navigate") {
+                c.throw_error("TypeError",
+                              "Failed to construct 'Request': mode cannot be navigate");
+                return value::undefined();
+            }
+            for (const char * name : {"mode", "credentials", "cache", "redirect", "referrer",
+                                      "referrerPolicy", "integrity", "keepalive", "signal"}) {
+                if (const value given = c.lookup_property(init, name); !given.is_undefined()) {
+                    self->set(name, given);
+                }
+            }
+            if (const value given = c.lookup_property(init, "headers"); !given.is_undefined()) {
+                list.clear();
+                if (!fill_headers(c, list, given, "Request")) { return value::undefined(); }
+            }
+            if (const value given = c.lookup_property(init, "body"); !given.is_nullish()) {
+                if (method == "GET" || method == "HEAD") {
+                    c.throw_error("TypeError", "Failed to construct 'Request': a " + method +
+                                                   " request cannot have a body");
+                    return value::undefined();
+                }
+                body = extract_body(c, given);
+                if (c.throw_pending()) { return value::undefined(); }
+            }
+        }
+        const std::pair<const char *, const char *> defaults[] = {{"mode", "cors"},
+                                                                  {"credentials", "same-origin"},
+                                                                  {"cache", "default"},
+                                                                  {"redirect", "follow"},
+                                                                  {"referrer", "about:client"},
+                                                                  {"referrerPolicy", ""},
+                                                                  {"integrity", ""},
+                                                                  {"destination", ""}};
+        for (const auto & [name, fallback] : defaults) {
+            if (self->find(name) == nullptr) { self->set(name, c.string(fallback)); }
+        }
+        if (self->find("keepalive") == nullptr) { self->set("keepalive", value::boolean(false)); }
+        self->set("url", c.string(url));
+        self->set("method", c.string(method));
+        attach_body(c, *self, make_headers(c, list, "none"), body);
+        return c.current_this();
+    };
+    request_ctor->retained.push_back(request_proto_value);
+    body_mixin(*request_proto);
+    set_method(cx, *request_proto, "clone",
+               [clone_of](context & c, std::span<value>) { return clone_of(c, "Request.clone"); });
+
+    // `new Response(body, init)` (Fetch 5.5): the status 200-599 else a
+    // RangeError, a statusText with no CR or LF, the headers, and a body -
+    // refused under a null body status.
+    auto * response_proto = cx.allocate<script::object_object>();
+    const value response_proto_value = value::object(response_proto);
+    cx.define_global(response_proto_global, response_proto_value);
+    script::native_object * response_ctor = make_ctor("Response", response_proto);
+    // "Initialize a response": the three init members onto `self`, or false
+    // with the error thrown.
+    const auto init_response = [](context & c, script::object_object & self, value init,
+                                  header_list & list) {
+        double status = 200;
+        std::string status_text;
+        if (init.is_object_like()) {
+            if (const value given = c.lookup_property(init, "status"); !given.is_undefined()) {
+                status = context::to_number(given);
+            }
+            if (const value given = c.lookup_property(init, "statusText"); !given.is_undefined()) {
+                status_text = c.to_string(given);
+            }
+        }
+        if (!(status >= 200 && status <= 599) || status != std::floor(status)) {
+            c.throw_error("RangeError",
+                          "Failed to construct 'Response': the status is out of range");
+            return false;
+        }
+        if (status_text.find_first_of("\r\n") != std::string::npos) {
+            c.throw_error("TypeError", "Failed to construct 'Response': invalid statusText");
+            return false;
+        }
+        if (init.is_object_like() &&
+            !fill_headers(c, list, c.lookup_property(init, "headers"), "Response")) {
+            return false;
+        }
+        self.set("type", c.string("default"));
+        self.set("url", c.string(""));
+        self.set("redirected", value::boolean(false));
+        self.set("status", value::number(status));
+        self.set("ok", value::boolean(status >= 200 && status <= 299));
+        self.set("statusText", c.string(status_text));
+        return true;
+    };
+    response_ctor->fn = [response_ctor, response_proto_value, constructed,
+                         init_response](context & c, std::span<value> a) {
+        script::object_object * self =
+            constructed(c, response_ctor, response_proto_value, "Response");
+        if (self == nullptr) { return value::undefined(); }
+        header_list list;
+        if (!init_response(c, *self, arg(a, 1), list)) { return value::undefined(); }
+        std::optional<extracted_body> body;
+        if (const value given = arg(a, 0); !given.is_nullish()) {
+            const double status = context::to_number(*self->find("status"));
+            if (status == 101 || status == 103 || status == 204 || status == 205 || status == 304) {
+                c.throw_error("TypeError",
+                              "Failed to construct 'Response': a null body status has a body");
+                return value::undefined();
+            }
+            body = extract_body(c, given);
+            if (c.throw_pending()) { return value::undefined(); }
+        }
+        attach_body(c, *self, make_headers(c, list, "none"), body);
+        return c.current_this();
+    };
+    response_ctor->retained.push_back(response_proto_value);
+    body_mixin(*response_proto);
+    set_method(cx, *response_proto, "clone",
+               [clone_of](context & c, std::span<value>) { return clone_of(c, "Response.clone"); });
+    // The three statics: a network error, a JSON body, and a redirect.
+    const auto bare_response = [response_proto_value](context & c) {
+        auto * made = c.allocate<script::object_object>();
+        made->prototype = response_proto_value;
+        return made;
+    };
+    set_method(cx, *response_ctor, "error", [bare_response](context & c, std::span<value>) {
+        script::object_object * made = bare_response(c);
+        made->set("type", c.string("error"));
+        made->set("url", c.string(""));
+        made->set("redirected", value::boolean(false));
+        made->set("status", value::number(0));
+        made->set("ok", value::boolean(false));
+        made->set("statusText", c.string(""));
+        attach_body(c, *made, make_headers(c, {}, "immutable"), std::nullopt);
+        return value::object(made);
+    });
+    set_method(cx, *response_ctor, "json",
+               [bare_response, init_response](context & c, std::span<value> a) {
+                   const value stringify = c.lookup_property(c.global("JSON"), "stringify");
+                   const value data = arg(a, 0);
+                   const value text = c.call(stringify, std::span<const value>{&data, 1});
+                   if (c.throw_pending()) { return value::undefined(); }
+                   if (!text.is_string()) {
+                       c.throw_error("TypeError", "Response.json: the data is not JSON");
+                       return value::undefined();
+                   }
+                   script::object_object * made = bare_response(c);
+                   header_list list;
+                   if (!init_response(c, *made, arg(a, 1), list)) { return value::undefined(); }
+                   attach_body(c, *made, make_headers(c, list, "none"),
+                               extracted_body{c.to_string(text), "application/json"});
+                   return value::object(made);
+               });
+    set_method(
+        cx, *response_ctor, "redirect", [this, bare_response](context & c, std::span<value> a) {
+            const std::string given = c.to_string(arg(a, 0));
+            const std::optional<url_record> parsed =
+                location_href_.empty() ? parse_url(given)
+                                       : parse_url(given, std::string_view{location_href_});
+            if (!parsed) {
+                c.throw_error("TypeError", "Response.redirect: invalid URL " + given);
+                return value::undefined();
+            }
+            const double status = arg(a, 1).is_undefined() ? 302 : context::to_number(arg(a, 1));
+            if (status != 301 && status != 302 && status != 303 && status != 307 && status != 308) {
+                c.throw_error("RangeError", "Response.redirect: not a redirect status");
+                return value::undefined();
+            }
+            script::object_object * made = bare_response(c);
+            made->set("type", c.string("default"));
+            made->set("url", c.string(""));
+            made->set("redirected", value::boolean(false));
+            made->set("status", value::number(status));
+            made->set("ok", value::boolean(false));
+            made->set("statusText", c.string(""));
+            attach_body(c, *made, make_headers(c, {{"Location", parsed->serialize()}}, "immutable"),
+                        std::nullopt);
+            return value::object(made);
+        });
+
     // fetch(url) -> a settled Response. The registry is consulted FIRST, so
     // a page that ships its resources never opens a socket and a test run
     // is reproducible; a miss goes to the network when the application
     // allows it.
-    // `new Request(url, init)`.
-    //
-    // p5.js does not call fetch with a string. Every loader builds a Request
-    // first - `new Request(path, { method: 'GET', mode: 'cors' })` - and hands
-    // that to fetch, so an absent Request constructor made loadImage, loadModel,
-    // loadShader and loadBytes throw on their first line. The failure named
-    // `Request`, which is not obviously about loading an image.
-    //
-    // The fields are the ones a caller reads back. `method` and `mode` are
-    // recorded rather than honoured: there is one transport here and it does a
-    // GET, so a POST would be a wrong answer either way - and a page that sets
-    // one can at least see what it set.
-    cx.define_native("Request", [](context & c, std::span<value> a) {
-        auto * request = c.allocate<script::object_object>();
-        request->set("url", c.string(a.empty() ? std::string{} : c.to_string(a[0])));
-        std::string method = "GET";
-        std::string mode = "cors";
-        if (a.size() > 1 && a[1].is_object()) {
-            const value given_method = c.lookup_property(a[1], "method");
-            const value given_mode = c.lookup_property(a[1], "mode");
-            if (!given_method.is_undefined()) { method = c.to_string(given_method); }
-            if (!given_mode.is_undefined()) { mode = c.to_string(given_mode); }
-            const value headers = c.lookup_property(a[1], "headers");
-            if (!headers.is_undefined()) { request->set("headers", headers); }
-            const value body = c.lookup_property(a[1], "body");
-            if (!body.is_undefined()) { request->set("body", body); }
-        }
-        request->set("method", c.string(method));
-        request->set("mode", c.string(mode));
-        return value::object(request);
-    });
-
     cx.define_native("fetch", [this](context & c, std::span<value> args) {
         // A REQUEST OR A STRING. `fetch(request)` is the form every p5 loader
         // uses, and to_string on an object would have produced "[object Object]"
@@ -455,70 +1278,25 @@ value dom_bindings::make_rejection(context & cx, const std::string & message) {
 
 value dom_bindings::make_response(context & cx, const std::string & url, int status,
                                   const std::string & content_type, std::vector<std::byte> body) {
+    // A REAL Response, on the prototype `new Response()` makes - so the Body
+    // mixin, clone() and bodyUsed are the same functions - with IMMUTABLE
+    // headers, as a fetched response's are, carrying the one header this
+    // engine knows: the content type.
     auto * response = cx.allocate<script::object_object>();
+    if (const value proto = cx.global(response_proto_global); proto.is_object()) {
+        response->prototype = proto;
+    }
+    response->set("type", cx.string("basic"));
     response->set("url", cx.string(url));
+    response->set("redirected", value::boolean(false));
     response->set("status", value::number(status));
     response->set("ok", value::boolean(status >= 200 && status < 300));
     response->set("statusText", cx.string(status == 200 ? "OK" : status == 404 ? "Not Found" : ""));
-    response->set("type", cx.string("basic"));
-    // `headers` IS AN OBJECT with get() and has(), not a string. A page does
-    // `res.headers.get('content-type')`, and the only header this engine
-    // knows is the content type - so it answers that one and reports every
-    // other as absent rather than pretending.
-    {
-        auto * headers = cx.allocate<script::object_object>();
-        headers->set("__contentType", cx.string(content_type));
-        const auto is_content_type = [](std::string_view wanted) {
-            return ascii_iequals(wanted, "content-type");
-        };
-        set_method(cx, *headers, "get",
-                   [content_type, is_content_type](context & c, std::span<value> a) {
-                       if (!is_content_type(arg_string(c, a, 0)) || content_type.empty()) {
-                           return value::null();
-                       }
-                       return c.string(content_type);
-                   });
-        set_method(cx, *headers, "has",
-                   [content_type, is_content_type](context & c, std::span<value> a) {
-                       return value::boolean(is_content_type(arg_string(c, a, 0)) &&
-                                             !content_type.empty());
-                   });
-        response->set("headers", value::object(headers));
-    }
-
-    const std::string text{reinterpret_cast<const char *>(body.data()), body.size()};
-    set_method(cx, *response, "text", [text](context & c, std::span<value>) {
-        return c.make_promise(c.string(text), false);
-    });
-    set_method(cx, *response, "json", [text](context & c, std::span<value>) {
-        // Through the standard library's JSON.parse, so one parser decides
-        // what JSON means here.
-        const value parser = c.global("JSON");
-        if (parser.is_object()) {
-            if (value * parse =
-                    static_cast<script::object_object *>(parser.as_heap())->find("parse")) {
-                const value text_value = c.string(text);
-                const value args[1] = {text_value};
-                return c.make_promise(c.call(*parse, args), false);
-            }
-        }
-        return c.make_promise(value::undefined(), false);
-    });
-    // The bytes, three ways a caller may ask for them. `bytes()` is the
-    // newest and p5 prefers it when present; `arrayBuffer()` is what
-    // everything else uses, and `blob()` is what an object URL is made from.
-    set_method(cx, *response, "bytes", [body](context & c, std::span<value>) {
-        return c.make_promise(make_u8_array(c, body), false);
-    });
-    set_method(cx, *response, "arrayBuffer", [body](context & c, std::span<value>) {
-        return c.make_promise(make_array_buffer(c, body), false);
-    });
-    // A REAL Blob - `instanceof Blob` was false, and p5's loadBlob probe only
-    // ever read as passing because the throw in its `.then` was lost rather
-    // than delivered as a rejection.
-    set_method(cx, *response, "blob", [this, body, content_type](context & c, std::span<value>) {
-        return c.make_promise(make_blob(c, make_u8_array(c, body), content_type), false);
-    });
+    header_list list;
+    if (!content_type.empty()) { list.emplace_back("Content-Type", content_type); }
+    attach_body(
+        cx, *response, make_headers(cx, list, "immutable"),
+        extracted_body{std::string{reinterpret_cast<const char *>(body.data()), body.size()}, {}});
     return cx.make_promise(value::object(response), false);
 }
 

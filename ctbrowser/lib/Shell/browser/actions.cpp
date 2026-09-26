@@ -31,43 +31,59 @@ void browser::activate(node_id target) {
     // HTML 4.10.4 - and that click has an activation behaviour of its own,
     // which is how the label's text toggles the checkbox. A disabled control
     // refuses it, in dom_bindings::click, as it refuses `element.click()`.
+    //
+    // ONCE: a control with no activation behaviour of its own - a <textarea> -
+    // leaves its click's activation target to the label it sits in, so the
+    // click forwarded to it came straight back here and was forwarded again,
+    // for ever; `<label>Notes <textarea>` hung the page on the first click.
+    // That second click is aimed at the label's interactive content, for
+    // which the activation behaviour is to do nothing - which is what the
+    // DOM's "click in progress" flag makes of it. ponytail: a thread-local
+    // stack for the flag, since only this one synthesized click can re-enter;
+    // a per-element flag in dom_bindings::click is the general form.
     if (tag == "label") {
-        if (labelled) { (void)bindings_->click(labelled); }
+        static thread_local std::vector<node_id> forwarding;
+        if (labelled && std::ranges::find(forwarding, target) == forwarding.end()) {
+            forwarding.push_back(target);
+            (void)bindings_->click(labelled);
+            forwarding.pop_back();
+        }
         return;
     }
     // A DISABLED control does nothing and dispatches nothing - it does not
     // toggle, submit, focus or fire an event. Without this the attribute
     // was purely decorative, and it was not even that.
     if (is_disabled(target)) { return; }
-    const auto txn = doc_->read();
-    const control_kind kind = kind_of(txn, target);
-    if (kind == control_kind::checkbox || kind == control_kind::radio) {
-        mark(dirty::paint);
-        return;
+    node_id form;
+    bool submits = false;
+    bool resets = false;
+    {
+        const auto txn = doc_->read();
+        const control_kind kind = kind_of(txn, target);
+        if (kind == control_kind::checkbox || kind == control_kind::radio) {
+            mark(dirty::paint);
+            return;
+        }
+        if (kind == control_kind::select) {
+            // Toggle: clicking an open select closes it again.
+            select_open_ = select_open_ == target ? node_id{} : target;
+            mark(dirty::paint);
+            return;
+        }
+        // The kind is read NOW, after the click's listeners: one that made a
+        // text field `type=submit` made a submit button, and this click is its.
+        // `<input type=image>` is one, with a picture on it (4.10.5.1.20),
+        // though control_kind_of files it with the text controls because that
+        // is how it is laid out; so is a <button> with no type, which is the
+        // default people forget and then wonder why their form reloads.
+        submits = form_store::is_submit_button(txn, atoms_, target);
+        resets = kind == control_kind::button &&
+                 ascii_iequals(txn.attribute_value(target, atoms_.intern("type")), "reset");
+        // Its FORM OWNER, `form=` and all; with none, a button does nothing.
+        form = form_store::owning_form(txn, atoms_, target);
     }
-    if (kind == control_kind::select) {
-        // Toggle: clicking an open select closes it again.
-        select_open_ = select_open_ == target ? node_id{} : target;
-        mark(dirty::paint);
-        return;
-    }
-    const std::string_view type = txn.attribute_value(target, atoms_.intern("type"));
-    const node_id form = form_store::owning_form(txn, atoms_, target);
-    // `<input type=image>` IS A SUBMIT BUTTON with a picture on it - HTML
-    // 4.10.5.1.20 - though control_kind_of files it with the text controls
-    // because that is how it is laid out.
-    if (tag == "input" && type == "image") {
-        submit(form);
-        return;
-    }
-    if (kind != control_kind::button) { return; }
-    if (type == "reset") {
-        reset(form);
-        return;
-    }
-    // A <button> with no type is a submit button, which is the default
-    // people forget and then wonder why their form reloads.
-    if (type.empty() || type == "submit") { submit(form); }
+    if (submits) { submit(form, target); }
+    if (resets) { reset(form); }
 }
 
 bool browser::toggle_details(node_id target) {
@@ -114,10 +130,14 @@ bool browser::follow_link(node_id target) {
     {
         const auto txn = doc_->read();
         const atom anchor = atoms_.intern_lower("a");
+        const atom area = atoms_.intern_lower("area");
         const atom attribute = atoms_.intern("href");
         const atom download_attribute = atoms_.intern("download");
+        // An <area> is a hyperlink as an <a> is (HTML 4.6.1): an image map's
+        // region follows its own href.
         for (node_id at = target; at; at = txn.parent(at)) {
-            if (txn.tag(at).value_or(atom{}) != anchor) { continue; }
+            const atom tag = txn.tag(at).value_or(atom{});
+            if (tag != anchor && tag != area) { continue; }
             href = txn.attribute_value(at, attribute);
             has_download = txn.has_attribute(at, download_attribute);
             download = txn.attribute_value(at, download_attribute);
@@ -212,33 +232,66 @@ void browser::scroll_to_fragment(std::string_view id) {
     if (const std::optional<rect> box = absolute_rect_of(fragments_, target)) { scroll_to(box->y); }
 }
 
-void browser::submit(node_id form) {
-    // HTML 4.10.21.3 step 4: a form that is not connected cannot navigate, so
-    // it does not submit - and does not fire `submit` either.
-    if (!form || !bindings_->is_connected(form)) { return; }
-    if (bindings_->dispatch("submit", form)) { return; } // cancelled
-    {
-        const auto txn = doc_->read();
-        last_submission_ = forms_.form_data(txn, atoms_, form);
+// "Submit" a form FROM A SUBMITTER (HTML 4.10.21.3), a submit button's
+// activation behaviour: the bindings' algorithm - validation, the `submit`
+// SubmitEvent carrying the button, the entry list with its `formdata`, the
+// navigation - and, when it went ahead, the store's data kept for the embedder
+// to read back.
+//
+// With NO submitter it is IMPLICIT SUBMISSION (4.10.21.2), Enter in a field: a
+// click at the form's default button - the first submit button in tree order
+// that it owns - which a disabled one refuses; and when it has none, and no
+// more than one field that blocks implicit submission, the form submitted from
+// itself.
+void browser::submit(node_id form, node_id submitter) {
+    if (!form || !bindings_->submit_from_) { return; }
+    if (!submitter) {
+        node_id button;
+        std::size_t blocking = 0;
+        {
+            const auto txn = doc_->read();
+            const atom type_attribute = atoms_.intern("type");
+            std::vector<node_id> pending{txn.root_of_tree(form)};
+            while (!pending.empty() && !button) {
+                const node_id at = pending.back();
+                pending.pop_back();
+                const std::span<const node_id> children = txn.children(at);
+                for (std::size_t i = children.size(); i-- > 0;) { pending.push_back(children[i]); }
+                const std::string_view tag = atoms_.text(txn.tag(at).value_or(atom{}));
+                if ((tag != "input" && tag != "button") ||
+                    form_store::owning_form(txn, atoms_, at) != form) {
+                    continue;
+                }
+                if (form_store::is_submit_button(txn, atoms_, at)) {
+                    button = at;
+                } else if (tag == "input" &&
+                           ascii_iequals_any(
+                               input_types::type_state_of(txn.attribute_value(at, type_attribute)),
+                               {"text", "search", "tel", "url", "email", "password", "date",
+                                "month", "week", "time", "datetime-local", "number"})) {
+                    ++blocking;
+                }
+            }
+        }
+        if (button) {
+            (void)bindings_->click(button);
+            return;
+        }
+        if (blocking > 1) { return; }
     }
-    // The entry list with its `formdata` event, and a GET aimed at a named
-    // frame navigating that frame (the bindings'); the store's data above is
-    // what the embedder reads back for every other submission.
-    if (bindings_->submit_form_) {
-        bindings_->submit_form_(form, node_id{});
-        mark(dirty::layout);
-    }
+    if (!bindings_->submit_from_(form, submitter)) { return; } // refused, invalid or cancelled
+    last_submission_ = forms_.form_data(doc_->read(), atoms_, form);
+    mark(dirty::layout);
 }
 
-// HTML 4.10.21.4 "reset the form": fire a cancelable `reset` event at the form
-// FIRST - so `onreset` runs whether or not the reset is then cancelled - and
-// clear the controls only when it was not. The reset button's default action
-// called reset_form() straight, with no event, so a form's `onreset` never
-// fired. `dispatch` returns true when a listener cancelled it.
+// HTML 4.10.21.5 "reset the form", the bindings' as form.reset() is: a
+// cancelable `reset` event at the form FIRST - so `onreset` runs whether or
+// not the reset is then cancelled - and each resettable control it owns reset
+// only when it was not, a <select>'s selectedness and an <output>'s text
+// included.
 void browser::reset(node_id form) {
-    if (!form) { return; }
-    if (bindings_->dispatch("reset", form)) { return; } // cancelled
-    forms_.reset_form(doc_->read(), form);
+    if (!form || !bindings_->reset_form_) { return; }
+    bindings_->reset_form_(form);
     mark(dirty::paint);
 }
 

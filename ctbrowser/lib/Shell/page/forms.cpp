@@ -321,10 +321,13 @@ void form_store::toggle(const read_txn & txn, atom_table & atoms, node_id id, co
     const atom name_attr = atoms.intern("name");
     const std::string_view group = txn.attribute_value(id, name_attr);
     // The group is in the radio's OWN TREE - a detached subtree or a shadow
-    // root is a tree of its own - not the document's.
+    // root is a tree of its own - not the document's, and among the radios
+    // with its FORM OWNER (HTML 4.10.5.1.16): two forms on a page may both
+    // name a group `choice`.
+    const node_id owner = owning_form(txn, atoms, id);
     const auto walk = [&](auto && self, node_id at) -> void {
         if (at != id && txn.attribute_value(at, name_attr) == group &&
-            type_of(txn, atoms, at) == "radio") {
+            type_of(txn, atoms, at) == "radio" && owning_form(txn, atoms, at) == owner) {
             control_state & other = state_of(txn, atoms, at);
             other.checked = false;
             other.checked_edited = true;
