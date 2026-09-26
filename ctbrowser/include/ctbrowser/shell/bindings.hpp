@@ -155,7 +155,8 @@ private:
                                                             std::string_view box) const;
     void install_window_scrolling(context & cx, script::object_object & window);
     void install_document_geometry(context & cx, script::object_object & doc);
-    [[nodiscard]] std::vector<node_id> elements_from_point(double x, double y, bool all);
+    [[nodiscard]] std::vector<node_id> elements_from_point(double x, double y, bool all,
+                                                           node_id asker = {});
     [[nodiscard]] std::optional<box_geometry> box_geometry_of(value node, std::string_view box);
     [[nodiscard]] static value make_dom_point(context & cx, double x, double y);
     [[nodiscard]] static value make_dom_rect(context & cx, const rect & r);
@@ -1018,12 +1019,14 @@ private:
     void move_live_boundary(const live_boundary & at, node_id node, double offset);
     std::vector<value> live_ranges_; // the primary's
     void install_selection(context & cx);
-    void place_caret_on_focus(node_id element); // selection.cpp
+    void place_caret_on_focus(node_id element);   // selection.cpp
+    void forget_selection_under(node_id removed); // selection.cpp
     flat_map<std::uint64_t, script::object_object *> adopted_away_;
     bool adopting_ = false; // node_from's clone: every shadow root goes, clonable or not
     flat_map<std::string, value> named_collections_;
     std::vector<node_id> moved_by_mutation_;
     bool moving_ = false;
+    node_id move_root_;           // the node moveBefore is moving, while moving_ (tree_ops.cpp)
     bool step_in_shadow_ = false; // the dispatch step fire_at invokes is in a shadow tree
 
 public:

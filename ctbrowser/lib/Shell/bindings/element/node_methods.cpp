@@ -628,6 +628,11 @@ void dom_bindings::install_node_methods(context & cx) {
             }
             return value::null();
         }
+        if (shadow_tree_of(self) != nullptr) {
+            throw_dom_exception(c, "NotSupportedError",
+                                "cloneNode: a shadow root cannot be cloned");
+            return value::undefined();
+        }
         const bool deep = !args.empty() && context::truthy(args[0]);
         node_id made;
         {
