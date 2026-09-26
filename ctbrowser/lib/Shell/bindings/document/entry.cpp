@@ -466,7 +466,12 @@ void dom_bindings::run_inserted_scripts() {
                                                 bytes.size());
                                execute_script_element(c, id, text);
                            }
-                           announce_load(id, !bytes.empty());
+                           // IN THIS TASK, not the next tick's: "execute the
+                           // script element" fires `load` - and a failed fetch
+                           // `error` - as part of the task that ran it, so a
+                           // task queued meanwhile (a rejection notification)
+                           // comes after (promise-resolution-order.html).
+                           settle_frame(c, pending_frame{id, !bytes.empty(), true});
                            return value::undefined();
                        }),
                 0, false);
