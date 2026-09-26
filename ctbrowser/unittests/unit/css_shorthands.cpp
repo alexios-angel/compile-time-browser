@@ -48,6 +48,14 @@ void test_white_space_is_a_shorthand() {
     // block-step-valid: `size || insert || align || round`, written in that order.
     CHECK_EQ(set_and_read("block-step", "content-box 100px up"), std::string{"100px content-box"});
     CHECK_EQ(set_and_read("block-step", "none auto up margin-box"), std::string{"none"});
+    // mask-valid: a layer's boxes need not stand together, and fold back as one.
+    CHECK_EQ(set_and_read("mask", "intersect no-clip space round 1px 2px / contain stroke-box "
+                                  "url(\"m.svg\") luminance"),
+             std::string{"url(\"m.svg\") 1px 2px / contain space round stroke-box no-clip "
+                         "intersect luminance"});
+    CHECK_EQ(set_and_read("mask", "border-box no-clip"), std::string{"no-clip"});
+    CHECK_EQ(set_and_read("mask", "content-box content-box"), std::string{"content-box"});
+    CHECK_EQ(set_and_read("mask", "stroke-box no-clip view-box"), std::string{});
 }
 
 // animation-shorthand, animation-valid, animation-name-valid/invalid.

@@ -27,6 +27,7 @@ enum class shape : std::uint8_t {
     sides,           // 1-4 values: top, right, bottom, left, in `margin`'s way
     pair,            // 1-2 values: start/end, x/y or row/column; one sets both
     background,      // comma-separated layers, with color in the final layer only
+    mask,            // CSS Masking 1 §7.1: comma-separated `<mask-layer>`s
     border_image,    // source || slice [ / width? [ / outset ]? ] || repeat
     radius,          // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
     place,           // `place-*`: an align value then a justify one, each of several words
@@ -253,6 +254,10 @@ inline constexpr shorthand_syntax table[] = {
      "font-variant-ligatures font-variant-caps font-variant-alternates font-variant-numeric "
      "font-variant-east-asian font-variant-position font-variant-emoji",
      ""},
+    {"mask", shape::mask,
+     "mask-image mask-position mask-size mask-repeat mask-origin mask-clip mask-composite "
+     "mask-mode",
+     ""},
     {"background", shape::background,
      "background-color background-image background-position background-size "
      "background-repeat background-attachment background-origin background-clip",
@@ -426,10 +431,14 @@ bool split_border_image(std::string_view value, std::vector<std::string> & out);
 
 bool split_background(std::string_view value, std::vector<std::string> & out);
 
+bool split_mask(std::string_view value, std::vector<std::string> & out);
+
 [[nodiscard]] std::string fold_radius(std::span<const std::string> values);
 
 [[nodiscard]] std::string fold_border_image(std::span<const std::string> v);
 
 [[nodiscard]] std::string fold_background(std::span<const std::string> v);
+
+[[nodiscard]] std::string fold_mask(std::span<const std::string> v);
 
 } // namespace ctbrowser::style::css::shorthand_detail

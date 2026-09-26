@@ -87,6 +87,46 @@ namespace ctbrowser::style::css::shorthand_detail {
     return out;
 }
 
+// `mask`, folded per layer in its longhands' order with the initial values
+// left out: the position when it or the size is not initial, the size after
+// a `/`, and one box for an origin and clip that agree - none at all for
+// `border-box` - or `no-clip` alone after the initial origin; `none` for a
+// layer that is all initial (mask-valid, mask-computed).
+[[nodiscard]] std::string fold_mask(std::span<const std::string> v) {
+    const auto names = longhands_of("mask");
+    std::array<std::vector<std::string_view>, 8> lists;
+    for (std::size_t i = 0; i < lists.size(); ++i) {
+        lists[i] = split_top_level(v[i], ",");
+        if (lists[i].size() != lists[0].size()) { return {}; }
+    }
+    std::string out;
+    for (std::size_t layer = 0; layer < lists[0].size(); ++layer) {
+        std::vector<std::string> parts;
+        const auto value = [&](std::size_t i) {
+            return std::string{trim(lists[i][layer], html_whitespace)};
+        };
+        const auto initial = [&](std::size_t i) { return value(i) == initial_of(names[i]); };
+        if (!initial(0)) { parts.push_back(value(0)); }
+        if (!initial(1) || !initial(2)) {
+            parts.push_back(value(1));
+            if (!initial(2)) { parts.push_back("/ " + value(2)); }
+        }
+        if (!initial(3)) { parts.push_back(value(3)); }
+        if (value(4) == value(5)) {
+            if (!initial(4)) { parts.push_back(value(4)); }
+        } else if (initial(4) && value(5) == "no-clip") {
+            parts.emplace_back("no-clip");
+        } else {
+            parts.push_back(value(4));
+            parts.push_back(value(5));
+        }
+        if (!initial(6)) { parts.push_back(value(6)); }
+        if (!initial(7)) { parts.push_back(value(7)); }
+        out += (layer == 0 ? "" : ", ") + (parts.empty() ? std::string{"none"} : join(parts));
+    }
+    return out;
+}
+
 // `font`, folded: the keywords that are not `normal`, the size, ` / ` and
 // the line-height when it is not `normal`, then the family - CSS Fonts 4
 // §3.1's canonical form, which getComputedStyle reads back too, so the
@@ -301,6 +341,7 @@ namespace ctbrowser::style::css::shorthand_detail {
     case shape::radius: return fold_radius(v);
     case shape::border_image: return fold_border_image(v);
     case shape::background: return fold_background(v);
+    case shape::mask: return fold_mask(v);
     case shape::pair:
     case shape::place: return v[0] == v[1] ? v[0] : join(v);
     case shape::grid_lines: return fold_grid_lines(v);

@@ -739,6 +739,98 @@ bool split_background(std::string_view value, std::vector<std::string> & out) {
     return true;
 }
 
+// `mask`, CSS Masking 1 §7.1: per comma-separated layer `<mask-reference> ||
+// <position> [ / <bg-size> ]? || <repeat-style> || <geometry-box> || [
+// <geometry-box> | no-clip ] || <compositing-operator> || <masking-mode>`,
+// each part through its longhand's grammar. The boxes need not stand
+// together: one sets the origin and the clip, a second - or `no-clip` - the
+// clip alone.
+bool split_mask(std::string_view value, std::vector<std::string> & out) {
+    const auto names = longhands_of("mask");
+    const auto layers = split_top_level(value, ",");
+    if (layers.empty()) { return false; }
+    const token_stream ts = tokenize(value);
+    int depth = 0;
+    std::size_t commas = 0;
+    for (const css_token & token : ts.tokens) {
+        if (token.type == token_type::function || token.type == token_type::open_paren) { ++depth; }
+        if (token.type == token_type::close_paren) { --depth; }
+        if (depth == 0 && token.type == token_type::comma) { ++commas; }
+    }
+    if (commas + 1 != layers.size()) { return false; }
+    out.assign(names.size(), {});
+    for (std::size_t layer = 0; layer < layers.size(); ++layer) {
+        std::vector<std::string> values;
+        for (const auto name : names) { values.emplace_back(initial_of(name)); }
+        std::array<bool, 8> given{};
+        const std::string spaced = space_slashes(layers[layer]);
+        const auto parts = split_top_level(spaced, html_whitespace);
+        if (parts.empty()) { return false; }
+        std::vector<std::string> boxes;
+        std::size_t at = 0;
+        const auto take = [&](std::size_t component, std::size_t maximum) {
+            if (given[component]) { return false; }
+            for (std::size_t count = std::min(maximum, parts.size() - at); count > 0; --count) {
+                const std::string_view text{parts[at].data(),
+                                            static_cast<std::size_t>(parts[at + count - 1].data() +
+                                                                     parts[at + count - 1].size() -
+                                                                     parts[at].data())};
+                const value_check checked = check_declaration(
+                    component == 0 ? "border-image-source" : names[component], text, false);
+                if (!checked.valid || (component == 0 && checked.uses_unknown_function) ||
+                    is_wide_keyword(checked.serialized)) {
+                    continue;
+                }
+                values[component] = checked.serialized;
+                given[component] = true;
+                at += count;
+                return true;
+            }
+            return false;
+        };
+        const auto keyword = [&](std::size_t component, std::string_view set) {
+            if (given[component] || !has_keyword(set, ascii_lower_copy(parts[at]))) {
+                return false;
+            }
+            values[component] = ascii_lower_copy(parts[at++]);
+            given[component] = true;
+            return true;
+        };
+        while (at < parts.size()) {
+            if (ascii_iequals_any(parts[at], {"content-box", "padding-box", "border-box",
+                                              "fill-box", "stroke-box", "view-box", "no-clip"})) {
+                boxes.push_back(ascii_lower_copy(parts[at++]));
+                continue;
+            }
+            if (keyword(6, "add subtract intersect exclude") ||
+                keyword(7, "alpha luminance match-source") || take(0, 1) || take(3, 2)) {
+                continue;
+            }
+            if (!take(1, 4)) { return false; }
+            if (at < parts.size() && parts[at] == "/") {
+                ++at;
+                if (!take(2, 2)) { return false; }
+            }
+        }
+        const auto clip_only = [](const std::string & box) { return box == "no-clip"; };
+        if (boxes.size() > 2 || (boxes.size() == 2 && clip_only(boxes[0]) && clip_only(boxes[1]))) {
+            return false;
+        }
+        if (boxes.size() == 1) {
+            if (!clip_only(boxes[0])) { values[4] = boxes[0]; }
+            values[5] = boxes[0];
+        } else if (boxes.size() == 2) {
+            const bool swapped = clip_only(boxes[0]);
+            values[4] = boxes[swapped ? 1 : 0];
+            values[5] = boxes[swapped ? 0 : 1];
+        }
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            out[i] += (layer == 0 ? "" : ", ") + values[i];
+        }
+    }
+    return true;
+}
+
 // A value's halves either side of its one top-level `/`, EMPTY ONES KEPT:
 // `/ 10px` is a first half missing, not a value without a slash, which is
 // what split_top_level - skipping empty fields - made of it. The value alone
@@ -886,6 +978,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::pair: return split_positional(e, parts, out);
     case shape::radius: return split_radius(value, out) ? split::ok : split::invalid;
     case shape::background: return split_background(value, out) ? split::ok : split::invalid;
+    case shape::mask: return split_mask(value, out) ? split::ok : split::invalid;
     case shape::border_image: return split_border_image(value, out) ? split::ok : split::invalid;
     case shape::place: {
         std::string align, justify;
