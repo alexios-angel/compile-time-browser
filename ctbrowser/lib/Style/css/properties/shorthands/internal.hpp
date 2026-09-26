@@ -28,6 +28,7 @@ enum class shape : std::uint8_t {
     pair,            // 1-2 values: start/end, x/y or row/column; one sets both
     background,      // comma-separated layers, with color in the final layer only
     mask,            // CSS Masking 1 §7.1: comma-separated `<mask-layer>`s
+    position_try,    // `position-try`: `<'position-try-order'>? <'position-try-fallbacks'>`
     border_image,    // source || slice [ / width? [ / outset ]? ] || repeat
     radius,          // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
     place,           // `place-*`: an align value then a justify one, each of several words
@@ -254,6 +255,7 @@ inline constexpr shorthand_syntax table[] = {
      "font-variant-ligatures font-variant-caps font-variant-alternates font-variant-numeric "
      "font-variant-east-asian font-variant-position font-variant-emoji",
      ""},
+    {"position-try", shape::position_try, "position-try-order position-try-fallbacks", ""},
     {"mask", shape::mask,
      "mask-image mask-position mask-size mask-repeat mask-origin mask-clip mask-composite "
      "mask-mode",
@@ -432,6 +434,8 @@ bool split_border_image(std::string_view value, std::vector<std::string> & out);
 bool split_background(std::string_view value, std::vector<std::string> & out);
 
 bool split_mask(std::string_view value, std::vector<std::string> & out);
+
+split split_position_try(std::string_view value, std::vector<std::string> & out);
 
 [[nodiscard]] std::string fold_radius(std::span<const std::string> values);
 

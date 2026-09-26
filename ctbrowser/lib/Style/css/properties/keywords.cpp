@@ -861,6 +861,96 @@ constexpr pair_grammar pair_grammars[] = {
     return std::nullopt;
 }
 
+// A <'position-area'> as position-try-fallbacks lists it (CSS Anchor
+// Positioning 1 §3.1): one or two keywords of one grammar - x with y, block
+// with inline, self-block with self-inline, or two axis-free ones - with
+// `center` and `span-all` fitting any, the horizontal or block keyword
+// written first and a repeated one once. Lowercase words in.
+[[nodiscard]] std::optional<std::string> position_area(std::vector<std::string> words) {
+    const auto family = [](std::string_view w) {
+        if (w == "center" || w == "span-all") { return 0; }
+        static constexpr std::pair<std::string_view, int> sets[] = {
+            {"left right span-left span-right x-start x-end span-x-start span-x-end self-x-start "
+             "self-x-end span-self-x-start span-self-x-end",
+             1},
+            {"top bottom span-top span-bottom y-start y-end span-y-start span-y-end self-y-start "
+             "self-y-end span-self-y-start span-self-y-end",
+             2},
+            {"block-start block-end span-block-start span-block-end", 3},
+            {"inline-start inline-end span-inline-start span-inline-end", 4},
+            {"self-block-start self-block-end span-self-block-start span-self-block-end", 5},
+            {"self-inline-start self-inline-end span-self-inline-start span-self-inline-end", 6},
+            {"start end span-start span-end", 7},
+            {"self-start self-end span-self-start span-self-end", 8}};
+        for (const auto & [set, id] : sets) {
+            if (has_keyword(set, w)) { return id; }
+        }
+        return -1;
+    };
+    if (words.empty() || words.size() > 2) { return std::nullopt; }
+    for (const std::string & w : words) {
+        if (family(w) < 0) { return std::nullopt; }
+    }
+    if (words.size() == 1) { return words[0]; }
+    const int a = family(words[0]), b = family(words[1]);
+    // 1 pairs with 2, 3 with 4, 5 with 6; the axis-free ones with their own.
+    const auto partner = [](int f) {
+        return f >= 1 && f <= 6 ? ((f % 2) != 0 ? f + 1 : f - 1) : f;
+    };
+    if (a != 0 && b != 0 && partner(a) != b) { return std::nullopt; }
+    if (a == 2 || a == 4 || a == 6 || b == 1 || b == 3 || b == 5) { std::swap(words[0], words[1]); }
+    if (words[0] == words[1]) { return words[0]; }
+    return words[0] + " " + words[1];
+}
+
+// `none | [ [ <dashed-ident> || <try-tactic> ] | <'position-area'> ]#` (CSS
+// Anchor Positioning 1 §5.2), a <try-tactic> being flip-block, flip-inline,
+// flip-start, flip-x and flip-y, each once: written with the name first and
+// the tactics in the author's order.
+[[nodiscard]] std::optional<std::string> position_try_fallbacks(const token_stream & ts,
+                                                                const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.size() == 1 && ts.tokens[at[0]].type == token_type::ident &&
+        ascii_iequals(ts.text_of(ts.tokens[at[0]]), "none")) {
+        return "none";
+    }
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return std::nullopt; }
+    std::string out;
+    for (const std::vector<std::size_t> & item : *items) {
+        std::string name;
+        std::vector<std::string> tactics, words;
+        for (const std::size_t i : item) {
+            if (ts.tokens[i].type != token_type::ident) { return std::nullopt; }
+            const std::string_view word = ts.text_of(ts.tokens[i]);
+            if (word.starts_with("--")) {
+                if (!name.empty()) { return std::nullopt; }
+                name = std::string{word};
+                continue;
+            }
+            const std::string lower = ascii_lower_copy(word);
+            if (has_keyword("flip-block flip-inline flip-start flip-x flip-y", lower)) {
+                if (std::ranges::find(tactics, lower) != tactics.end()) { return std::nullopt; }
+                tactics.push_back(lower);
+            } else {
+                words.push_back(lower);
+            }
+        }
+        std::string one;
+        if (!words.empty()) {
+            if (!name.empty() || !tactics.empty()) { return std::nullopt; }
+            const std::optional<std::string> area = position_area(words);
+            if (!area) { return std::nullopt; }
+            one = *area;
+        } else {
+            one = name;
+            for (const std::string & t : tactics) { one += (one.empty() ? "" : " ") + t; }
+        }
+        out += (out.empty() ? "" : ", ") + one;
+    }
+    return out;
+}
+
 // `normal | none | [ <content-replacement> | <content-list> ] [ / [ <string> |
 // <counter> | <attr()> ]+ ]?` (CSS Generated Content 3 §2), with counter() and
 // counters() as CSS Lists 3 §4 writes them and symbols() as CSS Counter Styles 3
@@ -1347,6 +1437,10 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
     if (!handled && ascii_iequals(property, "font-palette")) {
         handled = true;
         answer = font_palette(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "position-try-fallbacks")) {
+        handled = true;
+        answer = position_try_fallbacks(ts, found);
     }
     // `content` is only checked here; the freeform path writes a valid one.
     if (!handled && ascii_iequals(property, "content") && !content_valid(ts, found)) {

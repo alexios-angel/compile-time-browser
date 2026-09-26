@@ -56,6 +56,14 @@ void test_white_space_is_a_shorthand() {
     CHECK_EQ(set_and_read("mask", "border-box no-clip"), std::string{"no-clip"});
     CHECK_EQ(set_and_read("mask", "content-box content-box"), std::string{"content-box"});
     CHECK_EQ(set_and_read("mask", "stroke-box no-clip view-box"), std::string{});
+    // position-try-parsing, position-try-fallbacks-parsing.
+    CHECK_EQ(set_and_read("position-try", "most-width flip-y flip-x, --foo, top left"),
+             std::string{"most-width flip-y flip-x, --foo, left top"});
+    CHECK_EQ(set_and_read("position-try", "normal flip-inline --foo"),
+             std::string{"--foo flip-inline"});
+    CHECK_EQ(set_and_read("position-try", "none normal"), std::string{});
+    CHECK_EQ(set_and_read("position-try-fallbacks", "start start, --foo left"), std::string{});
+    CHECK_EQ(set_and_read("position-try-fallbacks", "start start"), std::string{"start"});
 }
 
 // animation-shorthand, animation-valid, animation-name-valid/invalid.

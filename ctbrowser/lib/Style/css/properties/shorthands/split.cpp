@@ -831,6 +831,25 @@ bool split_mask(std::string_view value, std::vector<std::string> & out) {
     return true;
 }
 
+// `position-try`, CSS Anchor Positioning 1 §5.4: an order keyword only when
+// something follows it, and the rest the fallbacks' own grammar.
+split split_position_try(std::string_view value, std::vector<std::string> & out) {
+    const std::string_view text = trim(value, html_whitespace);
+    const std::size_t space = text.find_first_of(" \t\n\r\f");
+    std::string order = "normal";
+    std::string_view rest = text;
+    if (space != std::string_view::npos &&
+        ascii_iequals_any(text.substr(0, space), {"normal", "most-width", "most-height",
+                                                  "most-block-size", "most-inline-size"})) {
+        order = ascii_lower_copy(text.substr(0, space));
+        rest = trim(text.substr(space), html_whitespace);
+    }
+    const value_check fallbacks = check_declaration("position-try-fallbacks", rest, false);
+    if (!fallbacks.valid || is_wide_keyword(fallbacks.serialized)) { return split::invalid; }
+    out = {order, fallbacks.serialized};
+    return split::ok;
+}
+
 // A value's halves either side of its one top-level `/`, EMPTY ONES KEPT:
 // `/ 10px` is a first half missing, not a value without a slash, which is
 // what split_top_level - skipping empty fields - made of it. The value alone
@@ -979,6 +998,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::radius: return split_radius(value, out) ? split::ok : split::invalid;
     case shape::background: return split_background(value, out) ? split::ok : split::invalid;
     case shape::mask: return split_mask(value, out) ? split::ok : split::invalid;
+    case shape::position_try: return split_position_try(value, out);
     case shape::border_image: return split_border_image(value, out) ? split::ok : split::invalid;
     case shape::place: {
         std::string align, justify;
