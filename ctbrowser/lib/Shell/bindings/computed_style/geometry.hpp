@@ -576,6 +576,12 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         // `10%` rather than as a share of a containing block it does not
         // have. Same sentence, same rule, as `width` above.
         if (!at.has_box) { return computed_length(text); }
+        // An out-of-flow box's percentages are of ITS containing block, the
+        // positioned ancestor's padding box, not of its parent (CSS 2.1
+        // §10.1; padding-computed's absolutely positioned target).
+        const bool out_of_flow = at.position == layout::position_kind::absolute ||
+                                 at.position == layout::position_kind::fixed;
+        const float percent_basis = out_of_flow ? at.containing.width : at.basis;
         // A MATH FUNCTION THE CASCADE COULD NOT FOLD is folded here, against
         // the containing block: this is the used value, and the used value
         // is where `round(10%, 1px)` finally has a basis. A percentage in a
@@ -586,7 +592,7 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
             ctx.root_font_size = at.root_font_size;
             ctx.viewport_width = static_cast<float>(viewport_width_);
             ctx.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
-            ctx.percent_basis = at.basis;
+            ctx.percent_basis = percent_basis;
             const style::css::math_answer used = style::css::evaluate_math(text, ctx);
             if (used.outcome == style::css::math_outcome::resolved &&
                 used.value.type == style::css::numeric_type::length && !used.value.has_percent) {
@@ -595,6 +601,9 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
                 double px = used.value.px;
                 if (std::isnan(px)) { px = 0; }
                 if (std::isinf(px)) { px = std::copysign(33554432.0, px); }
+                // ...and a padding is never negative, `calc(10% - 40px)`
+                // against a narrow block included (CSS Box 4 §4.2).
+                if (property.starts_with("padding-")) { px = std::max(px, 0.0); }
                 return px_text(static_cast<float>(px));
             }
         }
@@ -615,6 +624,18 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
             // other length answers `auto` still - a width, an inset, which
             // have their own rows above.
             if (at.frag != nullptr && property.starts_with("margin-")) {
+                // AN ANIMATED `auto` IS NOT THE FRAGMENT'S - layout placed the
+                // box on the cascade's margin. On the block axis, and beside
+                // an `auto` width that leaves no remainder, an auto margin is
+                // zero (CSS 2.1 §10.3.3, §10.6.3; margin-left-composition).
+                // ponytail: a definite width's centring remainder is not
+                // recomputed; the fragment's margin stands for it.
+                const bool animated =
+                    !at.chain.empty() && text != declared_on(at.chain.front(), property);
+                if (animated && (at.box == nullptr || at.box->width.is_auto() ||
+                                 property == "margin-top" || property == "margin-bottom")) {
+                    return "0px";
+                }
                 const layout::fragment & f = *at.frag;
                 return px_text(property == "margin-left"    ? f.margin_left
                                : property == "margin-right" ? f.margin_right
@@ -637,7 +658,7 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         if (len.u == layout::unit::percent && is_min_or_max_property(property)) {
             return std::string{text};
         }
-        return px_text(len.resolve(at.basis, at.font_size));
+        return px_text(len.resolve(percent_basis, at.font_size));
     }
     return std::nullopt;
 }
