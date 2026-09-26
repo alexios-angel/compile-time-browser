@@ -499,6 +499,15 @@ void dom_bindings::update_css_transitions(
             if (name == property) { before_value = trim(text, html_whitespace); }
         }
         const std::string after_value = resolved(after, value_on(after, *atoms_, property));
+        // Whether the pair interpolates is asked under the AFTER-CHANGE
+        // style's `interpolate-size` (CSS Values 5 §interpolate-size,
+        // interpolate-size-which-value).
+        style::css::length_context sizing;
+        sizing.interpolate_keywords =
+            ascii_iequals(value_on(after, *atoms_, "interpolate-size"), "allow-keywords");
+        const auto interpolates = [&](std::string_view from, std::string_view to) {
+            return style::interpolable_text(as, from, to, sizing);
+        };
 
         const auto start = [&](const std::string & from, const std::string & to, double start_delay,
                                double active, double factor, const std::string & reversing_start) {
@@ -538,7 +547,7 @@ void dom_bindings::update_css_transitions(
 
         if (existing == no_record) {
             if (before_value != after_value && combined > 0 &&
-                (discrete_ok || transitionable(as, before_value, after_value))) {
+                (discrete_ok || interpolates(before_value, after_value))) {
                 start(before_value, after_value, delay, duration, 1, before_value);
             }
             continue;
@@ -552,7 +561,7 @@ void dom_bindings::update_css_transitions(
             if (running.end_value == after_value) { continue; }
             cancel_record(existing);
             if (before_value != after_value && combined > 0 &&
-                (discrete_ok || transitionable(as, before_value, after_value))) {
+                (discrete_ok || interpolates(before_value, after_value))) {
                 start(before_value, after_value, delay, duration, 1, before_value);
             }
             continue;
@@ -561,7 +570,7 @@ void dom_bindings::update_css_transitions(
         // The running transition's end moved. Its current value is what the
         // before-change style carries.
         if (before_value == after_value || combined <= 0 ||
-            !(discrete_ok || transitionable(as, before_value, after_value))) {
+            !(discrete_ok || interpolates(before_value, after_value))) {
             cancel_record(existing);
             continue;
         }

@@ -336,11 +336,49 @@ void test_composition() {
                          context) == "rotate3d(1, 0, 0, 30deg)");
 }
 
+// CSS Values 5 §calc-size: both sides canonicalized onto one basis - a length
+// basis is `any`, a percentage basis `100%`, a nested calc-size() folded in -
+// and the calculations blended with `size` kept as a term; a keyword meets a
+// length only under `interpolate-size: allow-keywords`.
+void test_calc_size_interpolation() {
+    ctbrowser::style::css::length_context context;
+    CHECK(interpolate_text("height", "calc-size(auto, size)", "calc-size(auto, size * 2)", 0.5,
+                           context) == "calc-size(auto, size * 1.5)");
+    CHECK(interpolate_text("height", "calc-size(20px, size)", "calc-size(60px, size)", 0.75,
+                           context) == "calc-size(any, 50px)");
+    CHECK(interpolate_text("height", "calc-size(50%, size)", "calc-size(50px, size)", 0, context) ==
+          "calc-size(100%, 0px + size * 0.5)");
+    CHECK(interpolate_text("height", "auto", "calc-size(any, 50px)", 0.75, context) ==
+          "calc-size(auto, 37.5px + size * 0.25)");
+    CHECK(interpolate_text("height", "calc-size(calc-size(auto, size / 2), size * 2)",
+                           "calc-size(auto, size * 5)", 0.75,
+                           context) == "calc-size(auto, size * 4)");
+    CHECK(!interpolable_text("height", "auto", "calc-size(50px, size)"));
+    CHECK(!interpolable_text("height", "calc-size(auto, size)", "calc-size(50%, size)"));
+    CHECK(!interpolable_text("height", "fit-content", "calc-size(min-content, size)"));
+    CHECK(!interpolable_text("width", "auto", "10px"));
+    // A nest that doubles its text at every level is refused, not expanded.
+    std::string nest = "auto";
+    for (int i = 0; i < 20; ++i) { nest = "calc-size(" + nest + ", size / 2 + size / 2)"; }
+    CHECK(!interpolable_text("height", nest, "calc-size(auto, size * 3)"));
+
+    context.interpolate_keywords = true;
+    CHECK(interpolable_text("width", "auto", "10px", context));
+    CHECK(!interpolable_text("width", "auto", "min-content", context));
+    CHECK(interpolate_text("min-height", "auto", "20px", 0.3, context) ==
+          "calc-size(auto, 6px + size * 0.7)");
+    CHECK(interpolate_text("min-height", "10px", "min-content", -0.3, context) ==
+          "calc-size(min-content, 13px + size * -0.3)");
+    CHECK(interpolate_text("min-height", "auto", "0px", 0, context) ==
+          "calc-size(auto, 0px + size * 1)");
+}
+
 } // namespace
 
 int main() {
     test_easing();
     test_interpolation();
     test_composition();
+    test_calc_size_interpolation();
     REPORT("style_easing");
 }

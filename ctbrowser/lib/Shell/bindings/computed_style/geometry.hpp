@@ -1,6 +1,8 @@
 #pragma once
 #include "internal.hpp"
 
+#include <ctbrowser/shell/metrics.hpp>
+
 namespace ctbrowser::shell::detail {
 [[nodiscard]] inline const layout::box_node * box_for(const layout::box_node * root, node_id id) {
     if (root == nullptr || !id) { return nullptr; }
@@ -95,6 +97,10 @@ struct computed_probe {
     const layout::fragment * frag = nullptr;
     float basis = 0;        // the containing block's content width
     float basis_height = 0; // and its content height, for a relative inset
+    // ...WHICH IS A PERCENTAGE'S BASIS only when the parent's own height is
+    // definite (CSS 2.1 §10.5); layout's `height: 50%` under an auto-height
+    // parent is `auto`, and an animated one must agree.
+    bool definite_height = true;
     float font_size = 16;
     float root_font_size = 16; // the <html> element's, for a `rem` folded here
     // Is this element a FLEX ITEM? A fact about its parent rather than about it,
@@ -136,6 +142,53 @@ struct computed_probe {
     // and fragment stand in for the parent's, and `declared` reads this style.
     style::computed_style_ptr pseudo;
 };
+
+// AN ANIMATED WIDTH OR HEIGHT, which layout never saw, in the box box-sizing
+// names (the author's number names that box, so the specified size IS the used
+// one). A length resolves against the containing block as a pseudo-element's
+// does. A keyword, or a calc-size() over one, runs its calculation over the
+// size the keyword names for this box (CSS Values 5 §calc-size): on the block
+// axis the height the content came to, which the fragment kept whatever the
+// cascade's height was, or the containing block's for `stretch`; on the
+// inline axis layout's own answer for the keyword. A percentage of an
+// indefinite height is `auto` (CSS 2.1 §10.5) - and so is a whole calc-size()
+// over one, the `100%` an interpolation canonicalizes a percentage basis to -
+// while a percentage inside a calculation is zero there. nullopt where the box
+// cannot say, and the fragment's size stands.
+[[nodiscard]] inline std::optional<float> animated_size(const computed_probe & at, bool horizontal,
+                                                        std::string_view text) {
+    layout::length len = layout::parse_length(text);
+    const bool indefinite = !horizontal && !at.definite_height;
+    if (indefinite && len.u == layout::unit::percent) { len = layout::length{}; }
+    const float basis = horizontal ? at.basis : at.basis_height;
+    if (!len.is_auto() && !len.is_intrinsic()) { return len.resolve(basis, at.font_size); }
+    if (at.box == nullptr || at.frag == nullptr) { return std::nullopt; }
+    const layout::constraints c{at.basis, at.basis_height, at.font_size};
+    const layout::resolved_edges e = layout::resolve_edges(*at.box, c);
+    const bool border_box = at.box->border_box;
+    if (horizontal) {
+        // ponytail: text is measured in the built-in 8x8 face, not the page's
+        // fonts - the bindings are not handed the browser's measure; hand it
+        // over when an animated intrinsic width over text has to be exact.
+        const float border = layout::intrinsic_border_width(*at.box, c, e, font8x8_metrics(), len);
+        return border_box ? border : border - e.horizontal_inner();
+    }
+    const float inner = e.vertical_inner();
+    std::string_view keyword = trim(text, html_whitespace);
+    while (ascii_istarts_with(keyword, "calc-size(")) {
+        keyword = trim(keyword.substr(10), html_whitespace);
+    }
+    float content = 0;
+    if (ascii_istarts_with(keyword, "stretch") && !indefinite) {
+        content = at.basis_height - e.margin_top - e.margin_bottom - inner;
+    } else if (at.frag->auto_height >= 0) {
+        content = at.frag->auto_height - inner;
+    } else {
+        return std::nullopt;
+    }
+    const float size = std::max(0.0f, content) + (border_box ? inner : 0.0f);
+    return len.apply(size, indefinite ? 0.0f : basis, at.font_size);
+}
 
 // A disengaged result leaves the property's remaining non-geometric rules to the caller.
 // Callbacks retain the already-gathered cascade state without copying or type erasure.
@@ -184,15 +237,11 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         if (!at.has_box || at.inline_non_replaced || at.frag == nullptr) { return as_computed(); }
         const bool horizontal = property == "width";
         // AN ANIMATED SIZE IS NOT THE FRAGMENT'S: layout ran on the cascade's
-        // value, and a running animation's is the one owed - resolved, as a
-        // pseudo-element's is above, against the containing block. (The
-        // specified size IS the used one in whichever box box-sizing names.)
+        // value, and a running animation's is the one owed.
         if (const std::string_view animated = declared(property);
             !at.chain.empty() && animated != declared_on(at.chain.front(), property)) {
-            const layout::length len = layout::parse_length(animated);
-            if (!len.is_auto() && !len.is_intrinsic()) {
-                return used_px_text(std::max(
-                    0.0f, len.resolve(horizontal ? at.basis : at.basis_height, at.font_size)));
+            if (const std::optional<float> size = animated_size(at, horizontal, animated)) {
+                return used_px_text(std::max(0.0f, *size));
             }
         }
         float used = horizontal ? at.frag->bounds.width : at.frag->bounds.height;

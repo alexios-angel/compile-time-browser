@@ -13,6 +13,11 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
     ctx.font_size = font_size;
     ctx.viewport_width = static_cast<float>(viewport_width_);
     ctx.viewport_height = static_cast<float>(viewport_height_);
+    // The element's own `interpolate-size`, not a keyframe's: an animation
+    // cannot change how it interpolates itself (CSS Values 5
+    // §interpolate-size, interpolate-size-which-value).
+    ctx.interpolate_keywords =
+        ascii_iequals(trim(underlying("interpolate-size"), html_whitespace), "allow-keywords");
     // THE CONTAINERS A KEYFRAME'S `cq*` UNITS MEASURE (CSS Conditional 5
     // §4), as the cascade finds them: the nearest ancestor size container on
     // each axis, its content box as last laid out.

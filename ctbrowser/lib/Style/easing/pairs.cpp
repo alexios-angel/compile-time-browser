@@ -313,6 +313,319 @@ struct gap_shape {
                      trim(text.substr(comma + 1, text.size() - comma - 2), html_whitespace)};
 }
 
+// --- calc-size() and the intrinsic size keywords (CSS Values 5 §calc-size) ---
+
+// The properties calc-size() and interpolate-size apply to: the widths and
+// heights, their logical names, their minimums and maximums, and flex-basis.
+[[nodiscard]] bool sizing_property(std::string_view property) {
+    if (property.starts_with("min-") || property.starts_with("max-")) { property.remove_prefix(4); }
+    return property == "width" || property == "height" || property == "inline-size" ||
+           property == "block-size" || property == "flex-basis";
+}
+
+// An INTRINSIC SIZE KEYWORD: one a calc-size() may take as its basis, and one
+// interpolate-size lets interpolate.
+[[nodiscard]] bool size_keyword(std::string_view text) {
+    return ascii_iequals_any(
+        text, {"auto", "min-content", "max-content", "fit-content", "stretch", "content"});
+}
+
+// `calc` with every `size` in it replaced by `(by)`: how a basis that is a
+// calc-size() or a length folds into the calculation over it. nullopt when the
+// result WOULD pass `limit` bytes, which is checked before anything is built -
+// a nest of calc-size()s doubles its text at every level, and CSS Values 5
+// ("substitute into a calc-size calculation", step 3) lets the UA refuse an
+// expansion past its limit, which makes the pair not interpolable
+// (csswg-drafts#10369).
+[[nodiscard]] std::optional<std::string> substitute_size(std::string_view calc, std::string_view by,
+                                                         std::size_t limit) {
+    const auto name = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+               c == '-' || c == '_';
+    };
+    const auto size_at = [&](std::size_t i) {
+        return ascii_iequals(calc.substr(i, 4), "size") && (i == 0 || !name(calc[i - 1])) &&
+               (i + 4 == calc.size() || !name(calc[i + 4]));
+    };
+    std::size_t count = 0;
+    for (std::size_t i = 0; i < calc.size(); ++i) { count += size_at(i) ? 1 : 0; }
+    if (calc.size() + count * (by.size() + 2) > limit + count * 4) { return std::nullopt; }
+    std::string out;
+    out.reserve(calc.size() + count * (by.size() + 2));
+    for (std::size_t i = 0; i < calc.size();) {
+        if (size_at(i)) {
+            out += '(';
+            out += by;
+            out += ')';
+            i += 4;
+            continue;
+        }
+        out += calc[i++];
+    }
+    return out;
+}
+
+// A SIZE AS calc-size() INTERPOLATES IT: a basis and a calculation over it.
+struct size_form {
+    std::string basis;
+    std::string calc;
+};
+
+// The innermost basis of a nest of calc-size()s: the size it measures.
+[[nodiscard]] std::string_view innermost_basis(std::string_view text) {
+    while (const auto args = calc_size_args(text)) { text = args->first; }
+    return trim(text, html_whitespace);
+}
+
+// CANONICALIZED FOR INTERPOLATION (CSS Values 5 §calc-size): a basis that is
+// itself a calc-size() folds its calculation in for `size`; a basis that is a
+// length becomes `any`, the length standing for `size`; a basis with a
+// percentage in it becomes `100%`, its share of that standing for `size` - a
+// percentage the containing block cannot resolve makes the value `auto`, so it
+// may not become `any`. A keyword is calc-size(keyword, size), and any other
+// <length-percentage> calc-size(any, it). nullopt past the expansion limit.
+[[nodiscard]] std::optional<size_form> canonical_size(std::string_view text,
+                                                      const css::length_context & ctx) {
+    // ponytail: a fixed text budget is the UA's expansion limit; the
+    // specification leaves its size to the UA.
+    constexpr std::size_t expansion_limit = 4096;
+    text = trim(text, html_whitespace);
+    const auto args = calc_size_args(text);
+    if (!args) {
+        if (size_keyword(text)) { return size_form{ascii_lower_copy(text), "size"}; }
+        return size_form{"any", std::string{text}};
+    }
+    const std::string_view basis = args->first;
+    const std::string_view calc = args->second;
+    if (calc_size_args(basis)) {
+        std::optional<size_form> inner = canonical_size(basis, ctx);
+        if (!inner) { return std::nullopt; }
+        std::optional<std::string> folded = substitute_size(calc, inner->calc, expansion_limit);
+        if (!folded) { return std::nullopt; }
+        return size_form{std::move(inner->basis), std::move(*folded)};
+    }
+    if (size_keyword(basis) || ascii_iequals(basis, "any")) {
+        return size_form{ascii_lower_copy(basis), std::string{calc}};
+    }
+    const std::optional<numeric_pair> n = numeric_of(basis, basis, ctx);
+    if (!n || n->a.is_number) { return std::nullopt; }
+    std::string by{basis};
+    if (n->a.has_percent) {
+        // `P%` is P/100 of `100%`, and `calc(P% + L)` adds its length to that.
+        by = css::serialize_number(n->a.percent / 100) + " * size";
+        if (n->a.px != 0) {
+            by += (n->a.px < 0 ? " - " : " + ") + css::serialize_number(std::fabs(n->a.px)) + "px";
+        }
+    }
+    std::optional<std::string> folded = substitute_size(calc, by, expansion_limit);
+    if (!folded) { return std::nullopt; }
+    return size_form{n->a.has_percent ? "100%" : "any", std::move(*folded)};
+}
+
+// Is `text` a <length-percentage> - the plain side a calc-size() meets?
+[[nodiscard]] bool length_like(std::string_view text, const css::length_context & ctx) {
+    const std::optional<numeric_pair> n = numeric_of(text, text, ctx);
+    return n && (!n->a.is_number || n->a.px == 0);
+}
+
+// TWO SIZES ON ONE BASIS, each with its calculation, or nullopt when
+// calc-size() cannot put them on one: a calc-size() pairs with another, or with
+// a <length-percentage>; an intrinsic keyword with a calc-size() over that
+// keyword or over `any` - and, under `interpolate-size: allow-keywords`, with a
+// <length-percentage>. Two keywords never interpolate. `sized` is false when
+// neither side is a calc-size() or a keyword, which leaves the pair to the
+// ordinary numeric rules.
+struct size_pair_forms {
+    std::string basis;
+    std::string calc_a, calc_b;
+};
+[[nodiscard]] std::optional<size_pair_forms> size_pair(std::string_view a, std::string_view b,
+                                                       const css::length_context & ctx,
+                                                       bool & sized) {
+    a = trim(a, html_whitespace);
+    b = trim(b, html_whitespace);
+    const bool calc_a = calc_size_args(a).has_value();
+    const bool calc_b = calc_size_args(b).has_value();
+    const bool key_a = size_keyword(a);
+    const bool key_b = size_keyword(b);
+    sized = calc_a || calc_b || key_a || key_b;
+    if (!sized || (key_a && key_b)) { return std::nullopt; }
+    const auto meets = [&](bool key, std::string_view keyword, bool calc, std::string_view other) {
+        if (!key) { return true; }
+        if (calc) {
+            const std::string_view inner = innermost_basis(other);
+            return ascii_iequals(inner, keyword) || ascii_iequals(inner, "any");
+        }
+        return ctx.interpolate_keywords && length_like(other, ctx);
+    };
+    if (!meets(key_a, a, calc_b, b) || !meets(key_b, b, calc_a, a)) { return std::nullopt; }
+    if ((calc_a && !calc_b && !key_b && !length_like(b, ctx)) ||
+        (calc_b && !calc_a && !key_a && !length_like(a, ctx))) {
+        return std::nullopt;
+    }
+    std::optional<size_form> fa = canonical_size(a, ctx);
+    std::optional<size_form> fb = canonical_size(b, ctx);
+    if (!fa || !fb) { return std::nullopt; }
+    if (fa->basis != fb->basis && fa->basis != "any" && fb->basis != "any") { return std::nullopt; }
+    std::string basis = fa->basis == "any" ? std::move(fb->basis) : std::move(fa->basis);
+    return size_pair_forms{std::move(basis), std::move(fa->calc), std::move(fb->calc)};
+}
+
+// A calc-size() CALCULATION READ AS `k * size + lengths`: the grammar of a
+// <calc-sum> with `size` a term, kept linear - a product has at most one side
+// that is not a number. nullopt for anything else (`sign(size) * size`), which
+// then blends as written.
+struct size_sum {
+    double size = 0;
+    css::calc_result lengths;
+    bool has_size = false, has_lengths = false, number = false;
+};
+struct size_sum_reader {
+    std::string_view text;
+    const css::length_context & ctx;
+    std::size_t at = 0;
+
+    void skip_space() {
+        while (at < text.size() && (text[at] == ' ' || text[at] == '\t' || text[at] == '\n')) {
+            ++at;
+        }
+    }
+    static void scale(size_sum & s, double by) {
+        s.size *= by;
+        s.lengths.px *= by;
+        s.lengths.percent *= by;
+    }
+    [[nodiscard]] std::optional<size_sum> sum() {
+        std::optional<size_sum> left = product();
+        while (left) {
+            skip_space();
+            if (at >= text.size() || (text[at] != '+' && text[at] != '-')) { break; }
+            const double sign = text[at] == '-' ? -1 : 1;
+            ++at;
+            const std::optional<size_sum> right = product();
+            if (!right || left->number != right->number) { return std::nullopt; }
+            left->size += sign * right->size;
+            left->lengths.px += sign * right->lengths.px;
+            left->lengths.percent += sign * right->lengths.percent;
+            left->lengths.has_percent = left->lengths.has_percent || right->lengths.has_percent;
+            left->has_size = left->has_size || right->has_size;
+            left->has_lengths = left->has_lengths || right->has_lengths;
+        }
+        return left;
+    }
+    [[nodiscard]] std::optional<size_sum> product() {
+        std::optional<size_sum> left = factor();
+        while (left) {
+            skip_space();
+            if (at >= text.size() || (text[at] != '*' && text[at] != '/')) { break; }
+            const bool divide = text[at] == '/';
+            ++at;
+            std::optional<size_sum> right = factor();
+            if (!right) { return std::nullopt; }
+            if (divide) {
+                if (!right->number || right->lengths.px == 0) { return std::nullopt; }
+                scale(*left, 1 / right->lengths.px);
+            } else if (right->number) {
+                scale(*left, right->lengths.px);
+            } else if (left->number) {
+                const double by = left->lengths.px;
+                left = std::move(right);
+                scale(*left, by);
+            } else {
+                return std::nullopt;
+            }
+        }
+        return left;
+    }
+    [[nodiscard]] std::optional<size_sum> factor() {
+        skip_space();
+        if (at >= text.size()) { return std::nullopt; }
+        if (text[at] == '(' || ascii_iequals(text.substr(at, 5), "calc(")) {
+            at += text[at] == '(' ? 1 : 5;
+            std::optional<size_sum> inner = sum();
+            skip_space();
+            if (!inner || at >= text.size() || text[at] != ')') { return std::nullopt; }
+            ++at;
+            return inner;
+        }
+        // One token - `size`, a number, a dimension, a percentage - or a
+        // whole function, which the evaluator answers or nothing does.
+        const std::size_t start = at;
+        int depth = 0;
+        while (at < text.size()) {
+            const char c = text[at];
+            if (depth == 0 && (c == ' ' || c == '\t' || c == '\n' || c == ')' || c == '*' ||
+                               c == '/' || c == ',')) {
+                break;
+            }
+            if (c == '(') { ++depth; }
+            if (c == ')') { --depth; }
+            ++at;
+        }
+        const std::string_view token = text.substr(start, at - start);
+        if (ascii_iequals(token, "size")) {
+            size_sum out;
+            out.size = 1;
+            out.has_size = true;
+            return out;
+        }
+        const std::optional<numeric_pair> n = numeric_of(token, token, ctx);
+        if (!n || (!n->a.is_number && n->a.type != css::numeric_type::length)) {
+            return std::nullopt;
+        }
+        size_sum out;
+        out.lengths = n->a;
+        out.number = n->a.is_number;
+        out.has_lengths = !out.number;
+        if (!out.number) {
+            out.lengths.type = css::numeric_type::length;
+            out.lengths.is_number = false;
+        }
+        return out;
+    }
+};
+
+[[nodiscard]] std::optional<size_sum> size_sum_of(std::string_view calc,
+                                                  const css::length_context & ctx) {
+    size_sum_reader reader{calc, ctx};
+    std::optional<size_sum> out = reader.sum();
+    reader.skip_space();
+    if (!out || reader.at != calc.size() || out->number) { return std::nullopt; }
+    return out;
+}
+
+// TWO CALCULATIONS OVER ONE BASIS, BLENDED: `a * (1 - p) + b * p`, simplified
+// as calc() simplifies a sum (CSS Values 4 §10.10.1) - the lengths fold into
+// one, and `size` keeps a factor of its own: `auto` to `20px` at 0.3 is
+// `6px + size * 0.7` (interpolate-size-min-height-interpolation). A
+// calculation that is not linear in `size` is kept whole, each side times its
+// weight.
+[[nodiscard]] std::string blend_calcs(std::string_view a, std::string_view b, double p,
+                                      const css::length_context & ctx) {
+    const std::optional<size_sum> x = size_sum_of(a, ctx);
+    const std::optional<size_sum> y = size_sum_of(b, ctx);
+    if (!x || !y) {
+        return "(" + std::string{a} + ") * " + css::serialize_number(1 - p) + " + (" +
+               std::string{b} + ") * " + css::serialize_number(p);
+    }
+    std::string out;
+    if (x->has_lengths || y->has_lengths) {
+        css::calc_result lengths = mix(x->lengths, y->lengths, p);
+        if (lengths.px == 0) { lengths.px = 0; } // no `-0px`
+        std::string text = css::serialize_calc(lengths);
+        if (ascii_istarts_with(text, "calc(") && text.ends_with(')')) {
+            text = text.substr(5, text.size() - 6);
+        }
+        out = std::move(text);
+    }
+    if (x->has_size || y->has_size) {
+        double k = (1 - p) * x->size + p * y->size;
+        if (k == 0) { k = 0; }
+        out += (out.empty() ? "size * " : " + size * ") + css::serialize_number(k);
+    }
+    return out.empty() ? std::string{"0px"} : out;
+}
+
 // CSS Values 4 §4.1: two values interpolate when they are one number, length
 // or percentage each; two colours; or LISTS of the same shape -
 // comma-separated, then space-separated - whose items pair off as one of
@@ -456,20 +769,19 @@ struct gap_shape {
         return legacy_color(from) && legacy_color(to) ? lerp_color(*a, *b, p)
                                                       : lerp_oklab(*a, *b, p);
     }
-    // calc-size(A, B) with calc-size(C, D) interpolates A with C and B with D
-    // (CSS Values 5 §10.3); a calc-size() against a plain value is discrete.
-    if (const auto a = calc_size_args(from), b = calc_size_args(to); a || b) {
-        if (!a || !b) {
+    // A calc-size() OR AN INTRINSIC KEYWORD interpolates as calc-size() does
+    // (CSS Values 5 §calc-size): both sides canonicalized onto one basis and
+    // their calculations blended - or not at all, which is discrete.
+    if (sizing_property(property)) {
+        bool sized = false;
+        if (const std::optional<size_pair_forms> pair = size_pair(from, to, ctx, sized)) {
+            return "calc-size(" + pair->basis + ", " +
+                   blend_calcs(pair->calc_a, pair->calc_b, p, ctx) + ")";
+        }
+        if (sized) {
             interpolable = false;
             return std::string{p < 0.5 ? from : to};
         }
-        const std::string basis =
-            interpolate_pair(property, a->first, b->first, p, ctx, interpolable);
-        if (!interpolable) { return std::string{p < 0.5 ? from : to}; }
-        const std::string calc =
-            interpolate_pair(property, a->second, b->second, p, ctx, interpolable);
-        if (!interpolable) { return std::string{p < 0.5 ? from : to}; }
-        return "calc-size(" + basis + ", " + calc + ")";
     }
     if (const std::optional<numeric_pair> n = numeric_of(from, to, ctx)) {
         return numeric_text(property, mix(n->a, n->b, p));

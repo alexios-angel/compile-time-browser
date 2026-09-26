@@ -165,6 +165,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             const node_id parent = at.chain[1];
             const layout::box_node * up_box = box_for(boxes_, parent);
             at.flex_item = up_box != nullptr && up_box->kind == layout::box_kind::flex;
+            at.definite_height =
+                up_box == nullptr || !(up_box->height.is_auto() || up_box->height.is_intrinsic());
             if (const layout::fragment * up = fragment_for(fragments_, parent)) {
                 at.basis = up->bounds.width;
                 at.basis_height = up->bounds.height;

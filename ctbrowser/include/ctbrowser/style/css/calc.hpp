@@ -83,6 +83,11 @@ struct length_context {
     std::uint64_t element_key = 0;
     std::string_view property;
     std::uint32_t random_index = 0;
+    // THE ELEMENT'S `interpolate-size` IS `allow-keywords` (CSS Values 5
+    // §interpolate-size): an intrinsic size keyword then interpolates with a
+    // <length-percentage> as `calc-size(<keyword>, size)`. Only an
+    // animation asks; every other context leaves it off.
+    bool interpolate_keywords = false;
 };
 
 // WHICH OF CSS'S NUMERIC TYPES a math function came out as. CSS Values 4 §10.2
