@@ -84,6 +84,31 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-number-read-protected": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number'));
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-protected-snapshot": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number'));
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    throw anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-number-read-protected-return": """function customElements(anchor) {
+  try {
+    const saved = Number(anchor.getAttribute('data-number'));
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -572,6 +597,20 @@ def main():
             "write-number-read-unknown-getter": "const saved = Number(anchor.unknown); try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
             "write-number-read-invalid-name": "const saved = Number(anchor.getAttribute('data-number')); try { anchor.setAttribute('bad name', saved); throw anchor; } catch (error) { return error === anchor; }",
             "write-number-read-mixed-join": "const saved = anchor.hasAttribute('data-closed') ? Number(anchor.getAttribute('data-number')) : anchor; try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-without-intrinsic": "try { const saved = Number(anchor.getAttribute('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-rebound-intrinsic": "try { Number = anchor; const saved = Number(anchor.getAttribute('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-coercing-input": "try { const saved = Number(anchor); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-unknown-getter": "try { const saved = Number(anchor.unknown); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-unknown-producer": "try { const saved = Number(anchor.unknown()); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-rebound-getter": "try { anchor.getAttribute = anchor.setAttribute; const saved = Number(anchor.getAttribute('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-wrong-getter-receiver": "try { const get = anchor.getAttribute; const saved = Number(get('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-missing-getter-argument": "try { const saved = Number(anchor.getAttribute()); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-extra-getter-argument": "try { const saved = Number(anchor.getAttribute('data-number', 'extra')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-coercing-getter-name": "try { const saved = Number(anchor.getAttribute(anchor)); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-extra-number-argument": "try { const saved = Number(anchor.getAttribute('data-number'), 42); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-wrong-number-receiver": "try { const saved = Number.call(anchor, anchor.getAttribute('data-number')); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-invalid-name": "try { const saved = Number(anchor.getAttribute('data-number')); anchor.setAttribute('bad name', saved); throw anchor; } catch (error) { return error === anchor; }",
+            "write-number-read-protected-mixed-join": "try { const saved = Number(anchor.hasAttribute('data-closed') ? anchor.getAttribute('data-number') : anchor); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
             "mixed-protected-throw-call": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { decodeURIComponent('%'); throw anchor; } } catch (error) { return error === anchor; } return false;",
             "mixed-rethrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { throw error; } return false;",
             "mixed-return-borrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { return error; } return false;",
