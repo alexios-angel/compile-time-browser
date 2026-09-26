@@ -71,7 +71,10 @@ inline auto context::define_builtin_global(std::string name, value v) -> void {
 
 inline auto context::mark_globals_builtin() -> void {
     realm_record & realm = current_realm();
-    for (const auto & [name, held] : realm.globals) { realm.builtin[name] = true; }
+    for (const auto & [name, held] : realm.globals) {
+        realm.builtin[name] = true;
+        intrinsic_names_[name] = true;
+    }
 }
 
 inline auto context::declare_global_var(std::string name, bool configurable) -> void {

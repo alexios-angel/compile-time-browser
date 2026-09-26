@@ -34,7 +34,23 @@ public:
     void define_builtin_global(std::string name, value v);
     // Every name the current realm has becomes a platform name: the last step
     // of install_builtins, whose intrinsics are all ECMA-262 clause 19's.
+    // The names are remembered as the INTRINSICS, so a builtin global marked
+    // after them is the host's - a platform interface (is_intrinsic_name).
     void mark_globals_builtin();
+    [[nodiscard]] bool is_intrinsic_name(std::string_view name) const {
+        return intrinsic_names_.contains(name);
+    }
+    // THE HOST'S SERIALIZABLE INTERFACES (HTML 2.7.2 [Serializable]): an
+    // instance of one of these structuredClone copies - its own properties,
+    // internal ones included, onto a fresh object of the same interface
+    // prototype. An instance of any OTHER platform interface - a builtin
+    // global's prototype that is not an intrinsic's - is a DataCloneError.
+    void set_serializable_interfaces(std::vector<std::string> names) {
+        for (std::string & name : names) { serializable_interfaces_[std::move(name)] = true; }
+    }
+    [[nodiscard]] bool serializable_interface(std::string_view name) const {
+        return serializable_interfaces_.contains(name);
+    }
 
     // CreateGlobalVarBinding (9.1.1.4.17): a script's or an eval's `var` - a
     // new binding is undefined, and a name the global object already owns,
@@ -965,6 +981,8 @@ private:
     // See set_realm_template.
     string_flat_map<value> realm_template_;
     string_flat_map<bool> realm_template_builtin_;
+    string_flat_map<bool> intrinsic_names_;         // see mark_globals_builtin
+    string_flat_map<bool> serializable_interfaces_; // see set_serializable_interfaces
     std::vector<value> registers_;
     std::vector<call_frame> frames_;
     // WHERE THE TYPE ORACLE'S OBSERVATIONS GO, or null - and null selects the
