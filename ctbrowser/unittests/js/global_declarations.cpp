@@ -65,5 +65,44 @@ int main() {
     expect({"let a;", "var b; let a;", "b;"}, "ReferenceError");
     // A binding everywhere, and not a property of the global object.
     expect({"let a = 1;", "if (this.hasOwnProperty('a') || a !== 1) { throw 0; }"}, "ok");
+    // A script's function is { writable, enumerable, !configurable } (9.1.1.4.18
+    // CreateGlobalFunctionBinding with D false), so `delete` refuses it.
+    expect({"function f() {}", "var d = Object.getOwnPropertyDescriptor(globalThis, 'f');"
+                               "if (d.configurable || !d.enumerable || delete globalThis.f) {"
+                               " throw 0; }"},
+           "ok");
+    // CanDeclareGlobalVar / CanDeclareGlobalFunction: a TypeError, and nothing
+    // is created.
+    expect({"Object.preventExtensions(globalThis);", "var nope;"}, "TypeError");
+    expect({"Object.preventExtensions(globalThis);", "function nope() {}"}, "TypeError");
+    expect({"Object.defineProperty(globalThis, 'd',"
+            " {value: 0, writable: true, enumerable: false, configurable: false});",
+            "var x; function d() {}", "x;"},
+           "ReferenceError");
+    expect({"Object.defineProperty(globalThis, 'd',"
+            " {value: 0, writable: true, enumerable: true, configurable: false});",
+            "function d() {}", "if (typeof d !== 'function') { throw 0; }"},
+           "ok");
+    // for-in over the global object names the bindings the table holds: an
+    // eval's `var`, a plain assignment's global.
+    expect({"eval('var ev = 1;'); implicit = 2; var seen = '';"
+            "for (var k in globalThis) { if (k === 'ev' || k === 'implicit') { seen += k; } }"
+            "if (seen !== 'evimplicit' && seen !== 'implicitev') { throw seen; }"},
+           "ok");
+    // A global assignment to a data property the global object owns writes
+    // THAT property, attributes and all (9.1.1.4.5).
+    expect({"Object.defineProperty(globalThis, 'd',"
+            " {value: 'x', writable: true, enumerable: false, configurable: true});",
+            "d = 2; var o = Object.getOwnPropertyDescriptor(globalThis, 'd');"
+            "if (o.value !== 2 || o.enumerable || d !== 2) { throw 0; }"},
+           "ok");
+    // A Script (compile_script) refuses a top-level `return` and `new.target`;
+    // the embedder's program (compile) keeps its `return`.
+    check(!compiler::compile_script("return 1;").ok, "a Script's top-level return is refused");
+    check(!compiler::compile_script("new.target;").ok,
+          "a Script's top-level new.target is refused");
+    check(compiler::compile_script("function f() { return new.target; }").ok,
+          "a Script's function may return new.target");
+    check(compiler::compile("return 1;").ok, "an embedder's program may return");
     REPORT("global_declarations");
 }

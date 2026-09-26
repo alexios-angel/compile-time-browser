@@ -25,11 +25,15 @@ namespace {
 namespace {
 // `site` is null for a program an embedder runs, and an eval's otherwise.
 program compile_source(std::string_view source, script_kind kind, const eval_site * site,
-                       std::span<const eval_binding> outer = {});
+                       std::span<const eval_binding> outer = {}, bool script_goal = false);
 } // namespace
 
 program compiler::compile(std::string_view source, script_kind kind) {
     return compile_source(source, kind, nullptr);
+}
+
+program compiler::compile_script(std::string_view source) {
+    return compile_source(source, script_kind::classic, nullptr, {}, true);
 }
 
 program compiler::compile_for_eval(std::string_view source, const eval_site & site) {
@@ -44,7 +48,7 @@ program compiler::compile_for_direct_eval(std::string_view source,
 
 namespace {
 program compile_source(std::string_view source, script_kind kind, const eval_site * site,
-                       std::span<const eval_binding> outer) {
+                       std::span<const eval_binding> outer, bool script_goal) {
     // SOURCE TEXT IS TEXT: a stray 0xFF in a file handed over as bytes is the
     // U+FFFD decoding makes of it, before a string literal or a regular
     // expression can carry it into a constant and spell an internal key
@@ -87,8 +91,8 @@ program compile_source(std::string_view source, script_kind kind, const eval_sit
     // exactly that prefix to decide between phase `parse` and phase `refusal` -
     // a refusal being "the compiler does not implement this", which an early
     // error is emphatically not. See lib/Script/compile/early_errors.hpp.
-    if (const auto early =
-            detail::find_early_error(tree, source, kind == script_kind::module_, site)) {
+    if (const auto early = detail::find_early_error(tree, source, kind == script_kind::module_,
+                                                    site, script_goal)) {
         out.ok = false;
         out.error = "parse error: " + early->message;
         if (early->offset != detail::early_error::nowhere) {

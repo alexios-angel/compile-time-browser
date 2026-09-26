@@ -58,9 +58,13 @@ struct early_error {
 // `strict_root` says the whole program is strict code before any directive
 // is read - a module (16.2.1). `eval` says the source is an eval's, and where
 // the eval was (PerformEval's early errors, and its inherited strictness).
+// `script_goal` says the source is an ECMAScript Script rather than the
+// embedder's program (compiler::compile_script): a top-level `return` and
+// `new.target` are then the SyntaxErrors 16.1.1 makes them.
 [[nodiscard]] std::optional<early_error> find_early_error(const ctjs::vp::ast & tree,
                                                           std::string_view source,
                                                           bool strict_root = false,
-                                                          const eval_site * eval = nullptr);
+                                                          const eval_site * eval = nullptr,
+                                                          bool script_goal = false);
 
 } // namespace ctbrowser::script::detail

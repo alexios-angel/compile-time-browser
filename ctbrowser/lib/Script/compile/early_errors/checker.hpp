@@ -129,8 +129,9 @@ struct frame {
 class checker {
 public:
     checker(const vp::ast & tree, std::string_view source, bool strict_root,
-            const eval_site * eval = nullptr)
-        : ast_(tree), source_(source), strict_root_(strict_root), eval_(eval) {}
+            const eval_site * eval = nullptr, bool script_goal = false)
+        : ast_(tree), source_(source), strict_root_(strict_root), eval_(eval),
+          script_goal_(script_goal) {}
 
     void run();
 
@@ -365,6 +366,9 @@ private:
     // AN EVAL'S SOURCE, and where the eval was (19.2.1.1 steps 4-7): its top
     // level is that place's, not a script's - see run(). Null otherwise.
     const eval_site * eval_ = nullptr;
+    // AN ECMAScript Script, not the embedder's program (see find_early_error):
+    // the top level is [~Return] and may not contain `new.target`.
+    bool script_goal_ = false;
     std::size_t class_depth_ = 0; // inside a class body: strict code (15.7.1)
     std::vector<std::vector<std::string_view>> private_names_; // see check_private_reference
     // WALKING A FORMAL PARAMETER LIST of the innermost frame: `yield` and

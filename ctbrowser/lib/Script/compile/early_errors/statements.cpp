@@ -179,9 +179,9 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         // `test/corpus/babylon` another. Refusing it would refuse the
         // engine's own API to buy fifteen tests.
         //
-        // The honest fix is a script_kind that says "this source is a
-        // function body", which every embedder would have to pass; that is
-        // a change to callers this file does not own.
+        // So it is the other way round: a caller whose source IS a Script
+        // says so (compiler::compile_script, script_goal_) - ct262 for every
+        // test - and the contract stays the default.
         //
         // A STATIC BLOCK is [~Return] (15.7.1) and is not the top level.
         if (frames_.back().what == frame_kind::static_block) {
@@ -190,7 +190,7 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         // Nor is an EVAL'S top level: its source is a Script from script,
         // not an embedder's program, so the contract above does not reach it
         // - nor a MODULE'S (16.2.1: a ModuleItemList is [~Return]).
-        if ((eval_ != nullptr || module_()) && frames_.size() == 1) {
+        if ((eval_ != nullptr || module_() || script_goal_) && frames_.size() == 1) {
             report("`return` outside a function", idx);
         }
         walk_expression(n.a);

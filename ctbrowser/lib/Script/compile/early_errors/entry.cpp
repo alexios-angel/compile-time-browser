@@ -60,9 +60,10 @@ void checker::run() {
 using early::checker;
 
 std::optional<early_error> find_early_error(const ctjs::vp::ast & tree, std::string_view source,
-                                            bool strict_root, const eval_site * eval) {
+                                            bool strict_root, const eval_site * eval,
+                                            bool script_goal) {
     if (!tree.ok || tree.root < 0) { return std::nullopt; }
-    checker walk{tree, source, strict_root, eval};
+    checker walk{tree, source, strict_root, eval, script_goal};
     walk.run();
     return walk.result();
 }

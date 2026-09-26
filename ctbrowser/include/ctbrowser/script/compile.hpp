@@ -110,6 +110,13 @@ public:
     // with ok == false and error set, rather than throwing.
     [[nodiscard]] static program compile(std::string_view source,
                                          script_kind kind = script_kind::classic);
+    // An ECMAScript SCRIPT (16.1), parsed with the goal symbol the
+    // specification gives a classic script: a top-level `return` or
+    // `new.target` is a SyntaxError. compile() admits both - a program's
+    // top-level `return` is how it hands an embedder a value
+    // (run_result::returned) - so a caller whose source is a real Script, a
+    // test262 test, says so here.
+    [[nodiscard]] static program compile_script(std::string_view source);
     // `eval`'s shape: the program RETURNS the value of a trailing expression
     // statement (its completion value, 16.1.6 step 12 for the common case),
     // so `eval("1 + 1")` is 2. Otherwise the same classic script.
