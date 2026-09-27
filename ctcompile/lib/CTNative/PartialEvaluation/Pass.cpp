@@ -1,3 +1,4 @@
+#include "../Analysis/BindingTime/Effects.h"
 #include "ClosureProof.h"
 #include "Heap.h"
 
@@ -6,7 +7,6 @@
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/SymbolTable.h"
-#include "llvm/ADT/StringSet.h"
 
 namespace ctcompile::ctnative {
 
@@ -53,11 +53,7 @@ std::string environmentProblem(mlir::ModuleOp module,
             if (load->hasAttr(kNativeMapConstructor) || load->hasAttr(kNativeMapSnapshotBuiltin)) {
                 return;
             }
-            for (mlir::OpOperand & use : load.getResult().getUses()) {
-                if (!llvm::isa<ctjs::CallDirectOp>(use.getOwner()) || use.getOperandNumber() != 2) {
-                    reason = "module has host or mutable global reads";
-                }
-            }
+            if (!calleeSlotOnly(load)) { reason = "module has host or mutable global reads"; }
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(op);
             call && nativeMapAction(call).empty() && !call->hasAttr(kNativeMapSnapshotCopy) &&
@@ -96,13 +92,9 @@ std::string environmentProblem(mlir::ModuleOp module,
             reason = "module has dynamic property names";
             return;
         }
-        if (auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
-            static const llvm::StringSet<> prototypeNames{"__proto__", "prototype", "constructor",
-                                                          "__defineGetter__", "__defineSetter__"};
-            const auto name = text.getValue();
-            if (name.size() <= 16 && prototypeNames.contains(name)) {
-                reason = "module can inspect or mutate shared prototypes";
-            }
+        if (auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
+            text && !binding_time_detail::safeEffectKey(text.getValue())) {
+            reason = "module can inspect or mutate shared prototypes";
         }
     });
     return reason;
@@ -138,11 +130,7 @@ struct CTNativePartialEvaluatePass
         std::vector<rewrite> rewrites;
         unsigned evaluated = 0, nodes = 0, declined = 0;
         for (ctjs::FuncOp fn : functions) {
-            if (fn.getBody().empty() || callers[fn].empty() ||
-                mlir::SymbolTable::getSymbolVisibility(fn) !=
-                    mlir::SymbolTable::Visibility::Private) {
-                continue;
-            }
+            if (fn.getBody().empty() || callers[fn].empty() || !fn.isPrivate()) { continue; }
             const auto decline = [&](llvm::StringRef why) {
                 fn->setAttr("ctnative.partial_eval_reason",
                             mlir::StringAttr::get(&getContext(), why));

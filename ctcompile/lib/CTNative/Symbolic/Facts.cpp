@@ -73,11 +73,6 @@ llvm::StringRef typeName(unsigned domains) {
     default: return {};
     }
 }
-Fact yielded(mlir::Region & region, unsigned index, const Analysis & analysis) {
-    if (!llvm::hasSingleElement(region)) { return {}; }
-    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-    return yield && index < yield.getNumOperands() ? analysis.get(yield.getOperand(index)) : Fact{};
-}
 } // namespace
 
 Fact Analysis::operation(mlir::Operation * op) {
@@ -97,27 +92,16 @@ Fact Analysis::operation(mlir::Operation * op) {
             return {String, {}};
         }
         if (!left.domains || !right.domains) { return {}; }
-        switch (binary.getKind()) {
-        case ctjs::BinaryKind::Add:
+        if (binary.getKind() == ctjs::BinaryKind::Add) {
             if (left.domains == String || right.domains == String) {
                 return {String, {}};
             }
             return {(left.domains | right.domains) & String ? Number | String : Number, {}};
-        case ctjs::BinaryKind::Sub:
-        case ctjs::BinaryKind::Mul:
-        case ctjs::BinaryKind::Div:
-        case ctjs::BinaryKind::Mod:
-        case ctjs::BinaryKind::Pow:
-        // Known primitive domains exclude BigInt, so the bitwise six are Numbers
-        // here exactly as ctjs.binary_static's are below.
-        case ctjs::BinaryKind::Shl:
-        case ctjs::BinaryKind::Shr:
-        case ctjs::BinaryKind::UShr:
-        case ctjs::BinaryKind::BitAnd:
-        case ctjs::BinaryKind::BitOr:
-        case ctjs::BinaryKind::BitXor: return {Number, {}};
-        default: return {};
         }
+        // Known primitive domains exclude BigInt, so every other kind, the
+        // bitwise six included, is a Number here exactly as ctjs.binary_static's
+        // are below.
+        return {Number, {}};
     }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(op)) {
         const Fact left = get(binary.getLhs()), right = get(binary.getRhs());
@@ -194,20 +178,17 @@ bool Analysis::region(mlir::Region & body) {
         // remain unknown: an initializer is not a fact about every iteration.
         for (mlir::BlockArgument arg : block.getArguments()) { facts[arg] = arguments.lookup(arg); }
         for (mlir::Operation & op : block) {
-            if (!budget.take()) { return false; }
+            if (!budget.spend()) { return false; }
             for (mlir::Region & nested : op.getRegions()) {
                 if (!region(nested)) { return false; }
             }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
                 const auto take = condition(get(branch.getCondition()));
                 for (auto [index, result] : llvm::enumerate(op.getResults())) {
-                    facts[result] =
-                        take ? yielded(*take ? branch.getThenRegion() : branch.getElseRegion(),
-                                       static_cast<unsigned>(index), *this)
-                             : join(yielded(branch.getThenRegion(), static_cast<unsigned>(index),
-                                            *this),
-                                    yielded(branch.getElseRegion(), static_cast<unsigned>(index),
-                                            *this));
+                    const auto position = static_cast<unsigned>(index);
+                    const Fact yes = get(branch.thenYield().getOperand(position));
+                    const Fact no = get(branch.elseYield().getOperand(position));
+                    facts[result] = take ? (*take ? yes : no) : join(yes, no);
                 }
             } else {
                 const Fact result = operation(&op);
@@ -234,55 +215,22 @@ bool Analysis::collectCallers(llvm::ArrayRef<ctjs::FuncOp> functions) {
         // caller evidence. Reports and supplied native annotations are inert.
         auto charged = module.walk([&](mlir::Operation * op) {
             for (unsigned i = 0; i <= op->getNumOperands(); ++i) {
-                if (!budget.take()) { return mlir::WalkResult::interrupt(); }
+                if (!budget.spend()) { return mlir::WalkResult::interrupt(); }
             }
             return mlir::WalkResult::advance();
         });
         if (charged.wasInterrupted()) { return false; }
-        const auto uses = mlir::SymbolTable::getSymbolUses(fn, module);
-        if (!uses || !closedCallableProblem(fn, module).empty()) { continue; }
+        if (!closedCallableProblem(fn, module).empty()) { continue; }
         bool argumentsObject = false;
         fn.walk([&](ctjs::MakeArgumentsOp) { argumentsObject = true; });
         if (argumentsObject) { continue; } // Non-strict arguments.callee publishes this callable.
-        llvm::SmallVector<ctjs::CallDirectOp> sites;
-        bool closed = true;
-        for (const auto & use : *uses) {
-            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
-            if (!call || call.getTarget() != fn ||
-                call->getNumOperands() != fn.getBody().front().getNumArguments()) {
-                closed = false;
-                break;
-            }
-            sites.push_back(call);
-        }
         // Specialization may keep this closure as another symbol's boxed
         // dispatch value. Those actuals belong to the original function too;
         // leave it generic instead of using only its remaining symbolic calls.
-        const auto alternate = [&](mlir::Value value) {
-            return llvm::any_of(value.getUses(), [&](mlir::OpOperand & use) {
-                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-                return call && use.getOperandNumber() == 2 && call.getTarget() != fn;
-            });
-        };
-        const auto index = functionIndex(fn);
-        if (closed && index) {
-            module.walk([&](ctjs::CreateClosureOp made) {
-                if (made.getFunction() < 0 || static_cast<unsigned>(made.getFunction()) != *index) {
-                    return;
-                }
-                closed &= !alternate(made.getResult());
-                for (mlir::Operation * user : made.getResult().getUsers()) {
-                    auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(user);
-                    if (!store) { continue; }
-                    module.walk([&](ctjs::LoadGlobalOp load) {
-                        if (load.getName() == store.getName()) {
-                            closed &= !alternate(load.getResult());
-                        }
-                    });
-                }
-            });
+        auto sites = directCallers(fn, module);
+        if (sites && !sites->empty() && !hasAlternateCalleeCalls(fn, module)) {
+            callers[fn] = std::move(*sites);
         }
-        if (closed && !sites.empty()) { callers[fn] = std::move(sites); }
     }
     return true;
 }
@@ -303,7 +251,7 @@ void Analysis::run() {
                 Fact common;
                 bool first = true;
                 for (auto call : sites) {
-                    if (!budget.take()) { return; }
+                    if (!budget.spend()) { return; }
                     auto actual = get(call->getOperand(arg.getArgNumber()));
                     common = first ? actual : join(common, actual);
                     first = false;

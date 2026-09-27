@@ -5,38 +5,6 @@
 
 namespace ctcompile::ctnative {
 namespace {
-bool bookkeeping(ctjs::LoadGlobalOp load) {
-    return llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
-        return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-               (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) && use.getOperandNumber() == 2);
-    });
-}
-bool hasAlternateCalleeCalls(ctjs::FuncOp function, mlir::ModuleOp module) {
-    const auto index = functionIndex(function);
-    if (!index) { return false; }
-    const auto alternate = [&](mlir::Value value) {
-        return llvm::any_of(value.getUses(), [&](mlir::OpOperand & use) {
-            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-            return call && use.getOperandNumber() == 2 && call.getCallee() != function.getSymName();
-        });
-    };
-    bool found = false;
-    module.walk([&](ctjs::CreateClosureOp made) {
-        if (found || made.getFunction() < 0 ||
-            static_cast<unsigned>(made.getFunction()) != *index) {
-            return;
-        }
-        found |= alternate(made.getResult());
-        for (mlir::Operation * user : made.getResult().getUsers()) {
-            auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(user);
-            if (!store) { continue; }
-            module.walk([&](ctjs::LoadGlobalOp load) {
-                if (load.getName() == store.getName()) { found |= alternate(load.getResult()); }
-            });
-        }
-    });
-    return found;
-}
 bool sameFact(const binding_time_detail::fact & left, const binding_time_detail::fact & right) {
     // Reference identities form a set; traversal order is not a semantic
     // difference and must not keep a recursive worklist alive.
@@ -67,52 +35,27 @@ BindingTimeAnalysis::Impl::Impl(mlir::ModuleOp input,
 }
 
 void BindingTimeAnalysis::Impl::solveSummaries() {
-    llvm::SmallVector<ctjs::FuncOp> functions;
-    module.walk([&](ctjs::FuncOp fn) { functions.push_back(fn); });
-    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::FuncOp>> dependents;
-    module.walk([&](ctjs::CallDirectOp call) {
-        auto caller = call->getParentOfType<ctjs::FuncOp>();
-        auto target = call.getTarget();
-        if (caller && target && !llvm::is_contained(dependents[target], caller)) {
-            dependents[target].push_back(caller);
-        }
-    });
-    llvm::SmallVector<ctjs::FuncOp> pending;
-    llvm::SmallPtrSet<mlir::Operation *, 32> queued;
-    const auto enqueue = [&](ctjs::FuncOp fn) {
-        if (queued.insert(fn).second) { pending.push_back(fn); }
-    };
-    for (ctjs::FuncOp fn : llvm::reverse(functions)) { enqueue(fn); }
-    // Keep the former N+1 whole-module sweeps as a conservative work bound.
     // Summaries start incomplete; a recursive cycle cannot bootstrap a static
     // call merely because the return expression happens to be a literal.
-    const uint64_t count = static_cast<uint64_t>(functions.size());
-    const uint64_t limit = count * (count + 1);
-    uint64_t visits = 0;
-    while (!pending.empty() && visits < limit) {
-        ctjs::FuncOp fn = pending.pop_back_val();
-        queued.erase(fn);
+    const bool solved = binding_time_detail::solveCallerFixpoint(module, [&](ctjs::FuncOp fn) {
         const bool beforeComplete = complete.lookup(fn);
         const fact beforeResult = returns.lookup(fn);
         analyze(fn);
-        ++visits;
-        if (beforeComplete != complete.lookup(fn) || !sameFact(beforeResult, returns.lookup(fn))) {
-            for (ctjs::FuncOp caller : dependents[fn]) { enqueue(caller); }
-        }
-    }
-    if (pending.empty()) { return; }
+        return beforeComplete != complete.lookup(fn) || !sameFact(beforeResult, returns.lookup(fn));
+    });
+    if (solved) { return; }
     // An unfinished fixed point is not a proof. Re-derive local facts while
     // making every direct call dynamic; no stale summary survives exhaustion.
     returns.clear();
     complete.clear();
     facts.clear();
     decisions.clear();
-    for (ctjs::FuncOp fn : functions) {
+    module.walk([&](ctjs::FuncOp fn) {
         analyze(fn);
         returns[fn] = {};
         complete[fn] = false;
         decisions[fn] = {false, "function summary analysis budget exhausted"};
-    }
+    });
 }
 
 void BindingTimeAnalysis::Impl::seedArguments() {
@@ -128,7 +71,7 @@ void BindingTimeAnalysis::Impl::seedArguments() {
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
             load && !load->hasAttr(kNativeMapConstructor) &&
-            !load->hasAttr(kNativeMapSnapshotBuiltin) && !bookkeeping(load)) {
+            !load->hasAttr(kNativeMapSnapshotBuiltin) && !calleeSlotOnly(load, true)) {
             opaque = true;
         }
         if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op);
@@ -144,8 +87,7 @@ void BindingTimeAnalysis::Impl::seedArguments() {
         if (fn.getBody().empty()) { return; }
         auto & known = arguments[fn];
         known.resize(fn.getBody().front().getNumArguments());
-        if (opaque || callers[fn].empty() || fn.getUpvalueCount() != 0 ||
-            mlir::SymbolTable::getSymbolVisibility(fn) != mlir::SymbolTable::Visibility::Private ||
+        if (opaque || callers[fn].empty() || fn.getUpvalueCount() != 0 || !fn.isPrivate() ||
             !closedCallableProblem(fn, module).empty()) {
             return;
         }

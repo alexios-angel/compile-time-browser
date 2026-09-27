@@ -28,20 +28,14 @@ bool effectCalleeMatches(ctjs::CallDirectOp call, mlir::ModuleOp module) {
     }
     ctjs::CreateClosureOp made = value.getDefiningOp<ctjs::CreateClosureOp>();
     if (auto load = value.getDefiningOp<ctjs::LoadGlobalOp>()) {
-        unsigned stores = 0;
-        module.walk([&](ctjs::StoreGlobalOp store) {
-            if (store.getName() != load.getName()) { return; }
-            ++stores;
-            made = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
-        });
-        if (stores != 1 || !closedCallableProblem(target, module).empty()) { return false; }
+        auto store = ctjs::uniqueGlobalStore(module, load.getName());
+        if (!store || !closedCallableProblem(target, module).empty()) { return false; }
+        made = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
     }
     if (!made || made.getFunction() < 0 || static_cast<unsigned>(made.getFunction()) != *index) {
         return false;
     }
-    unsigned matches = 0;
-    module.walk([&](ctjs::FuncOp function) { matches += functionIndex(function) == index; });
-    return matches == 1;
+    return static_cast<bool>(ctjs::uniqueFunction(module, *index));
 }
 
 bool closedEffectEnvironment(mlir::ModuleOp module) {
@@ -57,9 +51,8 @@ bool closedEffectEnvironment(mlir::ModuleOp module) {
                 return;
             }
             auto & entry = function.getBody().front();
-            if (entry.getNumArguments() < 3 || (mlir::SymbolTable::getSymbolVisibility(function) !=
-                                                    mlir::SymbolTable::Visibility::Private &&
-                                                entry.getNumArguments() != 3)) {
+            if (entry.getNumArguments() < 3 ||
+                (!function.isPrivate() && entry.getNumArguments() != 3)) {
                 safe = false;
                 return;
             }
@@ -72,11 +65,7 @@ bool closedEffectEnvironment(mlir::ModuleOp module) {
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
             if (load->hasAttr(kNativeMapConstructor)) { return; }
-            safe = llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
-                return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-                       (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) &&
-                        use.getOperandNumber() == 2);
-            });
+            safe = calleeSlotOnly(load, true);
             return;
         }
         if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
@@ -93,12 +82,8 @@ bool closedEffectEnvironment(mlir::ModuleOp module) {
             return;
         }
         if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
-            unsigned matches = 0;
-            module.walk([&](ctjs::FuncOp function) {
-                matches += made.getFunction() >= 0 &&
-                           functionIndex(function) == static_cast<unsigned>(made.getFunction());
-            });
-            safe = matches == 1;
+            safe = made.getFunction() >= 0 &&
+                   ctjs::uniqueFunction(module, static_cast<unsigned>(made.getFunction()));
             return;
         }
         mlir::Value key;
@@ -128,13 +113,6 @@ bool closedEffectEnvironment(mlir::ModuleOp module) {
 
 namespace {
 constexpr unsigned maxQuerySteps = 4096, maxReachable = 256;
-bool clean(const fact & value, const flow & state) {
-    return value.time == BindingTime::Static && !value.nodes.empty() &&
-           llvm::all_of(value.nodes, [&](mlir::Operation * id) {
-               auto found = state.heaps.find(id);
-               return found != state.heaps.end() && !found->second.dynamic;
-           });
-}
 bool local(const fact & value, ctjs::FuncOp caller) {
     return llvm::all_of(value.nodes, [&](mlir::Operation * id) {
         return id->getParentOfType<ctjs::FuncOp>() == caller;

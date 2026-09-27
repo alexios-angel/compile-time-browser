@@ -1,5 +1,6 @@
 #include "Facts.h"
 
+#include "../PartialEvaluation/Heap.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/PatternMatch.h"
@@ -18,14 +19,7 @@ mlir::Attribute literal(mlir::Operation * op, const Analysis & analysis) {
     if (!known) { return {}; }
     const auto type = op->getResult(0).getType();
     if (auto integer = llvm::dyn_cast<mlir::IntegerType>(type)) {
-        if (auto original = llvm::dyn_cast<mlir::IntegerAttr>(known)) {
-            return mlir::IntegerAttr::get(integer,
-                                          original.getValue().zextOrTrunc(integer.getWidth()));
-        }
-        if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(known)) {
-            return mlir::IntegerAttr::get(integer, boolean.getValue());
-        }
-        return {};
+        return partial_eval::integerConstant(integer, known);
     }
     if (!llvm::isa<ctjs::ValueType>(type) || llvm::isa<mlir::IntegerAttr>(known)) { return {}; }
     return known;
@@ -55,15 +49,10 @@ struct Precompute : mlir::OpRewritePattern<Root> {
 bool select(mlir::scf::IfOp branch, bool take) {
     auto & selected = take ? branch.getThenRegion() : branch.getElseRegion();
     if (selected.empty()) {
-        if (branch.getNumResults() != 0) { return false; }
         branch.erase();
         return true;
     }
-    if (!llvm::hasSingleElement(selected) || selected.front().getNumArguments() != 0) {
-        return false;
-    }
-    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(selected.front().getTerminator());
-    if (!yield || yield.getNumOperands() != branch.getNumResults()) { return false; }
+    auto yield = take ? branch.thenYield() : branch.elseYield();
     for (auto [result, value] : llvm::zip(branch.getResults(), yield.getOperands())) {
         result.replaceAllUsesWith(value);
     }
@@ -75,7 +64,7 @@ bool select(mlir::scf::IfOp branch, bool take) {
 }
 } // namespace
 
-Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, Budget & budget) {
+Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, WorkBudget & budget) {
     // The patterns capture this invocation's analysis by reference; the
     // frozen set and applicator are destroyed before it goes out of scope.
     // Truthiness returns i1 and arith.trunci an integer, so those two become
@@ -110,7 +99,7 @@ Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, Budget & budge
     Changes changes;
     mlir::PatternRewriter rewriter(module.getContext());
     for (mlir::Operation * op : candidates) {
-        if (!budget.take()) { break; }
+        if (!budget.spend()) { break; }
         if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
             if (auto take = condition(analysis.get(branch.getCondition()));
                 take && select(branch, *take)) {

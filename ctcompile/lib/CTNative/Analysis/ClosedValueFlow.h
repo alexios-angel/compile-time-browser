@@ -4,6 +4,7 @@
 #include "OwnedMethodTableSlots.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
+#include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -32,12 +33,32 @@ struct closedValueFlow {
     auto nodes() const {
         return llvm::map_range(classes, [](const auto * node) { return node->getData(); });
     }
-    static bool closed(ctjs::FuncOp fn) {
-        return fn && !fn.getBody().empty() &&
-               mlir::SymbolTable::getSymbolVisibility(fn) == mlir::SymbolTable::Visibility::Private;
-    }
+    static bool closed(ctjs::FuncOp fn) { return fn && !fn.getBody().empty() && fn.isPrivate(); }
     static bool exactCall(ctjs::CallDirectOp call, ctjs::FuncOp fn) {
         return closed(fn) && call->getNumOperands() == fn.getBody().front().getNumArguments();
+    }
+    // A declared entry parameter of a closed function with visible callers.
+    bool closedParameter(mlir::BlockArgument arg) {
+        auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
+        return closed(fn) && arg.getOwner() == &fn.getBody().front() && arg.getArgNumber() >= 3 &&
+               !callers[fn].empty();
+    }
+    // Every visible call of a closedParameter's function is exact.
+    bool exactCallers(mlir::BlockArgument arg) {
+        auto fn = llvm::cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
+        return llvm::all_of(callers[fn],
+                            [&](ctjs::CallDirectOp call) { return exactCall(call, fn); });
+    }
+    // An exact call of a closed function with visible returns.
+    bool closedResult(ctjs::CallDirectOp call) {
+        auto fn = call.getTarget();
+        return exactCall(call, fn) && !returns[fn].empty();
+    }
+    // An erased capture, or a capture into a proved native closure environment.
+    static bool captured(mlir::OpOperand & use) {
+        return erasedCapture(use) ||
+               (llvm::isa<ctjs::CreateClosureOp>(use.getOwner()) && use.getOperandNumber() >= 2 &&
+                !environmentTarget(use.getOwner()).empty());
     }
     // Only the returned-table census requests these structural storage edges.
     // Other flow consumers must not acquire new escape permissions implicitly.

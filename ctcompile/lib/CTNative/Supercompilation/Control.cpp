@@ -59,9 +59,7 @@ Bindings commonBindings(llvm::ArrayRef<mlir::Attribute> ancestor,
 }
 
 std::string refusal(ctjs::FuncOp function, mlir::ModuleOp module) {
-    if (!functionIndex(function) || function->getParentOp() != module ||
-        mlir::SymbolTable::getSymbolVisibility(function) !=
-            mlir::SymbolTable::Visibility::Private ||
+    if (!functionIndex(function) || function->getParentOp() != module || !function.isPrivate() ||
         !llvm::hasSingleElement(function.getBody()) || function.getUpvalueCount() != 0) {
         return "requires a private indexed capture-free kernel with one entry block";
     }
@@ -69,12 +67,7 @@ std::string refusal(ctjs::FuncOp function, mlir::ModuleOp module) {
     if (entry.getNumArguments() < 3 || !entry.hasNoPredecessors()) {
         return "kernel has unsupported entry arguments";
     }
-    for (unsigned i = 0; i < 3; ++i) {
-        if (llvm::any_of(entry.getArgument(i).getUsers(),
-                         [](mlir::Operation * use) { return !llvm::isa<ctjs::RootOp>(use); })) {
-            return "kernel observes implicit call state";
-        }
-    }
+    if (!implicitArgumentsRooted(entry)) { return "kernel observes implicit call state"; }
     std::string problem = closedCallableProblem(function, module);
     bool recursive = false;
     function.getBody().walk([&](mlir::Operation * op) {

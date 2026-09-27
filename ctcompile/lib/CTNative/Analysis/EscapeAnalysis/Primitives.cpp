@@ -190,15 +190,22 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
     return std::nullopt;
 }
 
+std::optional<std::int64_t> signedConvertedNumber(const ContentsValue & input) {
+    if (const auto positive = boundedConvertedNumber(input)) {
+        return static_cast<std::int64_t>(*positive);
+    }
+    if (const auto negative = boundedConvertedNumber(input, true)) {
+        return -static_cast<std::int64_t>(*negative);
+    }
+    return std::nullopt;
+}
+
 // Bitwise conversion accepts an original Number or bounded String. Arithmetic and
 // property keys still require their separate exact Number/spelling proofs.
 std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
     if (input.convertedBits) { return input.convertedBits; }
-    if (const auto positive = boundedConvertedNumber(input)) {
-        return static_cast<std::uint32_t>(*positive);
-    }
-    if (const auto negative = boundedConvertedNumber(input, true)) {
-        return 0U - static_cast<std::uint32_t>(*negative);
+    if (const auto number = signedConvertedNumber(input)) {
+        return static_cast<std::uint32_t>(*number);
     }
     if (const auto number = boundedStringNumber(input)) {
         return ctbrowser::number_to_uint32(*number);
@@ -237,27 +244,14 @@ std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
 void boundedNumberComplement(const ContentsValue & input, ContentsValue & result) {
     const auto converted = boundedConvertedBits(input);
     if (!converted) { return; }
-    // Complement exact ToUint32 bits, then recover the signed Number magnitude
-    // without signed overflow. Facts attach only to the result's identity.
-    const std::uint32_t bits = ~*converted;
-    if (bits < 2147483648ULL) {
-        result.integerNumber = bits;
-    } else {
-        result.negativeIntegerNumber = 4294967296ULL - bits;
-    }
+    // Complement exact ToUint32 bits, then recover the signed ToInt32 Number.
+    // Facts attach only to the result's identity.
+    result.setSigned(static_cast<std::int32_t>(~*converted));
 }
 
 void boundedNumberBitwise(const ContentsValue & left, const ContentsValue & right,
                           ctjs::BinaryKind kind, ContentsValue & result) {
-    switch (kind) {
-    case ctjs::BinaryKind::BitAnd:
-    case ctjs::BinaryKind::BitOr:
-    case ctjs::BinaryKind::BitXor:
-    case ctjs::BinaryKind::Shl:
-    case ctjs::BinaryKind::Shr:
-    case ctjs::BinaryKind::UShr: break;
-    default: return;
-    }
+    if (!ctjs::isBitwise(kind)) { return; }
     const auto a = boundedConvertedBits(left);
     const auto b = boundedConvertedBits(right);
     // Bounded primitive operands use Core's ToUint32 conversion. Mask counts;
@@ -274,11 +268,8 @@ void boundedNumberBitwise(const ContentsValue & left, const ContentsValue & righ
             : kind == ctjs::BinaryKind::Shr
                 ? static_cast<std::uint32_t>(static_cast<std::int32_t>(x) >> (y & 31U))
                 : x >> (y & 31U);
-        if (kind == ctjs::BinaryKind::UShr || bits < 2147483648ULL) {
-            result.integerNumber = bits;
-        } else {
-            result.negativeIntegerNumber = 4294967296ULL - bits;
-        }
+        result.setSigned(kind == ctjs::BinaryKind::UShr ? static_cast<std::int64_t>(bits)
+                                                        : static_cast<std::int32_t>(bits));
     }
 }
 
@@ -419,60 +410,37 @@ void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
     // Strings cannot borrow the numeric proof used by the other operations.
     if (left.string() || right.string()) { return; }
     boundedNumberArithmetic(left, right, ctjs::BinaryKind::Add, result);
-    const auto a = boundedConvertedNumber(left);
-    const auto b = boundedConvertedNumber(right);
-    // Both original primitives must convert exactly. Guard before adding so
-    // neither dynamic nor static Add can borrow rounding or wrap.
-    const auto negativeA = boundedConvertedNumber(left, true);
-    const auto negativeB = boundedConvertedNumber(right, true);
-    // Cancellation stays exact and bounded. Keep negative magnitudes separate
-    // from indices; the original result still carries the sign of zero.
-    if (a && b && *a <= 4294967295ULL - *b) {
-        result.integerNumber = *a + *b;
-    } else if (a && negativeB) {
-        if (*a >= *negativeB) {
-            result.integerNumber = *a - *negativeB;
-        } else {
-            result.negativeIntegerNumber = *negativeB - *a;
-        }
-    } else if (negativeA && b) {
-        if (*b >= *negativeA) {
-            result.integerNumber = *b - *negativeA;
-        } else {
-            result.negativeIntegerNumber = *negativeA - *b;
-        }
-    } else if (negativeA && negativeB && *negativeA <= 4294967295ULL - *negativeB) {
-        result.negativeIntegerNumber = *negativeA + *negativeB;
-    }
+    // Both original primitives must convert exactly; setSigned's bound keeps
+    // neither dynamic nor static Add from borrowing rounding or wrap.
+    // Cancellation stays exact. Keep negative magnitudes separate from
+    // indices; the original result still carries the sign of zero.
+    const auto a = signedConvertedNumber(left);
+    const auto b = signedConvertedNumber(right);
+    if (a && b) { result.setSigned(*a + *b); }
 }
 
 void boundedNumberDifference(const ContentsValue & left, const ContentsValue & right,
                              ContentsValue & result) {
     boundedNumberArithmetic(left, right, ctjs::BinaryKind::Sub, result);
-    const auto original = boundedConvertedNumber(left);
-    const auto offset = boundedConvertedNumber(right);
     // Boolean/null and canonical Strings share unary's exact conversion.
-    // Saved operands retain their values; bound magnitudes before arithmetic.
-    if (original && offset) {
-        if (*offset <= *original) {
-            result.integerNumber = *original - *offset;
-        } else {
-            result.negativeIntegerNumber = *offset - *original;
-        }
-    } else if (const auto magnitude = boundedConvertedNumber(right, true);
-               original && magnitude && *magnitude <= 4294967295ULL - *original) {
-        result.integerNumber = *original + *magnitude;
-    } else if (const auto negative = boundedConvertedNumber(left, true); negative) {
-        // Cancellation remains exact; keep the original result's signed zero.
-        if (offset && *offset <= 4294967295ULL - *negative) {
-            result.negativeIntegerNumber = *negative + *offset;
-        } else if (magnitude) {
-            if (*magnitude >= *negative) {
-                result.integerNumber = *magnitude - *negative;
-            } else {
-                result.negativeIntegerNumber = *negative - *magnitude;
-            }
-        }
+    // Saved operands retain their values; setSigned bounds the difference.
+    // Cancellation remains exact; keep the original result's signed zero.
+    const auto original = signedConvertedNumber(left);
+    const auto offset = signedConvertedNumber(right);
+    if (original && offset) { result.setSigned(*original - *offset); }
+}
+
+void boundedNumberBinary(ctjs::BinaryKind kind, const ContentsValue & left,
+                         const ContentsValue & right, ContentsValue & result) {
+    switch (kind) {
+    case ctjs::BinaryKind::Add: return boundedNumberSum(left, right, result);
+    case ctjs::BinaryKind::Sub: return boundedNumberDifference(left, right, result);
+    case ctjs::BinaryKind::Mul: return boundedNumberProduct(left, right, result);
+    case ctjs::BinaryKind::Div:
+    case ctjs::BinaryKind::Mod:
+        return boundedNumberDivision(left, right, kind == ctjs::BinaryKind::Mod, result);
+    case ctjs::BinaryKind::Pow: return boundedNumberPower(left, right, result);
+    default: return boundedNumberBitwise(left, right, kind, result);
     }
 }
 

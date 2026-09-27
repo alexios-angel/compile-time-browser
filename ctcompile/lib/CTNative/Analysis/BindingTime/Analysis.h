@@ -43,6 +43,8 @@ struct decision {
     std::string reason;
 };
 fact join(fact left, const fact & right, bool staticControl);
+// A static reference whose every heap node is still tracked and not dynamic.
+bool clean(const fact & value, const flow & state);
 void invalidate(flow & state);
 } // namespace binding_time_detail
 

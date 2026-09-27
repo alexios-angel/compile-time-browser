@@ -25,5 +25,20 @@ llvm::Expected<CallableObject> analyzeGlobalCallableObject(ctjs::StoreGlobalOp p
                                                            llvm::function_ref<bool()> spend);
 // A unique hoisting declaration whose loads stay in closed direct-callee uses.
 bool closedDeclaration(ctjs::StoreGlobalOp store, ctjs::FuncOp target, mlir::ModuleOp module);
+// Every use of `load` is a ctjs.call_direct callee slot, or with `rooted` also a
+// ctjs.root: the loaded value reaches no source operation.
+bool calleeSlotOnly(ctjs::LoadGlobalOp load, bool rooted = false);
+// Whether `entry`'s receiver, new.target and callee reach only ctjs.root.
+bool implicitArgumentsRooted(mlir::Block & entry);
+// Whether `function` creates, reads or writes a closure or cell environment.
+bool usesEnvironment(ctjs::FuncOp function);
+// Whether a closure of `function`, directly or through a global it is stored
+// to, is the callee value of a call_direct of another symbol: a specialized
+// body's boxed dispatch, whose actuals belong to `function` too.
+bool hasAlternateCalleeCalls(ctjs::FuncOp function, mlir::ModuleOp module);
+// Every symbol use of `function`, when each is a call_direct of it passing
+// exactly its entry arguments; null otherwise.
+std::optional<llvm::SmallVector<ctjs::CallDirectOp>> directCallers(ctjs::FuncOp function,
+                                                                   mlir::ModuleOp module);
 std::string closedCallableProblem(ctjs::FuncOp function, mlir::ModuleOp module);
 } // namespace ctcompile::ctnative
