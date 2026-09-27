@@ -133,17 +133,7 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
         query.getResult().replaceAllUsesWith(constant.getResult());
         query.erase();
     }
-    for (auto [branch, selected] : branches) {
-        auto & arm = selected ? branch.getThenRegion() : branch.getElseRegion();
-        auto yield = llvm::cast<mlir::scf::YieldOp>(arm.front().back());
-        for (auto [result, value] : llvm::zip(branch.getResults(), yield.getOperands())) {
-            result.replaceAllUsesWith(value);
-        }
-        auto & contents = arm.front().getOperations();
-        branch->getBlock()->getOperations().splice(branch->getIterator(), contents,
-                                                   contents.begin(), yield->getIterator());
-        branch.erase();
-    }
+    for (auto [branch, selected] : branches) { inlineSelectedArm(branch, selected); }
     return llvm::Error::success();
 }
 
@@ -332,15 +322,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                                                  : "DOM iteration work budget exhausted");
                             }
                         }
-                        for (auto [result, value] :
-                             llvm::zip(branch.getResults(), yield.getOperands())) {
-                            result.replaceAllUsesWith(value);
-                        }
-                        auto & contents = selected.front().getOperations();
-                        branch->getBlock()->getOperations().splice(branch->getIterator(), contents,
-                                                                   contents.begin(),
-                                                                   yield->getIterator());
-                        branch.erase();
+                        inlineSelectedArm(branch, &selected == &branch.getThenRegion());
                         changed = true;
                         break;
                     }

@@ -607,18 +607,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         auto selected = exactBoolean(branch.getCondition());
                         if (!selected) { return mlir::WalkResult::advance(); }
                         auto * predicate = branch.getCondition().getDefiningOp();
-                        auto & region = *selected ? branch.getThenRegion() : branch.getElseRegion();
-                        if (!region.empty()) {
-                            auto & body = region.front();
-                            auto yield = llvm::cast<mlir::scf::YieldOp>(body.getTerminator());
-                            // Verification establishes result count, types and
-                            // dominance; substitute only the selected payload.
-                            branch.replaceAllUsesWith(yield.getOperands());
-                            yield.erase();
-                            branch->getBlock()->getOperations().splice(branch->getIterator(),
-                                                                       body.getOperations());
-                        }
-                        branch.erase();
+                        // Verification establishes result count, types and
+                        // dominance; substitute only the selected payload.
+                        inlineSelectedArm(branch, *selected);
                         changed = true;
                         // Only the unused pure predicate disappears; its input
                         // and every selected operation retain their source order.

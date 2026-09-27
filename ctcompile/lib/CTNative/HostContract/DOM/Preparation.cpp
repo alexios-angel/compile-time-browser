@@ -707,19 +707,10 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             result.getDefiningOp()->erase();
         }
         prepared->walk<mlir::WalkOrder::PostOrder>([](mlir::scf::IfOp branch) {
-            auto condition = branch.getCondition().getDefiningOp<mlir::arith::ConstantIntOp>();
-            if (!condition) { return; }
-            auto & region = condition.value() ? branch.getThenRegion() : branch.getElseRegion();
-            if (region.empty()) {
-                branch.erase();
-                return;
+            if (auto condition =
+                    branch.getCondition().getDefiningOp<mlir::arith::ConstantIntOp>()) {
+                inlineSelectedArm(branch, condition.value() != 0);
             }
-            auto & body = region.front();
-            auto yield = llvm::cast<mlir::scf::YieldOp>(body.getTerminator());
-            branch.replaceAllUsesWith(yield.getOperands());
-            yield.erase();
-            branch->getBlock()->getOperations().splice(branch->getIterator(), body.getOperations());
-            branch.erase();
         });
     }
     // The complete DOM proof above establishes the replacement's structure.
