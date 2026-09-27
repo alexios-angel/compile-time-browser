@@ -490,6 +490,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             }
             if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(&op);
                 binary && !ctjs::isBitwise(binary.getKind())) {
+                if (!ctjs::isArithmetic(binary.getKind()) &&
+                    binary.getKind() != ctjs::BinaryKind::Concat) {
+                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                }
                 const ContentsValue left = held(binary.getLhs());
                 const ContentsValue right = held(binary.getRhs());
                 const mlir::Value lhs = left.origin();

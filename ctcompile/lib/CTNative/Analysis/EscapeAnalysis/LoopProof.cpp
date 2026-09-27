@@ -231,7 +231,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 boundedNumberUnary(*input, unary.getKind() == ctjs::UnaryKind::Neg, result);
             }
         } else if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition);
-                   binary && binary.getKind() != ctjs::BinaryKind::Concat) {
+                   binary &&
+                   (ctjs::isArithmetic(binary.getKind()) || ctjs::isBitwise(binary.getKind()))) {
             const auto left = self(self, binary.getLhs(), depth + 1);
             const auto right = self(self, binary.getRhs(), depth + 1);
             if (!left || !right) { return std::nullopt; }

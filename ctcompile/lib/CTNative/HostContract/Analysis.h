@@ -35,19 +35,6 @@ inline bool reservedCallbackBinding(llvm::StringRef name) {
     return name.size() <= 10 && names.contains(name);
 }
 
-// Arithmetic giving a Number category from Number/Boolean operand categories.
-inline bool arithmeticBinary(ctjs::BinaryKind kind) {
-    switch (kind) {
-    case ctjs::BinaryKind::Add:
-    case ctjs::BinaryKind::Sub:
-    case ctjs::BinaryKind::Mul:
-    case ctjs::BinaryKind::Div:
-    case ctjs::BinaryKind::Mod:
-    case ctjs::BinaryKind::Pow: return true;
-    default: return false;
-    }
-}
-
 // The source function a closure creates. Its numeric index names a function
 // only inside the enclosing source program, whose callee the closure carries.
 inline ctjs::FuncOp closureTarget(ctjs::CreateClosureOp closure,

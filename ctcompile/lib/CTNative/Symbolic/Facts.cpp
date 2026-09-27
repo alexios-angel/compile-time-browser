@@ -98,9 +98,12 @@ Fact Analysis::operation(mlir::Operation * op) {
             }
             return {(left.domains | right.domains) & String ? Number | String : Number, {}};
         }
-        // Known primitive domains exclude BigInt, so every other kind, the
-        // bitwise six included, is a Number here exactly as ctjs.binary_static's
-        // are below.
+        // Known primitive domains exclude BigInt, so the other arithmetic kinds
+        // and the bitwise six are Numbers here exactly as ctjs.binary_static's
+        // are below. A kind outside the enum stays unknown.
+        if (!ctjs::isArithmetic(binary.getKind()) && !ctjs::isBitwise(binary.getKind())) {
+            return {};
+        }
         return {Number, {}};
     }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(op)) {

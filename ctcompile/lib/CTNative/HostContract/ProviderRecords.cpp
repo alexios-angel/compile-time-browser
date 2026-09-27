@@ -294,7 +294,7 @@ std::string analyzer::localRecordProblem() {
                     PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>());
             }
         } else if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op)) {
-            if (!arithmeticBinary(binary.getKind())) { return mlir::WalkResult::advance(); }
+            if (!ctjs::isArithmetic(binary.getKind())) { return mlir::WalkResult::advance(); }
             const auto numeric = [&](mlir::Value value) {
                 auto tag = category(value, op).tag();
                 return tag == mlir::TypeID::get<ctjs::NumberAttr>() ||

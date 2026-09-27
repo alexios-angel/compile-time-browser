@@ -27,9 +27,18 @@ constexpr bool isBitwise(BinaryKind kind) {
     }
 }
 
-// THE SIX ARITHMETIC KINDS: every kind that is neither bitwise nor Concat.
+// THE SIX ARITHMETIC KINDS, listed rather than derived: a kind outside the
+// enum (tests forge 255) must answer false here as it does in isBitwise.
 constexpr bool isArithmetic(BinaryKind kind) {
-    return !isBitwise(kind) && kind != BinaryKind::Concat;
+    switch (kind) {
+    case BinaryKind::Add:
+    case BinaryKind::Sub:
+    case BinaryKind::Mul:
+    case BinaryKind::Div:
+    case BinaryKind::Mod:
+    case BinaryKind::Pow: return true;
+    default: return false;
+    }
 }
 
 } // namespace ctcompile::ctjs

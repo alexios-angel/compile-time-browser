@@ -412,7 +412,7 @@ PrimitiveAlternatives analyzer::entryCategories(
         return entryCategories(write.getValue(), results, write, depth + 1, dependencies);
     }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition)) {
-        if (!arithmeticBinary(binary.getKind())) { return {}; }
+        if (!ctjs::isArithmetic(binary.getKind())) { return {}; }
         const auto number = mlir::TypeID::get<ctjs::NumberAttr>();
         const auto numeric = [&](mlir::Value operand) {
             auto tag = entryCategories(operand, results, binary, depth + 1, dependencies).tag();
