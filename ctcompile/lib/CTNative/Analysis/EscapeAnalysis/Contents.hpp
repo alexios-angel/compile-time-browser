@@ -480,5 +480,8 @@ void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
                       ContentsValue & result);
 void boundedNumberDifference(const ContentsValue & left, const ContentsValue & right,
                              ContentsValue & result);
+// The transfer above for `kind`; Concat proves nothing.
+void boundedNumberBinary(ctjs::BinaryKind kind, const ContentsValue & left,
+                         const ContentsValue & right, ContentsValue & result);
 
 } // namespace ctcompile::ctnative::escape_detail

@@ -468,4 +468,18 @@ void boundedNumberDifference(const ContentsValue & left, const ContentsValue & r
     }
 }
 
+void boundedNumberBinary(ctjs::BinaryKind kind, const ContentsValue & left,
+                         const ContentsValue & right, ContentsValue & result) {
+    switch (kind) {
+    case ctjs::BinaryKind::Add: return boundedNumberSum(left, right, result);
+    case ctjs::BinaryKind::Sub: return boundedNumberDifference(left, right, result);
+    case ctjs::BinaryKind::Mul: return boundedNumberProduct(left, right, result);
+    case ctjs::BinaryKind::Div:
+    case ctjs::BinaryKind::Mod:
+        return boundedNumberDivision(left, right, kind == ctjs::BinaryKind::Mod, result);
+    case ctjs::BinaryKind::Pow: return boundedNumberPower(left, right, result);
+    default: return boundedNumberBitwise(left, right, kind, result);
+    }
+}
+
 } // namespace ctcompile::ctnative::escape_detail

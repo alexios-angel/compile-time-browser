@@ -22,6 +22,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         out.work += count;
         return true;
     };
+    // A binary result charges once for a Number fact: Add only for its
+    // converted bits, every other kind for any fact.
+    const auto numberFact = [](ctjs::BinaryKind kind, const ContentsValue & result) {
+        return result.convertedBits || (kind != ctjs::BinaryKind::Add &&
+                                        (result.integerNumber || result.negativeIntegerNumber));
+    };
     if (function.getBody().empty() || function.getBody().front().empty()) {
         return refuse(ArrayContentsFailure::UnsupportedControlFlow, function);
     }
@@ -581,48 +587,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // results allocate in the VM and static conversions can allocate
                 // C++ temporaries; absence/success of allocation is unproved.
                 ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
-                if (binary.getKind() == ctjs::BinaryKind::Add) {
-                    boundedNumberSum(left, right, result);
-                    if (result.convertedBits && !spend()) {
-                        return refuse(ArrayContentsFailure::WorkLimit, &op);
-                    }
+                boundedNumberBinary(binary.getKind(), left, right, result);
+                if (binary.getKind() == ctjs::BinaryKind::Sub && !result.integerNumber &&
+                    !result.negativeIntegerNumber && boundedConvertedNumber(right) == 0 &&
+                    left.unaryDepth <= 64) {
+                    // ToNumber(x) - 0 preserves ToUint32(x), including signed
+                    // zero and nonfinite inputs. This is no exact Number fact.
+                    result.convertedBits = boundedConvertedBits(left);
+                    result.unaryDepth = left.unaryDepth;
                 }
-                if (binary.getKind() == ctjs::BinaryKind::Sub) {
-                    boundedNumberDifference(left, right, result);
-                    if (!result.integerNumber && !result.negativeIntegerNumber &&
-                        boundedConvertedNumber(right) == 0 && left.unaryDepth <= 64) {
-                        // ToNumber(x) - 0 preserves ToUint32(x), including signed
-                        // zero and nonfinite inputs. This is no exact Number fact.
-                        result.convertedBits = boundedConvertedBits(left);
-                        result.unaryDepth = left.unaryDepth;
-                    }
-                    if (result.integerNumber || result.negativeIntegerNumber ||
-                        result.convertedBits) {
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    }
-                }
-                if (binary.getKind() == ctjs::BinaryKind::Mul) {
-                    boundedNumberProduct(left, right, result);
-                    if (result.integerNumber || result.negativeIntegerNumber ||
-                        result.convertedBits) {
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    }
-                }
-                if (binary.getKind() == ctjs::BinaryKind::Div ||
-                    binary.getKind() == ctjs::BinaryKind::Mod) {
-                    boundedNumberDivision(left, right, binary.getKind() == ctjs::BinaryKind::Mod,
-                                          result);
-                    if (result.integerNumber || result.negativeIntegerNumber ||
-                        result.convertedBits) {
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    }
-                }
-                if (binary.getKind() == ctjs::BinaryKind::Pow) {
-                    boundedNumberPower(left, right, result);
-                    if (result.integerNumber || result.negativeIntegerNumber ||
-                        result.convertedBits) {
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    }
+                if (numberFact(binary.getKind(), result) && !spend()) {
+                    return refuse(ArrayContentsFailure::WorkLimit, &op);
                 }
                 state.values[binary.getResult()] = result;
                 continue;
@@ -681,16 +656,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // handlers ToNumeric an object. Only bounded exact primitive
                 // conversions or saved Number facts supply an index.
                 ContentsValue result{produced, ContentsKind::NonBigInt};
-                if (kind == ctjs::BinaryKind::Add) {
-                    boundedNumberSum(left, right, result);
-                    if (result.convertedBits && !spend()) {
-                        return refuse(ArrayContentsFailure::WorkLimit, &op);
-                    }
-                } else {
-                    boundedNumberBitwise(left, right, kind, result);
-                    if (result.integerNumber || result.negativeIntegerNumber) {
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    }
+                boundedNumberBinary(kind, left, right, result);
+                if (numberFact(kind, result) && !spend()) {
+                    return refuse(ArrayContentsFailure::WorkLimit, &op);
                 }
                 state.values[produced] = result;
                 continue;

@@ -248,22 +248,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const auto left = self(self, binary.getLhs(), depth + 1);
             const auto right = self(self, binary.getRhs(), depth + 1);
             if (!left || !right) { return std::nullopt; }
-            if (ctjs::isBitwise(binary.getKind())) {
-                // ToNumeric first, which is the identity on the bounded
-                // primitives boundedNumberBitwise alone answers for.
-                boundedNumberBitwise(*left, *right, binary.getKind(), result);
-            } else if (binary.getKind() == ctjs::BinaryKind::Add) {
-                boundedNumberSum(*left, *right, result);
-            } else if (binary.getKind() == ctjs::BinaryKind::Sub) {
-                boundedNumberDifference(*left, *right, result);
-            } else if (binary.getKind() == ctjs::BinaryKind::Mul) {
-                boundedNumberProduct(*left, *right, result);
-            } else if (binary.getKind() == ctjs::BinaryKind::Pow) {
-                boundedNumberPower(*left, *right, result);
-            } else {
-                boundedNumberDivision(*left, *right, binary.getKind() == ctjs::BinaryKind::Mod,
-                                      result);
-            }
+            // A bitwise kind's ToNumeric is the identity on the bounded
+            // primitives boundedNumberBitwise alone answers for.
+            boundedNumberBinary(binary.getKind(), *left, *right, result);
         } else if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(definition)) {
             const auto left = self(self, binary.getLhs(), depth + 1);
             const auto right = self(self, binary.getRhs(), depth + 1);
@@ -609,6 +596,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
               bitOr || bitXor)) {
             return std::nullopt;
         }
+        const ctjs::BinaryKind kind = binary ? binary.getKind() : addition.getKind();
         const bool corresponding =
             subtract && correspondingInputs(binary.getLhs(), binary.getRhs());
         if (invariantFailure == ArrayContentsFailure::WorkLimit) { return std::nullopt; }
@@ -658,17 +646,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 if (left) {
                     if (!charge()) { return std::nullopt; }
                     ContentsValue result{operand, ContentsKind::NonBigInt};
-                    if (subtract) {
-                        boundedNumberDifference(left->first, *right, result);
-                    } else if (multiply) {
-                        boundedNumberProduct(left->first, *right, result);
-                    } else if (divide || remainder) {
-                        boundedNumberDivision(left->first, *right, remainder, result);
-                    } else if (power) {
-                        boundedNumberPower(left->first, *right, result);
-                    } else {
-                        boundedNumberSum(left->first, *right, result);
-                    }
+                    boundedNumberBinary(kind, left->first, *right, result);
                     if (use == IndexUse::ArithmeticOperand) {
                         if (!result.arithmeticNumber) { return std::nullopt; }
                         return IndexRange{result, result, 1, left->mixedShift || rightMixed};
@@ -713,11 +691,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             if (!charge()) { return std::nullopt; }
             ContentsValue result{operand, ContentsKind::NonBigInt};
-            if (shift) {
-                boundedNumberBitwise(*offset, range->first, *bitwise, result);
-            } else {
-                boundedNumberDivision(*offset, range->first, remainder, result);
-            }
+            boundedNumberBinary(kind, *offset, range->first, result);
             if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
             return IndexRange{result, result, 1, range->mixedShift};
         }
@@ -1109,27 +1083,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         for (ContentsValue * endpoint : {&range->first, &range->last}) {
             if (!charge()) { return std::nullopt; }
             ContentsValue result{operand, ContentsKind::NonBigInt};
-            if (shift) {
-                boundedNumberBitwise(*endpoint, *offset, *bitwise, result);
-            } else if (divide) {
-                boundedNumberDivision(*endpoint, *offset, false, result);
-            } else if (multiply) {
-                boundedNumberProduct(*endpoint, *offset, result);
-            } else if (power) {
-                if (offsetOperand == 0) {
-                    boundedNumberPower(*offset, *endpoint, result);
-                } else {
-                    boundedNumberPower(*endpoint, *offset, result);
-                }
-            } else if (subtract) {
-                if (offsetOperand == 0) {
-                    boundedNumberDifference(*offset, *endpoint, result);
-                } else {
-                    boundedNumberDifference(*endpoint, *offset, result);
-                }
-            } else {
-                boundedNumberSum(*endpoint, *offset, result);
-            }
+            // Only Pow and Sub keep an invariant left operand on the left.
+            const bool swapped = offsetOperand == 0 && (power || subtract);
+            boundedNumberBinary(kind, swapped ? *offset : *endpoint, swapped ? *endpoint : *offset,
+                                result);
             if (!result.integerNumber && !result.negativeIntegerNumber) {
                 // A mixed enclosure may overstate an actual intermediate. Only
                 // subdivision can discharge it; every visited scalar must pass.
