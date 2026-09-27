@@ -410,19 +410,18 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         case UnaryKind::TypeOf:
             if (u.getOperand().getType() == carrierType(context, carrier::symbol)) {
                 swap(stringConstant(b, where, "symbol"));
-            } else if (isObjectValueCarrier(u.getOperand().getType())) {
-                needsObjectValue = true;
-                swap(convertScalar(b, where,
-                                   callValue(b, where, ec::OpaqueType::get(context, kRawStringType),
-                                             "ctnative::object_typeof", u.getOperand()),
-                                   carrierType(context, carrier::string)));
+            } else if (isObjectValueCarrier(u.getOperand().getType()) ||
+                       isNullableCarrier(u.getOperand().getType())) {
+                const bool object = isObjectValueCarrier(u.getOperand().getType());
+                needsObjectValue |= object;
+                swap(convertScalar(
+                    b, where,
+                    callValue(b, where, ec::OpaqueType::get(context, kRawStringType),
+                              object ? "ctnative::object_typeof" : "ctnative::scalar_typeof",
+                              u.getOperand()),
+                    carrierType(context, carrier::string)));
             } else if (isIdentityCarrier(u.getOperand().getType())) {
                 swap(stringConstant(b, where, "object"));
-            } else if (isNullableCarrier(u.getOperand().getType())) {
-                swap(convertScalar(b, where,
-                                   callValue(b, where, ec::OpaqueType::get(context, kRawStringType),
-                                             "ctnative::scalar_typeof", u.getOperand()),
-                                   carrierType(context, carrier::string)));
             } else {
                 swap(stringConstant(b, where,
                                     u.getOperand().getType() == numeric          ? "number"
@@ -441,19 +440,16 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         const bool equality =
             cmp.getKind() == CompareKind::Eq || cmp.getKind() == CompareKind::StrictEq;
         mlir::Value left = cmp.getLhs(), right = cmp.getRhs();
-        if (equality &&
-            (isObjectValueCarrier(left.getType()) || isObjectValueCarrier(right.getType()) ||
-             isIdentityCarrier(left.getType()) || isIdentityCarrier(right.getType()))) {
-            needsObjectValue = true;
-            const auto helper = cmp.getKind() == CompareKind::Eq ? "ctnative::object_equal"
-                                                                 : "ctnative::object_strict_equal";
-            swap(callValue(b, where, boolean, helper, mlir::ValueRange{left, right}));
-            return;
-        }
-        if (equality && (isNullableCarrier(left.getType()) || isNullableCarrier(right.getType()) ||
-                         left.getType() != right.getType())) {
-            const auto helper = cmp.getKind() == CompareKind::Eq ? "ctnative::scalar_equal"
-                                                                 : "ctnative::scalar_strict_equal";
+        const bool objects =
+            isObjectValueCarrier(left.getType()) || isObjectValueCarrier(right.getType()) ||
+            isIdentityCarrier(left.getType()) || isIdentityCarrier(right.getType());
+        if (equality && (objects || isNullableCarrier(left.getType()) ||
+                         isNullableCarrier(right.getType()) || left.getType() != right.getType())) {
+            needsObjectValue |= objects;
+            const bool loose = cmp.getKind() == CompareKind::Eq;
+            const auto helper =
+                objects ? (loose ? "ctnative::object_equal" : "ctnative::object_strict_equal")
+                        : (loose ? "ctnative::scalar_equal" : "ctnative::scalar_strict_equal");
             swap(callValue(b, where, boolean, helper, mlir::ValueRange{left, right}));
             return;
         }
@@ -549,7 +545,14 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             llvm::SmallVector<llvm::StringRef> names(printedGlobals.keys().begin(),
                                                      printedGlobals.keys().end());
             llvm::sort(names);
+            const auto textType = ec::PointerType::get(ec::OpaqueType::get(context, "const char"));
             for (llvm::StringRef name : names) {
+                const auto print = [&](llvm::StringRef helper, mlir::Value value) {
+                    mlir::Value label = ec::LiteralOp::create(
+                        b, where, textType, b.getStringAttr(cpp::c_string_literal(name.str())));
+                    callWithConstValueOperands(b, where, mlir::TypeRange{}, b.getStringAttr(helper),
+                                               mlir::ValueRange{label, value});
+                };
                 const auto storedType = globalTypes.lookup(name);
                 static const llvm::DenseMap<carrier, llvm::StringRef> printHelpers{
                     {carrier::booleanString, "ctnative::print_boolean_string"},
@@ -558,15 +561,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                     {carrier::nullableNumberString, "ctnative::print_nullable_number_string"}};
                 if (auto helper = printHelpers.find(carrierOf(storedType));
                     helper != printHelpers.end()) {
-                    mlir::Value current =
-                        convertScalar(b, where, lvalueOfGlobal(b, where, name),
-                                      carrierType(context, carrierOf(storedType)));
-                    mlir::Value label = ec::LiteralOp::create(
-                        b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
-                        b.getStringAttr(cpp::c_string_literal(name.str())));
-                    callWithConstValueOperands(b, where, mlir::TypeRange{},
-                                               b.getStringAttr(helper->second),
-                                               mlir::ValueRange{label, current});
+                    print(helper->second,
+                          convertScalar(b, where, lvalueOfGlobal(b, where, name),
+                                        carrierType(context, carrierOf(storedType))));
                     continue;
                 }
                 if (!llvm::isa_and_nonnull<NumType, BoolType, StrType>(storedType)) {
@@ -575,33 +572,20 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                         llvm::report_fatal_error(
                             "native global observation lacks a proved scalar carrier");
                     }
-                    mlir::Value loaded = convertScalar(b, where, lvalueOfGlobal(b, where, name),
-                                                       globalStorageType(name));
-                    mlir::Value label = ec::LiteralOp::create(
-                        b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
-                        b.getStringAttr(cpp::c_string_literal(name.str())));
-                    callWithConstValueOperands(b, where, mlir::TypeRange{},
-                                               b.getStringAttr("ctnative::print_scalar"),
-                                               mlir::ValueRange{label, loaded});
+                    print("ctnative::print_scalar",
+                          convertScalar(b, where, lvalueOfGlobal(b, where, name),
+                                        globalStorageType(name)));
                     continue;
                 }
                 if (llvm::isa<StrType>(storedType)) {
                     mlir::Value loaded = convertScalar(b, where, lvalueOfGlobal(b, where, name),
                                                        globalStorageType(name));
-                    mlir::Value current =
-                        callValue(b, where, ec::OpaqueType::get(context, kRawStringType),
-                                  "ctnative::global_string", loaded);
-                    mlir::Value label = ec::LiteralOp::create(
-                        b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
-                        b.getStringAttr(cpp::c_string_literal(name.str())));
-                    callWithConstValueOperands(b, where, mlir::TypeRange{},
-                                               b.getStringAttr("ctnative::print_string"),
-                                               mlir::ValueRange{label, current});
+                    print("ctnative::print_string",
+                          callValue(b, where, ec::OpaqueType::get(context, kRawStringType),
+                                    "ctnative::global_string", loaded));
                     continue;
                 }
                 const bool isBoolean = llvm::isa<BoolType>(storedType);
-                const auto textType =
-                    ec::PointerType::get(ec::OpaqueType::get(context, "const char"));
                 mlir::Value loaded = convertScalar(b, where, lvalueOfGlobal(b, where, name),
                                                    carrierType(context, carrier::nullable));
                 mlir::Value current = callValue(
