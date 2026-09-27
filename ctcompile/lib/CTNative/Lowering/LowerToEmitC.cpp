@@ -27,6 +27,7 @@
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
 #include "Exceptions/Recovery.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/PassManager.h"
@@ -47,16 +48,12 @@ using namespace lowering_detail;
 // writes never reach this path. Charge before mutation, then reprove the clone.
 bool materializeHostPrimitives(mlir::ModuleOp module, const HostContract & contract,
                                const OwnedGlobalRoots & owners, unsigned remaining) {
-    const auto spend = [&] {
-        if (!remaining) { return false; }
-        --remaining;
-        return true;
-    };
+    WorkBudget budget{remaining};
     llvm::SmallVector<ctjs::LoadGlobalOp> reads;
     llvm::SmallVector<ctjs::UnaryOp> objectTypes;
     const auto walked = module.walk<mlir::WalkOrder::PreOrder>(
         [&](mlir::Operation * operation) -> mlir::WalkResult {
-            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            if (!budget.spend()) { return mlir::WalkResult::interrupt(); }
             if (auto query = llvm::dyn_cast<ctjs::UnaryOp>(operation);
                 query && query.getKind() == ctjs::UnaryKind::TypeOf) {
                 auto * origin = query.getOperand().getDefiningOp();
@@ -64,10 +61,9 @@ bool materializeHostPrimitives(mlir::ModuleOp module, const HostContract & contr
                 // owner and its checked global loads are ordinary objects.
                 if (llvm::isa_and_nonnull<ctjs::CreateObjectOp, ctjs::LoadGlobalOp>(origin) &&
                     owners.lookup(origin)) {
-                    for ([[maybe_unused]] mlir::OpOperand & use : query.getResult().getUses()) {
-                        if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    if (!budget.spend(1 + llvm::range_size(query.getResult().getUses()))) {
+                        return mlir::WalkResult::interrupt();
                     }
-                    if (!spend()) { return mlir::WalkResult::interrupt(); }
                     objectTypes.push_back(query);
                 }
             }
@@ -76,12 +72,11 @@ bool materializeHostPrimitives(mlir::ModuleOp module, const HostContract & contr
             for (const auto * names : {&contract.undefinedBindings, &contract.absentBindings}) {
                 if (names == &contract.absentBindings && !load.getTypeofLookup()) { continue; }
                 for (const std::string & name : *names) {
-                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    if (!budget.spend()) { return mlir::WalkResult::interrupt(); }
                     if (load.getName() != name) { continue; }
-                    for ([[maybe_unused]] mlir::OpOperand & use : load.getResult().getUses()) {
-                        if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    if (!budget.spend(1 + llvm::range_size(load.getResult().getUses()))) {
+                        return mlir::WalkResult::interrupt();
                     }
-                    if (!spend()) { return mlir::WalkResult::interrupt(); }
                     reads.push_back(load);
                     return mlir::WalkResult::advance();
                 }
@@ -343,22 +338,19 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 bool switches = false;
                 fn.walk([&](mlir::scf::IndexSwitchOp) { switches = true; });
                 if (!switches) { return; }
-                unsigned remaining = structureMaxSteps;
                 // Reserve the copy's cost before allocating it, as class
                 // method normalization and exception recovery already do.
-                auto walked = fn.walk([&](mlir::Operation * op) {
-                    const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
-                    if (cost > remaining) { return mlir::WalkResult::interrupt(); }
-                    remaining -= static_cast<unsigned>(cost);
-                    return mlir::WalkResult::advance();
-                });
-                if (walked.wasInterrupted()) {
+                WorkBudget budget{structureMaxSteps};
+                if (!budget.spendWalk(fn, [](mlir::Operation * op) {
+                        return uint64_t(1) + op->getNumOperands() + op->getNumResults();
+                    })) {
                     fn->setAttr("ctnative.structure_refusal",
                                 mlir::StringAttr::get(
                                     &getContext(), "native structured-exit work budget exhausted"));
                     return;
                 }
                 mlir::OwningOpRef<ctjs::FuncOp> normalized(llvm::cast<ctjs::FuncOp>(fn->clone()));
+                auto remaining = static_cast<unsigned>(budget.remaining);
                 if (auto error = normalizeStructuredExits(*normalized, remaining)) {
                     fn->setAttr(
                         "ctnative.structure_refusal",
