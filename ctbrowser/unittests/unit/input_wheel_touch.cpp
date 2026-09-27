@@ -150,9 +150,29 @@ void test_keys_scroll_the_focused_container() {
     check(page.scroll_y() == 0, "and the page stays where it was");
 }
 
+// html/semantics/forms/the-input-element/selection-pointer.html,
+// selection/selection-direction-on-single-click.html: a press on text collapses
+// the page's Selection there - directionless - and a drag extends it.
+void test_a_drag_selects_in_the_page_selection() {
+    browser page{browser_options{400, 300}};
+    page.load_html(page_source);
+    page.frame();
+    (void)page.handle(input_event::mouse_move_to(1, 125));
+    (void)page.handle(input_event::mouse_down_at(1, 125));
+    (void)page.run_script("var s = getSelection(); console.log('pressed=' + (s.anchorNode === "
+                          "text.firstChild) + ',' + s.isCollapsed + ',' + s.direction);");
+    CHECK_EQ(logged(page, "pressed="), std::string{"pressed=true,true,none"});
+    (void)page.handle(input_event::mouse_move_to(300, 125));
+    (void)page.handle(input_event::mouse_up_at(300, 125));
+    (void)page.run_script("console.log('dragged=' + (s.focusNode === text.firstChild) + ',' + "
+                          "(s.focusOffset > s.anchorOffset) + ',' + s.direction);");
+    CHECK_EQ(logged(page, "dragged="), std::string{"dragged=true,true,forward"});
+}
+
 } // namespace
 
 int main() {
+    test_a_drag_selects_in_the_page_selection();
     test_wheel_cancelability_and_mousewheel();
     test_wheel_scrolls_the_container_and_scrollend_follows();
     test_a_touch_is_pointer_then_touch_events();

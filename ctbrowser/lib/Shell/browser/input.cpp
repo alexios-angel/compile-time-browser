@@ -114,6 +114,8 @@ bool browser::handle(const input_event & event) {
             if (at && (at.node != selection_focus_.node ||
                        at.code_point != selection_focus_.code_point)) {
                 selection_focus_ = at;
+                bindings_->select_by_user(selection_anchor_.node, selection_anchor_.code_point,
+                                          at.node, at.code_point);
                 mark(dirty::paint);
             }
             return true;
@@ -194,6 +196,11 @@ bool browser::handle(const input_event & event) {
                 selection_anchor_ = at;
                 selection_focus_ = at;
                 selecting_ = static_cast<bool>(at);
+                // ...and the page's Selection collapses there, as a click on
+                // text does in every browser (events/input.cpp).
+                if (at) {
+                    bindings_->select_by_user(at.node, at.code_point, at.node, at.code_point);
+                }
                 mark(dirty::paint);
             } else {
                 clear_selection();

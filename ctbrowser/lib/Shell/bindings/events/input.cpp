@@ -440,6 +440,50 @@ bool dom_bindings::dispatch_input(std::string_view type, node_id target,
     return dispatch_event(type, target, event);
 }
 
+// THE USER'S SELECTION IS THE PAGE'S SELECTION. A press on text collapses
+// `getSelection()` there, and a drag extends it - through the Selection's own
+// script surface (`collapse`, `setBaseAndExtent`), so its validity rules, its
+// direction and its selectionchange are the API's and not restated here. A
+// click leaves a DIRECTIONLESS collapsed selection, which is why the collapsed
+// case is `collapse` rather than a setBaseAndExtent to the same point.
+//
+// The positions arrive as UTF-8 byte offsets into a text node, as the painted
+// selection keeps them, and leave as the DOM's UTF-16 offsets.
+void dom_bindings::select_by_user(node_id anchor, std::size_t anchor_byte, node_id focus,
+                                  std::size_t focus_byte) {
+    if (cx_ == nullptr || doc_ == nullptr || !anchor || !focus) { return; }
+    context & cx = *cx_;
+    const auto in_realm = enter_realm(cx);
+    const auto utf16 = [&](node_id id, std::size_t byte) {
+        const auto txn = doc_->read();
+        const std::string_view text = txn.text(id);
+        double units = 0;
+        for (std::size_t i = 0; i < std::min(byte, text.size()); ++i) {
+            const auto b = static_cast<unsigned char>(text[i]);
+            if ((b & 0xC0u) != 0x80u) { units += b >= 0xF0u ? 2 : 1; }
+        }
+        return units;
+    };
+    script::object_object * window = window_object();
+    if (window == nullptr) { return; }
+    const value get = cx.lookup_property(value::object(window), "getSelection");
+    if (!get.is_callable()) { return; }
+    const value selection = cx.call(get, std::span<const value>{}, value::object(window));
+    const context::rooted keep_selection{cx, selection};
+    const bool collapsed = anchor == focus && anchor_byte == focus_byte;
+    const value method =
+        selection.is_object()
+            ? cx.lookup_property(selection, collapsed ? "collapse" : "setBaseAndExtent")
+            : value::undefined();
+    if (method.is_callable()) {
+        std::array<value, 4> args{wrap(cx, anchor), value::number(utf16(anchor, anchor_byte)),
+                                  wrap(cx, focus), value::number(utf16(focus, focus_byte))};
+        const context::rooted_values keep_args{cx, args};
+        (void)cx.call(method, std::span<const value>{args.data(), collapsed ? 2u : 4u}, selection);
+    }
+    if (cx.failed()) { (void)cx.take_error(); }
+}
+
 // Where a wheel notch or a touch drag goes once no listener kept it: the
 // nearest SCROLL CONTAINER on the flat-tree path from the target that can still
 // move that way - which is scroll chaining, CSSOM View's "scroll an element" on

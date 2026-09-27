@@ -72,6 +72,8 @@ public:
     bool dispatch_wheel(node_id target, const input_event & input);
     bool dispatch_touch(std::string_view phase, node_id target, float x, float y);
     bool wheel_scroll(node_id from, float dx, float dy); // events/input.cpp
+    void select_by_user(node_id anchor, std::size_t anchor_byte, node_id focus,
+                        std::size_t focus_byte); // events/input.cpp
     bool dispatch_input(std::string_view type, node_id target,
                         std::optional<std::string_view> input_type,
                         std::optional<std::string_view> data); // events/input.cpp
