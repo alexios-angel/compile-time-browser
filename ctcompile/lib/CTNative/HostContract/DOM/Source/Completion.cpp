@@ -81,9 +81,12 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         if (!step()) { return false; }
         mapping.map(argument, destination.addArgument(argument.getType(), argument.getLoc()));
     }
-    const auto copyMapping = [&](const mlir::IRMapping & from, mlir::IRMapping & to) {
-        const uint64_t cost =
-            from.getValueMap().size() + from.getOperationMap().size() + from.getBlockMap().size();
+    // Charge each mapped value and operation (and block, unless told not to)
+    // before copying; a charge that does not fit drains the budget.
+    const auto copyMapping = [&](const mlir::IRMapping & from, mlir::IRMapping & to,
+                                 bool blocks = true) {
+        const uint64_t cost = from.getValueMap().size() + from.getOperationMap().size() +
+                              (blocks ? from.getBlockMap().size() : 0);
         if (cost > remaining) {
             remaining = 0;
             return refuse("DOM helper expansion work budget exhausted");
@@ -550,15 +553,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     at, loop.getLoc(), mlir::TypeRange(before.types).drop_front(), initial);
                 ++operationCount;
                 for (auto [source, target] : llvm::zip(loop->getRegions(), copied->getRegions())) {
-                    for (const auto & item : values.getValueMap()) {
-                        (void)item;
-                        if (!step()) { return {}; }
-                    }
-                    for (const auto & item : values.getOperationMap()) {
-                        (void)item;
-                        if (!step()) { return {}; }
-                    }
-                    mlir::IRMapping path(values);
+                    mlir::IRMapping path;
+                    if (!copyMapping(values, path, false)) { return {}; }
                     auto & output = target.emplaceBlock();
                     const bool isBefore = &source == &loop.getBefore();
                     if (isBefore) {
@@ -617,15 +613,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                                                 ? before.exit.arms[index]
                                                 : before.exit.fallback;
                             const auto emitArm = [&](mlir::OpBuilder & nested) -> Results {
-                                for (const auto & item : values.getValueMap()) {
-                                    (void)item;
-                                    if (!step()) { return {}; }
-                                }
-                                for (const auto & item : values.getOperationMap()) {
-                                    (void)item;
-                                    if (!step()) { return {}; }
-                                }
-                                mlir::IRMapping path(values);
+                                mlir::IRMapping path;
+                                if (!copyMapping(values, path, false)) { return {}; }
                                 if (!refineExit(source, path, nested)) { return {}; }
                                 return self(self, source->front(), source->front().begin(), path,
                                             nested, &tail, terminal, depth + index + 1);
@@ -677,15 +666,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                              llvm::zip(llvm::ArrayRef<mlir::Region *>{before.exit.arms[0],
                                                                       before.exit.fallback},
                                        branch->getRegions())) {
-                            for (const auto & item : values.getValueMap()) {
-                                (void)item;
-                                if (!step()) { return {}; }
-                            }
-                            for (const auto & item : values.getOperationMap()) {
-                                (void)item;
-                                if (!step()) { return {}; }
-                            }
-                            mlir::IRMapping path(values);
+                            mlir::IRMapping path;
+                            if (!copyMapping(values, path, false)) { return {}; }
                             auto & output = target.emplaceBlock();
                             mlir::OpBuilder nested(&output, output.begin());
                             if (!refineExit(source, path, nested)) { return {}; }
@@ -859,15 +841,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 ++operationCount;
                 for (auto [source, target] :
                      llvm::zip(branch->getRegions(), copied->getRegions())) {
-                    for (const auto & item : values.getValueMap()) {
-                        (void)item;
-                        if (!step()) { return {}; }
-                    }
-                    for (const auto & item : values.getOperationMap()) {
-                        (void)item;
-                        if (!step()) { return {}; }
-                    }
-                    mlir::IRMapping path(values);
+                    mlir::IRMapping path;
+                    if (!copyMapping(values, path, false)) { return {}; }
                     target.emplaceBlock();
                     mlir::OpBuilder nested(&target.front(), target.front().begin());
                     if (repeated) {
