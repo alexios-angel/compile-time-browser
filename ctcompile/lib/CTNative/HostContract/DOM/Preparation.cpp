@@ -363,6 +363,42 @@ llvm::Error liftDOMClasses(mlir::ModuleOp module, unsigned maxSteps) {
     return llvm::Error::success();
 }
 
+// Drop the proved inert wrapper and make the initial `undefined` binding a
+// constant. Only the complete source proof authorizes either; no VM lookup or
+// C++ global survives emission.
+static void retireDeclaration(mlir::ModuleOp prepared, const DOMEntryAnalysis & source) {
+    if (auto wrapper = source.wrapper()) {
+        prepared.lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
+    }
+    prepared.walk([](ctjs::LoadGlobalOp load) {
+        if (load.getName() != "undefined") { return; }
+        mlir::OpBuilder at(load);
+        auto constant = ctjs::ConstantOp::create(at, load.getLoc(),
+                                                 ctjs::UndefinedAttr::get(load.getContext()));
+        load.getResult().replaceAllUsesWith(constant.getResult());
+        load.erase();
+    });
+}
+
+// Discard supplied native reports, export the entry, and reprove the private
+// clone before it replaces `module` and `contract`.
+static llvm::Error publishPrepared(mlir::ModuleOp module, HostContract & contract,
+                                   mlir::ModuleOp prepared, HostContract transformed,
+                                   unsigned maxSteps, llvm::StringRef stage) {
+    prepared.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+    prepared.lookupSymbol<ctjs::FuncOp>(contract.entry).setPublic();
+    transformed.moduleSha256 = hostContractFingerprint(prepared);
+    const DOMEntryAnalysis checked(prepared, transformed, maxSteps);
+    if (!checked.proved()) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                       stage + ": " + checked.reason());
+    }
+    module->setAttrs(prepared->getAttrs());
+    module.getBodyRegion().takeBody(prepared.getBodyRegion());
+    contract = std::move(transformed);
+    return llvm::Error::success();
+}
+
 llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsigned maxSteps) {
     const auto refuse = [](const llvm::Twine & reason) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
@@ -469,30 +505,10 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
                 return refuse("native intrinsic entry preparation work budget exhausted");
             }
             prepared = sourceModule.clone();
-            if (auto wrapper = source.wrapper()) {
-                prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
-            }
+            retireDeclaration(*prepared, source);
         }
-        prepared->walk([](ctjs::LoadGlobalOp load) {
-            if (load.getName() != "undefined") { return; }
-            mlir::OpBuilder at(load);
-            auto constant = ctjs::ConstantOp::create(at, load.getLoc(),
-                                                     ctjs::UndefinedAttr::get(load.getContext()));
-            load.getResult().replaceAllUsesWith(constant.getResult());
-            load.erase();
-        });
-        prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
-        prepared->lookupSymbol<ctjs::FuncOp>(contract.entry).setPublic();
-        HostContract transformed = contract;
-        transformed.moduleSha256 = hostContractFingerprint(*prepared);
-        const DOMEntryAnalysis checked(*prepared, transformed, remaining);
-        if (!checked.proved()) {
-            return refuse("native intrinsic entry preparation: " + checked.reason());
-        }
-        module->setAttrs((*prepared)->getAttrs());
-        module.getBodyRegion().takeBody(prepared->getBodyRegion());
-        contract = std::move(transformed);
-        return llvm::Error::success();
+        return publishPrepared(module, contract, *prepared, contract, remaining,
+                               "native intrinsic entry preparation");
     }
     if (contract.moduleSha256 != hostContractFingerprint(module) ||
         module->hasAttr("ctjs.skipped")) {
@@ -647,26 +663,12 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
                 yield->setOperand(static_cast<unsigned>(index), constant.getResult());
             }
         }
-        if (auto wrapper = source.wrapper()) {
-            prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
-        }
         // Make proved callback bodies reachable to sparse dataflow;
         // they still emit as ordinary internal C++ functions.
         for (ctjs::FuncOp callback : source.callbacks()) {
             prepared->lookupSymbol<ctjs::FuncOp>(callback.getSymName()).setPublic();
         }
-        // Only the initialized DOM provider and complete source
-        // proof authorize this binding. Normalize in the private
-        // clone, then reprove it; no VM lookup or C++ global
-        // survives emission.
-        prepared->walk([](ctjs::LoadGlobalOp load) {
-            if (load.getName() != "undefined") { return; }
-            mlir::OpBuilder at(load);
-            auto constant = ctjs::ConstantOp::create(at, load.getLoc(),
-                                                     ctjs::UndefinedAttr::get(load.getContext()));
-            load.getResult().replaceAllUsesWith(constant.getResult());
-            load.erase();
-        });
+        retireDeclaration(*prepared, source);
         // Normalize optional force while the original method
         // proof is available. Token lists omit undefined;
         // Element coerces it to false. The emitter then needs
@@ -720,20 +722,11 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             branch.erase();
         });
     }
-    prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
-    prepared->lookupSymbol<ctjs::FuncOp>(contract.entry).setPublic();
-
     // The complete DOM proof above establishes the replacement's structure.
     // An earlier CFG-lifting failure describes the original handler body only.
     prepared->lookupSymbol<ctjs::FuncOp>(contract.entry)->removeAttr("ctjs.not_structured");
-
-    transformed.moduleSha256 = hostContractFingerprint(*prepared);
-    const DOMEntryAnalysis checked(*prepared, transformed, maxSteps);
-    if (!checked.proved()) { return refuse("native DOM entry preparation: " + checked.reason()); }
-    module->setAttrs((*prepared)->getAttrs());
-    module.getBodyRegion().takeBody(prepared->getBodyRegion());
-    contract = std::move(transformed);
-    return llvm::Error::success();
+    return publishPrepared(module, contract, *prepared, std::move(transformed), maxSteps,
+                           "native DOM entry preparation");
 }
 
 } // namespace ctcompile::ctnative
