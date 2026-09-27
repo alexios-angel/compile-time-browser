@@ -381,7 +381,7 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                     kind == ctjs::BinaryKind::Sub || kind == ctjs::BinaryKind::Mul ||
                     kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Mod ||
                     kind == ctjs::BinaryKind::Pow || kind == ctjs::BinaryKind::Add ||
-                    kind == ctjs::BinaryKind::Concat;
+                    kind == ctjs::BinaryKind::Concat || ctjs::isBitwise(kind);
                 inspect(supported ? ArrayContentsFailure::None
                                   : ArrayContentsFailure::UnsupportedOperation);
                 comparison.setKindAttr(KindAttr::get(&context, producerKind));

@@ -66,7 +66,13 @@ bool classInitialization::publicationSuffix(ctjs::CallOp publication,
                 case ctjs::BinaryKind::Mul:
                 case ctjs::BinaryKind::Div:
                 case ctjs::BinaryKind::Mod:
-                case ctjs::BinaryKind::Pow: numeric = true; break;
+                case ctjs::BinaryKind::Pow:
+                case ctjs::BinaryKind::Shl:
+                case ctjs::BinaryKind::Shr:
+                case ctjs::BinaryKind::UShr:
+                case ctjs::BinaryKind::BitAnd:
+                case ctjs::BinaryKind::BitOr:
+                case ctjs::BinaryKind::BitXor: numeric = true; break;
                 default: break;
                 }
             }

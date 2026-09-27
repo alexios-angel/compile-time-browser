@@ -249,11 +249,16 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                               binary.getKind() == ctjs::BinaryKind::Mul ||
                               binary.getKind() == ctjs::BinaryKind::Div ||
                               binary.getKind() == ctjs::BinaryKind::Mod ||
-                              binary.getKind() == ctjs::BinaryKind::Pow)) {
+                              binary.getKind() == ctjs::BinaryKind::Pow ||
+                              ctjs::isBitwise(binary.getKind()))) {
             const auto left = self(self, binary.getLhs(), depth + 1);
             const auto right = self(self, binary.getRhs(), depth + 1);
             if (!left || !right) { return std::nullopt; }
-            if (binary.getKind() == ctjs::BinaryKind::Add) {
+            if (ctjs::isBitwise(binary.getKind())) {
+                // ToNumeric first, which is the identity on the bounded
+                // primitives boundedNumberBitwise alone answers for.
+                boundedNumberBitwise(*left, *right, binary.getKind(), result);
+            } else if (binary.getKind() == ctjs::BinaryKind::Add) {
                 boundedNumberSum(*left, *right, result);
             } else if (binary.getKind() == ctjs::BinaryKind::Sub) {
                 boundedNumberDifference(*left, *right, result);
@@ -602,13 +607,18 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             return range;
         }
-        const bool bitAnd = addition && addition.getKind() == ctjs::BinaryKind::BitAnd;
-        const bool bitOr = addition && addition.getKind() == ctjs::BinaryKind::BitOr;
-        const bool bitXor = addition && addition.getKind() == ctjs::BinaryKind::BitXor;
-        const bool leftShift = addition && addition.getKind() == ctjs::BinaryKind::Shl;
+        // A bitwise operation in either family. Every transfer below converts
+        // only operands it has proved bounded primitives, on which ctjs.binary's
+        // ToNumeric is the identity and binary_static's operator is the same.
+        std::optional<ctjs::BinaryKind> bitwise;
+        if (addition && ctjs::isBitwise(addition.getKind())) { bitwise = addition.getKind(); }
+        if (binary && ctjs::isBitwise(binary.getKind())) { bitwise = binary.getKind(); }
+        const bool bitAnd = bitwise == ctjs::BinaryKind::BitAnd;
+        const bool bitOr = bitwise == ctjs::BinaryKind::BitOr;
+        const bool bitXor = bitwise == ctjs::BinaryKind::BitXor;
+        const bool leftShift = bitwise == ctjs::BinaryKind::Shl;
         const bool shift =
-            leftShift || (addition && (addition.getKind() == ctjs::BinaryKind::Shr ||
-                                       addition.getKind() == ctjs::BinaryKind::UShr));
+            leftShift || bitwise == ctjs::BinaryKind::Shr || bitwise == ctjs::BinaryKind::UShr;
         if (!expression || !bodyBlocks.contains(expression->getBlock()) ||
             !(add || subtract || divide || remainder || multiply || power || shift || bitAnd ||
               bitOr || bitXor)) {
@@ -725,7 +735,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             ContentsValue result{operand, ContentsKind::NonBigInt};
             if (shift) {
-                boundedNumberBitwise(*offset, range->first, addition.getKind(), result);
+                boundedNumberBitwise(*offset, range->first, *bitwise, result);
             } else {
                 boundedNumberDivision(*offset, range->first, remainder, result);
             }
@@ -981,7 +991,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                         return std::nullopt;
                     }
                     ContentsValue result{operand, ContentsKind::NonBigInt};
-                    boundedNumberBitwise(*endpoint, *offset, addition.getKind(), result);
+                    boundedNumberBitwise(*endpoint, *offset, *bitwise, result);
                     if (!result.integerNumber && !result.negativeIntegerNumber) {
                         return std::nullopt;
                     }
@@ -1056,8 +1066,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             const auto count = boundedConvertedBits(*offset);
             if (!count) { return std::nullopt; }
-            const bool unsignedShift = addition.getKind() == ctjs::BinaryKind::UShr;
-            const bool signedShift = addition.getKind() == ctjs::BinaryKind::Shr;
+            const bool unsignedShift = bitwise == ctjs::BinaryKind::UShr;
+            const bool signedShift = bitwise == ctjs::BinaryKind::Shr;
             // Exact negative magnitudes are bounded by 2^32-1. Within this
             // band ToUint32 adds 2^32; crossing zero would break its order.
             const bool negativeBand = unsignedShift && range->first.negativeIntegerNumber &&
@@ -1145,7 +1155,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             ContentsValue result{operand, ContentsKind::NonBigInt};
             if (shift) {
-                boundedNumberBitwise(*endpoint, *offset, addition.getKind(), result);
+                boundedNumberBitwise(*endpoint, *offset, *bitwise, result);
             } else if (divide) {
                 boundedNumberDivision(*endpoint, *offset, false, result);
             } else if (multiply) {

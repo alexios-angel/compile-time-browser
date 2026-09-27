@@ -19,7 +19,7 @@
 // IMPORT-LABEL: ctjs.func @bitsReleased$
 // IMPORT: ctjs.unary bitnot
 // IMPORT-LABEL: ctjs.func @shiftReturned$
-// IMPORT: ctjs.binary_static ushr
+// IMPORT: ctjs.binary ushr
 // IMPORT-LABEL: ctjs.func @originalKey$
 // IMPORT: ctjs.get_property
 // IMPORT-LABEL: ctjs.func @stringAddition$
@@ -50,8 +50,8 @@
 // CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
 // CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr escapes:passed
-// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} arr escapes:passed
 

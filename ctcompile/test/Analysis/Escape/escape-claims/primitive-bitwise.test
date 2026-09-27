@@ -5,21 +5,21 @@
 
 // Original Boolean/null bitwise inputs convert only at the operation; their keys stay unchanged.
 // IMPORT-LABEL: ctjs.func @trueReleased$
-// IMPORT: ctjs.binary_static {{bitand|bitor|bitxor|shl|shr|ushr}}
+// IMPORT: ctjs.binary {{bitand|bitor|bitxor|shl|shr|ushr}}
 // IMPORT-LABEL: ctjs.func @trueReturned$
-// IMPORT: ctjs.binary_static {{bitand|bitor|bitxor|shl|shr|ushr}}
+// IMPORT: ctjs.binary {{bitand|bitor|bitxor|shl|shr|ushr}}
 // IMPORT-LABEL: ctjs.func @falseReleased$
-// IMPORT: ctjs.binary_static {{bitand|bitor|bitxor|shl|shr|ushr}}
+// IMPORT: ctjs.binary {{bitand|bitor|bitxor|shl|shr|ushr}}
 // IMPORT-LABEL: ctjs.func @falseReturned$
-// IMPORT: ctjs.binary_static {{bitand|bitor|bitxor|shl|shr|ushr}}
+// IMPORT: ctjs.binary {{bitand|bitor|bitxor|shl|shr|ushr}}
 // IMPORT-LABEL: ctjs.func @nullReleased$
-// IMPORT: ctjs.binary_static {{bitand|bitor|bitxor|shl|shr|ushr}}
+// IMPORT: ctjs.binary {{bitand|bitor|bitxor|shl|shr|ushr}}
 // IMPORT-LABEL: ctjs.func @nullReturned$
-// IMPORT: ctjs.binary_static {{bitand|bitor|bitxor|shl|shr|ushr}}
+// IMPORT: ctjs.binary {{bitand|bitor|bitxor|shl|shr|ushr}}
 // IMPORT-LABEL: ctjs.func @originalKey$
 // IMPORT: ctjs.get_property
 // IMPORT-LABEL: ctjs.func @unknownInput$
-// IMPORT: ctjs.binary_static {{bitand|bitor|bitxor|shl|shr|ushr}}
+// IMPORT: ctjs.binary {{bitand|bitor|bitxor|shl|shr|ushr}}
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored

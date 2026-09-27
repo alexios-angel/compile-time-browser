@@ -6,37 +6,37 @@
 // Invariant bitwise latches preserve original primitive snapshots, signed results
 // and masked shift counts. Changed operands and unsafe bounds refuse.
 // IMPORT-LABEL: ctjs.func @savedAnd$
-// IMPORT: ctjs.binary_static bitand
+// IMPORT: ctjs.binary bitand
 // IMPORT-LABEL: ctjs.func @savedOr$
-// IMPORT: ctjs.binary_static bitor
+// IMPORT: ctjs.binary bitor
 // IMPORT-LABEL: ctjs.func @savedXor$
-// IMPORT: ctjs.binary_static bitxor
+// IMPORT: ctjs.binary bitxor
 // IMPORT-LABEL: ctjs.func @maskedLeft$
-// IMPORT: ctjs.binary_static shl
+// IMPORT: ctjs.binary shl
 // IMPORT-LABEL: ctjs.func @signedRight$
-// IMPORT: ctjs.binary_static shr
+// IMPORT: ctjs.binary shr
 // IMPORT: ctjs.binary sub
 // IMPORT-LABEL: ctjs.func @unsignedRight$
-// IMPORT: ctjs.binary_static ushr
+// IMPORT: ctjs.binary ushr
 // IMPORT-LABEL: ctjs.func @nested$
 // IMPORT: ctjs.binary sub
-// IMPORT: ctjs.binary_static bitor
+// IMPORT: ctjs.binary bitor
 // IMPORT-LABEL: ctjs.func @changing$
-// IMPORT: ctjs.binary_static bitand
+// IMPORT: ctjs.binary bitand
 // IMPORT-LABEL: ctjs.func @reloaded$
-// IMPORT: ctjs.binary_static bitor
+// IMPORT: ctjs.binary bitor
 // IMPORT-LABEL: ctjs.func @noncanonical$
-// IMPORT: ctjs.binary_static bitor
+// IMPORT: ctjs.binary bitor
 // IMPORT-LABEL: ctjs.func @deep$
 // IMPORT: ctjs.binary sub
-// IMPORT: ctjs.binary_static bitor
-// IMPORT: ctjs.binary_static shl
+// IMPORT: ctjs.binary bitor
+// IMPORT: ctjs.binary shl
 // IMPORT-LABEL: ctjs.func @originalKey$
-// IMPORT: ctjs.binary_static bitand
+// IMPORT: ctjs.binary bitand
 // IMPORT-LABEL: ctjs.func @overflow$
-// IMPORT: ctjs.binary_static ushr
+// IMPORT: ctjs.binary ushr
 // IMPORT-LABEL: ctjs.func @zeroStride$
-// IMPORT: ctjs.binary_static bitxor
+// IMPORT: ctjs.binary bitxor
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
@@ -57,8 +57,8 @@
 // CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj confined
 // CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj confined
 // CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored

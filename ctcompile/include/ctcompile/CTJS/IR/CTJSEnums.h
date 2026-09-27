@@ -7,3 +7,24 @@
 #include "llvm/ADT/StringRef.h"
 
 #include "ctcompile/CTJS/IR/CTJSEnums.h.inc"
+
+namespace ctcompile::ctjs {
+
+// THE SIX BITWISE KINDS, the ones both binary families implement. The importer
+// emits them as ctjs.binary, whose ToNumeric can run an operand's valueOf; a
+// ctjs.binary_static of one says the operands are numeric already. A pass may
+// treat the two alike only once it has proved the operands primitive: on a
+// primitive, ToNumeric is the identity and both reach the same operator.
+constexpr bool isBitwise(BinaryKind kind) {
+    switch (kind) {
+    case BinaryKind::Shl:
+    case BinaryKind::Shr:
+    case BinaryKind::UShr:
+    case BinaryKind::BitAnd:
+    case BinaryKind::BitOr:
+    case BinaryKind::BitXor: return true;
+    default: return false;
+    }
+}
+
+} // namespace ctcompile::ctjs

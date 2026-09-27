@@ -131,11 +131,11 @@
 // Preserve both original source bodies as positives. Unary ~ and binary |
 // operate on js_num, whose overloads implement JavaScript's 32-bit conversion.
 //
-// MEASURED, AND IT SURPRISES: `x | y`, `x >> y` and `x >>> y` all arrive as
-// ctjs.binary_static, so the BinaryOp arm's own default ("a bitwise or string
-// operator is not native yet") is not reachable from any JavaScript operator
-// tried here. It is left unpinned rather than pinned against a construct that
-// does not produce it.
+// `x | y`, `x >> y` and `x >>> y` arrive as ctjs.binary - the VM ToNumerics
+// their operands - and the BinaryOp arm admits every bitwise kind with numeric
+// operands, so its own default ("a bitwise or string operator is not native
+// yet") is reachable from no JavaScript operator. It is left unpinned rather
+// than pinned against a construct that does not produce it.
 //
 // TILDE: bitwise_not {{.*}} : (!emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 

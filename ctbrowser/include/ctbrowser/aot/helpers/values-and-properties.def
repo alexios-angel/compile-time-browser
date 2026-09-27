@@ -275,22 +275,25 @@ CT_AOT_HELPER(/* name */ ct_aot_bit_not, /* ret */ int32_t,
               /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1)
 CT_AOT_COVERS(/* helper */ ct_aot_bit_not, /* opcode */ bit_not)
 
-/* THE NON-RE-ENTERING FAMILY, honest because all seven inventory rows are
- * byte-identical (1,1,1,0,1). These seven use only the STATIC conversions,
- * which skip the valueOf/toString walk, so may_reenter is 0 and a backend
- * that has proven both operands are Numbers may drop the call, the
- * exception edge AND the safepoint. PARAMETER NAMED op_kind, NOT op, and
- * that is not cosmetic: the .def is expanded on ctbrowser's DEFINE side
+/* THE NON-RE-ENTERING FAMILY. context::binary_op_static converts NOTHING:
+ * to_number and to_int32/to_uint32 on whatever it is handed, with no
+ * valueOf/toString walk, so may_reenter is 0 and a backend that has proven
+ * both operands are Numbers may drop the call, the exception edge AND the
+ * safepoint. It is no longer what the interpreter runs for the six bitwise
+ * opcodes: since ec1b5a89b their handlers ToNumeric both operands first
+ * (left first, a Symbol is a TypeError) and only then call this, so a
+ * compiler reaches it for them only once the operands are proven numeric -
+ * ct_aot_binary_op below is the general lowering. PARAMETER NAMED op_kind,
+ * NOT op, and that is not cosmetic: the .def is expanded on ctbrowser's DEFINE side
  * inside namespace ctbrowser::script where `op` is the enum type, so a
  * parameter of that name shadows it and the body cannot spell op::add -
  * context::bigint_binary already dodges this by naming its parameter
  * `kind`. `add` belongs HERE, not with add_generic: compile_binary maps
  * source `+` to add_generic and op::add comes only from `++` and three
- * internal counters, so `x++` on {valueOf:()=>3} is NaN and never runs user
- * code. That is a deviation from the specification, not an optimisation,
- * and if ctbrowser ever fixes it these seven move to ct_aot_binary_op -
- * which rule (b) turns into a build failure in both projects rather than a
- * miscompile.
+ * internal counters. The interpreter's add ToNumerics an object operand
+ * now, so `o++` on {valueOf:()=>3} stores 4 there; through this helper it
+ * is still NaN and runs no user code - a deviation this row keeps until the
+ * helper converts, at which point add joins ct_aot_binary_op too.
  * DELEGATES TO: context::bigint_binary (declared vm.hpp:543, defined
  *   vm/coerce.cpp:276, already op-dispatched) + context::to_number (static,
  *   vm.hpp:504/coerce.cpp:49) for add + to_int32/to_uint32 (vm.hpp:494/497)
@@ -317,9 +320,11 @@ CT_AOT_COVERS(/* helper */ ct_aot_binary_op_static, /* opcode */ shl)
 CT_AOT_COVERS(/* helper */ ct_aot_binary_op_static, /* opcode */ shr)
 CT_AOT_COVERS(/* helper */ ct_aot_binary_op_static, /* opcode */ ushr)
 
-/* THE RE-ENTERING FAMILY: all seven rows are byte-identical (1,1,1,1,1) and
- * all seven run page JavaScript through ToPrimitive/ToNumber/ToString, so
- * the caller must have every live value AND both operands reachable from
+/* THE RE-ENTERING FAMILY: thirteen opcodes, all of which run page
+ * JavaScript through ToPrimitive/ToNumeric/ToString - the seven arithmetic
+ * and string ones, and the six bitwise ones, which binary_op ToNumerics as
+ * their VM handlers do before handing them to binary_op_static. So the
+ * caller must have every live value AND both operands reachable from
  * the shadow frame FOR THE DURATION. THE LIFT MUST NOT ROUTE concat THROUGH
  * bigint_binary: coerce.cpp:298-317's switch has no case op::concat, so a
  * lifted binary_op that dispatched everything through bigint_binary first
@@ -344,7 +349,8 @@ CT_AOT_COVERS(/* helper */ ct_aot_binary_op_static, /* opcode */ ushr)
  *   to_number_value's BigInt TypeError (coerce.cpp:157), and from
  *   bigint_binary's TypeError/RangeErrors including div's and mod's
  *   'Division by zero' and pow's 'Exponent must be non-negative'
- *   (coerce.cpp:303-305). CT_AOT_FAILED from stack exhaustion
+ *   (coerce.cpp:303-305); for the bitwise six, a Symbol operand's TypeError
+ *   and everything ct_aot_binary_op_static above lists. CT_AOT_FAILED from stack exhaustion
  *   (context::invoke, vm/call/invoke.cpp) and the ceiling. *out is written on
  *   every path
  *   (undefined on the bigint throw arms). */
@@ -358,6 +364,12 @@ CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ mod)
 CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ pow)
 CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ add_generic)
 CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ concat)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ bit_and)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ bit_or)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ bit_xor)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ shl)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ shr)
+CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ ushr)
 
 /* A value member declared noexcept, so no handle is threaded at all. Both
  * opcodes share it and the negation is one xor in the caller. Keeping it

@@ -14,18 +14,24 @@ struct binary_row {
 };
 
 inline constexpr binary_row binary_rows[] = {
-    // THE STATIC FAMILY, which cannot run user code - to_number and to_int32
-    // rather than to_number_value. A backend that proves both operands are
-    // numbers may drop the call, the exception edge and the safepoint.
+    // THE STATIC FAMILY, which is now `add` alone: ct_aot_binary_op_static
+    // converts with to_number and runs no user code. The VM's own op::add
+    // ToNumerics its operands since ec1b5a89b, so `x++` on an object runs its
+    // valueOf in the interpreter; the helper still does not, and until that
+    // browser-side fix lands this row stays static rather than claim an edge
+    // the call it lowers to never takes.
     {op::add, ctjs::BinaryKind::Add, false},
-    {op::bit_and, ctjs::BinaryKind::BitAnd, false},
-    {op::bit_or, ctjs::BinaryKind::BitOr, false},
-    {op::bit_xor, ctjs::BinaryKind::BitXor, false},
-    {op::shl, ctjs::BinaryKind::Shl, false},
-    {op::shr, ctjs::BinaryKind::Shr, false},
-    {op::ushr, ctjs::BinaryKind::UShr, false},
-    // AND THE RE-ENTERING ONE. `add_generic` is what source `+` compiles to;
-    // `op::add` comes only from `++` and three internal counters.
+    // AND THE RE-ENTERING ONES. `add_generic` is what source `+` compiles to;
+    // `op::add` comes only from `++` and three internal counters. The six
+    // bitwise opcodes ToNumeric both operands, left first, so an object's
+    // valueOf runs and a Symbol is a TypeError - and context::binary_op
+    // answers them exactly as the interpreter does.
+    {op::bit_and, ctjs::BinaryKind::BitAnd, true},
+    {op::bit_or, ctjs::BinaryKind::BitOr, true},
+    {op::bit_xor, ctjs::BinaryKind::BitXor, true},
+    {op::shl, ctjs::BinaryKind::Shl, true},
+    {op::shr, ctjs::BinaryKind::Shr, true},
+    {op::ushr, ctjs::BinaryKind::UShr, true},
     {op::sub, ctjs::BinaryKind::Sub, true},
     {op::mul, ctjs::BinaryKind::Mul, true},
     {op::div, ctjs::BinaryKind::Div, true},
