@@ -649,6 +649,10 @@ struct closureLifter {
     bool slotIsACandidate(ctjs::CreateClosureOp c, unsigned j);
 
     bool slotCarriesAnObject(mlir::Operation * callable, unsigned j) const;
+    // A call's operand 2 + j, or a call_direct's 3 + j, whose slot carries an object.
+    bool carriesObjectArgument(mlir::OpOperand & use);
+    // A call whose callee is a constant-key read of its receiver `object`.
+    static bool methodCallOn(ctjs::CallOp call, mlir::Value object);
 
     void argumentCensus();
 

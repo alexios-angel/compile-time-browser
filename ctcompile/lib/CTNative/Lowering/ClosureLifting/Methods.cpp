@@ -199,58 +199,44 @@ bool closureLifter::retainedByLocalMap(mlir::OpOperand & use,
 // so a second, drifting copy of this walk is exactly what is not wanted.
 bool closureLifter::usesCloseTheShape(mlir::Value object) {
     for (mlir::OpOperand & use : object.getUses()) {
-        mlir::Operation * user = use.getOwner();
-        if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            if (use.getOperandNumber() != 0 || ctjs::constantKey(get.getKey()).empty()) {
-                return false;
-            }
-            continue;
-        }
-        if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            if (use.getOperandNumber() != 0 || ctjs::constantKey(set.getKey()).empty()) {
-                return false;
-            }
-            continue;
-        }
-        if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
+        if (isConstantKeyAccess(use)) { continue; }
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner())) {
             if (retainedByLocalMap(use)) { continue; }
             // The object as the RECEIVER of a call whose callee is a
             // constant-key read of that same object: a method call.
             if (use.getOperandNumber() == 1) {
                 // Borrowed parameters still have no method-resolution proof.
                 if (llvm::isa<mlir::BlockArgument>(object)) { return false; }
-                auto load = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                if (!load || load.getObject() != object ||
-                    ctjs::constantKey(load.getKey()).empty()) {
-                    return false;
-                }
+                if (!methodCallOn(call, object)) { return false; }
                 continue;
             }
-            // AND THE OBJECT AS AN ARGUMENT, which is the same carrier one
-            // operand along: a parameter this rewrite will hand a
-            // `ctn_x *`. `argumentCensus` decided that before anything was
-            // rewritten, so this is a map lookup and not a second proof.
-            if (use.getOperandNumber() >= 2) {
-                auto * made = objectArgumentCallee(call);
-                if (made && slotCarriesAnObject(made, use.getOperandNumber() - 2)) { continue; }
-            }
-            return false;
         }
-        // THE SAME TWO QUESTIONS AT THE POSITIONS call_direct PUTS THEM.
-        // Its operands are the callee's entry block in order, so argument i
-        // is operand 3 + i rather than 2 + i. Without this arm a literal
-        // handed to a call the closed world had already named read as an
-        // OPEN shape, and the object-argument lift lost it.
-        if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
-            if (use.getOperandNumber() >= 3) {
-                auto * made = objectArgumentCallee(direct);
-                if (made && slotCarriesAnObject(made, use.getOperandNumber() - 3)) { continue; }
-            }
-            return false;
-        }
+        // AND THE OBJECT AS AN ARGUMENT, which is the same carrier one
+        // operand along: a parameter this rewrite will hand a `ctn_x *`.
+        // `argumentCensus` decided that before anything was rewritten, so
+        // this is a map lookup and not a second proof. call_direct puts the
+        // same question at operand 3 + i rather than 2 + i; without that arm
+        // a literal handed to a call the closed world had already named read
+        // as an OPEN shape, and the object-argument lift lost it.
+        if (carriesObjectArgument(use)) { continue; }
         return false;
     }
     return true;
+}
+
+bool closureLifter::methodCallOn(ctjs::CallOp call, mlir::Value object) {
+    auto load = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+    return load && load.getObject() == object && !ctjs::constantKey(load.getKey()).empty();
+}
+
+bool closureLifter::carriesObjectArgument(mlir::OpOperand & use) {
+    mlir::Operation * call = use.getOwner();
+    const unsigned first = llvm::isa<ctjs::CallDirectOp>(call) ? 3 : 2;
+    if (!llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(call) || use.getOperandNumber() < first) {
+        return false;
+    }
+    auto * made = objectArgumentCallee(call);
+    return made && slotCarriesAnObject(made, use.getOperandNumber() - first);
 }
 
 // CONDITION 2: the one function a method call reaches, or null. Every
@@ -313,20 +299,8 @@ std::string closureLifter::whyNotAMethodField(ctjs::SetPropertyOp set) {
 // another proof. Forwarding is proved by argumentCensus's shrinking graph;
 // this state-free label does not authorize it or resolve borrowed methods.
 bool closureLifter::onlyConstantKeyAccess(mlir::Value v) {
-    for (mlir::OpOperand & use : v.getUses()) {
-        mlir::Operation * user = use.getOwner();
-        if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0 && !ctjs::constantKey(get.getKey()).empty()) {
-                continue;
-            }
-        } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0 && !ctjs::constantKey(set.getKey()).empty()) {
-                continue;
-            }
-        }
-        return false;
-    }
-    return true;
+    return llvm::all_of(v.getUses(),
+                        [](mlir::OpOperand & use) { return isConstantKeyAccess(use); });
 }
 
 // Include every symbolic call, not only uses of the closure value. The local
@@ -825,29 +799,13 @@ std::optional<std::string> closureLifter::whyThisLeaks(ctjs::FuncOp target) {
     const bool constructed = constructor && constructorClosures.contains(constructor);
     for (mlir::OpOperand & use : entry.getArgument(0).getUses()) {
         mlir::Operation * user = use.getOwner();
-        if (constructed) {
-            // Reuse the settled argument census: only an exact borrowed slot
-            // transports this caller-owned receiver into another function.
-            const bool direct = llvm::isa<ctjs::CallDirectOp>(user);
-            if ((direct || llvm::isa<ctjs::CallOp>(user)) &&
-                use.getOperandNumber() >= (direct ? 3u : 2u)) {
-                auto * callee = objectArgumentCallee(user);
-                if (callee &&
-                    slotCarriesAnObject(callee, use.getOperandNumber() - (direct ? 3u : 2u))) {
-                    continue;
-                }
-            }
-        }
-        if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0 && !ctjs::constantKey(get.getKey()).empty()) {
-                continue;
-            }
+        // Reuse the settled argument census: only an exact borrowed slot
+        // transports this caller-owned receiver into another function.
+        if ((constructed && carriesObjectArgument(use)) || isConstantKeyAccess(use)) { continue; }
+        if (llvm::isa<ctjs::GetPropertyOp>(user)) {
             return "it reads `this` through a dynamic key";
         }
-        if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0 && !ctjs::constantKey(set.getKey()).empty()) {
-                continue;
-            }
+        if (llvm::isa<ctjs::SetPropertyOp>(user)) {
             if (use.getOperandNumber() == 2) {
                 return "it stores `this` into another object - that needs an owner, and this "
                        "slice introduces none";
