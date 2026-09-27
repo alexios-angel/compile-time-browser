@@ -440,4 +440,66 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
                       });
 }
 
+// WHAT :valid AND :invalid MATCH (HTML 4.16.3), for the selector engine to ask:
+// a candidate for constraint validation answers whether it satisfies its
+// constraints; a <form>, whether none of the controls it owns is a candidate
+// that does not; a <fieldset>, the same of its descendants. Every other
+// element - a control barred from validation included - is nullopt and
+// matches neither. The same flags `validity` reports and checkValidity()
+// acts on, so a sheet and a script cannot disagree about a control.
+std::optional<bool> dom_bindings::control_validity(node_id id) {
+    if (cx_ == nullptr) { return std::nullopt; }
+    const control_helpers helpers{this};
+    context & c = *cx_;
+    // A page no script has touched has built no interfaces yet, and the
+    // `pattern` constraint compiles through ValidityState's prototype.
+    ensure_dom_interfaces(c);
+    // One element as a candidate: nullopt when it is none.
+    const auto satisfies = [&](node_id one) -> std::optional<bool> {
+        bool candidate = false;
+        bool face = false;
+        {
+            const auto txn = doc_->read();
+            if (!txn.contains(one) || txn.element_ns(one) != node_ns::html) { return std::nullopt; }
+            face = helpers.is_face(this, one);
+            if (face) {
+                // As validate_form bars a form-associated custom element.
+                bool in_datalist = false;
+                for (node_id up = txn.parent(one); up; up = txn.parent(up)) {
+                    if (helpers.is(txn, up, "datalist")) { in_datalist = true; }
+                }
+                candidate = !helpers.is_disabled(txn, this, one) &&
+                            !helpers.has_attribute(txn, this, one, "readonly") && !in_datalist;
+            } else {
+                candidate = helpers.will_validate(txn, this, one);
+            }
+        }
+        if (!candidate) { return std::nullopt; }
+        if (face) { return !helpers.face_invalid(this, one); }
+        return helpers.validity_flags(c, this, one) == 0;
+    };
+    std::vector<node_id> owned;
+    bool is_form = false;
+    bool is_fieldset = false;
+    {
+        const auto txn = doc_->read();
+        if (!txn.contains(id) || txn.element_ns(id) != node_ns::html) { return std::nullopt; }
+        is_form = txn.local_name(id) == "form";
+        is_fieldset = txn.local_name(id) == "fieldset";
+        if (is_fieldset) {
+            helpers.walk_tree(txn, id, [&](node_id at) {
+                if (at != id && txn.kind(at).value_or(node_kind::text) == node_kind::element) {
+                    owned.push_back(at);
+                }
+            });
+        }
+    }
+    if (!is_form && !is_fieldset) { return satisfies(id); }
+    if (is_form) { owned = helpers.elements_of_form(this, id); }
+    for (const node_id one : owned) {
+        if (satisfies(one) == false) { return false; }
+    }
+    return true;
+}
+
 } // namespace ctbrowser::shell

@@ -80,6 +80,7 @@ public:
     // HTML 4.10.4: a label's labeled control, labelable custom elements and
     // all (element/control_methods/collections_and_labels.cpp).
     [[nodiscard]] node_id labeled_control(node_id label);
+    [[nodiscard]] std::optional<bool> control_validity(node_id id); // :valid/:invalid's answer
     // After ANY write to the document, the browser's own included (a
     // <summary>'s activation): the observers' records and the attribute change
     // steps (entry.cpp).
@@ -87,6 +88,7 @@ public:
     [[nodiscard]] bool is_connected(node_id target) const;
 
     std::size_t run_due_callbacks();
+    std::size_t run_timers(bool queued_tasks_only); // window/callbacks.cpp
 
     void reconcile_frames();
     bool navigate_form_target(node_id form, form_navigation navigation);
@@ -698,6 +700,7 @@ private:
     // ...or null when `window` is no window of this page any more: a removed
     // frame's - frames.cpp.
     [[nodiscard]] dom_bindings * find_bindings_of(value window);
+    [[nodiscard]] std::vector<node_id> child_navigables(); // frames.cpp
     // The bindings that made the node wrapper `wrapper` - the page's or a
     // frame's, at any depth - or null for anything else. A member installed on
     // a SHARED interface prototype captures the bindings that installed it
@@ -732,6 +735,8 @@ private:
     [[nodiscard]] std::pair<dom_bindings *, node_id> choose_navigable(std::string_view target);
     void navigate_frame(dom_bindings & navigable, node_id element, form_navigation navigation);
     void install_window_open(context & cx, script::object_object & window);
+    void install_history(context & cx, script::object_object & window);
+    void install_dom_parser(context & cx);
     const request_handler * request_handler_ = nullptr; // the primary's
     [[nodiscard]] std::optional<resource_reply> ask_request_handler(resource_request request);
     // Returns the bindings over the frame's document (null when no wrapper).

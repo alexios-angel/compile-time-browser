@@ -228,48 +228,61 @@ std::string_view dom_bindings::mime_for_path(std::string_view path) {
 // exactly what "a frame runs only what changed" forbids.
 //
 // A FRAME DOCUMENT RECONCILES ITS OWN FRAMES TOO: a nested `<iframe>` gets its
-// document the same way, on the accessor - `install_frame_accessors` asks the
-// element's owner - since only the primary is asked on the tick. A document
+// document the same way - the primary's pass, which the tick asks for, goes
+// on into every frame's document, and the accessor asks the element's owner
+// (`install_frame_accessors`). A document
 // WITHOUT a browsing context - createHTMLDocument's, DOMParser's - has no
 // nested navigables and its `<iframe>`s stay empty (`contentDocument` null),
 // and "has a window" is exactly that fact: install_document leaves
 // `defaultView` null for one and load_frame sets it for a frame's.
 void dom_bindings::reconcile_frames() {
-    if (cx_ == nullptr || !frames_dirty_) { return; }
-    if (secondary_) {
-        script::object_object * doc = document_object();
-        const value * window = doc == nullptr ? nullptr : doc->find("defaultView");
-        if (window == nullptr || window->is_nullish()) { return; }
-    }
-    frames_dirty_ = false;
-    // A frame element with no `src` has an about:blank document in a browser.
-    // It gets one here too - `load_frame` with an empty src builds an empty
-    // HTML document - because `frame.contentDocument.body` is how a page
-    // writes into one, and answering `undefined` is the failure that reads as
-    // "iframes do not exist".
-    const std::vector<node_id> elements = all_html_elements("iframe");
-    std::vector<frame_entry> still;
-    still.reserve(elements.size());
-    for (const node_id id : elements) {
-        std::string src;
-        {
-            const auto txn = doc_->read();
-            src = frame_source(txn, id);
+    if (cx_ == nullptr) { return; }
+    [this] {
+        if (!frames_dirty_) { return; }
+        if (secondary_) {
+            script::object_object * doc = document_object();
+            const value * window = doc == nullptr ? nullptr : doc->find("defaultView");
+            if (window == nullptr || window->is_nullish()) { return; }
         }
-        const auto seen =
-            std::ranges::find_if(frames_, [&](const auto & entry) { return entry.element == id; });
-        if (seen != frames_.end() && seen->src == src) {
-            still.push_back(*seen);
-            continue;
+        frames_dirty_ = false;
+        // A frame element with no `src` has an about:blank document in a browser.
+        // It gets one here too - `load_frame` with an empty src builds an empty
+        // HTML document - because `frame.contentDocument.body` is how a page
+        // writes into one, and answering `undefined` is the failure that reads as
+        // "iframes do not exist".
+        const std::vector<node_id> elements = all_html_elements("iframe");
+        std::vector<frame_entry> still;
+        still.reserve(elements.size());
+        for (const node_id id : elements) {
+            std::string src;
+            {
+                const auto txn = doc_->read();
+                src = frame_source(txn, id);
+            }
+            const auto seen = std::ranges::find_if(
+                frames_, [&](const auto & entry) { return entry.element == id; });
+            if (seen != frames_.end() && seen->src == src) {
+                still.push_back(*seen);
+                continue;
+            }
+            still.push_back(frame_entry{id, src, start_frame(id, src)});
         }
-        still.push_back(frame_entry{id, src, start_frame(id, src)});
+        // A FRAME THAT LEFT THE TREE IS FORGOTTEN, and its document is not: the
+        // secondary bindings stay in `secondary_documents_` because a page may
+        // still be holding the `contentDocument` it took before removing the
+        // frame, and a removed frame put back gets a NEW document, which is what
+        // the DOM says happens.
+        frames_.swap(still);
+    }();
+    // AND EACH FRAME'S DOCUMENT ITS OWN, since the tick asks only the
+    // primary: an <iframe src> a script put into a frame's document loads
+    // and fires its `load` without anyone reading its `contentWindow` first
+    // (shadow-dom/.../html-forms/test-003.html submits a frame document's
+    // form at one). Over a copy - a load runs script, which can reconcile.
+    const std::vector<frame_entry> children = frames_;
+    for (const frame_entry & entry : children) {
+        if (entry.bindings != nullptr) { entry.bindings->reconcile_frames(); }
     }
-    // A FRAME THAT LEFT THE TREE IS FORGOTTEN, and its document is not: the
-    // secondary bindings stay in `secondary_documents_` because a page may
-    // still be holding the `contentDocument` it took before removing the
-    // frame, and a removed frame put back gets a NEW document, which is what
-    // the DOM says happens.
-    frames_.swap(still);
 }
 
 // AN <iframe> CONNECTED WITH NO `src`, OR ONE THAT IS about:blank - HTML
@@ -1042,14 +1055,14 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
                                       })),
                                   value::undefined());
     // `length` counts THIS document's child frames, as the page's does.
-    frame_window->define_accessor(
-        "length",
-        value::object(cx.allocate<script::native_object>(
-            "length",
-            [this](context &, std::span<value>) {
-                return value::number(static_cast<double>(all_html_elements("iframe").size()));
-            })),
-        value::undefined());
+    frame_window->define_accessor("length",
+                                  value::object(cx.allocate<script::native_object>(
+                                      "length",
+                                      [this](context &, std::span<value>) {
+                                          return value::number(
+                                              static_cast<double>(child_navigables().size()));
+                                      })),
+                                  value::undefined());
     if (auto * doc = document_object()) {
         define_location_property(cx, *doc);
         // AND THE DOCUMENT KNOWS ITS WINDOW. install_document set
@@ -1067,6 +1080,8 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     cx.define_global("self", frame_view);
     cx.define_global("document", document_);
     cx.define_global("location", location_);
+    install_history(cx, *frame_window); // the frame's own session history
+    install_dom_parser(cx);             // a DOMParser whose documents are the frame's
     cx.define_global("matchMedia", match);
     // THE NODE CONSTRUCTORS THAT NAME A DOCUMENT: `new frame.contentWindow
     // .Text()` - and a bare `new Text()` in the frame's own script - is a node
@@ -1139,6 +1154,25 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
 dom_bindings & dom_bindings::bindings_of(value window) {
     dom_bindings * found = find_bindings_of(window);
     return found != nullptr ? *found : primary();
+}
+
+// THE DOCUMENT-TREE CHILD NAVIGABLES in tree order (HTML 7.3.1.1) - what
+// `window.length` counts and `window[i]` indexes: each connected <iframe>
+// whose navigable exists. Reconciled first, so an <iframe src> inserted this
+// turn has one; a later <iframe> of the same insertion, whose insertion steps
+// have not run while an earlier one's `load` does, has none yet
+// (insertion-removing-steps-iframe.window.js).
+std::vector<node_id> dom_bindings::child_navigables() {
+    reconcile_frames();
+    std::vector<node_id> out;
+    for (const node_id id : all_html_elements("iframe")) {
+        if (std::ranges::any_of(frames_, [id](const frame_entry & entry) {
+                return entry.element == id && entry.bindings != nullptr;
+            })) {
+            out.push_back(id);
+        }
+    }
+    return out;
 }
 
 dom_bindings * dom_bindings::find_bindings_of(value window) {

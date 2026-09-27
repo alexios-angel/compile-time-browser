@@ -25,6 +25,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -388,20 +390,62 @@ std::string server_path(std::string_view url, std::string_view document_root) {
     return decoded;
 }
 
+namespace {
+
+// wptserve's `sub` pipe, which it runs over every file named `*.sub.*`: the
+// file, its `{{GET[name]}}` tokens replaced by the query's FIRST value under
+// that name - "" when there is none - HTML-escaped as the pipe's default
+// escaping does. The other tokens (`{{host}}`, `{{ports[...]}}`, ...) name a
+// server that is not here and are left as written.
+// ponytail: GET alone; `{{location[...]}}` and `{{uuid()}}` are the next ones
+// if a measured page needs them.
+[[nodiscard]] std::optional<resource_reply> substituted(const std::string & root,
+                                                        const std::string & path,
+                                                        const params & get) {
+    const std::string_view name = std::string_view{path}.substr(path.rfind('/') + 1);
+    if (name.find(".sub.") == std::string_view::npos) { return std::nullopt; }
+    std::string type;
+    for (const auto & [suffix, mime] :
+         {std::pair{".html", "text/html"}, std::pair{".htm", "text/html"},
+          std::pair{".js", "text/javascript"}, std::pair{".css", "text/css"},
+          std::pair{".xml", "application/xml"}, std::pair{".svg", "image/svg+xml"}}) {
+        if (name.ends_with(suffix)) { type = mime; }
+    }
+    if (type.empty()) { return std::nullopt; }
+    std::ifstream file{root + path, std::ios::binary};
+    if (!file) { return std::nullopt; }
+    const std::string text{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+    std::string out;
+    std::size_t at = 0;
+    for (std::size_t open = text.find("{{GET[", at); open != std::string::npos;
+         open = text.find("{{GET[", at)) {
+        const std::size_t close = text.find("]}}", open);
+        if (close == std::string::npos) { break; }
+        out.append(text, at, open - at);
+        const std::string key = text.substr(open + 6, close - open - 6);
+        const std::string * value = first(get, key);
+        out += html_escape(value == nullptr ? std::string_view{} : std::string_view{*value});
+        at = close + 3;
+    }
+    out.append(text, at);
+    return reply(std::move(type), std::move(out));
+}
+
+} // namespace
+
 ctbrowser::shell::request_handler wpt_handlers(std::string document_root) {
     return [root = std::move(document_root)](
                const resource_request & request) -> std::optional<resource_reply> {
         const std::string path = server_path(request.url, root);
+        std::string_view query = request.url;
+        query = query.substr(0, query.find('#'));
+        const std::size_t mark = query.find('?');
+        const params get =
+            mark == std::string_view::npos ? params{} : parse_urlencoded(query.substr(mark + 1));
         for (const route & entry : routes) {
-            if (entry.path != path) { continue; }
-            std::string_view query = request.url;
-            query = query.substr(0, query.find('#'));
-            const std::size_t mark = query.find('?');
-            return entry.answer(request, mark == std::string_view::npos
-                                             ? params{}
-                                             : parse_urlencoded(query.substr(mark + 1)));
+            if (entry.path == path) { return entry.answer(request, get); }
         }
-        return std::nullopt;
+        return request.method == "GET" ? substituted(root, path, get) : std::nullopt;
     };
 }
 

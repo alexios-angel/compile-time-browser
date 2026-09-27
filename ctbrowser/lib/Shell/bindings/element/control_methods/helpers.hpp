@@ -92,8 +92,7 @@ struct control_helpers {
                                    const char * which) const;
     bool is_step_aligned(double number, double base, double step) const;
     bool will_validate(const read_txn & txn, dom_bindings * b, node_id id) const;
-    value compile_pattern(context & c, const std::string & pattern) const;
-    bool matches_pattern(context & c, const std::string & pattern, const std::string & text) const;
+    bool matches_pattern(const std::string & pattern, const std::string & text) const;
     unsigned validity_flags(context & c, dom_bindings * b, node_id id) const;
     bool check_one(context & c, dom_bindings * b, node_id id) const;
     bool validate_form(context & c, dom_bindings * b, node_id form) const;

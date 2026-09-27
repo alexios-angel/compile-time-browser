@@ -473,13 +473,14 @@ void dom_bindings::install_control_select_options(context & cx) {
                          dom_bindings * b = where.first;
                          const node_id id = where.second;
                          if (!id) { return value::null(); }
-                         // ponytail: a fresh collection per read, so NOT
-                         // [SameObject]. A live collection re-reads its members
-                         // only when the document's version moves, and
-                         // selectedness lives in slots that do not move it - a
-                         // cached one went stale after `option.selected = x`.
-                         // One per select needs a selection generation the
-                         // collection can watch.
+                         // [SameObject]: one live collection per select. It
+                         // re-reads its members when the document's version
+                         // moves, and a selectedness slot that changes moves
+                         // it (control_helpers::set_slot).
+                         if (const value held = helpers.slot_of(c, b, id, "__selectedOptions");
+                             held.is_object_like()) {
+                             return held;
+                         }
                          const value list = b->make_live_collection(c, [b, id, helpers] {
                              const auto txn = b->doc_->read();
                              std::vector<node_id> options;
@@ -492,6 +493,7 @@ void dom_bindings::install_control_select_options(context & cx) {
                              }
                              return out;
                          });
+                         helpers.set_slot(c, b, id, "__selectedOptions", list);
                          return list;
                      });
     // `length`: the number of options; setting it appends blank options or

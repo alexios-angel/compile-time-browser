@@ -599,7 +599,37 @@ void test_a_javascript_source_is_its_string_result() {
     if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"js|0"}); }
 }
 
+// A FRAME IN A FRAME'S DOCUMENT LOADS ON THE TICK, not only when its
+// `contentWindow` is read: the tick reconciles the page's frames and each
+// frame document's own (html-forms/test-003.html waited for such a `load`).
+void test_a_frame_inside_a_frame_document_loads() {
+    is("<iframe id=b></iframe><script>var d = document.getElementById('b').contentDocument;"
+       " var n = d.createElement('iframe'); n.src = 'inner.html'; window.nested = 'none';"
+       " n.onload = function () { window.nested = n.contentDocument.title; };"
+       " d.body.appendChild(n);</script>",
+       "window.nested", "inner");
+}
+
+// THE ANIMATION FRAME CALLBACKS DOCUMENT BY DOCUMENT: the page's, then its
+// frames' in tree order, whatever order they were asked for in
+// (child-document-raf-order.html) - and a removed frame's never.
+void test_animation_frames_run_in_document_order() {
+    is("<iframe id=f1 src=inner.html></iframe><iframe id=f2 src=inner.html></iframe>"
+       "<iframe id=f3 src=inner.html></iframe><script>var order = [];"
+       " addEventListener('load', function () {"
+       " var w = function (id) { return document.getElementById(id).contentWindow; };"
+       " var gone = w('f3'); document.getElementById('f3').remove();"
+       " gone.requestAnimationFrame(function () { order.push('removed'); });"
+       " w('f2').requestAnimationFrame(function () { order.push('second');"
+       " setTimeout(function () { console.log(order.join()); }, 0); });"
+       " w('f1').requestAnimationFrame(function () { order.push('first'); });"
+       " requestAnimationFrame(function () { order.push('page'); }); });</script>",
+       "'unused'", "page,first,second");
+}
+
 int main() {
+    test_animation_frames_run_in_document_order();
+    test_a_frame_inside_a_frame_document_loads();
     test_a_frame_document_is_laid_out_at_the_size_of_its_box();
     test_the_frames_are_indexed_on_the_window();
     test_a_frame_loaded_at_a_fragment_has_a_target();
