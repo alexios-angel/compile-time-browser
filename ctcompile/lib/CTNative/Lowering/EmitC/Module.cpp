@@ -90,30 +90,10 @@ void lowering::finish() {
     if (!domDataSession.empty()) {
         std::string text;
         llvm::raw_string_ostream out(text);
-        out << "public:\n    " << domDataSession << "() = default;\n"
-            << "    " << domDataSession << "(const " << domDataSession << " &) = delete;\n"
-            << "    " << domDataSession << " & operator=(const " << domDataSession
-            << " &) = delete;\n"
-            << "    " << domDataSession << "(" << domDataSession << " &&) = delete;\n"
-            << "    " << domDataSession << " & operator=(" << domDataSession << " &&) = delete;\n"
-            << "    ctbrowser::document & document() { return document_; }\n"
-            << "    auto invoke(";
-        for (unsigned i = 0; i < domParameters.size(); ++i) {
-            if (i) { out << ", "; }
-            out << "ctbrowser::element_ref element" << i;
-        }
-        out << ") {\n        if (";
-        for (unsigned i = 0; i < domParameters.size(); ++i) {
-            if (i) { out << " || "; }
-            out << "element" << i << ".owner != &document_";
-        }
-        out << ") { throw std::invalid_argument(\"DOM element belongs to another session\"); }\n"
-            << "        return " << domDataEntry << "(";
-        for (unsigned i = 0; i < domParameters.size(); ++i) {
-            if (i) { out << ", "; }
-            out << "element" << i;
-        }
-        out << ");\n    }\n";
+        out << "public:\n"
+            << nonmovable(domDataSession, "    ")
+            << "    ctbrowser::document & document() { return document_; }\n";
+        sessionInvoke(out, domDataEntry, domParameters.size(), "");
         llvm::SmallVector<llvm::StringRef> observed(observations.keys().begin(),
                                                     observations.keys().end());
         llvm::sort(observed);

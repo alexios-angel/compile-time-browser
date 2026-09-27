@@ -237,11 +237,7 @@ void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                                      siteOf(made.getLoc()) + "\nstruct method_" +
                                      cIdentifier(site) + " {\n";
             if (session) {
-                const auto name = "method_" + cIdentifier(site);
-                definition += "  " + name + "() = default;\n  " + name + "(const " + name +
-                              " &) = delete;\n  " + name + " & operator=(const " + name +
-                              " &) = delete;\n  " + name + "(" + name + " &&) = delete;\n  " +
-                              name + " & operator=(" + name + " &&) = delete;\n";
+                definition += nonmovable("method_" + cIdentifier(site), "  ");
                 if (auto found = sessionAllocations.find(made); found != sessionAllocations.end()) {
                     const auto & storage = sessionMaps[found->second];
                     definition +=

@@ -2,6 +2,36 @@
 #include "ctcompile/CTNative/IR/CTNativeOps.h"
 
 namespace ctcompile::ctnative::lowering_detail {
+namespace {
+// The document every owned DOM session class holds.
+constexpr llvm::StringLiteral kSessionDocument =
+    "    ctbrowser::atom_table atoms_;\n    ctbrowser::document document_{atoms_};\n";
+} // namespace
+
+std::string nonmovable(llvm::StringRef name, llvm::StringRef indent) {
+    const std::string n = name.str(), i = indent.str();
+    return i + n + "() = default;\n" + i + n + "(const " + n + " &) = delete;\n" + i + n +
+           " & operator=(const " + n + " &) = delete;\n" + i + n + "(" + n + " &&) = delete;\n" +
+           i + n + " & operator=(" + n + " &&) = delete;\n";
+}
+
+void sessionInvoke(llvm::raw_ostream & out, llvm::StringRef entry, size_t count,
+                   llvm::StringRef extra) {
+    out << "    auto invoke(";
+    for (size_t i = 0; i < count; ++i) {
+        out << (i ? ", " : "") << "ctbrowser::element_ref element" << i;
+    }
+    out << ") {\n        if (";
+    for (size_t i = 0; i < count; ++i) {
+        out << (i ? " || " : "") << "element" << i << ".owner != &document_";
+    }
+    // Check every domain before the entry validates ANY handle. A foreign
+    // pointer can already dangle, so validation must never dereference it.
+    out << ") { throw std::invalid_argument(\"DOM element belongs to another session\"); }\n"
+        << "        return " << entry << "(";
+    for (size_t i = 0; i < count; ++i) { out << (i ? ", " : "") << "element" << i; }
+    out << extra << ");\n    }\n";
+}
 
 mlir::Type lowering::tableType(MethodTableType type) const {
     if (domDataSession.empty()) { return methodTableCarrierType(type); }
@@ -12,9 +42,7 @@ mlir::Type lowering::tableType(MethodTableType type) const {
 std::string lowering::domDataDefinition() const {
     std::string text;
     llvm::raw_string_ostream out(text);
-    out << "class " << domDataSession << " {\n"
-        << "    ctbrowser::atom_table atoms_;\n"
-        << "    ctbrowser::document document_{atoms_};\n";
+    out << "class " << domDataSession << " {\n" << kSessionDocument;
     for (auto [i, storage] : llvm::enumerate(sessionMaps)) {
         out << "    " << storage.tableName << " data_table_" << i << ";\n"
             << "    " << storage.tableName << " * reset_data_table_" << i << "() { data_table_" << i
@@ -128,46 +156,22 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
         llvm::raw_string_ostream out(text);
         out << "// ctcompile: owned synchronous DOM entry for " << symbol << "\n"
             << "class " << owner << " {\n"
-            << "    ctbrowser::atom_table atoms_;\n"
-            << "    ctbrowser::document document_{atoms_};\n";
+            << kSessionDocument;
         if (!domStyleParameters.empty()) {
             out << "    ctbrowser::style::engine selectors_{atoms_};\n";
         }
         out << "public:\n"
-            << "    " << owner << "() = default;\n"
-            << "    " << owner << "(const " << owner << " &) = delete;\n"
-            << "    " << owner << " & operator=(const " << owner << " &) = delete;\n"
-            << "    " << owner << "(" << owner << " &&) = delete;\n"
-            << "    " << owner << " & operator=(" << owner << " &&) = delete;\n"
+            << nonmovable(owner, "    ")
             << "    ctbrowser::document & document() { return document_; }\n";
         if (!domStyleParameters.empty()) {
             out << "    ctbrowser::style::engine & selectors() { return selectors_; }\n";
         }
         // Spell the actual checked parameter list. No callable or generic
         // argument forwarding can escape with a borrowed document capture.
-        out << "    auto invoke(";
-        for (unsigned i = 0; i < entry.parameters().size(); ++i) {
-            if (i) { out << ", "; }
-            out << "ctbrowser::element_ref element" << i;
-        }
-        out << ") {\n        if (";
-        for (unsigned i = 0; i < entry.parameters().size(); ++i) {
-            if (i) { out << " || "; }
-            out << "element" << i << ".owner != &document_";
-        }
-        // Check every domain before the entry validates ANY handle. A foreign
-        // pointer can already dangle, so validation must never dereference it.
-        out << ") { throw std::invalid_argument(\"DOM element belongs to another session\"); }\n"
-            << "        return " << symbol << "(";
-        for (unsigned i = 0; i < entry.parameters().size(); ++i) {
-            if (i) { out << ", "; }
-            out << "element" << i;
-        }
-        for (mlir::BlockArgument parameter : domStyleParameters) {
-            (void)parameter;
-            out << ", selectors_";
-        }
-        out << ");\n    }\n};\n";
+        std::string styles;
+        for (size_t i = 0; i < domStyleParameters.size(); ++i) { styles += ", selectors_"; }
+        sessionInvoke(out, symbol, entry.parameters().size(), styles);
+        out << "};\n";
         domSessionDefinition = std::move(text);
     }
 }
