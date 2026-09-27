@@ -329,15 +329,15 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (!kind) { return {}; }
         const bool isStatic = llvm::isa<ctjs::BinaryStaticOp>(binary);
         switch (kind.getValue()) {
-        case ctjs::BinaryKind::Add: break;
+        // Either family for the bitwise six: the operands are constants below,
+        // on which ctjs.binary's ToNumeric is the identity.
+        case ctjs::BinaryKind::Add:
         case ctjs::BinaryKind::BitAnd:
         case ctjs::BinaryKind::BitOr:
         case ctjs::BinaryKind::BitXor:
         case ctjs::BinaryKind::Shl:
         case ctjs::BinaryKind::Shr:
-        case ctjs::BinaryKind::UShr:
-            if (!isStatic) { return {}; }
-            break;
+        case ctjs::BinaryKind::UShr: break;
         case ctjs::BinaryKind::Concat:
         case ctjs::BinaryKind::Sub:
         case ctjs::BinaryKind::Mul:
@@ -401,7 +401,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         };
         auto left = number(lhs.getValue()), right = number(rhs.getValue());
         if (!left || !right) { return {}; }
-        if (isStatic && kind.getValue() != ctjs::BinaryKind::Add) {
+        if (ctjs::isBitwise(kind.getValue())) {
             // Reuse the typed Number operators and their public Core conversions:
             // ToInt32/ToUint32, masked shift counts and unsigned left shifts.
             const ::ctnative::js_num a{left.getDouble()}, b{right.getDouble()};

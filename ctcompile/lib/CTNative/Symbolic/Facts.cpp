@@ -107,7 +107,15 @@ Fact Analysis::operation(mlir::Operation * op) {
         case ctjs::BinaryKind::Mul:
         case ctjs::BinaryKind::Div:
         case ctjs::BinaryKind::Mod:
-        case ctjs::BinaryKind::Pow: return {Number, {}};
+        case ctjs::BinaryKind::Pow:
+        // Known primitive domains exclude BigInt, so the bitwise six are Numbers
+        // here exactly as ctjs.binary_static's are below.
+        case ctjs::BinaryKind::Shl:
+        case ctjs::BinaryKind::Shr:
+        case ctjs::BinaryKind::UShr:
+        case ctjs::BinaryKind::BitAnd:
+        case ctjs::BinaryKind::BitOr:
+        case ctjs::BinaryKind::BitXor: return {Number, {}};
         default: return {};
         }
     }

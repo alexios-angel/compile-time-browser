@@ -503,7 +503,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 continue;
             }
-            if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(&op)) {
+            if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(&op);
+                binary && !ctjs::isBitwise(binary.getKind())) {
                 switch (binary.getKind()) {
                 case ctjs::BinaryKind::Sub:
                 case ctjs::BinaryKind::Mul:
@@ -647,8 +648,16 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 state.values[binary.getResult()] = result;
                 continue;
             }
-            if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(&op)) {
-                switch (binary.getKind()) {
+            // THE STATIC FAMILY, AND A BITWISE ctjs.binary. Every arm below first
+            // requires original primitives, on which ToNumeric is the identity,
+            // so binary_op answers as binary_op_static does - bar a Symbol's
+            // TypeError, one more exit this retention-only evidence never claims.
+            if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(&op)) {
+                const ctjs::BinaryKind kind = llvm::isa<ctjs::BinaryOp>(&op)
+                                                  ? llvm::cast<ctjs::BinaryOp>(&op).getKind()
+                                                  : llvm::cast<ctjs::BinaryStaticOp>(&op).getKind();
+                const mlir::Value produced = op.getResult(0);
+                switch (kind) {
                 case ctjs::BinaryKind::Add:
                 case ctjs::BinaryKind::BitAnd:
                 case ctjs::BinaryKind::BitOr:
@@ -658,30 +667,25 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 case ctjs::BinaryKind::UShr: break;
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
-                const ContentsValue left = held(binary.getLhs());
-                const ContentsValue right = held(binary.getRhs());
+                const ContentsValue left = held(op.getOperand(0));
+                const ContentsValue right = held(op.getOperand(1));
                 const mlir::Value lhs = left.origin();
                 const mlir::Value rhs = right.origin();
                 if (!lhs || !rhs) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
                 if ((left.bigInt() && right.nonBigInt()) || (left.nonBigInt() && right.bigInt()) ||
-                    (binary.getKind() == ctjs::BinaryKind::UShr && left.bigInt() &&
-                     right.bigInt())) {
+                    (kind == ctjs::BinaryKind::UShr && left.bigInt() && right.bigInt())) {
                     // bigint_binary rejects mixed original primitives, or two
                     // BigInts for UShr, before conversion. Its independent
                     // TypeError/Undefined carrier has no operand/local edge or
                     // BigInt category. Keep all continuations and whole-frame
                     // exclusions; normal completion/native effects are unproved.
-                    state.values[binary.getResult()] = {binary.getResult(),
-                                                        ContentsKind::NonBigInt};
+                    state.values[produced] = {produced, ContentsKind::NonBigInt};
                     continue;
                 }
                 if (left.bigInt() && right.bigInt() &&
-                    (binary.getKind() == ctjs::BinaryKind::Add ||
-                     binary.getKind() == ctjs::BinaryKind::BitAnd ||
-                     binary.getKind() == ctjs::BinaryKind::BitOr ||
-                     binary.getKind() == ctjs::BinaryKind::BitXor ||
-                     binary.getKind() == ctjs::BinaryKind::Shl ||
-                     binary.getKind() == ctjs::BinaryKind::Shr)) {
+                    (kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::BitAnd ||
+                     kind == ctjs::BinaryKind::BitOr || kind == ctjs::BinaryKind::BitXor ||
+                     kind == ctjs::BinaryKind::Shl || kind == ctjs::BinaryKind::Shr)) {
                     // These exact bigint_binary arms allocate independent digits
                     // before static Number conversion, with no input alias or
                     // user conversion. Signed shifts may instead raise an
@@ -693,7 +697,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // proves neither allocation success nor normal completion
                     // or no-throw/native effects.
                     if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    state.values[binary.getResult()] = {binary.getResult(), ContentsKind::BigInt};
+                    state.values[produced] = {produced, ContentsKind::BigInt};
                     continue;
                 }
                 if (!left.nonBigInt() || !right.nonBigInt()) {
@@ -701,22 +705,22 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 // Independent primitive origins exclude source user conversion.
                 // Fresh objects/arrays are insufficient: inherited valueOf or
-                // toString can retain them or their contents even though today's
-                // VM converts them statically. Only bounded exact primitive
+                // toString can retain them or their contents - the VM's bitwise
+                // handlers ToNumeric an object. Only bounded exact primitive
                 // conversions or saved Number facts supply an index.
-                ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
-                if (binary.getKind() == ctjs::BinaryKind::Add) {
+                ContentsValue result{produced, ContentsKind::NonBigInt};
+                if (kind == ctjs::BinaryKind::Add) {
                     boundedNumberSum(left, right, result);
                     if (result.convertedBits && !spend()) {
                         return refuse(ArrayContentsFailure::WorkLimit, &op);
                     }
                 } else {
-                    boundedNumberBitwise(left, right, binary.getKind(), result);
+                    boundedNumberBitwise(left, right, kind, result);
                     if (result.integerNumber || result.negativeIntegerNumber) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     }
                 }
-                state.values[binary.getResult()] = result;
+                state.values[produced] = result;
                 continue;
             }
             if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(&op)) {
