@@ -7,8 +7,6 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/Error.h"
 
-#include <bit>
-
 namespace ctcompile::ctnative {
 
 llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostContract & contract,
@@ -172,27 +170,12 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
         if (observations.empty()) { return error("DOM snapshot length is not observed"); }
         snapshots.push_back(snapshot);
         mlir::OpBuilder at(call);
-        const auto where = call.getLoc();
-        auto size = ctjs::GetPropertyOp::create(at, where, call.getType(), snapshot.getResult(),
-                                                length.getKey());
-        // The VM materializes at most 2^24 proxy slots. Preserve that cap on
-        // the copy while retaining every original NodeList slot and length.
-        auto cap = ctjs::ConstantOp::create(
-            at, where,
-            ctjs::NumberAttr::get(candidate.getContext(),
-                                  std::bit_cast<uint64_t>(double(1U << 24))));
-        auto less = ctjs::CompareOp::create(at, where, call.getType(), ctjs::CompareKind::Lt,
-                                            size.getResult(), cap.getResult());
-        auto test = ctjs::TruthyOp::create(at, where, at.getI1Type(), less.getResult());
-        auto bounded = mlir::scf::IfOp::create(at, where, call->getResultTypes(), test.getResult());
-        for (auto [region, value] :
-             llvm::zip(bounded->getRegions(), llvm::ArrayRef<mlir::Value>{size, cap})) {
-            auto & arm = region.emplaceBlock();
-            mlir::OpBuilder nested(&arm, arm.begin());
-            mlir::scf::YieldOp::create(nested, where, value);
-        }
+        // Preserve the VM's slot cap on the copy while retaining every
+        // original NodeList slot and length.
+        const auto bounded =
+            cappedLength(at, call.getLoc(), call.getType(), snapshot.getResult(), length.getKey());
         for (ctjs::GetPropertyOp observation : observations) {
-            observation.getResult().replaceAllUsesWith(bounded.getResult(0));
+            observation.getResult().replaceAllUsesWith(bounded);
             observation.erase();
         }
         for (ctjs::GetPropertyOp index : indices) {

@@ -8,8 +8,6 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Error.h"
 
-#include <bit>
-
 namespace ctcompile::ctnative {
 
 llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContract & contract,
@@ -489,24 +487,8 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
             // Only materialization length is capped. Other NodeList aliases
             // still observe the whole collection, including after DOM writes.
             mlir::OpBuilder at(length);
-            auto size = ctjs::GetPropertyOp::create(at, length.getLoc(), length.getType(),
-                                                    length.getObject(), length.getKey());
-            auto cap = ctjs::ConstantOp::create(
-                at, length.getLoc(),
-                ctjs::NumberAttr::get(candidate.getContext(),
-                                      std::bit_cast<uint64_t>(double(1U << 24))));
-            auto less = ctjs::CompareOp::create(at, length.getLoc(), length.getType(),
-                                                ctjs::CompareKind::Lt, size, cap);
-            auto test = ctjs::TruthyOp::create(at, length.getLoc(), at.getI1Type(), less);
-            auto bounded =
-                mlir::scf::IfOp::create(at, length.getLoc(), length->getResultTypes(), test);
-            for (auto [region, value] :
-                 llvm::zip(bounded->getRegions(), llvm::ArrayRef<mlir::Value>{size, cap})) {
-                auto & arm = region.emplaceBlock();
-                mlir::OpBuilder exit(&arm, arm.end());
-                mlir::scf::YieldOp::create(exit, length.getLoc(), value);
-            }
-            length.getResult().replaceAllUsesWith(bounded.getResult(0));
+            length.getResult().replaceAllUsesWith(cappedLength(
+                at, length.getLoc(), length.getType(), length.getObject(), length.getKey()));
             length.erase();
         }
     }
