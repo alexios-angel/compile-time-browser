@@ -81,10 +81,24 @@ OBSERVATIONS["bootstrap-base-data"] = (7, 7)
 # An exact class's always-throwing static read ends its constructor arm.
 THROWING_ARMS = {
     "inherited-own-fields-iterate-throwing-arm" + suffix: (7, 7)
-    for suffix in ("", "-subclass", "-static-shadow", "-returning", "-escape-before")
+    for suffix in ("", "-subclass", "-static-shadow", "-returning", "-escape-before", "-own-getter")
 }
 OBSERVATIONS.update(THROWING_ARMS)
-PREPARED_ONLY.add("inherited-own-fields-iterate-throwing-arm")
+PREPARED_ONLY.update(
+    {
+        "inherited-own-fields-iterate-throwing-arm",
+        "inherited-own-fields-iterate-throwing-arm-own-getter",
+    }
+)
+# Own static getters beside inherited ones.
+OBSERVATIONS.update(
+    {
+        "inherited-static-getters": (7, 7),
+        "inherited-static-getters-shadow": (7, 7),
+        "inherited-static-getters-base-reads-leaf": (7, 7),
+    }
+)
+POSITIVES.add("inherited-static-getters")
 POSITIVES.update(
     {
         "own-fields-length",
@@ -561,6 +575,8 @@ def main():
             "inherited-own-fields-iterate-throwing-arm-static-shadow": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-iterate-throwing-arm-returning": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-iterate-throwing-arm-escape-before": "class own-key snapshot constructor observes its receiver",
+            "inherited-static-getters-shadow": "derived class requires receiver-preserving super normalization",
+            "inherited-static-getters-base-reads-leaf": "static getter receiver lacks an exact local getter dependency",
             "inherited-own-fields-iterate-forward-missing": "class construction helper requires an existing own field",
             "inherited-own-fields-iterate-forward-recursive": "class construction helper proof exceeds its depth bound",
             "inherited-own-fields-iterate-forward-unused-effects": "unknown call, binding or reflective effect",
@@ -913,7 +929,10 @@ def main():
             elif name == "class-map-inherited":
                 # Super guard Error constructions disappear during normalization.
                 operations = ("ctjs.load_upvalue",)
-            elif name == "inherited-own-fields-iterate-throwing-arm":
+            elif name in (
+                "inherited-own-fields-iterate-throwing-arm",
+                "inherited-own-fields-iterate-throwing-arm-own-getter",
+            ):
                 # Super normalization drops the guard's throw. The getter's stays,
                 # the dead arm keeps its writes, and dispose clears only `n`.
                 operations = ()

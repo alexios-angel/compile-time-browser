@@ -771,7 +771,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
         definitions.push_back(write);
     }
-    const bool hasOwnStaticGetters = !staticDefinitions.empty();
+    bool shadowsInheritedGetter = false;
     llvm::SmallVector<ctjs::SetPropertyOp> baseDefinitions, selectedBaseDefinitions;
     if (auto inherited = heritage.lookup(closure.getResult())) {
         auto base = inheritedMethods.find(sourceValue(inherited.getArgs()[1]));
@@ -790,12 +790,13 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
         // One shared method/getter body has one selected target. Reuse the
         // complete base getter environment, including transitive dependencies.
-        // Overrides need separate bodies for the actual most-derived receiver.
-        if (!hasOwnStaticGetters) {
-            for (const auto & item : inheritedGetters[sourceValue(inherited.getArgs()[1])]) {
-                if (!step()) { return false; }
-                staticDefinitions.try_emplace(item.first(), item.second);
-            }
+        // Own getters join it only when they shadow no inherited key, so every
+        // inherited body's receiver reads still select what they did in the
+        // base. Overrides need separate bodies for the actual derived receiver.
+        for (const auto & item : inheritedGetters[sourceValue(inherited.getArgs()[1])]) {
+            if (!step()) { return false; }
+            shadowsInheritedGetter |=
+                !staticDefinitions.try_emplace(item.first(), item.second).second;
         }
     }
     llvm::DenseSet<mlir::Operation *> methodHomes;
@@ -898,7 +899,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
     }
     if (auto inherited = heritage.lookup(closure.getResult())) {
-        if (hasOwnStaticGetters) {
+        if (shadowsInheritedGetter) {
             return refuse("derived class requires receiver-preserving super normalization");
         }
         // Recheck inherited receiver uses against the final method table:
