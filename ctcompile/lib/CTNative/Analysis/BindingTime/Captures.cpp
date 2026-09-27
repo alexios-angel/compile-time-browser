@@ -13,19 +13,12 @@ bool constructsClosures(ctjs::FuncOp function) {
 
 ctjs::FuncOp immutableClosureTarget(ctjs::CreateClosureOp made, mlir::ModuleOp module) {
     if (made.getFunction() < 0) { return {}; }
-    ctjs::FuncOp target;
-    unsigned matches = 0;
-    module.walk([&](ctjs::FuncOp function) {
-        if (functionIndex(function) == static_cast<unsigned>(made.getFunction())) {
-            target = function;
-            ++matches;
-        }
-    });
+    auto target = ctjs::uniqueFunction(module, static_cast<unsigned>(made.getFunction()));
     unsigned creations = 0;
     module.walk([&](ctjs::CreateClosureOp other) {
         creations += other.getFunction() == made.getFunction();
     });
-    if (creations != 1 || matches != 1 || !target || target.getBody().empty() ||
+    if (creations != 1 || !target || target.getBody().empty() ||
         target.getBody().front().getNumArguments() < 3 ||
         static_cast<size_t>(target.getUpvalueCount()) != made.getUpvalues().size()) {
         return {};

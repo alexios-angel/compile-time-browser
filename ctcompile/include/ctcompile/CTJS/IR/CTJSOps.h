@@ -108,4 +108,32 @@ inline bool nonCoercing(mlir::Operation * op) {
     auto compare = llvm::dyn_cast<CompareOp>(op);
     return llvm::isa<TruthyOp>(op) || (compare && compare.getKind() == CompareKind::StrictEq);
 }
+
+// The one ctjs.func under `scope` with function index `index`, or null when
+// none or several have it.
+inline FuncOp uniqueFunction(mlir::Operation * scope, unsigned index) {
+    FuncOp found;
+    unsigned matches = 0;
+    scope->walk([&](FuncOp function) {
+        if (functionIndex(function) == index) {
+            found = function;
+            ++matches;
+        }
+    });
+    return matches == 1 ? found : FuncOp{};
+}
+
+// The one ctjs.store_global of `name` under `scope`, or null when none or
+// several store it.
+inline StoreGlobalOp uniqueGlobalStore(mlir::Operation * scope, llvm::StringRef name) {
+    StoreGlobalOp found;
+    unsigned matches = 0;
+    scope->walk([&](StoreGlobalOp store) {
+        if (store.getName() == name) {
+            found = store;
+            ++matches;
+        }
+    });
+    return matches == 1 ? found : StoreGlobalOp{};
+}
 } // namespace ctcompile::ctjs

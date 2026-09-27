@@ -228,23 +228,16 @@ bool closedDeclaration(ctjs::StoreGlobalOp store, ctjs::FuncOp target, mlir::Mod
             return false;
         }
     }
-    unsigned stores = 0;
     bool closed = true;
-    module.walk([&](mlir::Operation * op) {
-        if (auto other = llvm::dyn_cast<ctjs::StoreGlobalOp>(op);
-            other && other.getName() == store.getName()) {
-            ++stores;
-        }
-        if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
-            load && load.getName() == store.getName()) {
-            for (mlir::OpOperand & use : load.getResult().getUses()) {
-                if (!llvm::isa<ctjs::RootOp>(use.getOwner()) && !directCalleeUse(use, target)) {
-                    closed = false;
-                }
+    module.walk([&](ctjs::LoadGlobalOp load) {
+        if (load.getName() != store.getName()) { return; }
+        for (mlir::OpOperand & use : load.getResult().getUses()) {
+            if (!llvm::isa<ctjs::RootOp>(use.getOwner()) && !directCalleeUse(use, target)) {
+                closed = false;
             }
         }
     });
-    return closed && stores == 1;
+    return closed && ctjs::uniqueGlobalStore(module, store.getName());
 }
 
 std::string closedCallableProblem(ctjs::FuncOp function, mlir::ModuleOp module) {

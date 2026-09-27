@@ -28,20 +28,14 @@ bool effectCalleeMatches(ctjs::CallDirectOp call, mlir::ModuleOp module) {
     }
     ctjs::CreateClosureOp made = value.getDefiningOp<ctjs::CreateClosureOp>();
     if (auto load = value.getDefiningOp<ctjs::LoadGlobalOp>()) {
-        unsigned stores = 0;
-        module.walk([&](ctjs::StoreGlobalOp store) {
-            if (store.getName() != load.getName()) { return; }
-            ++stores;
-            made = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
-        });
-        if (stores != 1 || !closedCallableProblem(target, module).empty()) { return false; }
+        auto store = ctjs::uniqueGlobalStore(module, load.getName());
+        if (!store || !closedCallableProblem(target, module).empty()) { return false; }
+        made = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
     }
     if (!made || made.getFunction() < 0 || static_cast<unsigned>(made.getFunction()) != *index) {
         return false;
     }
-    unsigned matches = 0;
-    module.walk([&](ctjs::FuncOp function) { matches += functionIndex(function) == index; });
-    return matches == 1;
+    return static_cast<bool>(ctjs::uniqueFunction(module, *index));
 }
 
 bool closedEffectEnvironment(mlir::ModuleOp module) {
@@ -92,12 +86,8 @@ bool closedEffectEnvironment(mlir::ModuleOp module) {
             return;
         }
         if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
-            unsigned matches = 0;
-            module.walk([&](ctjs::FuncOp function) {
-                matches += made.getFunction() >= 0 &&
-                           functionIndex(function) == static_cast<unsigned>(made.getFunction());
-            });
-            safe = matches == 1;
+            safe = made.getFunction() >= 0 &&
+                   ctjs::uniqueFunction(module, static_cast<unsigned>(made.getFunction()));
             return;
         }
         mlir::Value key;
