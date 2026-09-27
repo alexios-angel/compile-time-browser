@@ -1959,20 +1959,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 !branch.getThenRegion().isAncestor(call->getParentRegion())) {
                 continue;
             }
-            auto tag = compare.getLhs();
-            auto key = compare.getRhs().getDefiningOp<mlir::arith::ConstantOp>();
-            if (!key) {
-                tag = compare.getRhs();
-                key = compare.getLhs().getDefiningOp<mlir::arith::ConstantOp>();
-            }
+            auto [tag, key] = constantComparison(compare);
             auto cast = tag.getDefiningOp<mlir::arith::IndexCastUIOp>();
-            auto integer =
-                key ? llvm::dyn_cast<mlir::IntegerAttr>(key.getValue()) : mlir::IntegerAttr{};
+            auto integer = exactTag(key, 32);
             // i32 -> index is lossless on either supported index width. No
             // narrowing casts or unknown/truncated tags can select an identity.
             if (!cast || !cast.getIn().getType().isInteger(32) || !tag.getType().isIndex() ||
-                !integer || integer.getValue().isNegative() ||
-                integer.getValue().getActiveBits() > 32) {
+                !integer) {
                 continue;
             }
             bool matched = false;
@@ -2206,20 +2199,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (selector && compare &&
                 (compare.getPredicate() == mlir::arith::CmpIPredicate::eq ||
                  compare.getPredicate() == mlir::arith::CmpIPredicate::ne)) {
-                auto value = compare.getLhs();
-                auto key = compare.getRhs().getDefiningOp<mlir::arith::ConstantOp>();
-                if (!key) {
-                    value = compare.getRhs();
-                    key = compare.getLhs().getDefiningOp<mlir::arith::ConstantOp>();
-                }
+                auto [value, key] = constantComparison(compare);
                 auto cast = value.getDefiningOp<mlir::arith::IndexCastUIOp>();
                 if (cast && cast.getIn() == selector && value.getType().isIndex()) {
                     value = cast.getIn();
                 }
-                auto integer =
-                    key ? llvm::dyn_cast<mlir::IntegerAttr>(key.getValue()) : mlir::IntegerAttr{};
-                if (value == selector && integer && !integer.getValue().isNegative() &&
-                    integer.getValue().getActiveBits() <= 32) {
+                auto integer = exactTag(key, 32);
+                if (value == selector && integer) {
                     const bool equal =
                         integer.getValue().getZExtValue() == tag.getValue().getZExtValue();
                     selected = equal == (compare.getPredicate() == mlir::arith::CmpIPredicate::eq)

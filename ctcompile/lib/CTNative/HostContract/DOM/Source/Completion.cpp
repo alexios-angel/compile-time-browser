@@ -217,11 +217,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         return {};
                     }
                     if (integer.getValue().isZero()) {
-                        mlir::IntegerAttr key;
-                        (void)mlir::matchPattern(arguments[terminal.exit.selector],
-                                                 mlir::m_Constant(&key));
-                        if (!key || key.getValue().isNegative() ||
-                            key.getValue().getActiveBits() > 63) {
+                        auto key = exactTag(arguments[terminal.exit.selector]
+                                                .getDefiningOp<mlir::arith::ConstantOp>(),
+                                            63);
+                        if (!key) {
                             refuse("DOM helper loop exit selector is not an exact constant");
                             return {};
                         }
@@ -422,19 +421,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         if (!branch || branch.getCondition() != exit.comparison.getResult()) {
                             return {};
                         }
-                        selectorValue = exit.comparison.getLhs();
-                        auto constant =
-                            exit.comparison.getRhs().getDefiningOp<mlir::arith::ConstantOp>();
-                        if (!constant) {
-                            selectorValue = exit.comparison.getRhs();
-                            constant =
-                                exit.comparison.getLhs().getDefiningOp<mlir::arith::ConstantOp>();
-                        }
-                        auto key = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                            : mlir::IntegerAttr{};
-                        if (!key || key.getValue().isNegative() ||
-                            key.getValue().getActiveBits() > 63 ||
-                            !dominance.dominates(constant.getResult(), exit.comparison) ||
+                        mlir::arith::ConstantOp constant;
+                        std::tie(selectorValue, constant) = constantComparison(exit.comparison);
+                        auto key = exactTag(constant, 63);
+                        if (!key || !dominance.dominates(constant.getResult(), exit.comparison) ||
                             (!exit.literal && !values.contains(constant.getResult())) ||
                             (exit.literal &&
                              (constant != exit.literal || !constant->hasOneUse()))) {
@@ -879,9 +869,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 if (auto cast = selector.getDefiningOp<mlir::arith::IndexCastUIOp>()) {
                     selector = cast.getIn();
                 }
-                mlir::IntegerAttr integer;
-                if (!mlir::matchPattern(selector, mlir::m_Constant(&integer)) ||
-                    integer.getValue().isNegative() || integer.getValue().getActiveBits() > 63) {
+                auto integer = exactTag(selector.getDefiningOp<mlir::arith::ConstantOp>(), 63);
+                if (!integer) {
                     refuse("DOM helper completion selector is not an exact constant");
                     return {};
                 }
