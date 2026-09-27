@@ -20,6 +20,15 @@
 namespace ctcompile::ctnative {
 using ctjs::constantKey;
 
+namespace {
+// `f` on every member of `value`'s group, or on `value` alone outside any group.
+template <class Groups, class F> void forEachMember(const Groups & groups, mlir::Value value, F f) {
+    const auto group = groups.find(value);
+    if (group == groups.end()) { return f(value); }
+    for (mlir::Value member : group->second) { f(member); }
+}
+} // namespace
+
 mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     globalStores_.clear();
     globalsAreDynamic_ = false;
@@ -77,14 +86,9 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         // a second walk, so the two cannot disagree about which stores exist -
         // they differ only in what they are keyed on, and the header says why.
         fieldStoreSites_[{store.getObject(), key}].push_back(store.getOperation());
-        const auto group = groups.find(store.getObject());
-        if (group == groups.end()) {
-            fieldStores_[{store.getObject(), key}].push_back(store.getValue());
-            return;
-        }
-        for (mlir::Value member : group->second) {
+        forEachMember(groups, store.getObject(), [&](mlir::Value member) {
             fieldStores_[{member, key}].push_back(store.getValue());
-        }
+        });
     });
     top->walk([&](ctjs::GetPropertyOp read) {
         if (nativeObjectFieldGroup(read) >= 0 && queryNativeObjectFieldPresence(read).assigned) {
@@ -214,25 +218,14 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         // still "everything this binding can hold", over a set the lift made
         // one element smaller. `kAssignedBeforeRead` says what the lift proved.
         if (cell->hasAttr(kAssignedBeforeRead)) { return; }
-        const auto group = cells.find(cell.getResult());
-        if (group == cells.end()) {
-            cellStores_[cell.getResult()].push_back(cell.getInitial());
-            return;
-        }
-        for (mlir::Value member : group->second) {
+        forEachMember(cells, cell.getResult(), [&](mlir::Value member) {
             cellStores_[member].push_back(cell.getInitial());
-        }
+        });
     });
     top->walk([&](ctjs::CellSetOp store) {
         if (!namesACarriedCell(store.getCell())) { return; }
-        const auto group = cells.find(store.getCell());
-        if (group == cells.end()) {
-            cellStores_[store.getCell()].push_back(store.getValue());
-            return;
-        }
-        for (mlir::Value member : group->second) {
-            cellStores_[member].push_back(store.getValue());
-        }
+        forEachMember(cells, store.getCell(),
+                      [&](mlir::Value member) { cellStores_[member].push_back(store.getValue()); });
     });
     top->walk([&](mlir::Operation * op) {
         if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {

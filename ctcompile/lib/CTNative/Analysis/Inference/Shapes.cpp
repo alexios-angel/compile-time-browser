@@ -19,6 +19,31 @@
 namespace ctcompile::ctnative {
 using ctjs::constantKey;
 
+namespace {
+// An entry argument of a ctjs.func whose `attr` lists its index.
+bool listedArgument(mlir::Value v, llvm::StringRef attr) {
+    auto arg = llvm::dyn_cast<mlir::BlockArgument>(v);
+    if (!arg || !arg.getOwner()->isEntryBlock()) { return false; }
+    auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
+    auto listed = fn ? fn->getAttrOfType<mlir::DenseI32ArrayAttr>(attr) : mlir::DenseI32ArrayAttr{};
+    return listed &&
+           llvm::is_contained(listed.asArrayRef(), static_cast<int32_t>(arg.getArgNumber()));
+}
+
+// Every member of `classes` mapped to its whole class.
+template <unsigned N>
+llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, N>> flatten(
+    const llvm::EquivalenceClasses<mlir::Value> & classes) {
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, N>> out;
+    for (const auto * leader : classes) {
+        if (!leader->isLeader()) { continue; }
+        const auto members = llvm::to_vector<N>(classes.members(*leader));
+        for (mlir::Value member : members) { out[member] = members; }
+    }
+    return out;
+}
+} // namespace
+
 // THE RECEIVER IS A PARAMETER, and `%arg0` of a lifted method is the only block
 // argument that names an object. The attribute is written by the lift inside
 // --ctnative-lower-to-emitc, which runs BEFORE this analysis is loaded, so by
@@ -39,14 +64,7 @@ bool TypeInference::isReceiverArgument(mlir::Value v) {
 // two `ctn_x *` - and because the operand number is what the call site and the
 // emitted parameter list both count in.
 bool TypeInference::namesAnObjectParameter(mlir::Value v) {
-    if (isReceiverArgument(v)) { return true; }
-    auto arg = llvm::dyn_cast<mlir::BlockArgument>(v);
-    if (!arg || !arg.getOwner()->isEntryBlock()) { return false; }
-    auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
-    if (!fn) { return false; }
-    auto listed = fn->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.object_args");
-    return listed &&
-           llvm::is_contained(listed.asArrayRef(), static_cast<int32_t>(arg.getArgNumber()));
+    return isReceiverArgument(v) || listedArgument(v, "ctnative.object_args");
 }
 
 // PHASE 59 SLICE 2 STEP 2: DOES THIS VALUE NAME A SHARED BINDING THE LIFT MADE
@@ -58,13 +76,7 @@ bool TypeInference::namesACarriedCell(mlir::Value v) {
     if (auto made = v.getDefiningOp<ctjs::CreateCellOp>()) {
         return made->hasAttr("ctnative.carried");
     }
-    auto arg = llvm::dyn_cast<mlir::BlockArgument>(v);
-    if (!arg || !arg.getOwner()->isEntryBlock()) { return false; }
-    auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
-    if (!fn) { return false; }
-    auto listed = fn->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
-    return listed &&
-           llvm::is_contained(listed.asArrayRef(), static_cast<int32_t>(arg.getArgNumber()));
+    return listedArgument(v, "ctnative.cell_args");
 }
 
 // AND WHICH OF THEM NAME ONE BOX. A union-find over the carried cells and the
@@ -90,13 +102,7 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> TypeInference::gr
             classes.unionSets(call->getOperand(at), entry.getArgument(at));
         }
     });
-    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> out;
-    for (const auto * leader : classes) {
-        if (!leader->isLeader()) { continue; }
-        const auto members = llvm::to_vector<4>(classes.members(*leader));
-        for (mlir::Value member : members) { out[member] = members; }
-    }
-    return out;
+    return flatten<4>(classes);
 }
 
 namespace {
@@ -200,13 +206,7 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
         }
     });
 
-    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> out;
-    for (const auto * leader : classes) {
-        if (!leader->isLeader()) { continue; }
-        const auto members = llvm::to_vector<2>(classes.members(*leader));
-        for (mlir::Value member : members) { out[member] = members; }
-    }
-    return out;
+    return flatten<2>(classes);
 }
 
 // Appends and reads preserve density. An indexed write additionally needs a
