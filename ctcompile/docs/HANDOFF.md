@@ -22,6 +22,49 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved Number/null writes, UTF-16 order and Bootstrap B arms, 2026-09-27 UTC
+
+Claude compiler worker (`claude-ctcompile`), loop iterations 1-2. The browser
+worker was running throughout, so only `ctcompile/` changed apart from the
+one-comment `aot/helpers/frames-and-bindings.def` update Claude asked for.
+
+Landed in iteration 1 (gated on merged tree `7bb5db48f`):
+
+- **ffddadea3** proves saved Number/null attribute writes across protected
+  catches. `DOMAttributeProof::nullableNumberValue` is separate from
+  `numberValue`, so null never authorizes `Number.prototype.toString`; the DOM
+  entry gains `Kind::optionalNumber` for Number/null joins and `setAttribute`.
+  62 new DOMURI transactions. **bc705c75f** adds three complete source fixtures
+  and twelve refusal bodies (`native_dom_caught_node.py`); `native_dom.py`'s
+  opt-in is now `allow_nullable_scalar`.
+- **18be69838** removes the private VM byte-order guard in
+  `DOM/Iteration/Custom.cpp` now that the VM compares by UTF-16 code units
+  (browser `2b710a0d`). DOMURI rows 40..47 (controls 976..991) are admitted;
+  rows 48..59 still refuse. Two `-helper-unicode-order` witnesses replace the
+  stale VM-disagreement pin.
+- **3fe57ea42** corrects `ct_aot_global_set`'s DELEGATES-TO comment
+  (`context::assign_global`).
+
+Checks: six explicit targets built; exact `ctcompile_host_contract` 1/1 2.83 s,
+`ctcompile_exception_recovery` 1/1 21.10 s; selected Number/null sources
+24 generated C++ files, 48 executions, 12 admissions, 76 refusals (12 at zero
+budget); String-order outer catches 4 sources, 20 admissions, 80 native
+executions, 20 refusals, Node and current VM agreeing. The first gate caught
+host_contract's transported Number/null plain-write pin, moved to admission
+(the suppressed invoke stays refused). Full suites were skipped.
+
+In flight at the start of iteration 2 (see the next section once landed):
+
+- Uncommitted Bootstrap B proof: a constructor arm that reads
+  `this.constructor.K`, where K's static getter on the exact class always
+  throws, ends there, so the own-key snapshot join ignores that arm's fields.
+  Authentic `bootstrap-base`/`-data` then move from `class own-key snapshot
+  constructor observes its receiver` to `declared intrinsic identity escapes,
+  is reflected or is mutated` - W's `_typeCheckConfig` calls `Object.entries`.
+- Branch `claude-ctcompile-bitwise` (b1634cd3c, 3cbe5cb1b): the six bitwise
+  opcodes import as re-entering `ctjs.binary` / `ct_aot_binary_op`, matching
+  the VM's ToNumeric since browser `ec1b5a89b`/`3828267b`. Not yet gated.
+
 ## Saved nullable Boolean snapshots and nested truthiness, 2026-09-26 UTC
 
 Continued **00685566** and the exact saved Boolean/null source refusal. The
