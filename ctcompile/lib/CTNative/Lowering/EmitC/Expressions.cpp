@@ -69,19 +69,14 @@ mlir::Value lowering::truthy(mlir::OpBuilder & builder, mlir::Location where, ml
     if (isBooleanCarrier(value.getType())) {
         return convertScalar(builder, where, value, builder.getI1Type());
     }
-    if (isNullableNumberStringCarrier(value.getType()) ||
-        isNullableBooleanStringCarrier(value.getType())) {
-        return callValue(builder, where, mlir::IntegerType::get(context, 1),
-                         isNullableNumberStringCarrier(value.getType())
-                             ? "ctnative::nullable_number_string_truthy"
-                             : "ctnative::nullable_boolean_string_truthy",
-                         value);
-    }
-    if (isBooleanStringCarrier(value.getType()) || isNumberStringCarrier(value.getType())) {
-        return callValue(builder, where, mlir::IntegerType::get(context, 1),
-                         isNumberStringCarrier(value.getType()) ? "ctnative::number_string_truthy"
-                                                                : "ctnative::boolean_string_truthy",
-                         value);
+    static const llvm::StringMap<llvm::StringRef> unionTruthy{
+        {kNullableNumberStringType, "ctnative::nullable_number_string_truthy"},
+        {kNullableBooleanStringType, "ctnative::nullable_boolean_string_truthy"},
+        {kNumberStringType, "ctnative::number_string_truthy"},
+        {kBooleanStringType, "ctnative::boolean_string_truthy"}};
+    if (auto helper = unionTruthy.find(opaqueSpelling(value.getType()));
+        helper != unionTruthy.end()) {
+        return callValue(builder, where, mlir::IntegerType::get(context, 1), helper->second, value);
     }
     if (isIdentityCarrier(value.getType()) ||
         value.getType() == carrierType(context, carrier::symbol)) {

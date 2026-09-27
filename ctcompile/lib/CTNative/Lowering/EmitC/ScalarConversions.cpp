@@ -42,40 +42,26 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     }
     const auto string = carrierType(context, carrier::string);
     const auto rawString = ec::OpaqueType::get(context, kRawStringType);
-    const auto numberString = carrierType(context, carrier::numberString);
-    const auto nullableNumberString = carrierType(context, carrier::nullableNumberString);
-    const auto booleanString = carrierType(context, carrier::booleanString);
-    const auto nullableBooleanString = carrierType(context, carrier::nullableBooleanString);
-    if (target == booleanString &&
-        (isBooleanCarrier(value.getType()) || value.getType() == string)) {
-        return ec::CastOp::create(b, where, target, value);
-    }
-    if (target == nullableBooleanString) {
-        if (isBooleanCarrier(value.getType()) || value.getType() == string) {
+    // The Boolean/String and Number/String unions convert by the same rules.
+    const auto c = [&](carrier which) { return carrierType(context, which); };
+    for (auto [scalar, whole, optional, widen, narrow, text] :
+         {std::tuple{c(carrier::boolean), c(carrier::booleanString),
+                     c(carrier::nullableBooleanString), "ctnative::to_nullable_boolean_string",
+                     "ctnative::global_boolean_string", "ctnative::nullable_boolean_string_text"},
+          std::tuple{c(carrier::number), c(carrier::numberString), c(carrier::nullableNumberString),
+                     "ctnative::to_nullable_number_string", "ctnative::global_number_string",
+                     "ctnative::nullable_number_string_text"}}) {
+        const bool member = value.getType() == scalar || value.getType() == string;
+        if ((target == whole || target == optional) && member) {
             return ec::CastOp::create(b, where, target, value);
         }
-        return callValue(b, where, target, "ctnative::to_nullable_boolean_string", value);
-    }
-    if (value.getType() == nullableBooleanString && target == booleanString) {
-        return callValue(b, where, target, "ctnative::global_boolean_string", value);
-    }
-    if (value.getType() == nullableBooleanString && target == string) {
-        return callValue(b, where, target, "ctnative::nullable_boolean_string_text", value);
-    }
-    if (target == numberString && (isNumberCarrier(value.getType()) || value.getType() == string)) {
-        return ec::CastOp::create(b, where, target, value);
-    }
-    if (target == nullableNumberString) {
-        if (isNumberCarrier(value.getType()) || value.getType() == string) {
-            return ec::CastOp::create(b, where, target, value);
+        if (target == optional) { return callValue(b, where, target, widen, value); }
+        if (value.getType() == optional && target == whole) {
+            return callValue(b, where, target, narrow, value);
         }
-        return callValue(b, where, target, "ctnative::to_nullable_number_string", value);
-    }
-    if (value.getType() == nullableNumberString && target == numberString) {
-        return callValue(b, where, target, "ctnative::global_number_string", value);
-    }
-    if (value.getType() == nullableNumberString && target == string) {
-        return callValue(b, where, target, "ctnative::nullable_number_string_text", value);
+        if (value.getType() == optional && target == string) {
+            return callValue(b, where, target, text, value);
+        }
     }
     if (isNullableCarrier(value.getType()) && target == string) {
         return memberCall(b, where, target, value, "to_string");
