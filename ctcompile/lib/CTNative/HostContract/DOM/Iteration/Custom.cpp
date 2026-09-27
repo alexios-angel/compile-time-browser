@@ -298,9 +298,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return std::nullopt;
             }
             const auto order = left <=> right;
-            // ponytail: the VM still orders bytes. Refuse disagreements until
-            // its String ordering follows UTF-16 too; never alter the oracle.
-            if (order != (a <=> b)) { return std::nullopt; }
             switch (comparison.getKind()) {
             case ctjs::CompareKind::Lt: return order < 0;
             case ctjs::CompareKind::Le: return order <= 0;

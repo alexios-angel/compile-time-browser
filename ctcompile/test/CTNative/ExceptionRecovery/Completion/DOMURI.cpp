@@ -1338,8 +1338,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::CompareKind::Gt, 62, 61, true},
         {ctjs::CompareKind::Lt, 56, 54, true}, // literal replacement character is canonical
         {ctjs::CompareKind::Le, 7, 7, true},   // equality includes embedded NUL
-        // Canonical inputs whose UTF-16 ordering disagrees with the current VM
-        // byte ordering cannot authorize either selected branch.
+        // Canonical inputs whose UTF-16 ordering disagrees with their byte order.
         {ctjs::CompareKind::Lt, 59, 54, true},
         {ctjs::CompareKind::Le, 59, 54, true},
         {ctjs::CompareKind::Gt, 59, 54, false},
@@ -2333,7 +2332,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                   (power && index == 18))) ||
                 (numericUnary && (index < 15 || (!coercingUnary && index == 18))) ||
                 (equality &&
-                 ((stringComparison ? stringIndex < 40 || (index >= 27 && index < 31)
+                 ((stringComparison ? stringIndex < 48 || (index >= 27 && index < 31)
                                     : index < 31) ||
                   (!stringComparison && (convertedComparison ? index == 37 || index == 38
                                                              : index >= 37 && index <= 44))))) {
@@ -2777,7 +2776,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             (control >= 644 && control < 708) || control == 218 || control == 219 ||
             (control >= 508 && control < 516) || (control >= 720 && control < 736) ||
             (control >= 748 && control < 828) || (control >= 848 && control < 856) ||
-            (control >= 868 && control < 872) || (control >= 896 && control < 976) ||
+            (control >= 868 && control < 872) || (control >= 896 && control < 992) ||
             (control >= 1016 && control < 1024) || (control >= 1048 && control < 1072) ||
             (control >= 1080 && control < 1088) || (control >= 1096 && control < 1136) ||
             (control >= 1148 && control < 1154) || control == 316 || control == 317 ||
