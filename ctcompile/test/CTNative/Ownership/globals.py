@@ -9,23 +9,12 @@ import re
 import shutil
 import subprocess
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers
+from CTNative.harness import find_compilers
 from CTNative.Exports import boundary
+from Target.Cpp.harness import FLAGS
 
 host = boundary.host
 VM = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_")
-FLAGS = [
-    "-std=c++23",
-    RUNTIME_INCLUDE,
-    CORE_INCLUDE,
-    "-O2",
-    "-Wall",
-    "-Wextra",
-    "-Werror",
-    "-Wconversion",
-    "-pedantic",
-    "-ffp-contract=off",
-]
 CLEANUP = (
     "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
     "canonicalize,ctnative-prune-dead-stores,canonicalize)"
