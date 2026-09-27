@@ -20,8 +20,7 @@ def source(constructor=False):
     original = text.split(f"//--- class-map-record-nested-vendor-{kind}.js\n", 1)[1].split(
         "//---", 1
     )[0]
-    root = Path(__file__).resolve().parents[4]
-    vendor = (root / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js").read_text()
+    vendor = dom.BOOTSTRAP.read_text()
     data = (
         vendor[
             vendor.index("    const t = new Map,") : vendor.index('        i = "transitionend",')
