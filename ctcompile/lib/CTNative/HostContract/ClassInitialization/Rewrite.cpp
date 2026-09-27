@@ -215,9 +215,7 @@ bool classInitialization::transportHelperMaps() {
                                                     static_cast<uint32_t>(index));
             available[operation][map] = read;
         }
-        closure.getUpvaluesMutable().assign(captures);
-        closure.removeEnclosingIndicesAttr();
-        function.setUpvalueCount(static_cast<uint32_t>(captures.size()));
+        setCaptures(closure, function, captures);
         mapClosures.insert(closure);
         if (!llvm::is_contained(capturedClosures, closure)) { capturedClosures.push_back(closure); }
     }
@@ -347,10 +345,7 @@ void classInitialization::rewrite() {
     // Holder expansion erases its slot closures. Clear their proved capture
     // metadata first; the retained bodies still own all recorded reads.
     for (ctjs::CreateClosureOp closure : capturedClosures) {
-        if (mapClosures.contains(closure)) { continue; }
-        target(closure).setUpvalueCount(0);
-        closure.getUpvaluesMutable().clear();
-        closure.removeEnclosingIndicesAttr();
+        if (!mapClosures.contains(closure)) { setCaptures(closure, target(closure), {}); }
     }
     const auto holderTargets = expandHolders();
     for (auto [read, function] : staticMethodReads) {
@@ -439,9 +434,7 @@ void classInitialization::rewrite() {
         target(closure).walk([&](ctjs::LoadUpvalueOp read) {
             read.setIndex(indices[static_cast<size_t>(read.getIndex())]);
         });
-        closure.getUpvaluesMutable().assign(retained);
-        closure.removeEnclosingIndicesAttr();
-        target(closure).setUpvalueCount(static_cast<uint32_t>(retained.size()));
+        setCaptures(closure, target(closure), retained);
     }
     for (ctjs::CellGetOp read : cellReads) {
         read.getResult().replaceAllUsesWith(cells.lookup(read.getCell()));

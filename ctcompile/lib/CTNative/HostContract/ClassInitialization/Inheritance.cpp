@@ -521,9 +521,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
         mapOperations.insert(read);
     }
     if (!copiedMaps.empty()) {
-        constructor.getUpvaluesMutable().assign(captures);
-        constructor.removeEnclosingIndicesAttr();
-        function.setUpvalueCount(static_cast<uint32_t>(captures.size()));
+        setCaptures(constructor, function, captures);
         mapClosures.insert(constructor);
         if (!llvm::is_contained(capturedClosures, constructor)) {
             capturedClosures.push_back(constructor);

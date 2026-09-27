@@ -29,6 +29,20 @@ inline uint64_t cloneCost(mlir::Operation * op) {
     return uint64_t(1) + op->getNumOperands() + op->getNumResults();
 }
 
+// A nonnegative enclosing index captures a slot of an outer activation.
+inline bool hasOuterCapture(ctjs::CreateClosureOp closure) {
+    auto indices = closure.getEnclosingIndicesAttr();
+    return indices && llvm::any_of(indices.asArrayRef(), [](int32_t index) { return index >= 0; });
+}
+
+// Replace a proved closure's capture slots; they are all local cells now.
+inline void setCaptures(ctjs::CreateClosureOp closure, ctjs::FuncOp function,
+                        mlir::ValueRange captures) {
+    closure.getUpvaluesMutable().assign(captures);
+    closure.removeEnclosingIndicesAttr();
+    function.setUpvalueCount(static_cast<uint32_t>(captures.size()));
+}
+
 inline bool rootedOnly(mlir::Operation * operation) {
     return llvm::all_of(operation->getUsers(), llvm::IsaPred<ctjs::RootOp>);
 }

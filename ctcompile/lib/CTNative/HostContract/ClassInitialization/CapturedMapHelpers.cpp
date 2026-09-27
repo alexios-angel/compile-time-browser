@@ -783,10 +783,7 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
     const auto expand = [&](ctjs::CreateClosureOp helper) {
         auto function = target(helper);
         if (!function || helper.getUpvalues().size() != 1 || function.getUpvalueCount() != 1 ||
-            !function.getBody().hasOneBlock() ||
-            (helper.getEnclosingIndicesAttr() &&
-             llvm::any_of(helper.getEnclosingIndicesAttr().asArrayRef(),
-                          [](int32_t index) { return index >= 0; }))) {
+            !function.getBody().hasOneBlock() || hasOuterCapture(helper)) {
             return true;
         }
         auto mapCell = helper.getUpvalues().front();

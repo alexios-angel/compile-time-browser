@@ -275,9 +275,7 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
     auto fn = target(method);
     const auto constructorValue = constructor ? constructor.getResult() : mlir::Value{};
     if (fn.getUpvalueCount() != static_cast<int64_t>(method.getUpvalues().size()) ||
-        (method.getEnclosingIndicesAttr() &&
-         llvm::any_of(method.getEnclosingIndicesAttr().asArrayRef(),
-                      [](int32_t index) { return index >= 0; }))) {
+        hasOuterCapture(method)) {
         return refuse("class method lacks exact local capture slots");
     }
     for (mlir::Value capture : method.getUpvalues()) {

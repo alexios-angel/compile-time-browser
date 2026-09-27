@@ -133,10 +133,7 @@ bool classInitialization::sinkCapturedPublication(
     if (!function || constructor.getUpvalues().size() != 1 || function.getUpvalueCount() != 1 ||
         !function.getBody().hasOneBlock() || !undefined(constructor.getEnclosingThis()) ||
         earlyCaptures.contains(constructor) || constructor->getBlock() != setup->getBlock() ||
-        !constructor->isBeforeInBlock(setup) ||
-        (constructor.getEnclosingIndicesAttr() &&
-         llvm::any_of(constructor.getEnclosingIndicesAttr().asArrayRef(),
-                      [](int32_t index) { return index >= 0; }))) {
+        !constructor->isBeforeInBlock(setup) || hasOuterCapture(constructor)) {
         return true;
     }
     auto cell = constructor.getUpvalues().front();
@@ -302,9 +299,7 @@ bool classInitialization::sinkCapturedPublication(
         eraseRooted(invocation);
         if (selection) { eraseRooted(selection); }
         eraseRooted(captured);
-        constructor.getUpvaluesMutable().clear();
-        constructor.removeEnclosingIndicesAttr();
-        function.setUpvalueCount(0);
+        setCaptures(constructor, function, {});
         return true;
     }
     llvm::SmallVector<mlir::Value> keys;
@@ -396,9 +391,7 @@ bool classInitialization::sinkCapturedPublication(
     eraseRooted(invocation);
     if (selection) { eraseRooted(selection); }
     eraseRooted(captured);
-    constructor.getUpvaluesMutable().clear();
-    constructor.removeEnclosingIndicesAttr();
-    function.setUpvalueCount(0);
+    setCaptures(constructor, function, {});
     // The helper body is unchanged and must pass the existing Map-only
     // expansion. Generic helper admission cannot discharge this obligation.
     requiredHelpers.push_back(*functionIndex(helperFunction));
@@ -415,10 +408,7 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
         constructor.getUpvalues().size() != 2 || function.getUpvalueCount() != 2 ||
         !function.getBody().hasOneBlock() || !scope.getBody().hasOneBlock() ||
         constructor->getBlock() != &scope.getBody().front() ||
-        earlyCaptures.contains(constructor) ||
-        (constructor.getEnclosingIndicesAttr() &&
-         llvm::any_of(constructor.getEnclosingIndicesAttr().asArrayRef(),
-                      [](int32_t index) { return index >= 0; }))) {
+        earlyCaptures.contains(constructor) || hasOuterCapture(constructor)) {
         return true;
     }
     unsigned mapIndex = 0;
@@ -552,9 +542,7 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
         load.erase();
     }
     for (ctjs::LoadUpvalueOp load : mapReads) { load.setIndex(0); }
-    constructor.getUpvaluesMutable().assign(mapCell);
-    constructor.removeEnclosingIndicesAttr();
-    function.setUpvalueCount(1);
+    setCaptures(constructor, function, mapCell);
     return true;
 }
 
@@ -633,12 +621,7 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
         targetFunction.getUpvalueCount() != 1 || function.getUpvalueCount() != 1 ||
         helpers.contains(targetFunction) || capturedHelpers.contains(helper) ||
         mapClosures.contains(helper) || llvm::is_contained(capturedClosures, helper) ||
-        (helper.getEnclosingIndicesAttr() &&
-         llvm::any_of(helper.getEnclosingIndicesAttr().asArrayRef(),
-                      [](int32_t index) { return index >= 0; })) ||
-        (constructor.getEnclosingIndicesAttr() &&
-         llvm::any_of(constructor.getEnclosingIndicesAttr().asArrayRef(),
-                      [](int32_t index) { return index >= 0; }))) {
+        hasOuterCapture(helper) || hasOuterCapture(constructor)) {
         return true;
     }
     auto mapCell = helper.getUpvalues().front();
@@ -792,8 +775,7 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
         eraseRooted(holderRead);
         holderSlot.erase();
     }
-    constructor.getUpvaluesMutable().assign(mapCell);
-    constructor.removeEnclosingIndicesAttr();
+    setCaptures(constructor, function, mapCell);
     llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
         if (read.getCell() != helperCell) { return false; }
         cellOperations.erase(read);
@@ -964,9 +946,7 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
         eraseRooted(call);
         eraseRooted(read);
         eraseRooted(load);
-        closure.getUpvaluesMutable().clear();
-        closure.removeEnclosingIndicesAttr();
-        target(closure).setUpvalueCount(0);
+        setCaptures(closure, target(closure), {});
         mapClosures.erase(closure);
     };
     retire(constructor, publication);
