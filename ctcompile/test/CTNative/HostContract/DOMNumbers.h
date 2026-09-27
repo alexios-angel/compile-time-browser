@@ -26,8 +26,7 @@ module {
   }
 }
 )MLIR";
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-    check(static_cast<bool>(module), "DOM Number attribute comparison fixture parses");
+    auto module = parsed(context, source, "DOM Number attribute comparison fixture parses");
     if (!module) { return; }
     HostContract contract;
     contract.provider = HostContract::Provider::ctbrowserDOM;
@@ -125,8 +124,7 @@ module {
     stringification->setOperand(1, receiver);
 
     const auto query = [&](const std::string & text, bool expected) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(input), "DOM numeric census mutation fixture parses");
+        auto input = parsed(context, text, "DOM numeric census mutation fixture parses");
         if (!input) { return; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);

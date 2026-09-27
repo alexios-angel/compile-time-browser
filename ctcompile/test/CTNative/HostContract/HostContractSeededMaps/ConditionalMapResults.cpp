@@ -39,29 +39,13 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
 )MLIR";
     source = replaced(source, "    %answer = ctjs.call %mapGetter(%state, %probeKey)",
                       selection.str() + continuation.str());
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
-    const auto withheld = [](mlir::ModuleOp module, const HostContractAnalysis & result) {
-        bool empty = result.callables().empty();
-        module.walk([&](mlir::Operation * operation) {
-            empty &= !result.callable(operation);
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-                empty &= !result.property(read);
-            }
-        });
-        return empty;
-    };
     unsigned rows = 0;
     const auto variant = [&](const std::string & program, bool expected, const char * message,
                              mlir::TypeID tag = mlir::TypeID::get<ctjs::NumberAttr>()) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared conditional Map fixture parses");
+        auto module = parsed(context, program, "source/prepared conditional Map fixture parses");
         if (!module) { return; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         HostContractAnalysis result(*module, contract);
         check(result.proved() == expected && !result.exhausted() &&
                   (expected || withheld(*module, result)),
@@ -397,7 +381,7 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
     const auto checkBudgets = [&](const std::string & program, const char * label) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
         if (!module) { return; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         HostContractAnalysis complete(*module, contract);
         const unsigned completion = complete.steps();
         check(complete.proved() && completion < 15000,
@@ -439,7 +423,7 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
         right->setAttr("ctnative.map_present", builder.getBoolAttr(true));
         right->setAttr("ctnative.map_read_type", builder.getStringAttr("number"));
         branch->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(HostContractAnalysis(*module, contract).proved(),
               "forged reports leave an otherwise complete conditional proof reproducible");
         const auto originalKey = right.getArgs()[0];
@@ -447,7 +431,7 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
         HostContractAnalysis stale(*module, contract);
         check(!stale.proved() && stale.reason().contains("fingerprint") && withheld(*module, stale),
               "a changed conditional arm cannot reuse the previous fingerprint");
-        HostContractAnalysis fresh(*module, requested(*module));
+        HostContractAnalysis fresh(*module, mapContractFor(*module));
         check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
               "fresh forged tags cannot recover the missing arm or its consumer argument");
         right->setOperand(2, originalKey);
@@ -460,7 +444,7 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
             check(!staleGuard.proved() && staleGuard.reason().contains("fingerprint") &&
                       withheld(*module, staleGuard),
                   "a live guard-key edit cannot reuse its earlier host fingerprint");
-            HostContractAnalysis freshGuard(*module, requested(*module));
+            HostContractAnalysis freshGuard(*module, mapContractFor(*module));
             check(!freshGuard.proved() && !freshGuard.exhausted() && withheld(*module, freshGuard),
                   "a fresh forged report cannot turn a different-key has into membership");
             observedCall->setOperand(2, watchedKey);
@@ -471,7 +455,7 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
             left->setAttr("ctnative.map_present", builder.getBoolAttr(true));
             left->setAttr("ctnative.map_read_type", builder.getStringAttr("string"));
             guardedBranch->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
-            contract = requested(*module);
+            contract = mapContractFor(*module);
             check(HostContractAnalysis(*module, contract).proved(),
                   "forged intermediate tags leave the complete short-circuit proof reproducible");
             const auto mutation = [&](mlir::Operation * operation, unsigned operand,
@@ -482,7 +466,7 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
                 check(!old.proved() && old.reason().contains("fingerprint") &&
                           withheld(*module, old),
                       "a changed short-circuit SSA edge invalidates its previous fingerprint");
-                HostContractAnalysis changed(*module, requested(*module));
+                HostContractAnalysis changed(*module, mapContractFor(*module));
                 check(!changed.proved() && !changed.exhausted() && withheld(*module, changed),
                       "fresh forged tags cannot recover an invalid short-circuit scalar proof");
                 operation->setOperand(operand, previous);

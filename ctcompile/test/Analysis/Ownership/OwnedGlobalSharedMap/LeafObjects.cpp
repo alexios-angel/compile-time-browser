@@ -6,11 +6,6 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
     checkCallerPayloadOwner(context, source, lifted);
     checkChildMapOwner(context, source, lifted);
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     const std::string write = "    %written = ctjs.call %setter(%state, %entryKey, %value)";
     const auto numeric =
         replaced(source, write,
@@ -22,10 +17,9 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
         replaced(numeric, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"owned\">");
     for (const auto & [program, hasField] :
          {std::pair{source, false}, {numeric, true}, {string, true}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared leaf owner fixture parses");
+        auto module = parsed(context, program, "source/prepared leaf owner fixture parses");
         if (!module) { continue; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         check(query.proved() && query.roots().size() == 1,
               "a wrapper publishes a complete owner for repeated method-local leaf allocations");
@@ -110,7 +104,7 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
             operation->setAttr("ctnative.map_write_type", attributes.getStringAttr("number"));
             operation->setAttr("ctnative.object_schema", attributes.getStringAttr("leaf"));
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(OwnedGlobalRoots(*module, contract).proved(),
               "previous object and owner reports never replace the independent source query");
         const auto mutation = [&](mlir::Operation * operation, unsigned operand,
@@ -121,7 +115,7 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       empty(*module, stale),
                   "a changed leaf source invalidates the original owner fingerprint");
-            OwnedGlobalRoots fresh(*module, requested(*module));
+            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
             check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
                   "forged object reports cannot restore ownership of an unsafe fresh source");
             operation->setOperand(operand, saved);
@@ -144,10 +138,9 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
                     lifted ? "prepared" : "source", hasField ? "field" : "empty", completion);
     }
     const auto refuse = [&](const std::string & program, const char * message) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared leaf owner refusal parses");
+        auto module = parsed(context, program, "source/prepared leaf owner refusal parses");
         if (!module) { return; }
-        OwnedGlobalRoots query(*module, requested(*module));
+        OwnedGlobalRoots query(*module, mapContractFor(*module));
         check(!query.proved() && !query.exhausted() && empty(*module, query), message);
     };
     refuse(replaced(numeric, "ctjs.set_property %value[%fieldKey], %fieldValue",

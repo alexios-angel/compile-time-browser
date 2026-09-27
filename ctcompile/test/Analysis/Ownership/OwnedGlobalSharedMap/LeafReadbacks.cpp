@@ -4,11 +4,6 @@ namespace ctcompile::test::owned_global_shared_map {
 
 void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & source, bool lifted) {
     checkMixedChildReadbacks(context, source, lifted);
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     const std::string write = "    %written = ctjs.call %setter(%state, %entryKey, %value)";
     const std::string field = "    %fieldKey = ctjs.constant #ctjs.string<\"value\">\n"
                               "    %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
@@ -76,10 +71,9 @@ void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & sou
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, bool expected, const char * message) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared leaf readback owner fixture parses");
+        auto module = parsed(context, text, "source/prepared leaf readback owner fixture parses");
         if (!module) { return; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         check(query.proved() == expected && !query.exhausted() &&
                   (expected ? query.roots().size() == 1 : empty(*module, query)),
@@ -188,9 +182,8 @@ void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & sou
                                    "      scf.yield\n"
                                    "    }\n"
                                    "    %same =";
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(replaced(same, "    %same =", branch),
-                                                              &context);
-        check(static_cast<bool>(module), "leaf scope mutation fixture parses before mutation");
+        auto module = parsed(context, replaced(same, "    %same =", branch),
+                             "leaf scope mutation fixture parses before mutation");
         if (!module) { continue; }
         mlir::Builder attributes(&context);
         module->walk([&](mlir::Operation * operation) {
@@ -198,7 +191,7 @@ void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & sou
             operation->setAttr("ctnative.map_present", attributes.getBoolAttr(true));
             operation->setAttr("ctnative.object_origin", attributes.getStringAttr("same"));
         });
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         OwnedGlobalRoots checked(*module, contract);
         check(checked.proved(),
               "valid branch-local object operations retain their owning source proof");
@@ -226,7 +219,7 @@ void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & sou
         OwnedGlobalRoots stale(*module, contract);
         check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
               "a cross-scope identity operand invalidates the previous source fingerprint");
-        OwnedGlobalRoots fresh(*module, requested(*module));
+        OwnedGlobalRoots fresh(*module, mapContractFor(*module));
         check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
               "forged origin reports cannot authorize a then-only object outside its SSA scope");
         compared->setOperand(operand, original);
@@ -239,10 +232,9 @@ void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & sou
           {savedAfter, "saved field"},
           {stringSavedAfter, "saved String field"},
           {savedStringBeforeNumber, "String before Number overwrite"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "leaf readback owner budget fixture parses");
+        auto module = parsed(context, text, "leaf readback owner budget fixture parses");
         if (!module) { continue; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         const unsigned completion = query.steps();
         check(query.proved() && completion < 25000, "the complete readback owner proof is bounded");
@@ -265,7 +257,7 @@ void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & sou
             operation->setAttr("ctnative.object_schema", attributes.getStringAttr("leaf"));
             operation->setAttr("ctnative.object_origin", attributes.getStringAttr("same"));
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(OwnedGlobalRoots(*module, contract).proved(),
               "reports never replace the independent owning readback proof");
         auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
@@ -297,7 +289,7 @@ void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & sou
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       empty(*module, stale),
                   "changing a live readback source invalidates the old owner fingerprint");
-            OwnedGlobalRoots fresh(*module, requested(*module));
+            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
             check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
                   "a fresh fingerprint cannot turn forged object origin reports into an owner");
             operation->setOperand(operand, original);

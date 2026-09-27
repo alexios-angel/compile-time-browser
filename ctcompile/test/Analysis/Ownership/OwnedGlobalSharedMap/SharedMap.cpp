@@ -130,19 +130,13 @@ void checkSharedMap(mlir::MLIRContext & context) {
                      "    %hasMethod = ctjs.get_property %owned[%hasKey]\n"
                      "    %hasResult = ctjs.call %hasMethod(%owned)\n"
                      "    %answer = ctjs.call %getter(%owned)");
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     for (const auto & [program, members, lifted] : {std::tuple{source, 2u, false},
                                                     {prepare(source), 2u, true},
                                                     {three, 3u, false},
                                                     {prepare(three), 3u, true}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "shared Map source and prepared fixtures parse");
+        auto module = parsed(context, program, "shared Map source and prepared fixtures parse");
         if (!module) { continue; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         if (!query.proved()) {
             std::fprintf(stderr, "shared owner: %s\n", query.reason().str().c_str());
@@ -187,7 +181,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
         OwnedGlobalRoots stale(*module, contract);
         check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
               "a changed sibling body invalidates the original shared-owner fingerprint");
-        OwnedGlobalRoots changed(*module, requested(*module));
+        OwnedGlobalRoots changed(*module, mapContractFor(*module));
         check(!changed.proved() && empty(*module, changed),
               "a fresh shared-owner fingerprint cannot authorize a sibling Map cycle");
         mutation->setOperand(3, originalValue);
@@ -202,7 +196,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
             check(!oldReceiver.proved() && oldReceiver.reason().contains("fingerprint") &&
                       empty(*module, oldReceiver),
                   "a sibling implicit-receiver mutation invalidates the original fingerprint");
-            OwnedGlobalRoots newReceiver(*module, requested(*module));
+            OwnedGlobalRoots newReceiver(*module, mapContractFor(*module));
             check(!newReceiver.proved() && empty(*module, newReceiver),
                   "every sibling must remain independent of this and new.target");
             returned->setOperand(0, originalReturn);
@@ -216,7 +210,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
             check(!oldSlot.proved() && oldSlot.reason().contains("fingerprint") &&
                       empty(*module, oldSlot),
                   "a sibling capture-index mutation invalidates the original fingerprint");
-            OwnedGlobalRoots newSlot(*module, requested(*module));
+            OwnedGlobalRoots newSlot(*module, mapContractFor(*module));
             check(!newSlot.proved() && empty(*module, newSlot),
                   "an earlier sibling proof cannot authorize another environment slot");
             upvalue.setIndexAttr(attributes.getI32IntegerAttr(0));
@@ -227,10 +221,9 @@ void checkSharedMap(mlir::MLIRContext & context) {
                     members, lifted ? "prepared" : "source", completion);
     }
     const auto refuse = [&](std::string program, const char * message) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "shared Map refusal fixture parses");
+        auto module = parsed(context, program, "shared Map refusal fixture parses");
         if (!module) { return; }
-        OwnedGlobalRoots query(*module, requested(*module));
+        OwnedGlobalRoots query(*module, mapContractFor(*module));
         check(!query.proved() && !query.exhausted() && empty(*module, query), message);
     };
     refuse(replaced(source, "    %putResult = ctjs.call %putter(%owned)\n", ""),
@@ -331,11 +324,10 @@ void checkSharedMap(mlir::MLIRContext & context) {
         checkCapturedMapDeleteSizeOwner(context, program, lifted);
     }
     for (const bool lifted : {false, true}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(
-            lifted ? prepare(parameterized) : parameterized, &context);
-        check(static_cast<bool>(module), "parameterized shared source and prepared forms parse");
+        auto module = parsed(context, lifted ? prepare(parameterized) : parameterized,
+                             "parameterized shared source and prepared forms parse");
         if (!module) { continue; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         if (!query.proved()) {
             std::fprintf(stderr, "parameter owner: %s\n", query.reason().str().c_str());
@@ -366,7 +358,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       empty(*module, stale),
                   "changing an actual invalidates its supplied source fingerprint");
-            OwnedGlobalRoots fresh(*module, requested(*module));
+            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
             check(!fresh.proved() && empty(*module, fresh),
                   "fresh fingerprints cannot turn callable or object actuals into primitives");
         }
@@ -379,7 +371,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
         auto different = ctjs::ConstantOp::create(builder, edge.call->getLoc(),
                                                   ctjs::StringAttr::get(&context, "different"));
         edge.call->setOperand(operand, different.getResult());
-        OwnedGlobalRoots changed(*module, requested(*module));
+        OwnedGlobalRoots changed(*module, mapContractFor(*module));
         check(changed.proved() &&
                   changed.roots().front().methodTable->calls.front().arguments.front().actual ==
                       different.getResult(),
@@ -512,10 +504,10 @@ void checkSharedMap(mlir::MLIRContext & context) {
                     "%priorEnv = ctjs.load_upvalue %priorGetter[0]\n"
                     "    %prior = ctjs.call_direct @get$3(%owned, %u, %priorGetter, %priorEnv)");
             }
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-            check(static_cast<bool>(module), "source/prepared result-argument fixtures parse");
+            auto module =
+                parsed(context, program, "source/prepared result-argument fixtures parse");
             if (!module) { continue; }
-            const auto contract = requested(*module);
+            const auto contract = mapContractFor(*module);
             OwnedGlobalRoots query(*module, contract);
             check(query.proved(),
                   "an independently proved result supplies the consuming formal tag");
@@ -569,7 +561,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       empty(*module, stale),
                   "a producing return mutation invalidates the supplied fingerprint");
-            OwnedGlobalRoots changed(*module, requested(*module));
+            OwnedGlobalRoots changed(*module, mapContractFor(*module));
             check(changed.proved() &&
                       changed.roots()
                               .front()
@@ -578,7 +570,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
                               .alternatives.tag() == mlir::TypeID::get<ctjs::BooleanAttr>(),
                   "a fresh proof rederives the producer's changed tag for the consuming formal");
             returned->setOperand(0, getter.getBody().front().getArgument(0));
-            OwnedGlobalRoots external(*module, requested(*module));
+            OwnedGlobalRoots external(*module, mapContractFor(*module));
             check(!external.proved() && empty(*module, external),
                   "a formerly proved producer cannot authorize an external returned value");
             returned->setOperand(0, saved);
@@ -617,10 +609,9 @@ void checkSharedMap(mlir::MLIRContext & context) {
                 "%priorEnv = ctjs.load_upvalue %priorGetter[0]\n"
                 "    %prior = ctjs.call_direct @get$3(%owned, %u, %priorGetter, %priorEnv)");
         }
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "same-method Undefined result fixture parses");
+        auto module = parsed(context, program, "same-method Undefined result fixture parses");
         if (!module) { continue; }
-        OwnedGlobalRoots query(*module, requested(*module));
+        OwnedGlobalRoots query(*module, mapContractFor(*module));
         check(query.proved() && query.roots().size() == 1,
               "an earlier checked Undefined result closes the complete String/Undefined census");
         if (!query.proved() || query.roots().empty()) { continue; }
@@ -648,7 +639,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
     auto distinctModule = mlir::parseSourceString<mlir::ModuleOp>(distinct, &context);
     check(static_cast<bool>(distinctModule), "distinct sibling Map environment fixture parses");
     if (distinctModule) {
-        const auto contract = requested(*distinctModule);
+        const auto contract = mapContractFor(*distinctModule);
         HostContractAnalysis host(*distinctModule, contract);
         check(host.proved() && host.callables().size() == 2,
               "each separate sibling Map can satisfy its individual live callable proof");

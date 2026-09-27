@@ -63,10 +63,7 @@ constexpr row table[] = {
 #undef CT_OPCODE
 
 void check(bool ok, const char * what, std::string_view who) {
-    if (!ok) {
-        std::printf("FAIL %.*s: %s\n", static_cast<int>(who.size()), who.data(), what);
-        ++ctbrowser_test_failures;
-    }
+    ::check(ok, std::format("{}: {}", who, what));
 }
 
 bool known_kind(std::string_view k) {

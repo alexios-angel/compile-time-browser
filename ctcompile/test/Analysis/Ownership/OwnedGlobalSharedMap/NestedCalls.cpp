@@ -4,11 +4,6 @@ namespace ctcompile::test::owned_global_shared_map {
 
 void checkNestedOwner(mlir::MLIRContext & context, const std::string & source, bool lifted) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     const auto extra = [&](bool before, const char * literal) {
         const std::string marker = before   ? "    %putResult ="
                                    : lifted ? "    %getterEnv ="
@@ -28,10 +23,9 @@ void checkNestedOwner(mlir::MLIRContext & context, const std::string & source, b
           {extra(false, "#ctjs.null"), Alternatives::String | Alternatives::Null, 4u},
           {extra(false, "#ctjs.undefined"), Alternatives::String | Alternatives::Undefined, 4u}}) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared nested owner fixture parses");
+        auto module = parsed(context, program, "source/prepared nested owner fixture parses");
         if (!module) { continue; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         check(query.proved() && query.roots().size() == 1,
               "a nested result DAG publishes one owner only after the full family proof");
@@ -110,7 +104,7 @@ void checkNestedOwner(mlir::MLIRContext & context, const std::string & source, b
                                attributes.getStringAttr("nullable_string"));
             operation->setAttr("ctnative.map_write_type", attributes.getStringAttr("string"));
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(OwnedGlobalRoots(*module, contract).proved(),
               "forged host/native reports leave the independent nested owner proof reproducible");
         const auto mutation = [&](mlir::Operation * operation, unsigned operand,
@@ -121,7 +115,7 @@ void checkNestedOwner(mlir::MLIRContext & context, const std::string & source, b
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       empty(*module, stale),
                   "a nested source mutation invalidates its original owner fingerprint");
-            OwnedGlobalRoots fresh(*module, requested(*module));
+            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
             check(
                 !fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
                 "fresh fingerprints and forged reports cannot publish an incomplete nested owner");
@@ -139,7 +133,7 @@ void checkNestedOwner(mlir::MLIRContext & context, const std::string & source, b
         const auto nestedContract = contract;
         const auto nestedActual = outer->getOperand(argument);
         outer->setOperand(argument, inner->getOperand(argument));
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(OwnedGlobalRoots(*module, contract).proved(),
               "independent same-tag calls retain the complete owner before reversing an edge");
         mutation(inner, argument, outer->getResult(0));

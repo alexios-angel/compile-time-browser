@@ -5,18 +5,12 @@ namespace ctcompile::test::owned_global_shared_map {
 void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string & source,
                                   bool prepared) {
     using ctcompile::ctnative::PrimitiveAlternatives;
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     const auto variant = [&](const std::string & text, bool expected, const char * message,
                              unsigned fields = 0, unsigned outerKeys = 1,
                              unsigned outerFormals = 2) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "retained sibling key fixture parses");
+        auto module = parsed(context, text, "retained sibling key fixture parses");
         if (!module) { return; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         HostContractAnalysis host(*module, contract);
         OwnedGlobalRoots owner(*module, contract);
         check(host.proved() == expected && owner.proved() == expected, message);
@@ -97,7 +91,7 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
             false, "a sibling cannot create a key-to-Map ownership cycle");
     auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
     if (!module) { return; }
-    const auto contract = requested(*module);
+    const auto contract = mapContractFor(*module);
     OwnedGlobalRoots owner(*module, contract);
     if (!owner.proved()) { return; }
     const auto calls = owner.roots().front().methodTable->calls;
@@ -106,7 +100,7 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
     const auto actual = second.call->getOperand(actualIndex);
     second.call->setOperand(actualIndex, second.read.getObject());
     check(!OwnedGlobalRoots(*module, contract).proved() &&
-              !OwnedGlobalRoots(*module, requested(*module)).proved(),
+              !OwnedGlobalRoots(*module, mapContractFor(*module)).proved(),
           "stale facts and fresh fingerprints cannot substitute the owning table for a key");
     second.call->setOperand(actualIndex, actual);
     const unsigned completion = owner.steps();

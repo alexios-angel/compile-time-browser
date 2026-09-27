@@ -25,21 +25,6 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
                       "    %future = ctjs.constant #ctjs.string<\"y\">\n"
                       "    %laterPutter = ctjs.get_property %owned[%putKey]\n"
                       "    %laterResult = ctjs.call %laterPutter(%owned, %future)");
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
-    const auto withheld = [](mlir::ModuleOp module, const HostContractAnalysis & query) {
-        bool none = query.callables().empty();
-        module.walk([&](mlir::Operation * operation) {
-            none &= !query.callable(operation);
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-                none &= !query.property(read);
-            }
-        });
-        return none;
-    };
     const std::string field = "    %fieldKey = ctjs.constant #ctjs.string<\"value\">\n"
                               "    %fieldValue = ctjs.constant #ctjs.number<4607182418800017408>\n"
                               "    ctjs.set_property %value[%fieldKey], %fieldValue\n";
@@ -128,10 +113,9 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
         const auto variant = [&](const std::string & text, bool expected, const char * message,
                                  bool localLeaf = true) {
             ++rows;
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-            check(static_cast<bool>(module), "source/prepared leaf Map fixture parses");
+            auto module = parsed(context, text, "source/prepared leaf Map fixture parses");
             if (!module) { return; }
-            const auto contract = requested(*module);
+            const auto contract = mapContractFor(*module);
             HostContractAnalysis query(*module, contract);
             check(query.proved() == expected && !query.exhausted() &&
                       (expected || withheld(*module, query)),
@@ -330,10 +314,9 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
 
         for (const auto & [text, label] :
              {std::pair{program, "empty"}, {numeric, "number field"}}) {
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-            check(static_cast<bool>(module), "leaf object budget fixture parses");
+            auto module = parsed(context, text, "leaf object budget fixture parses");
             if (!module) { continue; }
-            auto contract = requested(*module);
+            auto contract = mapContractFor(*module);
             HostContractAnalysis query(*module, contract);
             const unsigned completion = query.steps();
             check(query.proved() && completion < 15000,
@@ -367,7 +350,7 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
                 operation->setAttr("ctnative.map_write_type", attributes.getStringAttr("number"));
                 operation->setAttr("ctnative.object_schema", attributes.getStringAttr("leaf"));
             });
-            contract = requested(*module);
+            contract = mapContractFor(*module);
             check(HostContractAnalysis(*module, contract).proved(),
                   "forged reports leave the real leaf proof independently reproducible");
             const auto mutation = [&](mlir::Operation * operation, unsigned operand,
@@ -378,7 +361,7 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
                 check(!stale.proved() && stale.reason().contains("fingerprint") &&
                           withheld(*module, stale),
                       "a changed object-use edge invalidates its prior fingerprint");
-                HostContractAnalysis fresh(*module, requested(*module));
+                HostContractAnalysis fresh(*module, mapContractFor(*module));
                 check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
                       "fresh fingerprints and forged schemas cannot repair an unsafe leaf use");
                 operation->setOperand(operand, saved);
@@ -402,14 +385,14 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
                     check(!stale.proved() && stale.reason().contains("fingerprint") &&
                               withheld(*module, stale),
                           "even a safe scalar field mutation invalidates the old fingerprint");
-                    check(HostContractAnalysis(*module, requested(*module)).proved(),
+                    check(HostContractAnalysis(*module, mapContractFor(*module)).proved(),
                           "a new fingerprint rederives a changed safe primitive field");
                     literal->setAttr("value", ctjs::StringAttr::get(&context, "unsupported"));
                     HostContractAnalysis staleString(*module, contract);
                     check(!staleString.proved() && staleString.reason().contains("fingerprint") &&
                               withheld(*module, staleString),
                           "a changed String literal still invalidates the old fingerprint");
-                    HostContractAnalysis string(*module, requested(*module));
+                    HostContractAnalysis string(*module, mapContractFor(*module));
                     check(string.proved() && !string.exhausted(),
                           "String field ownership rederives its source without a Number schema");
                     if (string.proved()) { edges(*module, string); }

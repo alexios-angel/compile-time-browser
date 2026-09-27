@@ -100,8 +100,7 @@ module {
   }
 }
 )MLIR";
-    auto original = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-    check(static_cast<bool>(original), "independent custom iterator fixture parses");
+    auto original = parsed(context, source, "independent custom iterator fixture parses");
     if (!original) { return; }
     const auto withoutReturnSource = replaced(
         replaced(source,
@@ -115,8 +114,8 @@ module {
   }
 )MLIR",
         "");
-    auto withoutReturn = mlir::parseSourceString<mlir::ModuleOp>(withoutReturnSource, &context);
-    check(static_cast<bool>(withoutReturn), "custom iterator with no return hook parses");
+    auto withoutReturn =
+        parsed(context, withoutReturnSource, "custom iterator with no return hook parses");
     if (!withoutReturn) { return; }
     // Independent break/exhaustion mux: each exit defines only its own count.
     // The other slot is poison, so retaining a prior count cannot prove it.
@@ -1669,8 +1668,7 @@ module {
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
         for (const auto & specimen : {abruptSource, abruptStateSource}) {
-            auto input = mlir::parseSourceString<mlir::ModuleOp>(specimen, &context);
-            check(static_cast<bool>(input), "independent protected custom close parses");
+            auto input = parsed(context, specimen, "independent protected custom close parses");
             if (!input) { continue; }
             auto request = contract;
             request.provider = provider;
@@ -1737,8 +1735,7 @@ module {
           replaced(abruptStateSource, "      scf.execute_region {",
                    "      ctjs.store_global \"between\", %one\n"
                    "      scf.execute_region {")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "hostile protected custom close parses");
+        auto input = parsed(context, invalid, "hostile protected custom close parses");
         if (!input) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -1773,8 +1770,7 @@ module {
       scf.yield %saved : !ctjs.value
     }
 )MLIR");
-    auto returning = mlir::parseSourceString<mlir::ModuleOp>(returningSource, &context);
-    check(static_cast<bool>(returning), "acyclic return completion parses");
+    auto returning = parsed(context, returningSource, "acyclic return completion parses");
     if (!returning) { return; }
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -1829,8 +1825,8 @@ module {
       scf.yield %one : !ctjs.value
     }
 )MLIR");
-    auto primitiveAbrupt = mlir::parseSourceString<mlir::ModuleOp>(primitiveAbruptSource, &context);
-    check(static_cast<bool>(primitiveAbrupt), "primitive close with saved throw parses");
+    auto primitiveAbrupt =
+        parsed(context, primitiveAbruptSource, "primitive close with saved throw parses");
     if (!primitiveAbrupt) { return; }
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -1878,8 +1874,7 @@ module {
             "    ctjs.define_accessor \"return\" on %holder get %finish set %undefined");
     };
     const auto getterAbruptSource = getterReturn(throwingAbruptSource);
-    auto getterAbrupt = mlir::parseSourceString<mlir::ModuleOp>(getterAbruptSource, &context);
-    check(static_cast<bool>(getterAbrupt), "throwing return getter parses");
+    auto getterAbrupt = parsed(context, getterAbruptSource, "throwing return getter parses");
     if (!getterAbrupt) { return; }
     const auto mutableThrowingClose = [&](const std::string & input) {
         return replaced(replaced(input, "    %holder = ctjs.create_object",
@@ -1906,8 +1901,7 @@ module {
         const bool mutableState = source != throwingAbruptSource && source != getterAbruptSource;
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-            auto input = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-            check(static_cast<bool>(input), "terminal throwing close with live frame parses");
+            auto input = parsed(context, source, "terminal throwing close with live frame parses");
             if (!input) { continue; }
             auto request = contract;
             request.provider = provider;
@@ -2011,8 +2005,7 @@ module {
          }) {
         for (const auto & source : {invalid, getterReturn(invalid)}) {
             check(!source.empty(), "throwing method/getter control replacement matched");
-            auto input = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-            check(static_cast<bool>(input), "unproved throwing close observer parses");
+            auto input = parsed(context, source, "unproved throwing close observer parses");
             if (!input) { continue; }
             auto request = contract;
             request.moduleSha256 = hostContractFingerprint(*input);
@@ -2025,8 +2018,7 @@ module {
     for (const auto & source :
          {throwingAbruptSource, getterAbruptSource, scalarThrowingSource, scalarGetterSource}) {
         for (bool framePayload : {false, true}) {
-            auto input = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-            check(static_cast<bool>(input), "close payload validation control parses");
+            auto input = parsed(context, source, "close payload validation control parses");
             if (!input) { continue; }
             auto close = input->lookupSymbol<ctjs::FuncOp>("return$3");
             auto thrown = llvm::cast<ctjs::ThrowOp>(close.getBody().front().back());
@@ -2066,8 +2058,7 @@ module {
                       "    ctjs.frame_exit %closeFrame\n    ctjs.frame_exit %closeFrame\n"
                       "    ctjs.throw %result"),
          }) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "malformed close frame control parses");
+        auto input = parsed(context, invalid, "malformed close frame control parses");
         if (!input) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -2084,8 +2075,7 @@ module {
                       "    ctjs.set_property %holder[%returnName], %finish\n    %open ="),
          }) {
         check(!invalid.empty(), "unsupported getter control replacement matched");
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "unsupported getter control parses");
+        auto input = parsed(context, invalid, "unsupported getter control parses");
         if (!input) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -2377,8 +2367,7 @@ module {
                   "mutable projected cleanup refusal changes the complete source");
             for (auto provider : {HostContract::Provider::ctbrowserDOM,
                                   HostContract::Provider::ctbrowserDOMSession}) {
-                auto input = mlir::parseSourceString<mlir::ModuleOp>(specimen, &context);
-                check(static_cast<bool>(input), "mutable projected cleanup observer parses");
+                auto input = parsed(context, specimen, "mutable projected cleanup observer parses");
                 if (!input) { continue; }
                 auto request = contract;
                 request.provider = provider;
@@ -2410,8 +2399,8 @@ module {
          }) {
         for (const auto & specimen : {invalid, getterReturn(invalid)}) {
             check(!specimen.empty(), "mixed close refusal construction matched");
-            auto input = mlir::parseSourceString<mlir::ModuleOp>(specimen, &context);
-            check(static_cast<bool>(input), "mixed close observer or mutation control parses");
+            auto input =
+                parsed(context, specimen, "mixed close observer or mutation control parses");
             if (!input) { continue; }
             auto request = contract;
             request.provider = HostContract::Provider::ctbrowserDOM;
@@ -2449,8 +2438,7 @@ module {
             check(!specimen.empty(), "incomplete mixed break replacement matched");
             for (auto provider : {HostContract::Provider::ctbrowserDOM,
                                   HostContract::Provider::ctbrowserDOMSession}) {
-                auto input = mlir::parseSourceString<mlir::ModuleOp>(specimen, &context);
-                check(static_cast<bool>(input), "incomplete mixed break completion parses");
+                auto input = parsed(context, specimen, "incomplete mixed break completion parses");
                 if (!input) { continue; }
                 auto request = contract;
                 request.provider = provider;
@@ -2495,8 +2483,7 @@ module {
     }
     for (const auto & invalid :
          {primitiveReturn(returningSource), primitiveReturn(countedSource)}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "normal primitive close control parses");
+        auto input = parsed(context, invalid, "normal primitive close control parses");
         if (!input) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -2519,8 +2506,7 @@ module {
          }) {
         check(!invalid.empty(), "invalid acyclic fixture replacement matched");
         if (invalid.empty()) { continue; }
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "invalid acyclic completion parses");
+        auto input = parsed(context, invalid, "invalid acyclic completion parses");
         if (!input) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -2588,8 +2574,7 @@ module {
     %countWritten = ctjs.call %countSet(%element, %countName, %hasCount)
 )MLIR");
     effectfulSource = replaced(effectfulSource, "ctjs.return %loop", "ctjs.return %answer");
-    auto effectful = mlir::parseSourceString<mlir::ModuleOp>(effectfulSource, &context);
-    check(static_cast<bool>(effectful), "effectful loop completion parses");
+    auto effectful = parsed(context, effectfulSource, "effectful loop completion parses");
     if (!effectful) { return; }
     const auto conditionalPrimitiveSource =
         replaced(primitiveReturn(effectfulSource),
@@ -2612,8 +2597,7 @@ module {
     for (const auto & specimen :
          {conditionalPrimitiveSource, throwingReturn(conditionalPrimitiveSource)}) {
         const bool throwing = specimen != conditionalPrimitiveSource;
-        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(specimen, &context);
-        check(static_cast<bool>(fixture), "conditional suppressed close fixture parses");
+        auto fixture = parsed(context, specimen, "conditional suppressed close fixture parses");
         if (!fixture) { return; }
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -2647,10 +2631,10 @@ module {
             check(DOMEntryAnalysis(*input, request).proved(),
                   "conditional close retains complete DOM reproof");
         }
-        auto conflicting = mlir::parseSourceString<mlir::ModuleOp>(
+        auto conflicting = parsed(
+            context,
             replaced(specimen, "%again = arith.constant true", "%again = arith.constant false"),
-            &context);
-        check(static_cast<bool>(conflicting), "conflicting done facts parse");
+            "conflicting done facts parse");
         if (!conflicting) { return; }
         auto request = contract;
         request.provider = HostContract::Provider::ctbrowserDOM;
@@ -2782,8 +2766,7 @@ module {
         check(!invalid.empty() && invalid != effectfulSource,
               "hostile effectful completion changes the complete fixture");
         if (invalid.empty()) { continue; }
-        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(fixture), "hostile effectful completion parses");
+        auto fixture = parsed(context, invalid, "hostile effectful completion parses");
         if (!fixture) { continue; }
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -2868,11 +2851,10 @@ module {
     llvm::SmallVector<mlir::ModuleOp> savedFixtures{*savedCompletion, *zeroSavedCompletion};
     for (const auto & text : {comparedSource, comparedZeroSource, reversedComparisonSource,
                               unequalComparisonSource, earlierComparisonSource}) {
-        auto parsed = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(parsed), "compared saved completion parses");
-        if (!parsed) { return; }
-        savedFixtures.push_back(*parsed);
-        comparisons.push_back(std::move(parsed));
+        auto compared = parsed(context, text, "compared saved completion parses");
+        if (!compared) { return; }
+        savedFixtures.push_back(*compared);
+        comparisons.push_back(std::move(compared));
     }
     for (auto fixture : savedFixtures) {
         for (auto provider :
@@ -2970,8 +2952,7 @@ module {
                       "    %observed = arith.index_castui %loop#3 : i32 to index\n"
                       "    %selector ="),
          }) {
-        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(fixture), "observed three-way inactive slot parses");
+        auto fixture = parsed(context, text, "observed three-way inactive slot parses");
         if (!fixture) { return; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*fixture);
@@ -3013,8 +2994,7 @@ module {
             check(!invalid.empty() && invalid != savedCompletionSource,
                   "hostile saved payload changes the complete source");
             if (invalid.empty()) { continue; }
-            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-            check(static_cast<bool>(fixture), "hostile selected payload parses");
+            auto fixture = parsed(context, invalid, "hostile selected payload parses");
             if (!fixture) { continue; }
             for (auto provider : {HostContract::Provider::ctbrowserDOM,
                                   HostContract::Provider::ctbrowserDOMSession}) {
@@ -3046,8 +3026,7 @@ module {
                       "    %extraComparison = arith.xori %exitTest, %exitTest : i1\n"
                       "    ctjs.frame_exit %frame"),
          }) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "unproved exit comparison parses");
+        auto input = parsed(context, invalid, "unproved exit comparison parses");
         if (!input) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -3220,8 +3199,7 @@ module {
         check(!invalid.empty() && invalid != elementSource,
               "hostile element payload changes the complete fixture");
         if (invalid.empty()) { continue; }
-        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(fixture), "hostile saved element fixture parses");
+        auto fixture = parsed(context, invalid, "hostile saved element fixture parses");
         if (!fixture) { continue; }
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -3335,8 +3313,7 @@ module {
                             "%done = ctjs.constant #ctjs.boolean<true>");
         }
         check(!text.empty(), "saved selector source retains every requested construction");
-        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(fixture), "same-root saved selector fixture parses");
+        auto fixture = parsed(context, text, "same-root saved selector fixture parses");
         if (!fixture) { continue; }
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -3402,8 +3379,7 @@ module {
                       "%done = ctjs.constant #ctjs.boolean<true>"),
          }) {
         check(!text.empty(), "mixed selector preserves its complete source construction");
-        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(fixture), "mixed-root selector fixture parses");
+        auto fixture = parsed(context, text, "mixed-root selector fixture parses");
         if (!fixture) { continue; }
         // Function order must not make the entry's Style closure belong to a callback.
         fixture->lookupSymbol<ctjs::FuncOp>("identity$1")
@@ -3492,8 +3468,7 @@ module {
                       "        %stopping ="),
          }) {
         check(!invalid.empty(), "hostile Style root changes the complete fixture");
-        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(fixture), "hostile saved selector fixture parses");
+        auto fixture = parsed(context, invalid, "hostile saved selector fixture parses");
         if (!fixture) { continue; }
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -4597,8 +4572,7 @@ module {
                  directJoinedWriterSource, "ctjs.call %returnedWriter_final(%undefined, ",
                  "ctjs.call_direct @writeState$6(%undefined, %undefined, %returnedWriter_final, "),
          }) {
-        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(fixture), "hostile nested helper witness parses");
+        auto fixture = parsed(context, invalid, "hostile nested helper witness parses");
         if (!fixture) { continue; }
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -4656,8 +4630,7 @@ module {
                           "ctjs.call_direct @writeState$6(%undefined, %undefined, "
                           "%returnedWriter_final, "),
              }) {
-            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-            check(static_cast<bool>(fixture), "hostile loop-carried helper witness parses");
+            auto fixture = parsed(context, invalid, "hostile loop-carried helper witness parses");
             if (!fixture) { continue; }
             for (auto provider : {HostContract::Provider::ctbrowserDOM,
                                   HostContract::Provider::ctbrowserDOMSession}) {
@@ -4728,8 +4701,7 @@ module {
             check(!invalid.empty() && invalid != source,
                   "loop call-result control changes its source");
             if (invalid.empty() || invalid == source) { continue; }
-            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-            check(static_cast<bool>(fixture), "hostile loop call-result dependency parses");
+            auto fixture = parsed(context, invalid, "hostile loop call-result dependency parses");
             if (!fixture) { continue; }
             for (auto provider : {HostContract::Provider::ctbrowserDOM,
                                   HostContract::Provider::ctbrowserDOMSession}) {
@@ -4785,8 +4757,7 @@ module {
             check(!invalid.empty() && invalid != source,
                   "nested loop call-result control changes its source");
             if (invalid.empty() || invalid == source) { continue; }
-            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-            check(static_cast<bool>(fixture), "hostile nested loop return dependency parses");
+            auto fixture = parsed(context, invalid, "hostile nested loop return dependency parses");
             if (!fixture) { continue; }
             for (auto provider : {HostContract::Provider::ctbrowserDOM,
                                   HostContract::Provider::ctbrowserDOMSession}) {
@@ -4844,8 +4815,7 @@ module {
             check(!invalid.empty() && invalid != source,
                   "branch loop call-result control changes its source");
             if (invalid.empty() || invalid == source) { continue; }
-            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-            check(static_cast<bool>(fixture), "hostile branch loop return dependency parses");
+            auto fixture = parsed(context, invalid, "hostile branch loop return dependency parses");
             if (!fixture) { continue; }
             for (auto provider : {HostContract::Provider::ctbrowserDOM,
                                   HostContract::Provider::ctbrowserDOMSession}) {
@@ -4919,8 +4889,8 @@ module {
             check(!invalid.empty() && invalid != source,
                   "formal return-callee control changes its source");
             if (invalid.empty() || invalid == source) { continue; }
-            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-            check(static_cast<bool>(fixture), "hostile formal return-callee dependency parses");
+            auto fixture =
+                parsed(context, invalid, "hostile formal return-callee dependency parses");
             if (!fixture) { continue; }
             for (auto provider : {HostContract::Provider::ctbrowserDOM,
                                   HostContract::Provider::ctbrowserDOMSession}) {
@@ -4948,8 +4918,7 @@ module {
                           "    %helperSelector ="),
                  replaced(poisoned, "%trip = %helperZero", "%trip = %helperValuePoison"),
              }) {
-            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-            check(static_cast<bool>(fixture), "invalid sibling break completion parses");
+            auto fixture = parsed(context, invalid, "invalid sibling break completion parses");
             if (!fixture) { continue; }
             for (auto provider : {HostContract::Provider::ctbrowserDOM,
                                   HostContract::Provider::ctbrowserDOMSession}) {
@@ -5300,8 +5269,7 @@ module {
                       "ctjs.store_upvalue %callee[1], %callee"),
              otherCaptureSource,
          }) {
-        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(fixture), "invalid captured-state witness parses");
+        auto fixture = parsed(context, invalid, "invalid captured-state witness parses");
         if (!fixture) { continue; }
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -5350,8 +5318,7 @@ module {
              replaced(receiverSource, "%finish = ctjs.create_closure %callee[3] this %undefined",
                       "%finish = ctjs.create_closure %callee[3] this %this"),
          }) {
-        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(fixture), "invalid receiver-state witness parses");
+        auto fixture = parsed(context, invalid, "invalid receiver-state witness parses");
         if (!fixture) { continue; }
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -5393,8 +5360,7 @@ module {
              replaced(loopReceiverSource, "      %effectAfter =",
                       "      ctjs.store_global \"leaked\", %this\n      %effectAfter ="),
          }) {
-        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(fixture), "unsupported conditional-state witness parses");
+        auto fixture = parsed(context, invalid, "unsupported conditional-state witness parses");
         if (!fixture) { continue; }
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -5510,8 +5476,7 @@ module {
                  replaced(poisoned, "scf.yield %stop, %nextTrip, %methodBreak",
                           "scf.yield %stop, %methodValuePoison, %methodBreak"),
              }) {
-            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-            check(static_cast<bool>(fixture), "invalid method break completion parses");
+            auto fixture = parsed(context, invalid, "invalid method break completion parses");
             if (!fixture) { continue; }
             for (auto provider : {HostContract::Provider::ctbrowserDOM,
                                   HostContract::Provider::ctbrowserDOMSession}) {
@@ -5598,8 +5563,7 @@ module {
                       "      %effect = ctjs.call %unknown(%element, %afterEmitted)\n"
                       "      %effectAfter ="),
          }) {
-        auto nonScalar = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(nonScalar), "iterator-state category mutation parses");
+        auto nonScalar = parsed(context, invalid, "iterator-state category mutation parses");
         if (!nonScalar) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*nonScalar);
@@ -5650,8 +5614,7 @@ module {
                       "    %observedTag = arith.index_castui %loop#6 : i32 to index\n"
                       "    %selector ="),
          }) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "invalid counted break continuation parses");
+        auto input = parsed(context, invalid, "invalid counted break continuation parses");
         if (!input) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -5743,8 +5706,7 @@ module {
                               close),
                  "truth-only observations"},
          }) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "invalid custom iterator witness parses");
+        auto input = parsed(context, invalid, "invalid custom iterator witness parses");
         if (!input) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -5773,8 +5735,7 @@ module {
     }
     // Locate the completion threshold instead of baking in today's scan count.
     // Sample early, middle and last incomplete budgets on fresh private clones.
-    auto abruptState = mlir::parseSourceString<mlir::ModuleOp>(abruptStateSource, &context);
-    check(static_cast<bool>(abruptState), "terminal state budget specimen parses");
+    auto abruptState = parsed(context, abruptStateSource, "terminal state budget specimen parses");
     if (!abruptState) { return; }
     for (auto fixture : {*original,
                          *abruptState,

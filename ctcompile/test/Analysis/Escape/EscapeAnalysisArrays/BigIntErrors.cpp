@@ -15,11 +15,7 @@ void checkBigIntPlusErrors(mlir::MLIRContext & context) {
     const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
     const std::string branch =
         "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
-    struct plus_row {
-        contents_row contents;
-        const char * discharged = "x";
-    };
-    const std::vector<plus_row> rows = {
+    const std::vector<discharge_row> rows = {
         {.contents = {.what = "BigInt Plus checks both structural continuations after its error",
                       .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
                       .arrays = "a:[zero] | a:[zero]",
@@ -60,26 +56,15 @@ void checkBigIntPlusErrors(mlir::MLIRContext & context) {
     unsigned rowCount = 0;
     unsigned liveStates = 0;
     std::size_t budgets = 0;
-    const auto check = [&](mlir::ModuleOp module, const plus_row & expected) {
-        checkArrayContents(module, expected.contents);
-        const bool complete = expected.contents.failure == ArrayContentsFailure::None;
-        budgets += checkArrayRetention(module, {.what = expected.contents.what,
-                                                .body = expected.contents.body,
-                                                .discharged = complete ? expected.discharged : "",
-                                                .complete = complete});
+    const auto check = [&](mlir::ModuleOp module, const discharge_row & expected) {
+        budgets += checkDischarge(module, expected.contents, expected.discharged);
     };
-    const auto parse = [&](const plus_row & expected) {
-        return mlir::parseSourceString<mlir::ModuleOp>(
-            std::string{kPrologue} + expected.contents.body + "}\n", &context);
+    const auto parse = [&](const discharge_row & expected) {
+        return parseContents(context, expected.contents);
     };
-    const auto run = [&](const plus_row & expected) {
-        if (auto module = parse(expected)) {
-            check(*module, expected);
-        } else {
-            fail(
-                row{.what = expected.contents.what, .body = expected.contents.body, .expected = ""},
-                "the BigInt Plus fixture did not parse");
-        }
+    const auto run = [&](const discharge_row & expected) {
+        budgets += runDischarge(context, expected.contents, expected.discharged,
+                                "the BigInt Plus fixture did not parse");
         ++rowCount;
     };
     for (const auto & expected : rows) { run(expected); }
@@ -136,7 +121,7 @@ void checkBigIntPlusErrors(mlir::MLIRContext & context) {
                           .objects = "x:{}",
                           .propertyReads = savedBigInt ? "x[value]=big" : "x[value]=zero"}});
     }
-    plus_row wide = rows.front();
+    discharge_row wide = rows.front();
     std::string extras;
     for (unsigned i = 0; i < 32; ++i) {
         extras += "  %extra_" + std::to_string(i) + " = ctjs.unary plus %big\n";
@@ -158,7 +143,7 @@ void checkBigIntPlusErrors(mlir::MLIRContext & context) {
         fail(row{.what = "wide BigInt Plus snapshot", .body = wide.contents.body, .expected = ""},
              "the BigInt Plus snapshot fixture did not parse");
     }
-    plus_row mutation = rows.front();
+    discharge_row mutation = rows.front();
     if (auto module = parse(mutation)) {
         auto function = *module->getOps<ctjs::FuncOp>().begin();
         ctjs::UnaryOp unary;
@@ -253,11 +238,7 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
     const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
     const std::string branch =
         "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
-    struct mixed_row {
-        contents_row contents;
-        const char * discharged = "x";
-    };
-    const std::vector<mixed_row> rows = {
+    const std::vector<discharge_row> rows = {
         {.contents = {.what =
                           "mixed BigInt Sub checks both structural continuations after its error",
                       .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
@@ -299,26 +280,15 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
     unsigned rowCount = 0;
     unsigned liveStates = 0;
     std::size_t budgets = 0;
-    const auto check = [&](mlir::ModuleOp module, const mixed_row & expected) {
-        checkArrayContents(module, expected.contents);
-        const bool complete = expected.contents.failure == ArrayContentsFailure::None;
-        budgets += checkArrayRetention(module, {.what = expected.contents.what,
-                                                .body = expected.contents.body,
-                                                .discharged = complete ? expected.discharged : "",
-                                                .complete = complete});
+    const auto check = [&](mlir::ModuleOp module, const discharge_row & expected) {
+        budgets += checkDischarge(module, expected.contents, expected.discharged);
     };
-    const auto parse = [&](const mixed_row & expected) {
-        return mlir::parseSourceString<mlir::ModuleOp>(
-            std::string{kPrologue} + expected.contents.body + "}\n", &context);
+    const auto parse = [&](const discharge_row & expected) {
+        return parseContents(context, expected.contents);
     };
-    const auto run = [&](const mixed_row & expected) {
-        if (auto module = parse(expected)) {
-            check(*module, expected);
-        } else {
-            fail(
-                row{.what = expected.contents.what, .body = expected.contents.body, .expected = ""},
-                "the mixed BigInt Sub fixture did not parse");
-        }
+    const auto run = [&](const discharge_row & expected) {
+        budgets += runDischarge(context, expected.contents, expected.discharged,
+                                "the mixed BigInt Sub fixture did not parse");
         ++rowCount;
     };
     for (const auto & expected : rows) { run(expected); }
@@ -439,7 +409,7 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
                               .exit = "zero -> {}; zero -> {}"}});
         }
     }
-    mixed_row wide = rows.front();
+    discharge_row wide = rows.front();
     std::string extras;
     for (unsigned i = 0; i < 32; ++i) {
         extras += "  %extra_" + std::to_string(i) + " = ctjs.binary sub %big, %zero\n";
@@ -463,7 +433,7 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
                  .expected = ""},
              "the mixed BigInt Sub snapshot fixture did not parse");
     }
-    mixed_row mutation = rows.front();
+    discharge_row mutation = rows.front();
     if (auto module = parse(mutation)) {
         auto function = *module->getOps<ctjs::FuncOp>().begin();
         ctjs::BinaryOp binary;
@@ -578,11 +548,7 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
     const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
     const std::string branch =
         "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
-    struct mixed_row {
-        contents_row contents;
-        const char * discharged = "x";
-    };
-    const std::vector<mixed_row> rows = {
+    const std::vector<discharge_row> rows = {
         {.contents = {.what =
                           "mixed BigInt Mul checks both structural continuations after its error",
                       .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
@@ -624,17 +590,11 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
     unsigned rowCount = 0;
     unsigned liveStates = 0;
     std::size_t budgets = 0;
-    const auto check = [&](mlir::ModuleOp module, const mixed_row & expected) {
-        checkArrayContents(module, expected.contents);
-        const bool complete = expected.contents.failure == ArrayContentsFailure::None;
-        budgets += checkArrayRetention(module, {.what = expected.contents.what,
-                                                .body = expected.contents.body,
-                                                .discharged = complete ? expected.discharged : "",
-                                                .complete = complete});
+    const auto check = [&](mlir::ModuleOp module, const discharge_row & expected) {
+        budgets += checkDischarge(module, expected.contents, expected.discharged);
     };
-    const auto parse = [&](const mixed_row & expected) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(
-            std::string{kPrologue} + expected.contents.body + "}\n", &context);
+    const auto parse = [&](const discharge_row & expected) {
+        auto module = parseContents(context, expected.contents);
         // Preserve every historical Mul fixture; run the same independent
         // operand/retention matrix for Div/Mod/Pow/Add by changing only those operations.
         if (module && operation != ctjs::BinaryKind::Mul) {
@@ -646,7 +606,7 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
         }
         return module;
     };
-    const auto run = [&](const mixed_row & expected) {
+    const auto run = [&](const discharge_row & expected) {
         if (auto module = parse(expected)) {
             check(*module, expected);
         } else {
@@ -774,7 +734,7 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
                               .exit = "zero -> {}; zero -> {}"}});
         }
     }
-    mixed_row wide = rows.front();
+    discharge_row wide = rows.front();
     std::string extras;
     for (unsigned i = 0; i < 32; ++i) {
         extras += "  %extra_" + std::to_string(i) + " = ctjs.binary mul %big, %zero\n";
@@ -798,7 +758,7 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
                  .expected = ""},
              "the mixed BigInt Mul snapshot fixture did not parse");
     }
-    mixed_row mutation = rows.front();
+    discharge_row mutation = rows.front();
     if (auto module = parse(mutation)) {
         auto function = *module->getOps<ctjs::FuncOp>().begin();
         ctjs::BinaryOp binary;

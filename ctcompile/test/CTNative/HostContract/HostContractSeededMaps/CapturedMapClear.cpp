@@ -4,42 +4,8 @@ namespace ctcompile::test::host_contract_seeded_maps {
 
 void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & source, bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
-    const auto withheld = [](mlir::ModuleOp module, const HostContractAnalysis & query) {
-        bool none = query.callables().empty();
-        module.walk([&](mlir::Operation * operation) {
-            none &= !query.callable(operation);
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-                none &= !query.property(read);
-            }
-        });
-        return none;
-    };
-    auto fixture =
-        replaced(source, "%entryKey: !ctjs.value)",
-                 "%entryKey: !ctjs.value, %aliasKey: !ctjs.value, %choice: !ctjs.value)");
-    fixture = replaced(fixture, "    %actual =",
-                       "    %other = ctjs.constant #ctjs.string<\"z\">\n"
-                       "    %choice = ctjs.constant #ctjs.boolean<true>\n"
-                       "    %actual =");
-    for (const auto & [name, actual] :
-         {std::pair{"putter", "actual"}, {"repeatPutter", "actual"}, {"laterPutter", "future"}}) {
-        const std::string prefix = prepared ? std::string("%") + name + "Env, " : "%owned, ";
-        fixture = replaced(fixture, prefix + "%" + actual + ")",
-                           prefix + "%" + actual + ", %other, %choice)");
-    }
-    const std::string getterSignature =
-        "@get$2(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value" +
-        std::string(prepared ? ", %state: !ctjs.value" : "") + ")";
-    fixture =
-        replaced(fixture, getterSignature,
-                 getterSignature.substr(0, getterSignature.size() - 1) + ", %input: !ctjs.value)");
-    fixture = replaced(fixture, prepared ? "%getterEnv)" : "%getter(%owned)",
-                       prepared ? "%getterEnv, %putResult)" : "%getter(%owned, %putResult)");
+    auto fixture = choiceMapSource(source, prepared,
+                                   {"putterEnv", "repeatPutterEnv", "laterPutterEnv"}, "@get$2");
     const std::string write = "    %written = ctjs.call %setter(%state, %entryKey, %value)";
     const std::string clear = "    %cleared = ctjs.call %clearer(%state)\n";
     const std::string erase = "    %deleted = ctjs.call %eraser(%state, %entryKey)\n";
@@ -124,10 +90,9 @@ void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & sour
     const auto variant = [&](const std::string & text, bool expected, const char * message,
                              unsigned mask = Alternatives::Undefined) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared captured clear fixture parses");
+        auto module = parsed(context, text, "source/prepared captured clear fixture parses");
         if (!module) { return; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         HostContractAnalysis query(*module, contract);
         check(query.proved() == expected && !query.exhausted() &&
                   (expected || withheld(*module, query)),
@@ -260,9 +225,8 @@ void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & sour
                 "    %outerCleared = ctjs.call %outerClearer(%state)\n"
                 "    scf.if %flag {\n      scf.yield\n    }\n"
                 "    ctjs.return %loaded";
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(
-                replaced(base, "    ctjs.return %loaded", scoped), &context);
-            check(static_cast<bool>(module), "clear dependency scope fixture parses");
+            auto module = parsed(context, replaced(base, "    ctjs.return %loaded", scoped),
+                                 "clear dependency scope fixture parses");
             if (!module) { continue; }
             mlir::Builder attributes(&context);
             module->walk([&](mlir::Operation * operation) {
@@ -270,7 +234,7 @@ void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & sour
                 operation->setAttr("ctnative.map_absent", attributes.getBoolAttr(true));
                 operation->setAttr("ctnative.map_read_type", attributes.getStringAttr("undefined"));
             });
-            const auto contract = requested(*module);
+            const auto contract = mapContractFor(*module);
             check(HostContractAnalysis(*module, contract).proved(),
                   "properly scoped clear dependencies have an independent complete proof");
             auto setter = module->lookupSymbol<ctjs::FuncOp>("put$3");
@@ -343,7 +307,7 @@ void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & sour
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       withheld(*module, stale),
                   "a clear dependency scope edit invalidates old reports");
-            HostContractAnalysis fresh(*module, requested(*module));
+            HostContractAnalysis fresh(*module, mapContractFor(*module));
             check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
                   "fresh reports cannot authorize a then-only clear dependency outside its scope");
             for (const auto & edit : edits) { edit.op->setOperand(edit.operand, edit.original); }
@@ -354,10 +318,9 @@ void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & sour
     }
     check(scopeMutations == 8, "all scalar, callee, flag and fluent Map scope controls ran");
     for (const auto & [text, label] : {std::pair{base, "unseen key"}, {bothArms, "two arms"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "clear budget fixture parses");
+        auto module = parsed(context, text, "clear budget fixture parses");
         if (!module) { continue; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         HostContractAnalysis query(*module, contract);
         const unsigned completion = query.steps();
         check(query.proved() && completion < 20000, "clear proof has bounded complete work");
@@ -379,7 +342,7 @@ void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & sour
             operation->setAttr("ctnative.map_absent", attributes.getBoolAttr(true));
             operation->setAttr("ctnative.map_read_type", attributes.getStringAttr("undefined"));
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(HostContractAnalysis(*module, contract).proved(),
               "forged clear reports leave the positive live proof independently reproducible");
         auto setter = module->lookupSymbol<ctjs::FuncOp>("put$3");
@@ -406,7 +369,7 @@ void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & sour
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       withheld(*module, stale),
                   "live clear edits invalidate the prior fingerprint");
-            HostContractAnalysis fresh(*module, requested(*module));
+            HostContractAnalysis fresh(*module, mapContractFor(*module));
             check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
                   "fresh fingerprints and forged empty reports cannot repair an invalid clear");
         };

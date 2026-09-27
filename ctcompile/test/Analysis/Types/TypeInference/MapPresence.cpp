@@ -125,8 +125,7 @@ void checkRetainedChildPresence(mlir::MLIRContext & context) {
                 fresh = mlir::OwningOpRef<mlir::ModuleOp>{module->clone()};
                 current = *fresh;
             }
-            auto contract = fixtures::contractFor(current);
-            contract.initialIntrinsics = {"Map"};
+            auto contract = fixtures::mapContractFor(current);
             const auto sourceBefore = sourceFingerprint(current);
             ctnative::OwnedGlobalRoots owner(current, contract);
             if (!owner.proved() || owner.roots().size() != 1 ||

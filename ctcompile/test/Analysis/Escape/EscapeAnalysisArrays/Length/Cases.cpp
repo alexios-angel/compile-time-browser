@@ -4,17 +4,11 @@ namespace ctcompile::test::escape::arrays::length_detail {
 
 void LengthCases::check(mlir::ModuleOp module, const contents_row & expected,
                         const char * discharged) {
-    checkArrayContents(module, expected);
-    const bool complete = expected.failure == ArrayContentsFailure::None;
-    budgets += checkArrayRetention(module, {.what = expected.what,
-                                            .body = expected.body,
-                                            .discharged = complete ? discharged : "",
-                                            .complete = complete});
+    budgets += checkDischarge(module, expected, discharged);
 }
 
 mlir::OwningOpRef<mlir::ModuleOp> LengthCases::parse(const contents_row & expected) {
-    return mlir::parseSourceString<mlir::ModuleOp>(std::string{kPrologue} + expected.body + "}\n",
-                                                   &context);
+    return parseContents(context, expected);
 }
 
 void LengthCases::run(const contents_row & expected, const char * discharged,

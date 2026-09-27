@@ -31,8 +31,6 @@ struct StructuredCases {
     std::string savedNegative{};
     std::size_t budgets{};
 
-    static std::string replace(std::string source, const std::string & before,
-                               const std::string & after);
     void reject(const char * what, std::string body,
                 ArrayContentsFailure failure = ArrayContentsFailure::UnsupportedControlFlow);
 

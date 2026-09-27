@@ -25,8 +25,7 @@ module {
           std::pair{"__ctbrowser_init_fields", "%u, %u, %u"},
           std::pair{"__ctbrowser_super_get", "%u, %u, %u, %u"}}) {
         const auto text = replaced(replaced(source, "HELPER", name), "ARGS", arguments);
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "class helper invocation fixture parses");
+        auto module = parsed(context, text, "class helper invocation fixture parses");
         if (!module) { continue; }
         HostContract contract;
         contract.moduleSha256 = hostContractFingerprint(*module);
@@ -95,8 +94,7 @@ module {
                         std::string{"%binding = ctjs.constant #ctjs.string<\""} + name +
                             "\">\nctjs.set_property %this[%binding], %u\nctjs.return %u"}}) {
             auto changed =
-                mlir::parseSourceString<mlir::ModuleOp>(replaced(text, from, to), &context);
-            check(static_cast<bool>(changed), "class helper misuse fixture parses");
+                parsed(context, replaced(text, from, to), "class helper misuse fixture parses");
             if (!changed) { continue; }
             check(!host_detail::initialBindingProblem(*changed, contract).empty(),
                   "class helper aliases, reflection, mutation and malformed calls refuse");

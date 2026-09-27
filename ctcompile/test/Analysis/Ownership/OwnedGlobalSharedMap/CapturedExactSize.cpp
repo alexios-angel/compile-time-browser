@@ -4,11 +4,6 @@ namespace ctcompile::test::owned_global_shared_map {
 
 void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::string & source,
                                     bool prepared) {
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     auto fixture =
         replaced(source, "%entryKey: !ctjs.value)",
                  "%entryKey: !ctjs.value, %aliasKey: !ctjs.value, %choice: !ctjs.value)");
@@ -96,10 +91,9 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, bool expected, const char * message) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared exact-size owner fixture parses");
+        auto module = parsed(context, text, "source/prepared exact-size owner fixture parses");
         if (!module) { return; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         check(query.proved() == expected && !query.exhausted() &&
                   (expected || empty(*module, query)),
@@ -211,10 +205,9 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
 
     for (const auto & [text, label] :
          {std::pair{fixture, "one"}, {twoEntries, "two"}, {bothArms, "both arms"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "exact-size budget and live-mutation fixture parses");
+        auto module = parsed(context, text, "exact-size budget and live-mutation fixture parses");
         if (!module) { continue; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots complete(*module, contract);
         const unsigned completion = complete.steps();
         check(complete.proved() && completion < 20000, "the exact-size proof has bounded work");
@@ -242,7 +235,7 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
             op->setAttr("ctnative.map_exact_size", attributes.getI32IntegerAttr(1));
             op->setAttr("ctnative.map_present", attributes.getUnitAttr());
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(snapshot && lookup, "live exact-size control retains its read and later lookup");
         if (!snapshot || !lookup) { continue; }
         auto * restoreBefore = snapshot->getNextNode();
@@ -263,7 +256,7 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
         OwnedGlobalRoots stale(*module, contract);
         check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
               "moving the evaluated size invalidates the original fingerprint");
-        OwnedGlobalRoots fresh(*module, requested(*module));
+        OwnedGlobalRoots fresh(*module, mapContractFor(*module));
         check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
               "fresh fingerprints and forged exact-size reports cannot prove the earlier read");
         snapshot->moveBefore(restoreBefore);
@@ -272,7 +265,7 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
         const auto key = lookup.getArgs().front();
         auto wrong = snapshot.getKey();
         lookup->setOperand(2, wrong);
-        OwnedGlobalRoots wrongKey(*module, requested(*module));
+        OwnedGlobalRoots wrongKey(*module, mapContractFor(*module));
         check(!wrongKey.proved() && !wrongKey.exhausted() && empty(*module, wrongKey),
               "a different live lookup key cannot inherit an old exact-size result");
         lookup->setOperand(2, key);
@@ -422,10 +415,9 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
 
     for (const auto & [text, label] :
          {std::pair{inverted, "inverted"}, {continued, "continued"}, {filtered, "filtered"}}) {
-        auto guarded = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(guarded), "source/prepared guard budget fixture parses");
+        auto guarded = parsed(context, text, "source/prepared guard budget fixture parses");
         if (!guarded) { continue; }
-        const auto contract = requested(*guarded);
+        const auto contract = mapContractFor(*guarded);
         OwnedGlobalRoots complete(*guarded, contract);
         const unsigned completion = complete.steps();
         check(complete.proved() && completion < 20000,
@@ -458,7 +450,7 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
         OwnedGlobalRoots stale(*guarded, contract);
         check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*guarded, stale),
               "a changed guard operand invalidates the original source fingerprint");
-        OwnedGlobalRoots fresh(*guarded, requested(*guarded));
+        OwnedGlobalRoots fresh(*guarded, mapContractFor(*guarded));
         check(!fresh.proved() && !fresh.exhausted() && empty(*guarded, fresh),
               "a fresh fingerprint and forged membership report cannot replace the live guard");
         negation->setOperand(0, operand);
@@ -472,10 +464,9 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
     auto foreign = enterFrame(straight, "get$3", "otherFrame");
     foreign = replaced(foreign, "    ctjs.return %size",
                        "    ctjs.frame_exit %otherFrame\n    ctjs.return %size");
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(foreign, &context);
-    check(static_cast<bool>(module), "foreign-frame live-edit control parses");
+    auto module = parsed(context, foreign, "foreign-frame live-edit control parses");
     if (!module) { return; }
-    const auto contract = requested(*module);
+    const auto contract = mapContractFor(*module);
     check(OwnedGlobalRoots(*module, contract).proved(),
           "each source method independently owns and exits its original frame");
     auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
@@ -497,7 +488,7 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
         OwnedGlobalRoots stale(*module, contract);
         check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
               "a foreign frame operand invalidates the original source fingerprint");
-        OwnedGlobalRoots fresh(*module, requested(*module));
+        OwnedGlobalRoots fresh(*module, mapContractFor(*module));
         check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
               "fresh fingerprints and forged frame reports cannot authorize a foreign frame");
         changed->setOperand(0, original.getContext());
@@ -506,7 +497,7 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
     }
     const auto count = original->getAttr("reg_count");
     original->removeAttr("reg_count");
-    OwnedGlobalRoots malformed(*module, requested(*module));
+    OwnedGlobalRoots malformed(*module, mapContractFor(*module));
     check(!malformed.proved() && !malformed.exhausted() && empty(*module, malformed),
           "a malformed live frame entry cannot inherit its earlier frame proof");
     original->setAttr("reg_count", count);
@@ -514,7 +505,7 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
           "restoring the entry register count restores the source proof");
     const auto type = original->getResult(0).getType();
     original->getResult(0).setType(ctjs::ValueType::get(&context));
-    OwnedGlobalRoots wrongType(*module, requested(*module));
+    OwnedGlobalRoots wrongType(*module, mapContractFor(*module));
     check(!wrongType.proved() && !wrongType.exhausted() && empty(*module, wrongType),
           "a live frame result with the wrong type cannot acquire frame authority");
     original->getResult(0).setType(type);
@@ -522,7 +513,7 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
           "restoring the original context type restores the source proof");
     const auto rootedValue = rooted->getOperand(1);
     rooted->setOperand(1, original.getContext());
-    OwnedGlobalRoots rootedFrame(*module, requested(*module));
+    OwnedGlobalRoots rootedFrame(*module, mapContractFor(*module));
     check(!rootedFrame.proved() && !rootedFrame.exhausted() && empty(*module, rootedFrame),
           "a frame token cannot masquerade as a rooted JavaScript value");
     rooted->setOperand(1, rootedValue);

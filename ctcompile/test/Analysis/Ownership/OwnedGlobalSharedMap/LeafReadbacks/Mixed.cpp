@@ -26,18 +26,12 @@ void checkExactScalarReturns(mlir::MLIRContext & context, const std::string & di
 )MLIR");
     scalar = replaced(scalar, "%missing = ctjs.constant #ctjs.boolean<false>",
                       "%missing = ctjs.constant #ctjs.null");
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, std::optional<mlir::TypeID> first,
                              std::optional<mlir::TypeID> second, const char * label,
                              bool live = false, bool publish = true) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "exact scalar source/prepared fixture parses");
+        auto module = parsed(context, text, "exact scalar source/prepared fixture parses");
         if (!module) { return; }
         module->walk([&](mlir::Operation * operation) {
             operation->setAttr("ctnative.host_owner_proved", mlir::UnitAttr::get(&context));
@@ -45,7 +39,7 @@ void checkExactScalarReturns(mlir::MLIRContext & context, const std::string & di
                                mlir::StringAttr::get(&context, "number"));
             operation->setAttr("ctnative.map_present", mlir::UnitAttr::get(&context));
         });
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         HostContractAnalysis host(*module, contract);
         OwnedGlobalRoots owner(*module, contract);
         check(host.proved() && owner.proved() && !host.exhausted() && !owner.exhausted(), label);
@@ -117,7 +111,7 @@ void checkExactScalarReturns(mlir::MLIRContext & context, const std::string & di
         const auto key = getters.front()->getOperand(keyOperand);
         getters.front()->setOperand(keyOperand, getters.back()->getOperand(keyOperand));
         OwnedGlobalRoots stale(*module, contract);
-        OwnedGlobalRoots changed(*module, requested(*module));
+        OwnedGlobalRoots changed(*module, mapContractFor(*module));
         check(!stale.proved() && stale.reason().contains("fingerprint") && noResults(stale),
               "changing the exact call invalidates all old Number-result evidence");
         check(changed.proved() && !changed.exhausted() &&
@@ -128,7 +122,7 @@ void checkExactScalarReturns(mlir::MLIRContext & context, const std::string & di
         const unsigned payloadOperand = prepared ? 5u : 3u;
         const auto input = setters.back()->getOperand(payloadOperand);
         setters.back()->setOperand(payloadOperand, getters.front()->getOperand(prepared ? 0u : 1u));
-        OwnedGlobalRoots failed(*module, requested(*module));
+        OwnedGlobalRoots failed(*module, mapContractFor(*module));
         check(!failed.proved() && !failed.exhausted() && noResults(failed),
               "an unsupported live payload invalidates every exact scalar publication");
         setters.back()->setOperand(payloadOperand, input);
@@ -185,11 +179,6 @@ void checkExactScalarReturns(mlir::MLIRContext & context, const std::string & di
 void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & source,
                               bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     auto fixture =
         replaced(source, "%entryKey: !ctjs.value)", "%entryKey: !ctjs.value, %input: !ctjs.value)");
     fixture = replaced(fixture, "    %putResult =", R"MLIR(
@@ -246,10 +235,9 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
     const auto variant = [&](const std::string & text, bool expected, const char * label,
                              unsigned expectedCalls = 4, unsigned expectedLeaves = 0) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared mixed child readback fixture parses");
+        auto module = parsed(context, text, "source/prepared mixed child readback fixture parses");
         if (!module) { return; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         HostContractAnalysis host(*module, contract);
         OwnedGlobalRoots owner(*module, contract);
         check(host.proved() == expected && owner.proved() == expected && !host.exhausted() &&
@@ -498,8 +486,7 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
     const auto invocationVariant = [&](const std::string & text, bool expected, const char * label,
                                        bool live = false) {
         ++invocationRows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "object-key invocation source/prepared fixture parses");
+        auto module = parsed(context, text, "object-key invocation source/prepared fixture parses");
         if (!module) { return; }
         module->walk([&](mlir::Operation * operation) {
             operation->setAttr("ctnative.host_owner_proved", mlir::UnitAttr::get(&context));
@@ -508,7 +495,7 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
             operation->setAttr("ctnative.map_size",
                                mlir::IntegerAttr::get(mlir::IntegerType::get(&context, 64), 0));
         });
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         HostContractAnalysis host(*module, contract);
         OwnedGlobalRoots owner(*module, contract);
         check(host.proved() == expected && owner.proved() == expected && !host.exhausted() &&
@@ -568,8 +555,8 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
         const auto original = setters.back()->getOperand(keyOperand);
         setters.back()->setOperand(keyOperand, setters.front()->getOperand(keyOperand));
         OwnedGlobalRoots stale(*module, contract);
-        HostContractAnalysis freshHost(*module, requested(*module));
-        OwnedGlobalRoots fresh(*module, requested(*module));
+        HostContractAnalysis freshHost(*module, mapContractFor(*module));
+        OwnedGlobalRoots fresh(*module, mapContractFor(*module));
         check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale) &&
                   !freshHost.proved() && !freshHost.exhausted() && freshHost.callables().empty() &&
                   !fresh.proved() && !fresh.exhausted() && empty(*module, fresh) &&
@@ -637,8 +624,7 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
     checkExactScalarReturns(context, distinct, prepared);
 
     for (const auto & liveFixture : {returnedIdentity, guarded, unguarded}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(liveFixture, &context);
-        check(static_cast<bool>(module), "returned-child live source fixture parses");
+        auto module = parsed(context, liveFixture, "returned-child live source fixture parses");
         if (!module) { return; }
         module->walk([&](mlir::Operation * operation) {
             operation->setAttr("ctnative.host_owner_proved", mlir::UnitAttr::get(&context));
@@ -646,7 +632,7 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
             operation->setAttr("ctnative.object_origin",
                                mlir::StringAttr::get(&context, "payload"));
         });
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         HostContractAnalysis host(*module, contract);
         OwnedGlobalRoots owner(*module, contract);
         check(host.proved() && owner.proved(),
@@ -708,8 +694,8 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
             const auto original = operation->getOperand(0);
             operation->setOperand(0, invalid);
             OwnedGlobalRoots stale(*module, contract);
-            HostContractAnalysis freshHost(*module, requested(*module));
-            OwnedGlobalRoots fresh(*module, requested(*module));
+            HostContractAnalysis freshHost(*module, mapContractFor(*module));
+            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       empty(*module, stale) &&
                       llvm::all_of(calls,
@@ -762,8 +748,7 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
                     mutations, completion);
     }
 
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(fixture, &context);
-    check(static_cast<bool>(module), "mixed child live proof fixture parses");
+    auto module = parsed(context, fixture, "mixed child live proof fixture parses");
     if (!module) { return; }
     module->walk([&](mlir::Operation * operation) {
         operation->setAttr("ctnative.host_owner_proved", mlir::UnitAttr::get(&context));
@@ -771,7 +756,7 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
         operation->setAttr("ctnative.map_read_type", mlir::StringAttr::get(&context, "object"));
         operation->setAttr("ctnative.object_origin", mlir::StringAttr::get(&context, "payload"));
     });
-    const auto contract = requested(*module);
+    const auto contract = mapContractFor(*module);
     OwnedGlobalRoots owner(*module, contract);
     check(owner.proved(), "forged reports leave the independent mixed child proof reproducible");
     if (!owner.proved()) { return; }
@@ -803,8 +788,8 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
         const auto saved = operation->getOperand(operand);
         operation->setOperand(operand, value);
         OwnedGlobalRoots stale(*module, contract);
-        HostContractAnalysis freshHost(*module, requested(*module));
-        OwnedGlobalRoots fresh(*module, requested(*module));
+        HostContractAnalysis freshHost(*module, mapContractFor(*module));
+        OwnedGlobalRoots fresh(*module, mapContractFor(*module));
         check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale) &&
                   !freshHost.proved() && !freshHost.exhausted() && freshHost.callables().empty() &&
                   !fresh.proved() && !fresh.exhausted() && empty(*module, fresh),

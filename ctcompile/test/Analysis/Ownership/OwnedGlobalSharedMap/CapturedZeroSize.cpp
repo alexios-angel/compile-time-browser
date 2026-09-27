@@ -5,11 +5,6 @@ namespace ctcompile::test::owned_global_shared_map {
 void checkCapturedMapZeroSizeOwner(mlir::MLIRContext & context, const std::string & source,
                                    bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     auto fixture = replaced(source, "%entryKey: !ctjs.value)",
                             "%entryKey: !ctjs.value, %choice: !ctjs.value)");
     fixture = replaced(
@@ -80,10 +75,9 @@ void checkCapturedMapZeroSizeOwner(mlir::MLIRContext & context, const std::strin
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, bool expected, const char * message) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared exact-zero owner fixture parses");
+        auto module = parsed(context, text, "source/prepared exact-zero owner fixture parses");
         if (!module) { return; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         check(query.proved() == expected && !query.exhausted() &&
                   (expected || empty(*module, query)),
@@ -162,10 +156,9 @@ void checkCapturedMapZeroSizeOwner(mlir::MLIRContext & context, const std::strin
     check(rows == 21, "all exact-zero owner and conservative join controls ran");
 
     for (const auto & [text, label] : {std::pair{fixture, "saved"}, {bothArms, "both arms"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "exact-zero budget fixture parses");
+        auto module = parsed(context, text, "exact-zero budget fixture parses");
         if (!module) { continue; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         const unsigned completion = query.steps();
         check(query.proved() && completion < 20000, "exact-zero complete proof is bounded");
@@ -185,7 +178,7 @@ void checkCapturedMapZeroSizeOwner(mlir::MLIRContext & context, const std::strin
             op->setAttr("ctnative.map_size_zero", attributes.getBoolAttr(true));
             op->setAttr("ctnative.map_present", attributes.getUnitAttr());
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
         ctjs::GetPropertyOp snapshot;
         ctjs::CallOp growth;
@@ -205,7 +198,7 @@ void checkCapturedMapZeroSizeOwner(mlir::MLIRContext & context, const std::strin
         OwnedGlobalRoots stale(*module, contract);
         check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
               "moving the actual size read invalidates its old fingerprint");
-        OwnedGlobalRoots fresh(*module, requested(*module));
+        OwnedGlobalRoots fresh(*module, mapContractFor(*module));
         check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
               "fresh fingerprints and forged zero reports cannot repair a post-growth read");
         snapshot->moveBefore(restoreBefore);

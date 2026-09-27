@@ -1,4 +1,5 @@
 #include "../../../lib/CTNative/Analysis/OwnedGlobalRoots.h"
+#include "../../CTNative/HostContract/HostContractFixtures.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -18,6 +19,8 @@ using ctcompile::ctnative::HostContract;
 using ctcompile::ctnative::HostContractAnalysis;
 using ctcompile::ctnative::hostContractFingerprint;
 using ctcompile::ctnative::OwnedGlobalRoots;
+using ctcompile::test::host_contract::parsed;
+using ctcompile::test::host_contract::replaced;
 
 constexpr const char * fixture = R"MLIR(
 module {
@@ -75,13 +78,6 @@ bool complete(mlir::ModuleOp module, const OwnedGlobalRoots & query) {
     });
     return unrelated;
 }
-
-std::string replaced(std::string source, llvm::StringRef from, llvm::StringRef to) {
-    const auto offset = source.find(from.str());
-    if (offset == std::string::npos) { return {}; }
-    source.replace(offset, from.size(), to.str());
-    return source;
-}
 } // namespace
 
 int main() {
@@ -89,8 +85,7 @@ int main() {
     context.getOrLoadDialect<ctjs::CTJSDialect>();
     context.getOrLoadDialect<mlir::arith::ArithDialect>();
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(fixture, &context);
-    check(static_cast<bool>(module), "owned global fixture parses");
+    auto module = parsed(context, fixture, "owned global fixture parses");
     if (!module) { return 1; }
     auto contract = contractFor(*module);
     HostContractAnalysis host(*module, contract);
@@ -237,8 +232,7 @@ int main() {
     const auto variant = [&](llvm::StringRef from, llvm::StringRef to, bool hostProves,
                              const char * message) {
         auto text = replaced(fixture, from, to);
-        auto changed = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(changed), "owned global refusal variant parses");
+        auto changed = parsed(context, text, "owned global refusal variant parses");
         if (!changed) { return; }
         auto changedContract = contractFor(*changed);
         if (hostProves) {
