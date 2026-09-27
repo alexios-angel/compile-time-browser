@@ -28,6 +28,37 @@ std::optional<bool> unrootedUser(classInitialization & proof, mlir::Operation * 
     return std::nullopt;
 }
 
+// The sole class derived from `base`; true (stop) when it is not unique,
+// capture-free and a leaf, false on budget failure.
+std::optional<bool> soleLeaf(classInitialization & proof, mlir::Value base,
+                             ctjs::CreateClosureOp & leaf) {
+    for (auto [derived, inherited] : proof.heritage) {
+        if (!proof.step()) { return false; }
+        if (proof.sourceValue(inherited.getArgs()[1]) != base) { continue; }
+        auto next = derived.getDefiningOp<ctjs::CreateClosureOp>();
+        if (leaf || !next || proof.baseClasses.contains(derived) || !next.getUpvalues().empty()) {
+            return true;
+        }
+        leaf = next;
+    }
+    return std::nullopt;
+}
+
+// The shared holder census, with the uses of one captured read of the holder.
+llvm::Expected<CallableObject> capturedHolder(classInitialization & proof,
+                                              ctjs::CreateObjectOp holder, mlir::Value captured) {
+    return analyzeLocalCallableObject(
+        holder, [&] { return proof.step(); },
+        [&](mlir::Value value) {
+            auto uses = proof.sourceUses(value);
+            for (mlir::OpOperand & use : captured.getUses()) {
+                if (!proof.step()) { break; }
+                uses.push_back(&use);
+            }
+            return uses;
+        });
+}
+
 } // namespace
 
 bool classInitialization::publicationSuffix(ctjs::CallOp publication,
@@ -175,16 +206,7 @@ bool classInitialization::sinkCapturedPublication(
         if (auto stop = unrootedUser(*this, selection, invocation.getOperation())) { return *stop; }
         // Keep every slot and observer. The shared holder census proves that
         // moving this exact selection cannot cross a slot replacement.
-        auto proof = analyzeLocalCallableObject(
-            holder, [&] { return step(); },
-            [&](mlir::Value) {
-                auto uses = sourceUses(source);
-                for (mlir::OpOperand & use : captured.getResult().getUses()) {
-                    if (!step()) { break; }
-                    uses.push_back(&use);
-                }
-                return uses;
-            });
+        auto proof = capturedHolder(*this, holder, captured.getResult());
         if (!proof) {
             llvm::consumeError(proof.takeError());
             return reason.empty();
@@ -252,15 +274,7 @@ bool classInitialization::sinkCapturedPublication(
     if (isBase) {
         ctjs::CreateClosureOp leaf;
         ctjs::CallOp leafSetup;
-        for (auto [derived, inherited] : heritage) {
-            if (!step()) { return false; }
-            if (sourceValue(inherited.getArgs()[1]) != constructor.getResult()) { continue; }
-            auto next = derived.getDefiningOp<ctjs::CreateClosureOp>();
-            if (leaf || !next || baseClasses.contains(derived) || !next.getUpvalues().empty()) {
-                return true;
-            }
-            leaf = next;
-        }
+        if (auto stop = soleLeaf(*this, constructor.getResult(), leaf)) { return *stop; }
         for (ctjs::CallOp call : calls) {
             if (!step()) { return false; }
             if (leaf && call.getArgs().size() == 1 && call.getArgs().front() == leaf.getResult()) {
@@ -570,16 +584,7 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
         }
         // The raw cell/alias census below proves every omitted transport.
         // Project only this constructor's sole captured holder read.
-        auto proof = analyzeLocalCallableObject(
-            holder, [&] { return step(); },
-            [&](mlir::Value value) {
-                auto uses = sourceUses(value);
-                for (mlir::OpOperand & use : selectedHelper.getResult().getUses()) {
-                    if (!step()) { break; }
-                    uses.push_back(&use);
-                }
-                return uses;
-            });
+        auto proof = capturedHolder(*this, holder, selectedHelper.getResult());
         if (!proof) {
             llvm::consumeError(proof.takeError());
             return reason.empty();
@@ -781,15 +786,7 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
     if (isBase) {
         if (!instances.empty() || heritage.contains(constructor.getResult())) { return true; }
         ctjs::CreateClosureOp leaf;
-        for (auto [derived, inherited] : heritage) {
-            if (!step()) { return false; }
-            if (sourceValue(inherited.getArgs()[1]) != constructor.getResult()) { continue; }
-            auto next = derived.getDefiningOp<ctjs::CreateClosureOp>();
-            if (leaf || !next || baseClasses.contains(derived) || !next.getUpvalues().empty()) {
-                return true;
-            }
-            leaf = next;
-        }
+        if (auto stop = soleLeaf(*this, constructor.getResult(), leaf)) { return *stop; }
         if (!leaf) { return true; }
     }
     auto & body = function.getBody().front();
