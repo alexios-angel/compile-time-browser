@@ -7,6 +7,7 @@
 // The class is declared whole in compiler_impl.hpp beside this.
 
 #include "compiler_impl.hpp"
+#include "early_errors.hpp"
 
 namespace ctbrowser::script::detail {
 
@@ -75,13 +76,24 @@ void compiler_impl::compile_program() {
                 ast_.root,
                 [&](std::string n, std::int32_t decl) {
                     fn().annex_b_decls.push_back(decl);
-                    out_.hoisted_vars.push_back(std::move(n));
+                    out_.annex_b_names.push_back(std::move(n));
                 },
                 lexical, true);
         }
         std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());
         out_.hoisted_vars.erase(std::unique(out_.hoisted_vars.begin(), out_.hoisted_vars.end()),
                                 out_.hoisted_vars.end());
+        // A block function's name is a var either way; it is an Annex B name
+        // (program::annex_b_names) only when no `var` declares it too.
+        std::ranges::sort(out_.annex_b_names);
+        out_.annex_b_names.erase(std::ranges::unique(out_.annex_b_names).begin(),
+                                 out_.annex_b_names.end());
+        std::erase_if(out_.annex_b_names, [&](const std::string & name) {
+            return std::ranges::binary_search(out_.hoisted_vars, name);
+        });
+        out_.hoisted_vars.insert(out_.hoisted_vars.end(), out_.annex_b_names.begin(),
+                                 out_.annex_b_names.end());
+        std::ranges::sort(out_.hoisted_vars);
         // 19.2.1.3 step 3: a sloppy direct eval's `var` or function may not
         // share a name with a `let`, `const` or `class` of its caller's
         // function - hoisting the var would reach through it.
@@ -103,9 +115,11 @@ void compiler_impl::compile_program() {
         }
         // A direct eval's `var` of a caller's binding is that binding, not a
         // global to create.
-        std::erase_if(out_.hoisted_vars, [&](const std::string & name) {
+        const auto caller_binds = [&](const std::string & name) {
             return std::ranges::find(eval_outer_names_, name) != eval_outer_names_.end();
-        });
+        };
+        std::erase_if(out_.hoisted_vars, caller_binds);
+        std::erase_if(out_.annex_b_names, caller_binds);
     }
     // AN EVAL'S `let`, `const` and `class` ARE ITS OWN, strict or not
     // (19.2.1.3 step 17: a new declarative environment) - hoisted like a
@@ -199,24 +213,29 @@ void compiler_impl::compile_program() {
     // HoistableDeclaration[+Default]), instantiated before the module's first
     // statement - a module importing itself, or a cycle, calls it before its
     // text. A parenthesised function is an expression and is not hoisted; the
-    // parser gives the two the same node, so the byte before the function
-    // says which.
+    // parser gives the two the same node, so the token before the function
+    // says which: `default`, or a `(` (after_open_paren, which a comment
+    // between them cannot fool). Asked once, before the two passes.
     const auto hoisted_default = [this](std::int32_t s) {
         const vp::node & n = at(s);
         if (!module_scope_ || n.kind != vp::nk::export_decl || n.c != 1 || n.a < 0 ||
             at(n.a).kind != vp::nk::func_expr) {
             return false;
         }
-        std::size_t i = at(n.a).begin;
-        if (i == 0 || i > source_view_.size()) { return false; }
-        while (i > 0 && (source_view_[i - 1] == ' ' || source_view_[i - 1] == '\t' ||
-                         source_view_[i - 1] == '\n' || source_view_[i - 1] == '\r')) {
-            --i;
-        }
-        return i > 0 && source_view_[i - 1] != '(';
+        const std::size_t begin = at(n.a).begin;
+        return begin != 0 && begin <= source_view_.size() && !after_open_paren(source_view_, begin);
     };
+    std::int32_t default_declaration = -1;
     for (const std::int32_t s : kids(root)) {
-        if (at(declared_by(s)).kind == vp::nk::func_decl || hoisted_default(s)) { compile_stmt(s); }
+        if (hoisted_default(s)) {
+            default_declaration = s;
+            break;
+        }
+    }
+    for (const std::int32_t s : kids(root)) {
+        if (at(declared_by(s)).kind == vp::nk::func_decl || s == default_declaration) {
+            compile_stmt(s);
+        }
     }
     const std::span<const std::int32_t> body = kids(root);
     // `eval("a; b")` is b, and `eval("1; if (x) {}")` is undefined: the
@@ -246,7 +265,7 @@ void compiler_impl::compile_program() {
         return;
     }
     for (const std::int32_t s : body) {
-        if (at(declared_by(s)).kind == vp::nk::func_decl || hoisted_default(s)) { continue; }
+        if (at(declared_by(s)).kind == vp::nk::func_decl || s == default_declaration) { continue; }
         compile_stmt(s);
     }
     ret_completion();

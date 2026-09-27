@@ -30,7 +30,10 @@ std::string with_widget(std::string_view source, bool serializable) {
     });
     ctor->set("prototype", prototype);
     cx.define_builtin_global("Widget", value::object(ctor));
-    if (serializable) { cx.set_serializable_interfaces({"Widget"}); }
+    if (serializable) {
+        cx.set_serializable_interface("Widget",
+                                      {std::string{CTBROWSER_PRIVATE_KEY("WidgetState")}, "size"});
+    }
     const program & compiled = cx.own_program(compiler::compile(source));
     const run_result ran = cx.run(compiled);
     return ran.ok ? cx.to_string(ran.returned) : "THREW " + ran.error;
@@ -83,6 +86,12 @@ int main() {
                   "return (c !== w) + ',' + (Object.getPrototypeOf(c) === Widget.prototype) +"
                   " ',' + c.size;",
                   true, "true,true,3");
+    // Only the interface's state: a page's expando is neither copied nor able
+    // to make the clone fail (a function is not cloneable).
+    expect_widget("var w = new Widget(); w.extra = 1; w.fn = function () {};"
+                  "var c = structuredClone(w);"
+                  "return Object.keys(c).join() + ',' + ('extra' in c) + ',' + ('fn' in c);",
+                  true, "size,false,false");
     // An object on a prototype the page made is not a platform object at all.
     expect_widget("class Plain {} var c = structuredClone(new Plain());"
                   "return Object.getPrototypeOf(c) === Object.prototype;",

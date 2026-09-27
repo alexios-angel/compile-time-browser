@@ -52,6 +52,15 @@ int main() {
     expect({"let x;", "eval('var x;');"}, "SyntaxError");
     expect({"let x;", "(0, eval)('var x;');"}, "SyntaxError");
     expect({"let x;", "(0, eval)('function x() {}');"}, "SyntaxError");
+    // An Annex B block function is not a var name (B.3.2.3): a global `let`
+    // of it skips it, with no error and no binding, and so does a global
+    // object that cannot take it.
+    expect({"let f = 1;", "(0, eval)('if (false) { function f() {} }');"
+                          "if (f !== 1) { throw 0; }"},
+           "ok");
+    expect({"let f = 1;", "eval('{ function f() {} }');"}, "ok");
+    expect({"Object.preventExtensions(globalThis);", "(0, eval)('{ function g() {} }');"}, "ok");
+    expect({"let f;", "(0, eval)('var f; { function f() {} }');"}, "SyntaxError");
     // ...but not from a function, whose own variables they are.
     expect({"let x;", "(function () { eval('var x;'); })();"}, "ok");
     // An eval's bindings are configurable, so a later script's `let` shadows

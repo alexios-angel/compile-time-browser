@@ -29,6 +29,11 @@ public:
     [[nodiscard]] value iter_result(value v, bool done);
 
     void define_global(std::string name, value v);
+    // AN ASSIGNMENT TO A GLOBAL NAME - op::set_global, and the compiled tier's
+    // ct_aot_global_set, which is this with `strict` false: one store, so the
+    // two tiers cannot disagree about where a global's value went (see the
+    // definition). A strict store to a read-only global throws.
+    void assign_global(realm_record & realm, const std::string & name, value v, bool strict);
     // A PLATFORM name - an interface object, a namespace, an alias of one:
     // { writable, !enumerable, configurable } (realm_record::builtin).
     void define_builtin_global(std::string name, value v);
@@ -40,16 +45,22 @@ public:
     [[nodiscard]] bool is_intrinsic_name(std::string_view name) const {
         return intrinsic_names_.contains(name);
     }
-    // THE HOST'S SERIALIZABLE INTERFACES (HTML 2.7.2 [Serializable]): an
-    // instance of one of these structuredClone copies - its own properties,
-    // internal ones included, onto a fresh object of the same interface
-    // prototype. An instance of any OTHER platform interface - a builtin
-    // global's prototype that is not an intrinsic's - is a DataCloneError.
-    void set_serializable_interfaces(std::vector<std::string> names) {
-        for (std::string & name : names) { serializable_interfaces_[std::move(name)] = true; }
+    // A SERIALIZABLE INTERFACE OF THE HOST'S (HTML 2.7.2 [Serializable]): an
+    // instance of one structuredClone copies onto a fresh object of the same
+    // interface prototype, and what it copies is `state` - the own properties
+    // the binding keeps an instance's state in, internal ones included, which
+    // are its serialization steps. Nothing else: a page's expando on a Blob is
+    // not the Blob's, and is neither copied nor able to make the clone fail.
+    // An instance of any OTHER platform interface - a builtin global's
+    // prototype that is not an intrinsic's - is a DataCloneError.
+    void set_serializable_interface(std::string name, std::vector<std::string> state) {
+        serializable_interfaces_[std::move(name)] = std::move(state);
     }
-    [[nodiscard]] bool serializable_interface(std::string_view name) const {
-        return serializable_interfaces_.contains(name);
+    // Its state keys, or null when `name` is not a serializable interface.
+    [[nodiscard]] const std::vector<std::string> * serializable_interface(
+        std::string_view name) const {
+        const auto it = serializable_interfaces_.find(name);
+        return it == serializable_interfaces_.end() ? nullptr : &it->second;
     }
 
     // CreateGlobalVarBinding (9.1.1.4.17): a script's or an eval's `var` - a
@@ -79,6 +90,11 @@ public:
     // already lexical, is a SyntaxError and creates no binding. False with
     // the SyntaxError thrown; true once the script's names are recorded.
     bool global_declaration_instantiation(const program & prog);
+    // True when `name` is one of the program's Annex B block-function names
+    // (program::annex_b_names) that the global environment cannot take as a
+    // var - a global lexical of it, or CanDeclareGlobalVar false - and so is
+    // not created (B.3.2.2, B.3.2.3). Whoever declares hoisted_vars asks.
+    [[nodiscard]] bool annex_b_skipped(const program & prog, const std::string & name);
 
     // THE THREE VALUE PROPERTIES OF THE GLOBAL OBJECT (19.1): NaN, Infinity
     // and undefined are { writable: false, enumerable: false, configurable:
@@ -902,11 +918,6 @@ private:
     [[nodiscard]] bool unwind_to_handler();
     // Records throw_site_ for the throw unwind_to_handler is starting.
     void note_throw_site() noexcept;
-    // op::set_global for a name the binding table does not have: true when
-    // the global object's target owns it as a data property, which took the
-    // store (see the definition).
-    [[nodiscard]] bool store_global_property(realm_record & realm, const std::string & name,
-                                             value v, bool strict);
 
     void mark(value v);
     // Marks `o` and everything reachable from it. Iterative - see
@@ -944,7 +955,8 @@ private:
     // The program being executed, so a call from C++ can find the string
     // tables a nested frame needs.
     const program * program_ = nullptr;
-    throw_site throw_site_; // see last_throw_site
+    throw_site throw_site_;              // see last_throw_site
+    std::uint64_t throw_site_value_ = 0; // the bits of the value thrown there (note_throw_site)
     std::vector<std::unique_ptr<program>> owned_programs_;
     flat_map<const void *, flat_map<std::uint32_t, value>> string_cache_;
     // The same for BigInt literals, keyed and swept the same way.
@@ -1013,8 +1025,9 @@ private:
     // See set_realm_template.
     string_flat_map<value> realm_template_;
     string_flat_map<bool> realm_template_builtin_;
-    string_flat_map<bool> intrinsic_names_;         // see mark_globals_builtin
-    string_flat_map<bool> serializable_interfaces_; // see set_serializable_interfaces
+    string_flat_map<bool> intrinsic_names_; // see mark_globals_builtin
+    // See set_serializable_interface.
+    string_flat_map<std::vector<std::string>> serializable_interfaces_;
     std::vector<value> registers_;
     std::vector<call_frame> frames_;
     // WHERE THE TYPE ORACLE'S OBSERVATIONS GO, or null - and null selects the

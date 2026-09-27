@@ -106,33 +106,49 @@ inline auto context::declare_global_var(std::string name, bool configurable) -> 
     realm.globals[std::move(name)] = value::undefined();
 }
 
-// A GLOBAL ASSIGNMENT TO A PROPERTY THE GLOBAL OBJECT OWNS (9.1.1.4.5
-// SetMutableBinding: the object record's Set). A data property that
+// A GLOBAL ASSIGNMENT. NaN, Infinity and undefined refuse it; a binding the
+// table has takes it; otherwise a DATA property of the global object's own
+// (9.1.1.4.5 SetMutableBinding: the object record's Set) - one that
 // `Object.defineProperty(globalThis, ...)` made lives on the proxy's target,
-// and writing the binding table instead left the two disagreeing - the
-// descriptor kept the old value, and a bare read found the new one. Only a
-// DATA property, and only when the table has no binding of the name: an
-// accessor keeps the table's shadow as before, and the table is still where
-// every other global lives.
-inline auto context::store_global_property(realm_record & realm, const std::string & name, value v,
-                                           bool strict) -> bool {
-    value holder = realm.global_this;
-    if (holder.is_kind(heap_kind::proxy)) {
-        holder = static_cast<proxy_object *>(holder.as_heap())->target;
-    }
-    if (!holder.is_object()) { return false; }
-    auto * target = static_cast<object_object *>(holder.as_heap());
-    value * slot = target->find(name);
-    if (slot == nullptr) { return false; }
-    if ((target->attrs_of(name) & attr_writable) == 0) {
+// and writing the binding table instead left the two disagreeing: the
+// descriptor kept the old value, and a bare read found the new one. An
+// accessor keeps the table's shadow as before, and the table is where every
+// other global is created.
+//
+// BOTH TIERS STORE HERE - VM_CASE(set_global) and ct_aot_global_set - because
+// the native backend checks itself against the interpreter: a compiled store
+// that wrote the table while the interpreter wrote the property was the same
+// program giving two answers.
+inline auto context::assign_global(realm_record & realm, const std::string & name, value v,
+                                   bool strict) -> void {
+    if (immutable_global(name)) [[unlikely]] {
         if (strict) {
             throw_error("TypeError",
                         "Cannot assign to read only property '" + name + "' of object");
         }
-        return true;
+        return;
     }
-    *slot = v;
-    return true;
+    if (const auto it = realm.globals.find(name); it != realm.globals.end()) {
+        it->second = v;
+        return;
+    }
+    value holder = realm.global_this;
+    if (holder.is_kind(heap_kind::proxy)) {
+        holder = static_cast<proxy_object *>(holder.as_heap())->target;
+    }
+    if (holder.is_object()) {
+        auto * target = static_cast<object_object *>(holder.as_heap());
+        if (value * slot = target->find(name)) {
+            if ((target->attrs_of(name) & attr_writable) != 0) {
+                *slot = v;
+            } else if (strict) {
+                throw_error("TypeError",
+                            "Cannot assign to read only property '" + name + "' of object");
+            }
+            return;
+        }
+    }
+    realm.globals[name] = v;
 }
 
 inline auto context::declare_global_function(std::string name, bool configurable) -> void {
@@ -326,7 +342,9 @@ inline auto context::set_module_evaluator(std::function<bool(context &, module_r
     if (!global_declaration_instantiation(prog)) { return value::undefined(); }
     // Its `var`s exist before it starts, as run() gives a script's
     // (19.2.1.3 EvalDeclarationInstantiation binds them the same way).
-    for (const std::string & name : prog.hoisted_vars) { declare_global_var(name, prog.eval_code); }
+    for (const std::string & name : prog.hoisted_vars) {
+        if (!annex_b_skipped(prog, name)) { declare_global_var(name, prog.eval_code); }
+    }
     for (const std::string & name : prog.function_names) {
         declare_global_function(name, prog.eval_code);
     }

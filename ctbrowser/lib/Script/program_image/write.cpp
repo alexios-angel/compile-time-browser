@@ -386,6 +386,8 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
     for (const std::string & s : from.lexical_names) { out.text(s); }
     out.u32(static_cast<std::uint32_t>(from.function_names.size()));
     for (const std::string & s : from.function_names) { out.text(s); }
+    out.u32(static_cast<std::uint32_t>(from.annex_b_names.size()));
+    for (const std::string & s : from.annex_b_names) { out.text(s); }
 
     out.text(option == image_option::keep_source ? std::string_view{from.source}
                                                  : std::string_view{});
@@ -442,6 +444,11 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
         out.u32(keep_offsets ? static_cast<std::uint32_t>(fn.code_offsets.size()) : 0u);
         if (keep_offsets) {
             for (const std::uint32_t offset : fn.code_offsets) { out.u32(offset); }
+        }
+        // And the table only the offsets give a meaning to.
+        out.u32(keep_offsets ? static_cast<std::uint32_t>(fn.rethrows.size()) : 0u);
+        if (keep_offsets) {
+            for (const std::uint32_t at : fn.rethrows) { out.u32(at); }
         }
     }
     return std::move(out.bytes);

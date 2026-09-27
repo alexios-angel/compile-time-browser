@@ -51,6 +51,13 @@ int main() {
     expect_site("var a = 1;\n\nnull.x;\n", "3:6");
     expect_site("var e = 'bar';\ntry {\n  throw e;\n} catch (x) {}\n  throw e;\n", "5:9");
     expect_site("[1].forEach(function () {\n  throw 1;\n});\n", "2:9");
+    // A finally's rethrow, and an iterator close's, keep the site of the throw
+    // they carry on - unless a throw caught inside the finally replaced it.
+    expect_site("var n = 0;\ntry {\n  null.x;\n} finally {\n  n = 1;\n}\n", "3:8");
+    expect_site("for (const v of [1]) {\n  try {\n    null.x;\n  } finally {}\n}\n", "3:10");
+    expect_site("try {\n  null.x;\n} finally {\n  try { throw 2; } catch (e) {}\n}\n", "none");
+    // A catch's own `throw` is a throw of its own, reported where it is.
+    expect_site("try {\n  null.x;\n} catch (e) {\n  throw e;\n}\n", "4:9");
 
     // A parse error's position, as numbers.
     {

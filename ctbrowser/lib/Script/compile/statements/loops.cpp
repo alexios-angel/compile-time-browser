@@ -372,7 +372,7 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     // throw: close, then rethrow.
     patch_here(guard);
     close();
-    emit_rethrow(caught);
+    emit_rethrow(caught, true);
     patch_here(exit);
     patch_here(leave);
     loops_.pop_back();

@@ -27,10 +27,12 @@
 // be refusing valid source. Two rules are relaxed for the same reason and are
 // marked where they are checked.
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <ctbrowser/script/compile.hpp>
 
@@ -66,5 +68,20 @@ struct early_error {
                                                           bool strict_root = false,
                                                           const eval_site * eval = nullptr,
                                                           bool script_goal = false);
+
+// IS THE TOKEN BEFORE `offset` A `(`? The parser keeps no parentheses, so
+// `export default function () {}` and `export default (function () {})` - a
+// declaration and an expression - are one tree, and the source is asked. By
+// token and not by byte, because a comment may stand between the two and may
+// hold a `(` or hide one: the text up to `offset`, which must be a token's
+// start, is lexed again. A rare question - both callers ask it of a
+// default-exported function only - so the second lex is its whole cost.
+[[nodiscard]] inline bool after_open_paren(std::string_view source, std::size_t offset) {
+    if (offset > source.size()) { return false; }
+    const std::vector<ctjs::vp::token> before = ctjs::vp::lex(source.substr(0, offset));
+    const auto last = std::find_if(before.rbegin(), before.rend(),
+                                   [](const auto & t) { return t.kind != ctjs::vp::tk::end; });
+    return last != before.rend() && last->kind == ctjs::vp::tk::punct && last->s == "(";
+}
 
 } // namespace ctbrowser::script::detail

@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -55,9 +56,39 @@ void answers(std::string_view source, std::string_view expected) {
     }
 }
 
+// IS `export default function` HOISTED in this module? Its closure is then
+// made before the module's first statement - the call to `first` here - and
+// otherwise after it.
+bool default_hoisted(std::string_view source) {
+    const program prog = compiler::compile(source, script_kind::module_);
+    if (!prog.ok || prog.functions.empty()) { return false; }
+    std::size_t closure = 0;
+    std::size_t first = 0;
+    const std::vector<instruction> & code = prog.functions[0].code;
+    for (std::size_t i = code.size(); i-- > 0;) {
+        if (code[i].code == op::closure) { closure = i; }
+        if (code[i].code == op::get_global) { first = i; }
+    }
+    return closure < first;
+}
+
 } // namespace
 
 int main() {
+    // --- `export default function` is a declaration, hoisted; a parenthesised
+    // one is an expression, and a comment between `default` and the function
+    // is neither (16.2.3).
+    check(default_hoisted("first(); export default function () {}"),
+          "export default function is hoisted");
+    check(default_hoisted("first(); export default /* ( */ function () {}"),
+          "a comment holding `(` does not parenthesise it");
+    check(default_hoisted("first(); export default // (\n function () {}"),
+          "nor does a line comment holding one");
+    check(!default_hoisted("first(); export default (function () {})"),
+          "a parenthesised function is not hoisted");
+    check(!default_hoisted("first(); export default (/* c */ function () {})"),
+          "nor with a comment after its parenthesis");
+
     // --- the lexer: whitespace and line terminators beyond ASCII (12.2, 12.3)
     answers("var x = 1;\u00a0x\u00a0+= 1; return x;", "2");     // NBSP between tokens
     answers("var y = 1 // comment\u2028y = 2; return y;", "2"); // LS ends a line comment

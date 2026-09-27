@@ -447,6 +447,13 @@ struct function_proto {
     // between them is made once per FUNCTION: the prologue and the implicit
     // return are emitted with no statement in hand.
     bool debug_offsets = false;
+    // THE COMPILER'S OWN RETHROWS: the index of each op::throw_value that
+    // throws again a value a handler caught - a finally's, an iterator close's
+    // - rather than a `throw` the source wrote. In emission order, so sorted.
+    // Kept beside code_offsets and only when it is, for the one reader that
+    // needs it: context::note_throw_site, where such a throw keeps the site of
+    // the throw it caught.
+    std::vector<std::uint32_t> rethrows;
 
     // THE COMPILED BODY, or null, which is almost always. Runtime-only: the
     // compiler never sets it, no image ever carries it, and `image_fingerprint`
@@ -555,6 +562,14 @@ struct program {
     // functions (and no lexical names - those are the eval's own).
     std::vector<std::string> lexical_names;
     std::vector<std::string> function_names;
+    // THE NAMES IN hoisted_vars THAT ONLY A BLOCK'S FUNCTION DECLARATION PUT
+    // THERE - no `var` and no top-level function declares them (B.3.2.2,
+    // B.3.2.3: a sloppy script's or eval's block function is also a var).
+    // Sorted. Such a name is never a refusal: one the global environment has
+    // as a lexical binding, or cannot take as a var (CanDeclareGlobalVar), is
+    // simply not created - context::annex_b_skipped - where a real `var` of
+    // it is the SyntaxError or TypeError. Data, like hoisted_vars.
+    std::vector<std::string> annex_b_names;
     // THE SOURCE THIS WAS COMPILED FROM, kept so a function can be printed.
     // A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
     std::string source;
