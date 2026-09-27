@@ -4,17 +4,12 @@
 import argparse
 from pathlib import Path
 import re
-import shutil
 import subprocess
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, run
+from CTNative.harness import CLEANUP, build_and_run, find_compilers, prepare_js, run
 
 FUNCTION = re.compile(r"ctjs\.func (?:private )?@([^ (]+)\(.*?(?=\n  ctjs\.func |\n})", re.S)
-NATIVE_PIPELINE = (
-    "builtin.module(ctnative-lower-to-emitc{optimize=false},"
-    "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
-    "canonicalize,ctnative-prune-dead-stores,canonicalize))"
-)
+NATIVE_PIPELINE = f"builtin.module(ctnative-lower-to-emitc{{optimize=false}},{CLEANUP})"
 
 
 def resolve_callbacks(source, mixed=False):
@@ -134,32 +129,10 @@ def main():
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    compilers = [shutil.which(name) for name in ("g++", "clang++")]
-    if not all(compilers):
-        raise RuntimeError("direct callback regression requires GCC and Clang")
-    raw = args.work / "raw.mlir"
+    compilers = find_compilers()
     prepared = args.work / "prepared.mlir"
-    run(
-        [
-            args.translate,
-            "--ctbrowser-js-to-ctjs",
-            str(args.fixtures / "positive.js"),
-            "--mlir-print-debuginfo",
-            "-o",
-            str(raw),
-        ]
-    )
-    run(
-        [
-            args.opt,
-            str(raw),
-            "--ctjs-resolve-globals",
-            "--ctjs-lift-to-scf",
-            "--mlir-print-debuginfo",
-            "-o",
-            str(prepared),
-        ]
-    )
+    positive = args.fixtures / "positive.js"
+    prepare_js(args, positive, args.work / "raw.mlir", prepared, "--mlir-print-debuginfo")
     original = prepared.read_text()
     if len(FUNCTION.findall(original)) != 10 or "ctjs.skipped" in original:
         raise RuntimeError("the source's ten functions were not all imported")
@@ -209,25 +182,7 @@ def main():
             file.write_text(cpp)
             for index, compiler in enumerate(compilers):
                 binary = (args.work / f"{name}.{mode}.{index}").resolve()
-                run(
-                    [
-                        compiler,
-                        "-std=c++23",
-                        RUNTIME_INCLUDE,
-                        CORE_INCLUDE,
-                        "-O2",
-                        "-Wall",
-                        "-Wextra",
-                        "-Werror",
-                        "-Wconversion",
-                        "-pedantic",
-                        "-ffp-contract=off",
-                        str(file),
-                        "-o",
-                        str(binary),
-                    ]
-                )
-                observed = run([str(binary)]).stdout
+                observed = build_and_run(compiler, file, binary).stdout
                 if observed != expected:
                     raise RuntimeError(f"{name}/{mode}: {observed!r} != {expected!r}")
 

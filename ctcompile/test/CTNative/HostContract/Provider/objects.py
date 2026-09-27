@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
-import subprocess
 
 from CTNative.HostContract.Provider import diagnostics
+from CTNative.harness import prepare_js
 
 mutations, host = diagnostics.mutations, diagnostics.host
 OPTIONS = mutations.OPTIONS + " follow-provider-objects=true"
@@ -778,52 +778,16 @@ def controls(args, prepared):
     # the last insufficient limit has attempted Map, object and global effects.
     for name in ("nested_retention", "combined_transaction"):
         source = prepared[name]
-        budget_manifest, budget_report = (
-            args.work / f"{name}-budget.json",
-            args.work / f"{name}-budget.report.json",
-        )
-        budget_manifest.write_text(json.dumps(contract(args.opt, source)))
         case = next(case for case in cases() if case.name == name)
-
-        def run_budget(limit):
-            budget_report.unlink(missing_ok=True)
-            result = subprocess.run(
-                [
-                    args.opt,
-                    str(source),
-                    f"--ctnative-specialize-host-prefix=manifest={budget_manifest} output={budget_report} {case.options()} max-steps={limit}",
-                    "-o",
-                    "/dev/null",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            report = json.loads(budget_report.read_text())
-            if not report["valid"]:
-                if (
-                    result.returncode != 1
-                    or report["reason"] != "host prefix analysis work budget exhausted"
-                ):
-                    raise RuntimeError(f"{name}: unexpected work-limit refusal: {result.stderr}")
-                no_facts(report, f"{name} budget {limit}")
-            elif result.returncode or report["summarized_provider_calls"] != case.summaries():
-                raise RuntimeError(
-                    f"{name}: complete work limit lost provider/object state: {report}"
-                )
-            return report["valid"]
-
-        low, high = 0, 100000
-        if run_budget(low) or not run_budget(high):
-            raise RuntimeError(f"{name}: unexpected work-limit bracket")
-        while high - low > 1:
-            middle = (high + low) // 2
-            if run_budget(middle):
-                high = middle
-            else:
-                low = middle
-        if run_budget(high - 1) or not run_budget(high):
-            raise RuntimeError(f"{name}: unstable object transaction completion threshold")
+        mutations.budget_threshold(
+            args,
+            source,
+            contract(args.opt, source),
+            case.options(),
+            f"{name}-budget",
+            no_facts,
+            lambda report: report["summarized_provider_calls"] == case.summaries(),
+        )
 
 
 def main():
@@ -856,13 +820,8 @@ def main():
         if args.oracle_only:
             continue
         evidence[case.name]["interpreter"] = interpreter(reference, folder, case, js)
-        raw, ir = folder / "raw.mlir", folder / "prepared.mlir"
-        host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-        if "ctjs.skipped" in raw.read_text():
-            raise RuntimeError(f"{case.name}: importer dropped a source function")
-        host.run(
-            [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)]
-        )
+        ir = folder / "prepared.mlir"
+        prepare_js(args, js, folder / "raw.mlir", ir, complete=True)
         prepared[case.name] = ir
         report, output, _ = mutations.specialize(
             args.opt, ir, contract(args.opt, ir), folder / "checked", options=case.options()

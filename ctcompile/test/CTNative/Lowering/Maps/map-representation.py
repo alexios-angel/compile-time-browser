@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """Check associative lookup, ordered fallback, aliases, and owning Map values."""
 
-import argparse
-import os
 from pathlib import Path
 import re
-import shutil
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers, run
+from CTNative.harness import build_and_run, native_args, native_tools, run
 from CTNative.Exports import boundary
 
 NODE_GLOBALS = r"""const fs = require('node:fs');
@@ -56,21 +53,10 @@ int main() {
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fixtures", type=Path, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__, "fixtures")
     tests = Path(__file__).resolve().parents[3]
     node, reference = args.node, args.reference
-    nm = shutil.which("nm")
-    if not nm:
-        raise RuntimeError("Map representation regression requires nm")
-    compilers = find_compilers()
+    compilers, nm = native_tools(reference)
     cases = [
         (
             "associative",
@@ -189,57 +175,11 @@ def main():
             )
             for index, compiler in enumerate(compilers):
                 binary = (args.work / f"{name}-{label}-{index}").resolve()
-                run(
-                    [
-                        compiler,
-                        "-std=c++23",
-                        RUNTIME_INCLUDE,
-                        CORE_INCLUDE,
-                        "-O2",
-                        "-Wall",
-                        "-Wextra",
-                        "-Werror",
-                        "-Wconversion",
-                        "-pedantic",
-                        "-ffp-contract=off",
-                        str(source),
-                        "-o",
-                        str(binary),
-                    ]
-                )
-                actual = run([str(binary)]).stdout
+                actual = build_and_run(compiler, source, binary, nm=nm).stdout
                 assert actual == expected, (name, label, actual, expected)
-                assert "ctbrowser::script::" not in run([nm, "-C", str(binary)]).stdout
             if label == "plain":
-                environment = dict(
-                    os.environ,
-                    ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                    UBSAN_OPTIONS="halt_on_error=1",
-                )
                 binary = source.with_suffix(".sanitized").resolve()
-                run(
-                    [
-                        compilers[1],
-                        "-std=c++23",
-                        RUNTIME_INCLUDE,
-                        CORE_INCLUDE,
-                        "-O1",
-                        "-g",
-                        "-Wall",
-                        "-Wextra",
-                        "-Werror",
-                        "-Wconversion",
-                        "-pedantic",
-                        "-ffp-contract=off",
-                        "-fno-omit-frame-pointer",
-                        "-fsanitize=address,undefined",
-                        "-fsanitize-address-use-after-scope",
-                        str(source),
-                        "-o",
-                        str(binary),
-                    ]
-                )
-                assert run([str(binary)], environment=environment).stdout == expected
+                assert build_and_run(compilers[1], source, binary, sanitize=True).stdout == expected
     for fixture in ["boolean-values"]:
         source = (args.fixtures / (fixture + ".js")).read_text()
         _, prepared, count = boundary.prepare(args, fixture, source)

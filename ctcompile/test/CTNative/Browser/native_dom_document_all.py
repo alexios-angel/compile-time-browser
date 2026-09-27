@@ -4,7 +4,6 @@
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser.native_dom_document import CURRENT_DOCUMENT_CHECKS, INPUT_CHECKS
 from CTNative.Browser.native_dom_query_all import REFUSALS as ELEMENT_REFUSALS
-from CTNative.harness import find_compilers
 
 SOURCE = """function queryAll(anchor, expected) {
   if (anchor.hasAttribute('data-invalid')) {
@@ -193,8 +192,7 @@ REFUSALS.update(
 
 def main():
     args = dom.parse_args(__doc__)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     refusals = 0
     for anchor in (0, 1):
@@ -203,56 +201,46 @@ def main():
         )
         ir, contract = dom.prepare(args, f"document-all-{anchor}", source, 2)
         contract.update(current_document_parameter=anchor, initial_intrinsics=["Number"])
-        for owned in (False, True):
-            manifest = dict(
-                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
-            )
-            for optimize in (False, True):
-                name = f"document-all-{anchor}-{owned}-{optimize}"
-                native = dom.lower(args, ir, manifest, name, optimize=optimize)
-                text = native.read_text()
-                if (
-                    "ctnative::document_scope" not in text
-                    or "ctnative::document.querySelectorAll" not in text
-                    or "std::vector<ctnative::js_element_t>" not in text
-                    or "std::vector<ctbrowser::element_ref>" in text
-                ):
-                    raise RuntimeError(f"{name}: document snapshot lost its typed browser views")
-                client = (
-                    CURRENT_DOCUMENT_CHECKS
-                    + CHECKS
-                    + INPUT_CHECKS
-                    + (OWNED_CHECKS if owned else "")
-                ).replace("@ARGUMENTS@", "expected, anchor" if anchor else "anchor, expected")
-                dom.standalone(args, native, name, client, compilers, includes, libraries)
-                missing = dict(manifest)
-                del missing["current_document_parameter"]
-                for suffix, bad, budget in (
-                    ("unbound", missing, None),
-                    ("stale", dict(manifest, module_sha256="0" * 64), None),
-                    ("budget", manifest, 0),
-                    ("dataset", dict(manifest, dataset_parameters=[anchor]), None),
-                ):
-                    dom.lower(
-                        args,
-                        ir,
-                        bad,
-                        f"{name}-{suffix}",
-                        optimize=optimize,
-                        max_steps=budget,
-                        success=False,
-                    )
-                    refusals += 1
+        for owned, optimize, manifest in dom.variants(contract):
+            name = f"document-all-{anchor}-{owned}-{optimize}"
+            native = dom.lower(args, ir, manifest, name, optimize=optimize)
+            text = native.read_text()
+            if (
+                "ctnative::document_scope" not in text
+                or "ctnative::document.querySelectorAll" not in text
+                or "std::vector<ctnative::js_element_t>" not in text
+                or "std::vector<ctbrowser::element_ref>" in text
+            ):
+                raise RuntimeError(f"{name}: document snapshot lost its typed browser views")
+            client = (
+                CURRENT_DOCUMENT_CHECKS + CHECKS + INPUT_CHECKS + (OWNED_CHECKS if owned else "")
+            ).replace("@ARGUMENTS@", "expected, anchor" if anchor else "anchor, expected")
+            dom.standalone(args, native, name, client, compilers, includes, libraries)
+            missing = dict(manifest)
+            del missing["current_document_parameter"]
+            for suffix, bad, budget in (
+                ("unbound", missing, None),
+                ("stale", dict(manifest, module_sha256="0" * 64), None),
+                ("budget", manifest, 0),
+                ("dataset", dict(manifest, dataset_parameters=[anchor]), None),
+            ):
+                dom.lower(
+                    args,
+                    ir,
+                    bad,
+                    f"{name}-{suffix}",
+                    optimize=optimize,
+                    max_steps=budget,
+                    success=False,
+                )
+                refusals += 1
     for name, body in REFUSALS.items():
         ir, manifest = dom.prepare(
             args, name, f"function bad(element, expected) {{ {body} }}\n", 2, entry_name="bad"
         )
         manifest["current_document_parameter"] = 0
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, manifest, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
-            refusals += 1
+        dom.refuse(args, ir, manifest, f"refused-{name}")
+        refusals += 2
     print(
         f"Document.querySelectorAll: 32 native executions, {refusals} refusals; DOM/Core/Style only"
     )

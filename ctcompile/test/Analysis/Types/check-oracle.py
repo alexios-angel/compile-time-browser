@@ -20,8 +20,9 @@ report.
 
 import argparse
 import re
-import subprocess
 import sys
+
+from CTNative.harness import run
 
 TYPE_TALLY = (
     r"all-i32 observed ([0-9]+) unobserved ([0-9]+) violations ([0-9]+) beat-boxed ([0-9]+)"
@@ -30,12 +31,6 @@ ESCAPE_FIELDS = (
     "claimed observed unobserved violations sound partial pending imprecise exact unclaimed "
     "inconclusive mismatch"
 ).split()
-
-
-def run(command):
-    result = subprocess.run(command, capture_output=True, text=True)
-    print(result.stdout + result.stderr)
-    return result
 
 
 def main():
@@ -47,8 +42,6 @@ def main():
     args = parser.parse_args()
 
     selftest = run([args.exe, *(["--escape"] if args.escape else []), "--out", args.recording])
-    if selftest.returncode != 0:
-        sys.exit(f"the oracle's own self-test failed (exit {selftest.returncode})")
     out = selftest.stdout
     checker = [sys.executable, args.script, "--recording", args.recording, "--name", "selftest"]
 
@@ -74,21 +67,18 @@ def main():
             + ["--expect-observed", str(observed), "--expect-unobserved", str(unobserved)]
             + ["--expect-precision", str(beat)]
         )
-        if wrong.returncode != 0:
-            sys.exit("the Python checker disagrees with the C++ one on all-i32")
         if not re.search(
             r"VIOLATION program [0-9a-f]+ function [0-9]+ \([A-Za-z_-]+\) register [0-9]+",
             wrong.stdout,
         ):
             sys.exit(f"the checker counted violations without naming one:\n{wrong.stdout}")
-        trivial = run(
+        # all-boxed is sound by construction: the checker must agree.
+        run(
             checker
             + ["--infer", "all-boxed", "--expect-violations", "0"]
             + ["--expect-observed", str(observed), "--expect-unobserved", str(unobserved)]
             + ["--expect-precision", "0"]
         )
-        if trivial.returncode != 0:
-            sys.exit("all-boxed is sound by construction and the checker says otherwise")
         print(
             f"type oracle: {observed} observed registers, {unobserved} unobserved, all-i32 "
             f"{violations} soundness violations, all-boxed 0"
@@ -138,8 +128,6 @@ def main():
         return flags
 
     wrong = run(checker + ["--infer", "all-confined", "--max-report", "0"] + expectations(confined))
-    if wrong.returncode != 0:
-        sys.exit("the Python checker disagrees with the C++ one on all-confined")
     # Every violation is printed (--max-report 0) because the first ten are
     # the top level's closures, named `<script>`; and one hand-computed
     # violation is required BY NAME - `ret`'s object literal, the in-flight
@@ -154,11 +142,10 @@ def main():
         wrong.stdout,
     ):
         sys.exit(f"the checker did not name `ret`'s site with its route:\n{wrong.stdout}")
+    # all-escapes is sound by construction: the checker must agree.
     trivial = run(
         checker + ["--infer", "all-escapes"] + expectations(escapes, violations=0, sound=0)
     )
-    if trivial.returncode != 0:
-        sys.exit("all-escapes is sound by construction and the checker says otherwise")
     if "PRECISION confined 0/" not in trivial.stdout:
         sys.exit(f"all-escapes must have zero precision:\n{trivial.stdout}")
     print(

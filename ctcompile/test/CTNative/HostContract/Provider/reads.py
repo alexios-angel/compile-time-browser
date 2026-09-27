@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 
 from CTNative.HostContract import prefix
+from CTNative.harness import prepare_js
 
 host = prefix.host
 OPTIONS = "follow-publication=true follow-provider-reads=true"
@@ -96,13 +97,9 @@ def main():
     prepared = {}
     for name, program in sources.items():
         js = args.work / f"{name}.js"
-        raw = args.work / f"{name}.raw.mlir"
         ir = args.work / f"{name}.mlir"
         js.write_text(program)
-        host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-        host.run(
-            [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)]
-        )
+        prepare_js(args, js, args.work / f"{name}.raw.mlir", ir)
         prepared[name] = ir
         contract = dict(
             host.manifest(args.opt, ir, undefined=("undefined",)),

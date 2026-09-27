@@ -319,18 +319,6 @@ def refusal_checks(args, prepared):
         ("number_entry_replaces_global", ir, dict(contract, initial_intrinsics=["Number"]))
     )
     for name, ir, contract in cases:
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    ir,
-                    dict(contract, provider=provider),
-                    f"{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if "DOM" not in diagnostic:
-                    raise RuntimeError(
-                        f"{name}: missing intended numeric DOM refusal\n{diagnostic}"
-                    )
+        for provider in dom.PROVIDERS:
+            dom.refuse(args, ir, dict(contract, provider=provider), f"{name}-{provider}", "DOM")
     return 4 * len(cases)

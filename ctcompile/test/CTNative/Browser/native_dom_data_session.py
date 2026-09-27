@@ -2,12 +2,11 @@
 """Gate private DOM Data storage against the unchanged source proof and real documents."""
 
 import importlib.util
-import os
 from pathlib import Path
 import re
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, run
 from Target.Cpp.harness import FLAGS
 
 _spec = importlib.util.spec_from_file_location(
@@ -120,8 +119,7 @@ int main() {
 
 def main():
     args = dom.parse_args(__doc__, oracles=True)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     read_client = (
         CLIENT.replace(
             "assert(!ctnative::global_boolean(session.observe_traceBefore()));",
@@ -218,43 +216,29 @@ def main():
                 client = "\n#include <array>\n" + client_source.replace("@OWNER@", owner[0])
                 path = args.work / f"{variant}-{optimize}.{mode}.cpp"
                 path.write_text(cpp + client)
+                flags = [*FLAGS, *includes]
                 for index, compiler in enumerate(compilers):
                     binary = path.with_suffix(f".{index}")
-                    compiled = run(
-                        [compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)]
+                    result = build_and_run(
+                        compiler,
+                        path,
+                        binary,
+                        flags=flags,
+                        libraries=libraries,
+                        nm=args.nm,
+                        vm=dom.VM,
+                        clean=True,
                     )
-                    if compiled.stdout or compiled.stderr:
-                        raise RuntimeError("DOM Data did not compile cleanly")
-                    if dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
-                        raise RuntimeError("DOM Data linked Script/AOT")
-                    if run([str(binary)]).stdout != "DOM Data passed\n":
+                    if result.stdout != "DOM Data passed\n":
                         raise RuntimeError("DOM Data observations incomplete")
                 if mode == "explicit":
-                    sanitized = path.with_suffix(".sanitized")
-                    run(
-                        [
-                            compilers[1],
-                            *FLAGS,
-                            "-O1",
-                            "-g",
-                            "-fno-omit-frame-pointer",
-                            "-fsanitize=address,undefined",
-                            "-fsanitize-address-use-after-scope",
-                            "-DCTCOMPILE_TEST_DANGLING=1",
-                            *includes,
-                            str(path),
-                            *libraries,
-                            "-o",
-                            str(sanitized),
-                        ]
-                    )
-                    result = run(
-                        [str(sanitized)],
-                        environment=dict(
-                            os.environ,
-                            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-                        ),
+                    result = build_and_run(
+                        compilers[1],
+                        path,
+                        path.with_suffix(".sanitized"),
+                        flags=[*flags, "-DCTCOMPILE_TEST_DANGLING=1"],
+                        libraries=libraries,
+                        sanitize=True,
                     )
                     if result.stdout != "DOM Data passed\n" or result.stderr:
                         raise RuntimeError("DOM Data lifetime check failed")

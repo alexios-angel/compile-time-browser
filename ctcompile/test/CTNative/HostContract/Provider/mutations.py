@@ -11,6 +11,7 @@ import struct
 import subprocess
 
 from CTNative.HostContract import prefix
+from CTNative.harness import prepare_js, threshold
 
 host = prefix.host
 OPTIONS = "follow-publication=true follow-provider-reads=true follow-provider-mutations=true"
@@ -544,6 +545,48 @@ def specialize(opt, ir, manifest, path, **options):
     return report, output, result
 
 
+def budget_threshold(args, source, manifest, options, label, no_facts, complete):
+    """Bracket, bisect and pin the least prefix-analysis work limit that
+    completes: an exhausted limit must refuse by name and publish nothing
+    (`no_facts`), a completed one must satisfy `complete(report)`."""
+    config, output = args.work / f"{label}.json", args.work / f"{label}.report.json"
+    config.write_text(json.dumps(manifest))
+
+    def valid(limit):
+        output.unlink(missing_ok=True)
+        result = subprocess.run(
+            [
+                args.opt,
+                str(source),
+                f"--ctnative-specialize-host-prefix=manifest={config} output={output} {options} max-steps={limit}",
+                "-o",
+                "/dev/null",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        report = json.loads(output.read_text())
+        if not report["valid"]:
+            reason = "host prefix analysis work budget exhausted"
+            if (
+                result.returncode != 1
+                or report["reason"] != reason
+                or "host prefix refused: " + reason not in result.stderr
+            ):
+                raise RuntimeError(f"{label}: unexpected work-limit refusal: {result.stderr}")
+            no_facts(report, f"{label} {limit}")
+        elif result.returncode or not complete(report):
+            raise RuntimeError(f"{label}: a completed work limit lost its summaries: {report}")
+        return report["valid"]
+
+    if valid(0) or not valid(100000):
+        raise RuntimeError(f"{label}: unexpected initial work-limit bracket")
+    high = threshold(valid)
+    if valid(high - 1) or not valid(high):
+        raise RuntimeError(f"{label}: work-limit completion boundary is not stable")
+
+
 def no_facts(report, label):
     fields = (
         "selected_branches",
@@ -708,49 +751,15 @@ def controls(args, prepared):
     # Every lower work limit must withhold earlier completed summaries and any
     # transaction-local mutations or nested allocations, including late limits.
     budget_case, _ = prepared["nested_identity"]
-    budget_manifest = args.work / "budget.json"
-    budget_manifest.write_text(json.dumps(contract(args.opt, budget_case)))
-    budget_report = args.work / "budget.report.json"
-
-    def run_budget(limit):
-        budget_report.unlink(missing_ok=True)
-        result = subprocess.run(
-            [
-                args.opt,
-                str(budget_case),
-                f"--ctnative-specialize-host-prefix=manifest={budget_manifest} output={budget_report} {OPTIONS} max-steps={limit}",
-                "-o",
-                "/dev/null",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        report = json.loads(budget_report.read_text())
-        if not report["valid"]:
-            if (
-                result.returncode != 1
-                or report["reason"] != "host prefix analysis work budget exhausted"
-                or "host prefix refused: host prefix analysis work budget exhausted"
-                not in result.stderr
-            ):
-                raise RuntimeError(f"unexpected work-limit refusal: {result.stderr}")
-            no_facts(report, f"budget {limit}")
-        elif result.returncode or len(report["provider_calls"]) != 7:
-            raise RuntimeError(f"a completed work limit lost normal-return summaries: {report}")
-        return report["valid"]
-
-    low, high = 0, 100000
-    if run_budget(low) or not run_budget(high):
-        raise RuntimeError("unexpected initial work-limit bracket")
-    while high - low > 1:
-        middle = (low + high) // 2
-        if run_budget(middle):
-            high = middle
-        else:
-            low = middle
-    if run_budget(high - 1) or not run_budget(high):
-        raise RuntimeError("work-limit completion boundary is not stable")
+    budget_threshold(
+        args,
+        budget_case,
+        contract(args.opt, budget_case),
+        OPTIONS,
+        "budget",
+        no_facts,
+        lambda report: len(report["provider_calls"]) == 7,
+    )
 
 
 def main():
@@ -775,12 +784,8 @@ def main():
         if args.node:
             oracle(args.node, folder, case, js)
         if not args.oracle_only:
-            raw = folder / "raw.mlir"
             ir = folder / "prepared.mlir"
-            host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-            host.run(
-                [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)]
-            )
+            prepare_js(args, js, folder / "raw.mlir", ir)
             if case.literalize:
                 ir.write_text(literalize_keys(ir.read_text()))
             prepared[case.name] = (ir, case)

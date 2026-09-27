@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """Keep sequential DOM Map keys sound for equal and distinct native inputs."""
 
-import argparse
-from pathlib import Path
 import re
-import shutil
 
 from CTNative.Browser import native_class_dom_data as data
 from CTNative.Browser import native_dom as dom
@@ -95,15 +92,7 @@ def observe(args, name, text, suffix, expected):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference", "clang"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("build", "include", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = dom.parse_args(__doc__, oracles=True)
     executions = refusals = 0
     variants = sources()
     for label, (text, expected) in variants.items():
@@ -176,16 +165,8 @@ probe(first, first); var traceRepeat = traceAfter;
             ):
                 raise RuntimeError(f"{suffix}: unused input retained forged provider proof")
             refusals += 1
-            for optimize in (False, True):
-                dom.lower(
-                    args,
-                    path,
-                    fresh,
-                    f"{name}-{suffix}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                refusals += 1
+            dom.refuse(args, path, fresh, f"{name}-{suffix}")
+            refusals += 2
         for suffix, request, options in (
             ("stale", dict(contract, module_sha256="0" * 64), ""),
             ("no-second-input", dict(contract, element_parameters=[0]), ""),
@@ -198,11 +179,8 @@ probe(first, first); var traceRepeat = traceAfter;
                 args, name + "-" + suffix, ir, request, success=False, options=options
             )
             refusals += 1
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, contract, f"{name}-raw-{optimize}", optimize=optimize, success=False
-            )
-            refusals += 1
+        dom.refuse(args, ir, contract, f"{name}-raw")
+        refusals += 2
 
     # These are the unchanged handoff witnesses. Distinct inputs reach a null
     # field read, so accepting their equal-input answer would erase a TypeError.

@@ -23,9 +23,10 @@ compilation-unit gate already runs the deduced module through the whole of
 
 import argparse
 import re
-import subprocess
 import sys
 from pathlib import Path
+
+from CTNative.harness import FLAGS, run
 
 AUTO = re.compile(r"^[ \t]*(constexpr )?auto( const)? [A-Za-z_0-9]+ = ")
 PIN = re.compile(r"^[ \t]*CTCOMPILE_PIN\(")
@@ -59,20 +60,6 @@ CARRIERS = [
     ),
 ]
 SITE = re.compile(r"ctcompile: [A-Za-z_0-9]+ @ [^\"\n]*\.js:[0-9]+:[0-9]+")
-# The runtime header every native program includes lives in ctcompile/include.
-CORE_INCLUDE = "-I" + str(Path(__file__).resolve().parents[4] / "ctbrowser/include")
-RUNTIME_INCLUDE = "-I" + str(Path(__file__).resolve().parents[3] / "include")
-FLAGS = [
-    "-std=c++23",
-    RUNTIME_INCLUDE,
-    CORE_INCLUDE,
-    "-O2",
-    "-Wall",
-    "-Wextra",
-    "-Werror",
-    "-pedantic",
-    "-Wconversion",
-]
 
 
 def normalise(lines):
@@ -103,13 +90,9 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
 
     def translate(module, out):
-        result = subprocess.run(
-            [args.translate, "--mlir-to-cpp", module], capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            fail(f"the emitter refused {module}:\n{result.stderr}")
-        (work / out).write_text(result.stdout)
-        return result.stdout.split("\n")
+        cpp = run([args.translate, "--mlir-to-cpp", module]).stdout
+        (work / out).write_text(cpp)
+        return cpp.split("\n")
 
     plain_lines = translate(args.plain, "plain.cpp")
     deduced_lines = translate(args.deduced, "deduced.cpp")
@@ -173,24 +156,13 @@ def main():
     (work / "deduced-no-pins.cpp").write_text("\n".join(stripped) + "\n")
     b_nopins = (work / "deduced-no-pins.cpp").stat().st_size
 
-    # (e) the mutation.
-    def compile_mutated(*extra):
-        return subprocess.run(
-            [
-                args.cxx,
-                *FLAGS,
-                "-ffp-contract=off",
-                "-fsyntax-only",
-                *extra,
-                str(work / "mutated.cpp"),
-            ],
-            capture_output=True,
-            text=True,
-        )
+    # (e) the mutation: one double pinned as int32_t must NOT compile, or the
+    # pins do not bite.
+    def compile_mutated(*extra, success):
+        command = [args.cxx, *FLAGS, "-fsyntax-only", *extra, str(work / "mutated.cpp")]
+        return run(command, success=success)
 
-    result = compile_mutated()
-    if result.returncode == 0:
-        fail("the mutated file (one double pinned as int32_t) COMPILED - the pins do not bite")
+    result = compile_mutated(success=False)
     # A JAVASCRIPT site: the file the program came from, its line and column. A
     # site in the .mlir file (locations dropped between passes) or "unknown" (a
     # location the printer did not unwrap) both fail here by name.
@@ -200,12 +172,8 @@ def main():
             "the mutated file failed, but not with a pin naming a JavaScript site "
             f"(file.js:line:col):\n{result.stdout}{result.stderr}"
         )
-    result = compile_mutated("-DCTCOMPILE_NO_TYPE_PINS")
-    if result.returncode != 0:
-        fail(
-            "the mutated file does not compile under -DCTCOMPILE_NO_TYPE_PINS, so the failure "
-            f"above was not (only) the pin:\n{result.stdout}{result.stderr}"
-        )
+    # Clean under -DCTCOMPILE_NO_TYPE_PINS, or the failure was not (only) the pin.
+    compile_mutated("-DCTCOMPILE_NO_TYPE_PINS", success=True)
     print(
         f"print-deduced ({args.name}): {n_auto} deduced declarations, each pinned; plain "
         f"{b_plain} bytes, deduced {b_deduced} bytes ({b_nopins} without pins); the mutation "

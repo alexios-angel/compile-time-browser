@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 """Proved HTML/SVG dataset snapshots, filtering, iteration and present values."""
 
-import argparse
 import json
-import os
-from pathlib import Path
 import re
-import shutil
 
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser.native_dom_json import BOOTSTRAP_M, quote
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, run
 from Target.Cpp.harness import FLAGS
 
 BODIES = {
@@ -604,22 +600,15 @@ def client(symbol, owned, name):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    for name in ("translate", "opt", "clang", "node", "reference", "build", "include", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
-    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    args = dom.parse_args(__doc__, oracles=True)
+    vendor = dom.BOOTSTRAP
     assert BOOTSTRAP_FILTER in vendor.read_text(), "Bootstrap dataset source pin changed"
     assert PREFIX in vendor.read_text(), "Bootstrap prefix source pin changed"
     assert "t.dataset[n]" in vendor.read_text(), "Bootstrap live-value source pin changed"
     assert BOOTSTRAP_GUARD in vendor.read_text(), "Bootstrap element-guard source pin changed"
     assert BOOTSTRAP_M in vendor.read_text(), "Bootstrap M source pin changed"
     expected = oracles(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     prepared = [
         (name, *dom.prepare(args, name, source, 1, entry_name=name))
@@ -628,7 +617,7 @@ def main():
     for optimize in (False, True):
         for layout in ("explicit", "deduced"):
             headers, bodies, clients, wanted = set(), [], [], []
-            for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for provider in dom.PROVIDERS:
                 owned = "session" in provider
                 for name, ir, contract in prepared:
                     label = f"{name}-{owned}-{optimize}-{layout}"
@@ -713,36 +702,17 @@ def main():
                 + "".join(clients)
                 + "}\n"
             )
+            flags = [*FLAGS, *includes]
             for index, compiler in enumerate(compilers):
                 binary = path.with_suffix(f".{index}")
-                run([compiler, *FLAGS, *includes, path, *libraries, "-o", binary])
-                assert not dom.VM.search(run([args.nm, "-C", binary]).stdout)
-                assert run([binary]).stdout.splitlines() == wanted
+                result = build_and_run(
+                    compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
+                )
+                assert result.stdout.splitlines() == wanted
             if optimize and layout == "explicit":
                 binary = path.with_suffix(".sanitized")
-                run(
-                    [
-                        compilers[1],
-                        *FLAGS,
-                        "-O1",
-                        "-g",
-                        "-fsanitize=address,undefined",
-                        "-fsanitize-address-use-after-scope",
-                        "-fno-omit-frame-pointer",
-                        *includes,
-                        path,
-                        *libraries,
-                        "-o",
-                        binary,
-                    ]
-                )
-                result = run(
-                    [binary],
-                    environment=dict(
-                        os.environ,
-                        ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                        UBSAN_OPTIONS="halt_on_error=1",
-                    ),
+                result = build_and_run(
+                    compilers[1], path, binary, flags=flags, libraries=libraries, sanitize=True
                 )
                 assert result.stdout.splitlines() == wanted and not result.stderr, result.stderr
     refusals = 0
@@ -761,24 +731,21 @@ def main():
     )
     for name, source, parameters in refused_sources:
         ir, contract = dom.prepare(args, name, source, parameters, entry_name=name)
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                dom.lower(
-                    args,
-                    ir,
-                    dict(
-                        contract,
-                        provider=provider,
-                        initial_intrinsics=PREFIX_INTRINSICS,
-                        dataset_parameters=list(range(parameters)),
-                    ),
-                    f"refuse-{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                refusals += 1
+        for provider in dom.PROVIDERS:
+            dom.refuse(
+                args,
+                ir,
+                dict(
+                    contract,
+                    provider=provider,
+                    initial_intrinsics=PREFIX_INTRINSICS,
+                    dataset_parameters=list(range(parameters)),
+                ),
+                f"refuse-{name}-{provider}",
+            )
+            refusals += 2
     _, ir, contract = next(item for item in prepared if item[0] == "dataset_guarded_values")
-    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+    for provider in dom.PROVIDERS:
         for optimize in (False, True):
             for changes in ({"element_parameters": []}, {"dataset_parameters": []}):
                 dom.lower(
@@ -813,7 +780,7 @@ def main():
                 )
                 refusals += 1
     _, ir, contract = next(item for item in prepared if item[0] == "dataset_values")
-    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+    for provider in dom.PROVIDERS:
         for optimize in (False, True):
             for missing in ITERATION_INTRINSICS:
                 dom.lower(
@@ -860,7 +827,7 @@ def main():
         dom.lower(args, ir, dict(contract, **changes), f"premise-{refusals}", success=False)
         refusals += 1
     _, ir, contract = next(item for item in prepared if item[0] == "dataset_filter")
-    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+    for provider in dom.PROVIDERS:
         for optimize in (False, True):
             for intrinsics in (
                 ["Object"],
@@ -896,7 +863,7 @@ def main():
             )
             refusals += 1
     for missing in ITERATION_INTRINSICS:
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 dom.lower(
                     args,
@@ -916,7 +883,7 @@ def main():
                 refusals += 1
     _, ir, contract = next(item for item in prepared if item[0] == "dataset_loop_prefix")
     for missing in ("String", "RegExp", "__ctbrowser_regexp"):
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 dom.lower(
                     args,

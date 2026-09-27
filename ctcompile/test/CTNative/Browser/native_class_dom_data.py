@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """Gate prepared class and record providers against real DOM Data session owners."""
 
-import argparse
 from pathlib import Path
 import re
-import shutil
 
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_data_session as session
 from CTNative.Exports import boundary
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, run
 from CTNative.HostContract import contract as host
 from CTNative.Lowering.Objects import class_initialization_inputs as classes
 from Target.Cpp.harness import FLAGS
@@ -22,8 +20,7 @@ def source(constructor=False):
     original = text.split(f"//--- class-map-record-nested-vendor-{kind}.js\n", 1)[1].split(
         "//---", 1
     )[0]
-    root = Path(__file__).resolve().parents[4]
-    vendor = (root / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js").read_text()
+    vendor = dom.BOOTSTRAP.read_text()
     data = (
         vendor[
             vendor.index("    const t = new Map,") : vendor.index('        i = "transitionend",')
@@ -175,8 +172,7 @@ def check_record_executable(
             "auto check = [&] {\n"
             f"            assert(ctnative::global_number(session.observe_classResult()).value() == {class_value});",
         )
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     executions = 0
     deduced = args.work / f"{name}.deduced.mlir"
@@ -197,16 +193,20 @@ def check_record_executable(
             raise RuntimeError(f"{name}: document outlives its atoms")
         path = args.work / f"{name}.{mode}.cpp"
         path.write_text(cpp + client.replace("@OWNER@", owner[0]))
+        flags = [*FLAGS, *includes]
         for index, compiler in enumerate(compilers):
             binary = path.with_suffix(f".{index}")
-            result = run([compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)])
-            if (
-                result.stdout
-                or result.stderr
-                or dom.VM.search(run([args.nm, "-C", str(binary)]).stdout)
-            ):
-                raise RuntimeError(f"{name}: native compilation/symbol gate failed")
-            if run([str(binary)]).stdout != "DOM record Data passed\n":
+            result = build_and_run(
+                compiler,
+                path,
+                binary,
+                flags=flags,
+                libraries=libraries,
+                nm=args.nm,
+                vm=dom.VM,
+                clean=True,
+            )
+            if result.stdout != "DOM record Data passed\n":
                 raise RuntimeError(f"{name}: real document observations incomplete")
             executions += 1
     return executions
@@ -383,15 +383,7 @@ def published_provider(args, name, prepared, contract, *, adversarial=False):
                 f"{label}: forged success survived live provider reproof: {rejected}"
             )
         if label in ("constructor-callee", "constructor-new-target", "constructor-program"):
-            for optimize in (False, True):
-                dom.lower(
-                    args,
-                    path,
-                    fresh,
-                    f"{name}-provider-{label}-native-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
+            dom.refuse(args, path, fresh, f"{name}-provider-{label}-native")
     for label, request, options, reason in (
         ("stale", dict(contract, module_sha256="0" * 64), "", "fingerprint mismatch"),
         ("budget", contract, "max-steps=0", "budget"),
@@ -737,11 +729,8 @@ def published_composite_results(args):
             ):
                 raise RuntimeError(f"{label}: composite retained forged provider proof: {rejected}")
             refusals += 1
-            for optimize in (False, True):
-                dom.lower(
-                    args, path, fresh, f"{variant}-{optimize}", optimize=optimize, success=False
-                )
-                refusals += 1
+            dom.refuse(args, path, fresh, variant)
+            refusals += 2
     print(
         "original composite DOM Data: three Node/VM observations, three preparations, "
         f"three provider proofs, {executions} native executions, {refusals} refusals"
@@ -1127,9 +1116,8 @@ def published_records(args):
     for label, text in controls.items():
         name = "record-refused-" + label
         ir, contract = published_prepare(args, name, text)
-        for optimize in (False, True):
-            dom.lower(args, ir, contract, f"{name}-{optimize}", optimize=optimize, success=False)
-            refusals += 1
+        dom.refuse(args, ir, contract, name)
+        refusals += 2
     print(
         f"published DOM Data: {len(sources)} Node/VM observations, {executions} native record executions, {refusals} refusals"
     )
@@ -1188,17 +1176,7 @@ def object_constructors(args, constructor):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference", "clang"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("build", "include"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--class-families-only", action="store_true")
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = dom.parse_args(__doc__, oracles=True, switches=("class-families-only",))
     published_families(args)
     published_composite_results(args)
     published_class_fields(args)
@@ -1314,18 +1292,8 @@ def main():
         ):
             raise RuntimeError(f"{name}: a DOM input escaped its discharged key uses")
         checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
-        for optimize in (False, True):
-            result = dom.lower(
-                args,
-                prepared,
-                checked,
-                f"{name}-owner-{optimize}",
-                optimize=optimize,
-                success=False,
-            )
-            if "native DOM Data" not in result:
-                raise RuntimeError("local class Data acquired an unproved session owner")
-            native_refusals += 1
+        dom.refuse(args, prepared, checked, f"{name}-owner", "native DOM Data")
+        native_refusals += 2
         for label, requested, options in (
             ("stale", dict(contract, module_sha256="0" * 64), ""),
             ("no-map", dict(contract, initial_intrinsics=["__ctbrowser_class_defined"]), ""),

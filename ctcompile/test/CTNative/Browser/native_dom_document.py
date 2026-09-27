@@ -2,7 +2,6 @@
 """Execute an explicitly bound source document against public DOM/Style."""
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers
 
 ROOT_SOURCE = """function root(anchor, expected) {
   const root = document.documentElement;
@@ -204,8 +203,7 @@ REFUSALS = {
 
 def main():
     args = dom.parse_args(__doc__)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     cases = (
         ("root", ROOT_SOURCE, ROOT_CHECKS, 0),
@@ -221,50 +219,46 @@ def main():
     for case, source, checks, anchor in cases:
         ir, contract = dom.prepare(args, case, source, 2)
         contract["current_document_parameter"] = anchor
-        for owned in (False, True):
-            manifest = dict(
-                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+        for owned, optimize, manifest in dom.variants(contract):
+            name = f"document-{case}-{owned}-{optimize}"
+            native = dom.lower(args, ir, manifest, name, optimize=optimize)
+            text = native.read_text()
+            method = "querySelector" if case == "query" else "documentElement"
+            if (
+                "ctnative::document_scope" not in text
+                or f"ctnative::document.{method}" not in text
+                or "ctcompile/CTNative/Runtime/Browser.hpp" not in text
+            ):
+                raise RuntimeError(f"{name}: source document bypassed its scoped global object")
+            client = (
+                CURRENT_DOCUMENT_CHECKS
+                + CHECK_PREFIX
+                + checks
+                + INPUT_CHECKS
+                + (OWNED_CHECKS if owned else "")
             )
-            for optimize in (False, True):
-                name = f"document-{case}-{owned}-{optimize}"
-                native = dom.lower(args, ir, manifest, name, optimize=optimize)
-                text = native.read_text()
-                method = "querySelector" if case == "query" else "documentElement"
-                if (
-                    "ctnative::document_scope" not in text
-                    or f"ctnative::document.{method}" not in text
-                    or "ctcompile/CTNative/Runtime/Browser.hpp" not in text
-                ):
-                    raise RuntimeError(f"{name}: source document bypassed its scoped global object")
-                client = (
-                    CURRENT_DOCUMENT_CHECKS
-                    + CHECK_PREFIX
-                    + checks
-                    + INPUT_CHECKS
-                    + (OWNED_CHECKS if owned else "")
+            client = client.replace(
+                "@ARGUMENTS@", "expected, anchor" if anchor else "anchor, expected"
+            ).replace("@OWNED_ARGUMENTS@", "expected, input" if anchor else "input, expected")
+            dom.standalone(args, native, name, client, compilers, includes, libraries)
+            missing = dict(manifest)
+            del missing["current_document_parameter"]
+            for suffix, bad, budget in (
+                ("unbound", missing, None),
+                ("wrong-index", dict(manifest, current_document_parameter=2), None),
+                ("stale", dict(manifest, module_sha256="0" * 64), None),
+                ("budget", manifest, 0),
+            ):
+                dom.lower(
+                    args,
+                    ir,
+                    bad,
+                    f"{name}-{suffix}",
+                    optimize=optimize,
+                    max_steps=budget,
+                    success=False,
                 )
-                client = client.replace(
-                    "@ARGUMENTS@", "expected, anchor" if anchor else "anchor, expected"
-                ).replace("@OWNED_ARGUMENTS@", "expected, input" if anchor else "input, expected")
-                dom.standalone(args, native, name, client, compilers, includes, libraries)
-                missing = dict(manifest)
-                del missing["current_document_parameter"]
-                for suffix, bad, budget in (
-                    ("unbound", missing, None),
-                    ("wrong-index", dict(manifest, current_document_parameter=2), None),
-                    ("stale", dict(manifest, module_sha256="0" * 64), None),
-                    ("budget", manifest, 0),
-                ):
-                    dom.lower(
-                        args,
-                        ir,
-                        bad,
-                        f"{name}-{suffix}",
-                        optimize=optimize,
-                        max_steps=budget,
-                        success=False,
-                    )
-                    refusals += 1
+                refusals += 1
     sources = {
         name: f"function bad(element, expected) {{ {body} }}\n" for name, body in REFUSALS.items()
     }
@@ -272,11 +266,8 @@ def main():
     for name, source in sources.items():
         ir, manifest = dom.prepare(args, name, source, 2)
         manifest["current_document_parameter"] = 0
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, manifest, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
-            refusals += 1
+        dom.refuse(args, ir, manifest, f"refused-{name}")
+        refusals += 2
     print(
         f"Bound document root/query: {16 * len(cases)} native executions, {refusals} refusals; DOM/Core/Style only"
     )

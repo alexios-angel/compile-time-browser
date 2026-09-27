@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """Execute finite Map key/value storage and independently proved read types."""
 
-import argparse
 import importlib.util
-import os
 from pathlib import Path
 import re
-import shutil
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers
+from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, build_and_run, native_args, native_tools
 
 spec = importlib.util.spec_from_file_location(
     "representation", Path(__file__).with_name("map-representation.py")
@@ -96,26 +93,8 @@ def compile_and_run(args, name, cpp, expected, compilers, nm):
     out.write_text(cpp)
     for index, compiler in enumerate(compilers):
         binary = args.work / f"{name}-{index}"
-        run(
-            [
-                compiler,
-                "-std=c++23",
-                RUNTIME_INCLUDE,
-                CORE_INCLUDE,
-                "-O2",
-                "-Wall",
-                "-Wextra",
-                "-Werror",
-                "-Wconversion",
-                "-pedantic",
-                "-ffp-contract=off",
-                str(out),
-                "-o",
-                str(binary),
-            ]
-        )
-        assert run([str(binary)]).stdout == expected, name
-        assert "ctbrowser::script::" not in run([nm, "-C", str(binary)]).stdout
+        assert build_and_run(compiler, out, binary, nm=nm).stdout == expected, name
+    return out
 
 
 def check_scalar_payloads(args, node, reference, compilers, nm):
@@ -219,19 +198,9 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fixtures", type=Path, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__, "fixtures")
     node, reference = args.node, args.reference
-    compilers = find_compilers()
-    nm = shutil.which("nm")
-    assert all(compilers) and nm
+    compilers, nm = native_tools(reference)
     source = (args.fixtures / "mixed.js").read_text()
     for ordered in (False, True):
         name = "ordered" if ordered else "associative"
@@ -295,54 +264,17 @@ def main():
             assert f"ctnative::number_map<{key_carrier}>" in cpp
             assert f"ctnative::map_storage<{key_carrier}, ctnative::object_value>" in cpp
             assert ("#define CTNATIVE_ORDERED_MAPS 1" in cpp) == ordered
-            out = args.work / f"{name}-{label}.cpp"
-            out.write_text(number_object_lifetime(cpp, ordered))
-            for index, compiler in enumerate(compilers):
-                binary = args.work / f"{name}-{label}-{index}"
-                run(
-                    [
-                        compiler,
-                        "-std=c++23",
-                        RUNTIME_INCLUDE,
-                        CORE_INCLUDE,
-                        "-O2",
-                        "-Wall",
-                        "-Wextra",
-                        "-Werror",
-                        "-Wconversion",
-                        "-pedantic",
-                        "-ffp-contract=off",
-                        str(out),
-                        "-o",
-                        str(binary),
-                    ]
-                )
-                assert run([str(binary)]).stdout == expected
-                assert "ctbrowser::script::" not in run([nm, "-C", str(binary)]).stdout
+            lifetime = number_object_lifetime(cpp, ordered)
+            out = compile_and_run(args, f"{name}-{label}", lifetime, expected, compilers, nm)
             if label == "plain":
-                binary = args.work / f"{name}-sanitized"
-                run(
-                    [
-                        compilers[1],
-                        "-std=c++23",
-                        RUNTIME_INCLUDE,
-                        CORE_INCLUDE,
-                        "-O1",
-                        "-g",
-                        "-fno-omit-frame-pointer",
-                        "-fsanitize=address,undefined",
-                        "-fsanitize-address-use-after-scope",
-                        str(out),
-                        "-o",
-                        str(binary),
-                    ]
+                sanitized = build_and_run(
+                    compilers[1],
+                    out,
+                    args.work / f"{name}-sanitized",
+                    flags=["-std=c++23", RUNTIME_INCLUDE, CORE_INCLUDE],
+                    sanitize=True,
                 )
-                environment = dict(
-                    os.environ,
-                    ASAN_OPTIONS="detect_leaks=1:detect_stack_use_after_return=1",
-                    UBSAN_OPTIONS="halt_on_error=1",
-                )
-                assert run([str(binary)], environment=environment).stdout == expected
+                assert sanitized.stdout == expected
     check_isolated_nullable_helpers(args, source, node, reference, compilers, nm)
     check_scalar_payloads(args, node, reference, compilers, nm)
     for fixture in args.fixtures.glob("*-refused.js"):

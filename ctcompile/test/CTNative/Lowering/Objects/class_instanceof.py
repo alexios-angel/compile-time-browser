@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """Prove ordinary instanceof before class prototypes become structural C++ shapes."""
 
-import argparse
-from pathlib import Path
-
-from CTNative.harness import run
+from CTNative.harness import native_args, run
 from CTNative.HostContract import contract as host
 from CTNative.Lowering.Objects import class_initialization as classes
 
@@ -70,12 +67,7 @@ REFUSALS = {
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__)
     native_runs = refusals = 0
     for name, (body, expected) in (
         CASES | {name: (body, None) for name, body in REFUSALS.items()}

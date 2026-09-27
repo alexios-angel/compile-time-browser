@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """Prove explicit class entries without borrowing DOM or host parameter authority."""
 
-import argparse
-from pathlib import Path
 import re
 
 from CTNative.Browser import native_dom as dom
 from CTNative.HostContract import contract as host
-from CTNative.harness import run
+from CTNative.harness import native_args, run
 from CTNative.Lowering.Objects import class_initialization as classes
 from CTNative.Lowering.Objects.constructor_refusals import check_mutable_helper
 
@@ -23,12 +21,7 @@ WRAPPER = re.compile(r"^  ctjs.func @_script_\$0\(.*?^  }\n", re.M | re.S)
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__)
     refusals, observations = 0, 0
 
     def imported(name, body, parameters="element", suffix=""):

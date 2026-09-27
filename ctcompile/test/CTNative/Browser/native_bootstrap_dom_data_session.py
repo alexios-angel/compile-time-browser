@@ -3,14 +3,12 @@
 
 import hashlib
 import json
-import os
 import re
 import subprocess
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, node_globals, run, threshold
 from CTNative.HostContract import contract as host
-from CTNative.Ownership.native_owned_global_maps.driver_common import CONSTANT_GLOBAL_NODE
 from CTNative.Ownership.native_owned_global_maps.driver_umd import (
     observe_umd,
     prepare_umd,
@@ -188,8 +186,7 @@ int main() {
 
 def main():
     args = dom.parse_args(__doc__, oracles=True)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     source, values, prefix = umd_source()
     js, _, original, _ = prepare_umd(args)
     observe_umd(args, js, values)
@@ -239,9 +236,7 @@ def main():
         if source.count(ALLOCATIONS) != 1:
             raise RuntimeError("original probe key allocations changed")
         observed.write_text(source.replace(ALLOCATIONS, bindings))
-        node = run(
-            [args.node, "-e", CONSTANT_GLOBAL_NODE, str(observed), json.dumps(sorted(values))]
-        )
+        node = node_globals(args.node, observed, sorted(values))
         reference = run([args.reference, str(observed)])
         if reference.stdout != node.stdout:
             raise RuntimeError(f"alias partition {indices}: Node and interpreter disagree")
@@ -329,24 +324,18 @@ def main():
         if "ctnative.host_owner_proved = true" not in native.read_text():
             raise RuntimeError("normalized Bootstrap lacks complete owner proof")
         if not optimize:
-            low, high = 0, 1000000
-            while high - low > 1:
-                middle = (low + high) // 2
-                checked = subprocess.run(
-                    [
-                        args.opt,
-                        str(subject),
-                        f"--ctnative-lower-to-emitc=host-manifest={config} host-max-steps={middle} optimize=false",
-                        "-o",
-                        "/dev/null",
-                    ],
-                    text=True,
-                    capture_output=True,
-                )
-                if checked.returncode == 0:
-                    high = middle
-                else:
-                    low = middle
+
+            def lowers(limit):
+                command = [
+                    args.opt,
+                    str(subject),
+                    f"--ctnative-lower-to-emitc=host-manifest={config} host-max-steps={limit} optimize=false",
+                    "-o",
+                    "/dev/null",
+                ]
+                return subprocess.run(command, text=True, capture_output=True).returncode == 0
+
+            high = threshold(lowers, high=1000000)
             refuse(subject, contract, "final-cutoff", budget=high - 1)
             print(
                 f"Bootstrap DOM native proof: minimum work budget {high}; preceding cutoff refuses"
@@ -374,46 +363,29 @@ def main():
             complete = client.replace("@OWNER@", owners[0])
             path = args.work / f"{optimize}.{mode}.cpp"
             path.write_text(cpp + complete)
+            flags = [*FLAGS, *includes]
             for index, compiler in enumerate(compilers):
                 binary = path.with_suffix(f".{index}")
-                result = run(
-                    [compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)]
+                result = build_and_run(
+                    compiler,
+                    path,
+                    binary,
+                    flags=flags,
+                    libraries=libraries,
+                    nm=args.nm,
+                    vm=dom.VM,
+                    clean=True,
                 )
-                if (
-                    result.stdout
-                    or result.stderr
-                    or dom.VM.search(run([args.nm, "-C", str(binary)]).stdout)
-                ):
-                    raise RuntimeError("Bootstrap DOM did not compile cleanly without Script")
-                result = run([str(binary)])
                 if result.stdout != "Bootstrap DOM Data passed\n" or result.stderr:
                     raise RuntimeError("Bootstrap DOM observations incomplete")
             if mode == "explicit":
-                binary = path.with_suffix(".sanitized")
-                run(
-                    [
-                        compilers[1],
-                        *FLAGS,
-                        "-O1",
-                        "-g",
-                        "-fno-omit-frame-pointer",
-                        "-fsanitize=address,undefined",
-                        "-fsanitize-address-use-after-scope",
-                        "-DCTCOMPILE_TEST_DANGLING=1",
-                        *includes,
-                        str(path),
-                        *libraries,
-                        "-o",
-                        str(binary),
-                    ]
-                )
-                result = run(
-                    [str(binary)],
-                    environment=dict(
-                        os.environ,
-                        ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-                    ),
+                result = build_and_run(
+                    compilers[1],
+                    path,
+                    path.with_suffix(".sanitized"),
+                    flags=[*flags, "-DCTCOMPILE_TEST_DANGLING=1"],
+                    libraries=libraries,
+                    sanitize=True,
                 )
                 if result.stdout != "Bootstrap DOM Data passed\n" or result.stderr:
                     raise RuntimeError("Bootstrap DOM lifetime check failed")

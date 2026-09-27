@@ -5,7 +5,8 @@ import argparse
 import json
 from pathlib import Path
 import re
-import subprocess
+
+from harness import run
 
 MISMATCH = "requires each escaping callee throw to match the homogeneous catch payload"
 UNDEFINED = "requires a defined EmitC callee for each protected direct call"
@@ -16,16 +17,8 @@ WORK = "protected direct-call payload work budget exhausted"
 
 def check(args, name, source, reason=None):
     path = args.work / f"{name}.mlir"
-    output = args.work / f"{name}.verified.mlir"
     path.write_text(source)
-    result = subprocess.run(
-        [args.opt, str(path), "-o", str(output)], text=True, capture_output=True, timeout=30
-    )
-    if reason is None:
-        if result.returncode:
-            raise RuntimeError(f"{name}: unexpectedly refused\n{result.stdout}{result.stderr}")
-    elif result.returncode == 0 or reason not in result.stderr:
-        raise RuntimeError(f"{name}: expected {reason!r}\n{result.stdout}{result.stderr}")
+    run([args.opt, str(path), "-o", str(args.work / f"{name}.verified.mlir")], failure_site=reason)
     return {"name": name, "accepted": reason is None, "reason": reason}
 
 

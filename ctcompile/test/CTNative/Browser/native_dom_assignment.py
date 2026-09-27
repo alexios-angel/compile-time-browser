@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 """Fresh DOM result assignments preserve order and own original M's values."""
 
-import argparse
 import json
-import os
-from pathlib import Path
 import re
-import shutil
 
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_json as values
 from CTNative.Browser import native_dom_numbers as numbers
 from CTNative.Browser.native_dom_dataset import BOOTSTRAP_FILTER, PREFIX_INTRINSICS
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, run
 from Target.Cpp.harness import FLAGS
 
 GET = "M(t.getAttribute('data-bs-config'))"
@@ -473,19 +469,12 @@ def check_output(args, output, expected):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    for name in ("translate", "opt", "clang", "node", "reference", "build", "include", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
-    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    args = dom.parse_args(__doc__, oracles=True)
+    vendor = dom.BOOTSTRAP
     assert values.BOOTSTRAP_M in vendor.read_text(), "Bootstrap M source pin changed"
     assert BOOTSTRAP_FILTER in vendor.read_text(), "Bootstrap filter source pin changed"
     expected = oracles(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     intrinsics = PREFIX_INTRINSICS + ["Number", "JSON", "decodeURIComponent"]
     prepared = [
@@ -494,7 +483,7 @@ def main():
     ]
     for optimize in (False, True):
         modules = []
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             owned = "session" in provider
             for name, ir, contract in prepared:
                 label = f"{name}-{owned}-{optimize}"
@@ -558,38 +547,22 @@ def main():
                 + "".join(bodies)
                 + values.CLIENT.replace("@RUNS@", "\n".join(clients))
             )
+            flags = [*FLAGS, *includes]
             for index, compiler in enumerate(compilers):
                 binary = path.with_suffix(f".{index}")
-                run([compiler, *FLAGS, *includes, path, *libraries, "-o", binary])
-                assert not dom.VM.search(run([args.nm, "-C", binary]).stdout)
-                check_output(args, run([binary]).stdout, expected * 2)
-            if optimize and layout == "explicit":
-                binary = path.with_suffix(".sanitized")
-                run(
-                    [
-                        compilers[1],
-                        *FLAGS,
-                        "-O1",
-                        "-g",
-                        "-fsanitize=address,undefined",
-                        "-fsanitize-address-use-after-scope",
-                        "-fno-omit-frame-pointer",
-                        # Avoid inlining every fixture into the combined lifetime check.
-                        "-fno-inline-functions",
-                        *includes,
-                        path,
-                        *libraries,
-                        "-o",
-                        binary,
-                    ]
+                result = build_and_run(
+                    compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
                 )
-                result = run(
-                    [binary],
-                    environment=dict(
-                        os.environ,
-                        ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                        UBSAN_OPTIONS="halt_on_error=1",
-                    ),
+                check_output(args, result.stdout, expected * 2)
+            if optimize and layout == "explicit":
+                result = build_and_run(
+                    compilers[1],
+                    path,
+                    path.with_suffix(".sanitized"),
+                    # Avoid inlining every fixture into the combined lifetime check.
+                    flags=[*flags, "-fno-inline-functions"],
+                    libraries=libraries,
+                    sanitize=True,
                 )
                 assert not result.stderr, result.stderr
                 check_output(args, result.stdout, expected * 2)
@@ -602,25 +575,22 @@ def main():
             1,
             entry_name=name,
         )
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                dom.lower(
-                    args,
-                    ir,
-                    dict(
-                        contract,
-                        provider=provider,
-                        initial_intrinsics=intrinsics,
-                        dataset_parameters=[0],
-                    ),
-                    f"refuse-{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                refusals += 1
+        for provider in dom.PROVIDERS:
+            dom.refuse(
+                args,
+                ir,
+                dict(
+                    contract,
+                    provider=provider,
+                    initial_intrinsics=intrinsics,
+                    dataset_parameters=[0],
+                ),
+                f"refuse-{name}-{provider}",
+            )
+            refusals += 2
     for name in ("assign_loop", "loop_dynamic_key", "prefix_result", "normalized_result"):
         _, ir, contract = next(row for row in prepared if row[0] == name)
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 for budget in (0, 64, 256):
                     dom.lower(

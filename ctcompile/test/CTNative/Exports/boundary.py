@@ -5,16 +5,15 @@ These are measured boundary tests. Update the admission expectations only when
 an explicit live consumer implements the corresponding ownership/call gate.
 """
 
-import argparse
 import json
 from pathlib import Path
 import re
 
 from CTNative.HostContract import contract as host
+from CTNative.harness import REFUSAL, forge_module, native_args, prepare_js
 
 FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE = re.compile(r"^\s*emitc\.func\b", re.M)
-REFUSAL = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
 GLOBAL_ESCAPE = "an object literal that escapes - it reaches `ctjs.store_global`"
 TABLE_ESCAPE = "returned method table is written through an alias or stored into another object"
 FOLLOW = (
@@ -33,16 +32,9 @@ process.stdout.write('trace=' + String(trace) + '\n');
 
 def prepare(args, name, source):
     js = args.work / f"{name}.js"
-    raw = args.work / f"{name}.raw.mlir"
     prepared = args.work / f"{name}.prepared.mlir"
     js.write_text(source + "\n")
-    result = host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-    text = raw.read_text()
-    if "ctjs.skipped" in text or "is not compiled:" in result.stderr:
-        raise RuntimeError(f"{name}: importer skipped part of the source")
-    host.run(
-        [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(prepared)]
-    )
+    text = prepare_js(args, js, args.work / f"{name}.raw.mlir", prepared, complete=True)
     return js, prepared, len(FUNCTION.findall(text))
 
 
@@ -89,14 +81,7 @@ def follow(args, ir, name):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__)
     reference, node = args.reference, args.node
     sources = {
         "scalar": "var host = {}; host.slot = 42; var trace = host.slot;",
@@ -275,17 +260,13 @@ def main():
     # A claimed complete proof copied onto the real published source is not a
     # live export proof. Global R3 and the table's storage refusal still apply.
     forged = args.work / "published-forged.mlir"
-    text, changed = re.subn(
-        r"\bmodule attributes \{",
-        "module attributes {"
-        "ctnative.host_proved = true, ctnative.host_slots = [], "
-        'ctnative.host_fingerprint = "forged", ',
-        after,
-        count=1,
+    forged.write_text(
+        forge_module(
+            after,
+            "ctnative.host_proved = true, ctnative.host_slots = [], "
+            'ctnative.host_fingerprint = "forged"',
+        )
     )
-    if changed != 1:
-        raise RuntimeError("forgery control could not mark the module")
-    forged.write_text(text)
     first, forged_reasons = native(args, forged, "published-forged", count)
     _, rerun_reasons = native(args, first, "published-forged-rerun", count)
     if forged_reasons != reasons or rerun_reasons != reasons:

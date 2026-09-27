@@ -1,20 +1,11 @@
 """Check owning String fields through local borrows and the mixed/absent boundary."""
 
-import argparse
-from pathlib import Path
-
-from CTNative.harness import run
+from CTNative.harness import native_args, run
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_native
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("fixtures", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__, "fixtures")
     checked = refused = 0
     for name, expected in {
         "strings": 375,

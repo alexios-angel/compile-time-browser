@@ -293,10 +293,11 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
         )
         for index, compiler in enumerate(compilers):
             binary = path.with_suffix(f".{index}")
-            run([compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)])
-            if dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
-                raise RuntimeError("class DOM native program links Script/AOT")
-            if run([str(binary)]).stdout != "".join(expected):
+            flags = [*FLAGS, *includes]
+            result = build_and_run(
+                compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
+            )
+            if result.stdout != "".join(expected):
                 raise RuntimeError("class DOM native observations disagree with source")
 
 
@@ -308,8 +309,7 @@ def main():
     assert BOOTSTRAP_H in vendor.read_text(), "Bootstrap H source pin changed"
     assert FILTER_PREDICATE in BOOTSTRAP_H, "Bootstrap dataset predicate changed"
     observations = check_oracles(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     prepared, refusals = [], 0
     for name, (body, _) in CASES.items():

@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from CTNative.HostContract import contract as host
+from CTNative.harness import prepare_js
 
 
 def specialize(opt, ir, contract, prefix, *, success=True, options=""):
@@ -268,13 +269,9 @@ def main():
     prepared = {}
     for name, (source, branches, calls) in sources.items():
         js = args.work / f"{name}.js"
-        raw = args.work / f"{name}.raw.mlir"
         ir = args.work / f"{name}.mlir"
         js.write_text(source + "\n")
-        host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-        host.run(
-            [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)]
-        )
+        prepare_js(args, js, args.work / f"{name}.raw.mlir", ir)
         prepared[name] = ir
         report, output, _ = specialize(
             args.opt, ir, host.manifest(args.opt, ir), args.work / f"{name}-check"
@@ -429,13 +426,9 @@ def main():
     }
     for name, source in resource_sources.items():
         js = args.work / f"{name}.js"
-        raw = args.work / f"{name}.raw.mlir"
         ir = args.work / f"{name}.mlir"
         js.write_text(source + "\n")
-        host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-        host.run(
-            [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)]
-        )
+        prepare_js(args, js, args.work / f"{name}.raw.mlir", ir)
         resource_contract = dict(
             host.manifest(args.opt, ir), initial_intrinsics=["Map", "Array"], realm_global_this=True
         )
@@ -488,13 +481,9 @@ def main():
     }
     for name, source in realm_sources.items():
         js = args.work / f"{name}.js"
-        raw = args.work / f"{name}.raw.mlir"
         ir = args.work / f"{name}.mlir"
         js.write_text(source + "\n")
-        host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-        host.run(
-            [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)]
-        )
+        prepare_js(args, js, args.work / f"{name}.raw.mlir", ir)
         undefined = (
             ["undefined", "globalThis"] if name == "realm_initial_undefined" else ["undefined"]
         )
