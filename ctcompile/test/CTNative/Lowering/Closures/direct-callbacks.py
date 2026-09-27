@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 
-from CTNative.harness import CLEANUP, CORE_INCLUDE, RUNTIME_INCLUDE, run
+from CTNative.harness import CLEANUP, CORE_INCLUDE, RUNTIME_INCLUDE, prepare_js, run
 
 FUNCTION = re.compile(r"ctjs\.func (?:private )?@([^ (]+)\(.*?(?=\n  ctjs\.func |\n})", re.S)
 NATIVE_PIPELINE = f"builtin.module(ctnative-lower-to-emitc{{optimize=false}},{CLEANUP})"
@@ -133,29 +133,9 @@ def main():
     compilers = [shutil.which(name) for name in ("g++", "clang++")]
     if not all(compilers):
         raise RuntimeError("direct callback regression requires GCC and Clang")
-    raw = args.work / "raw.mlir"
     prepared = args.work / "prepared.mlir"
-    run(
-        [
-            args.translate,
-            "--ctbrowser-js-to-ctjs",
-            str(args.fixtures / "positive.js"),
-            "--mlir-print-debuginfo",
-            "-o",
-            str(raw),
-        ]
-    )
-    run(
-        [
-            args.opt,
-            str(raw),
-            "--ctjs-resolve-globals",
-            "--ctjs-lift-to-scf",
-            "--mlir-print-debuginfo",
-            "-o",
-            str(prepared),
-        ]
-    )
+    positive = args.fixtures / "positive.js"
+    prepare_js(args, positive, args.work / "raw.mlir", prepared, "--mlir-print-debuginfo")
     original = prepared.read_text()
     if len(FUNCTION.findall(original)) != 10 or "ctjs.skipped" in original:
         raise RuntimeError("the source's ten functions were not all imported")

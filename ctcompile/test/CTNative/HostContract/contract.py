@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import re
 
-from CTNative.harness import forge_module, run
+from CTNative.harness import forge_module, prepare_js, run
 
 
 def fingerprint(opt, ir):
@@ -88,11 +88,9 @@ def main():
     prepared = {}
     for name, source in sources.items():
         js = args.work / f"{name}.js"
-        raw = args.work / f"{name}.raw.mlir"
         ir = args.work / f"{name}.mlir"
         js.write_text(source + "\n")
-        run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-        run([args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)])
+        prepare_js(args, js, args.work / f"{name}.raw.mlir", ir)
         prepared[name] = ir
         contract = manifest(args.opt, ir, absent=("missing",) if name.startswith("absent_") else ())
         positive = name in {

@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 
 from CTNative.HostContract import contract as host
-from CTNative.harness import REFUSAL, forge_module
+from CTNative.harness import REFUSAL, forge_module, prepare_js
 
 FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE = re.compile(r"^\s*emitc\.func\b", re.M)
@@ -33,16 +33,9 @@ process.stdout.write('trace=' + String(trace) + '\n');
 
 def prepare(args, name, source):
     js = args.work / f"{name}.js"
-    raw = args.work / f"{name}.raw.mlir"
     prepared = args.work / f"{name}.prepared.mlir"
     js.write_text(source + "\n")
-    result = host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-    text = raw.read_text()
-    if "ctjs.skipped" in text or "is not compiled:" in result.stderr:
-        raise RuntimeError(f"{name}: importer skipped part of the source")
-    host.run(
-        [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(prepared)]
-    )
+    text = prepare_js(args, js, args.work / f"{name}.raw.mlir", prepared, complete=True)
     return js, prepared, len(FUNCTION.findall(text))
 
 

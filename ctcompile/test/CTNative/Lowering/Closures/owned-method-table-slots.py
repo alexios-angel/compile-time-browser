@@ -7,7 +7,14 @@ from pathlib import Path
 import re
 import shutil
 
-from CTNative.harness import CORE_INCLUDE, REFUSAL, RUNTIME_INCLUDE, find_compilers, run
+from CTNative.harness import (
+    CORE_INCLUDE,
+    REFUSAL,
+    RUNTIME_INCLUDE,
+    find_compilers,
+    prepare_js,
+    run,
+)
 
 CTJS_FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE_FUNCTION = re.compile(r"^\s*emitc\.func\b", re.M)
@@ -17,33 +24,10 @@ VM_SYMBOL = re.compile(r"ctbrowser::(?:script|aot)::")
 def prepare(args, source, name):
     raw = args.work / f"{name}.raw.mlir"
     prepared = args.work / f"{name}.prepared.mlir"
-    imported = run(
-        [
-            args.translate,
-            "--ctbrowser-js-to-ctjs",
-            str(source),
-            "--mlir-print-debuginfo",
-            "-o",
-            str(raw),
-        ]
-    )
-    text = raw.read_text()
-    if "ctjs.skipped" in text or "is not compiled:" in imported.stderr:
-        raise RuntimeError(f"{name}: a source function was skipped\n{imported.stderr}")
+    text = prepare_js(args, source, raw, prepared, "--mlir-print-debuginfo", complete=True)
     count = len(CTJS_FUNCTION.findall(text))
     if not count:
         raise RuntimeError(f"{name}: no source functions imported")
-    run(
-        [
-            args.opt,
-            str(raw),
-            "--ctjs-resolve-globals",
-            "--ctjs-lift-to-scf",
-            "--mlir-print-debuginfo",
-            "-o",
-            str(prepared),
-        ]
-    )
     return prepared, count
 
 

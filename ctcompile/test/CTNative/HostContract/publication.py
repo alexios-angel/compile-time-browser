@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from CTNative.HostContract import prefix
+from CTNative.harness import prepare_js
 
 host = prefix.host
 
@@ -70,13 +71,9 @@ def main():
     prepared = {}
     for name, text in sources.items():
         js = args.work / f"{name}.js"
-        raw = args.work / f"{name}.raw.mlir"
         ir = args.work / f"{name}.mlir"
         js.write_text(text)
-        host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-        host.run(
-            [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)]
-        )
+        prepare_js(args, js, args.work / f"{name}.raw.mlir", ir)
         prepared[name] = ir
 
     # Normalize the resource initialization into create_cell itself. The

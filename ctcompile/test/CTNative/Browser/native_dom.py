@@ -12,7 +12,15 @@ import re
 import shutil
 import subprocess
 
-from CTNative.harness import CLEANUP, FLAGS, FUNCTION, find_compilers, forge_module, run
+from CTNative.harness import (
+    CLEANUP,
+    FLAGS,
+    FUNCTION,
+    find_compilers,
+    forge_module,
+    prepare_js,
+    run,
+)
 from CTNative.HostContract.contract import fingerprint
 
 ACTION = """function toggle(element) {
@@ -501,13 +509,9 @@ def parse_args(description, *, oracles=False):
 
 def prepare(args, name, source, parameters, *, entry_name=None):
     js = args.work / f"{name}.js"
-    raw = args.work / f"{name}.raw.mlir"
     ir = args.work / f"{name}.mlir"
     js.write_text(source)
-    imported = run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-    if "ctjs.skipped" in raw.read_text() or "is not compiled:" in imported.stderr:
-        raise RuntimeError(f"{name}: source was not completely imported")
-    run([args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)])
+    prepare_js(args, js, args.work / f"{name}.raw.mlir", ir, complete=True)
     entries = [symbol for symbol in FUNCTION.findall(ir.read_text()) if symbol != "_script_$0"]
     if entry_name is not None:
         entries = [symbol for symbol in entries if symbol.rsplit("$", 1)[0] == entry_name]

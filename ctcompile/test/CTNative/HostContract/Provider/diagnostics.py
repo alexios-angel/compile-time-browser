@@ -10,6 +10,7 @@ import subprocess
 from urllib.parse import quote
 
 from CTNative.HostContract.Provider import mutations
+from CTNative.harness import prepare_js
 
 prefix, host = mutations.prefix, mutations.host
 BASE = mutations.OPTIONS
@@ -698,13 +699,8 @@ def main():
         if args.oracle_only:
             continue
         evidence[case.name]["interpreter"] = interpreter(reference, folder, case, js)
-        raw, ir = folder / "raw.mlir", folder / "prepared.mlir"
-        host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-        if "ctjs.skipped" in raw.read_text():
-            raise RuntimeError(f"{case.name}: importer dropped a source function")
-        host.run(
-            [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)]
-        )
+        ir = folder / "prepared.mlir"
+        prepare_js(args, js, folder / "raw.mlir", ir, complete=True)
         prepared[case.name] = ir
         options = CALLBACKS if case.callback_mode else DIAGNOSTICS
         report, output, _ = mutations.specialize(

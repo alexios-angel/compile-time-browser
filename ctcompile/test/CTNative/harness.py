@@ -78,6 +78,19 @@ def run(command, *, success=True, environment=None, input_text=None):
     return result
 
 
+def prepare_js(args, js, raw, ir, *options, complete=False):
+    """Import `js` into `raw`, then resolve globals and lift structure into `ir`,
+    both tools given `options`; `complete` refuses an import that skipped a
+    function. Returns the raw import's text."""
+    imported = run([args.translate, "--ctbrowser-js-to-ctjs", str(js), *options, "-o", str(raw)])
+    text = raw.read_text()
+    if complete and ("ctjs.skipped" in text or "is not compiled:" in imported.stderr):
+        raise RuntimeError(f"{js}: the importer skipped a source function\n{imported.stderr}")
+    lift = ["--ctjs-resolve-globals", "--ctjs-lift-to-scf", *options]
+    run([args.opt, str(raw), *lift, "-o", str(ir)])
+    return text
+
+
 # Node's side of the output convention (CTNative/Checks/compilation-unit.py) for
 # the globals named by argv[2], a JSON list, in that order.
 CONSTANT_GLOBAL_NODE = r"""const fs = require('node:fs');

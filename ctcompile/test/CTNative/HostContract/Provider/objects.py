@@ -9,6 +9,7 @@ import re
 import subprocess
 
 from CTNative.HostContract.Provider import diagnostics
+from CTNative.harness import prepare_js
 
 mutations, host = diagnostics.mutations, diagnostics.host
 OPTIONS = mutations.OPTIONS + " follow-provider-objects=true"
@@ -856,13 +857,8 @@ def main():
         if args.oracle_only:
             continue
         evidence[case.name]["interpreter"] = interpreter(reference, folder, case, js)
-        raw, ir = folder / "raw.mlir", folder / "prepared.mlir"
-        host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-        if "ctjs.skipped" in raw.read_text():
-            raise RuntimeError(f"{case.name}: importer dropped a source function")
-        host.run(
-            [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)]
-        )
+        ir = folder / "prepared.mlir"
+        prepare_js(args, js, folder / "raw.mlir", ir, complete=True)
         prepared[case.name] = ir
         report, output, _ = mutations.specialize(
             args.opt, ir, contract(args.opt, ir), folder / "checked", options=case.options()

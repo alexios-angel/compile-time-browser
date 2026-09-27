@@ -11,6 +11,7 @@ import struct
 import subprocess
 
 from CTNative.HostContract import prefix
+from CTNative.harness import prepare_js
 
 host = prefix.host
 OPTIONS = "follow-publication=true follow-provider-reads=true follow-provider-mutations=true"
@@ -775,12 +776,8 @@ def main():
         if args.node:
             oracle(args.node, folder, case, js)
         if not args.oracle_only:
-            raw = folder / "raw.mlir"
             ir = folder / "prepared.mlir"
-            host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-            host.run(
-                [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)]
-            )
+            prepare_js(args, js, folder / "raw.mlir", ir)
             if case.literalize:
                 ir.write_text(literalize_keys(ir.read_text()))
             prepared[case.name] = (ir, case)
