@@ -125,19 +125,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     const auto yieldedInputs = [&](mlir::Value operand) -> llvm::SmallVector<mlir::Value, 2> {
         auto branch = operand.getDefiningOp<mlir::scf::IfOp>();
         if (!branch || !bodyBlocks.contains(branch->getBlock())) { return {}; }
-        const auto position = llvm::cast<mlir::OpResult>(operand).getResultNumber();
-        llvm::SmallVector<mlir::Value, 2> inputs;
-        for (mlir::Region & region : branch->getRegions()) {
-            if (!charge()) { return {}; }
-            if (!llvm::hasSingleElement(region) || region.front().empty() ||
-                region.front().getNumArguments() != 0) {
-                return {};
-            }
-            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-            if (!yield || yield.getNumOperands() != branch.getNumResults()) { return {}; }
-            inputs.push_back(yield.getOperand(position));
-        }
-        return inputs;
+        // One charge per arm.
+        if (!charge() || !charge()) { return {}; }
+        const auto [then, otherwise] = armYields(llvm::cast<mlir::OpResult>(operand));
+        return {then, otherwise};
     };
     const auto sameInput = [](mlir::Value left, mlir::Value right) {
         if (left == right) { return true; }

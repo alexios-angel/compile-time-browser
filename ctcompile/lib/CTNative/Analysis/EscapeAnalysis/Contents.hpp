@@ -21,6 +21,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -67,6 +68,34 @@ struct ContentsValue {
     bool string() const { return kind == ContentsKind::String; }
 };
 
+// The operands both arms of `result`'s scf.if yield for it, then-arm first.
+inline std::array<mlir::Value, 2> armYields(mlir::OpResult result) {
+    auto branch = llvm::cast<mlir::scf::IfOp>(result.getOwner());
+    const auto position = result.getResultNumber();
+    return {branch.thenYield().getOperand(position), branch.elseYield().getOperand(position)};
+}
+
+// Visits the leaves `value` selects through nested scf.if results, charging one
+// step per value and per arm. Null when the budget runs out, otherwise whether
+// every visited leaf was accepted.
+inline std::optional<bool> ifLeaves(mlir::Value value, llvm::function_ref<bool(std::size_t)> spend,
+                                    llvm::function_ref<bool(mlir::Value)> visit) {
+    llvm::SmallVector<mlir::Value, 4> pending{value};
+    while (!pending.empty()) {
+        if (!spend(1)) { return std::nullopt; }
+        const mlir::Value current = pending.pop_back_val();
+        if (!current.getDefiningOp<mlir::scf::IfOp>()) {
+            if (!visit(current)) { return false; }
+            continue;
+        }
+        for (mlir::Value arm : armYields(llvm::cast<mlir::OpResult>(current))) {
+            if (!spend(1)) { return std::nullopt; }
+            pending.push_back(arm);
+        }
+    }
+    return true;
+}
+
 inline std::pair<mlir::Value, bool> conditionChoiceKey(
     mlir::Value condition, llvm::function_ref<bool(std::size_t)> spend) {
     // Truthy, ToBoolean and logical Not are total, without object conversion. The flag
@@ -87,61 +116,32 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
         while (true) {
             // The shared budget bounds traversal; exhaustion supplies no partial key.
             if (!spend(1)) { return {}; }
-            if (auto selected = value.getDefiningOp<mlir::scf::IfOp>()) {
-                const auto position = llvm::cast<mlir::OpResult>(value).getResultNumber();
-                mlir::Value common;
-                for (mlir::Region & region : selected->getRegions()) {
-                    if (!spend(1)) { return {}; }
-                    if (!llvm::hasSingleElement(region) || region.front().empty() ||
-                        region.front().getNumArguments() != 0) {
-                        common = {};
-                        break;
-                    }
-                    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                    if (!yield || yield.getNumOperands() != selected.getNumResults() ||
-                        (common && common != yield.getOperand(position))) {
-                        common = {};
-                        break;
-                    }
-                    common = yield.getOperand(position);
+            if (!value.getDefiningOp<mlir::scf::IfOp>()) { return value; }
+            mlir::Value common;
+            for (mlir::Value arm : armYields(llvm::cast<mlir::OpResult>(value))) {
+                if (!spend(1)) { return {}; }
+                if (common && common != arm) {
+                    common = {};
+                    break;
                 }
-                // An identical saved SSA value keeps its tag and snapshot.
-                // Every arm effect is checked separately.
-                if (common) {
-                    value = common;
-                    continue;
-                }
-                // Nested selections may forward one saved SSA leaf through
-                // different immediate results. Keep exact identity only; every
-                // arm's producers and effects still require census and replay.
-                llvm::SmallVector<mlir::Value, 4> pending{value};
-                while (!pending.empty()) {
-                    if (!spend(1)) { return {}; }
-                    auto current = pending.pop_back_val();
-                    auto nested = current.getDefiningOp<mlir::scf::IfOp>();
-                    if (!nested) {
-                        if (common && common != current) { return value; }
-                        common = current;
-                        continue;
-                    }
-                    const auto slot = llvm::cast<mlir::OpResult>(current).getResultNumber();
-                    for (mlir::Region & region : nested->getRegions()) {
-                        if (!spend(1)) { return {}; }
-                        if (!llvm::hasSingleElement(region) || region.front().empty() ||
-                            region.front().getNumArguments() != 0) {
-                            return value;
-                        }
-                        auto yield =
-                            llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                        if (!yield || yield.getNumOperands() != nested.getNumResults()) {
-                            return value;
-                        }
-                        pending.push_back(yield.getOperand(slot));
-                    }
-                }
-                if (common) { return common; }
+                common = arm;
             }
-            return value;
+            // An identical saved SSA value keeps its tag and snapshot.
+            // Every arm effect is checked separately.
+            if (common) {
+                value = common;
+                continue;
+            }
+            // Nested selections may forward one saved SSA leaf through
+            // different immediate results. Keep exact identity only; every
+            // arm's producers and effects still require census and replay.
+            const auto walked = ifLeaves(value, spend, [&](mlir::Value leaf) {
+                if (common && common != leaf) { return false; }
+                common = leaf;
+                return true;
+            });
+            if (!walked) { return {}; }
+            return *walked && common ? common : value;
         }
     };
     const auto stripBoolean = [&](mlir::Value value) -> std::pair<mlir::Value, bool> {
@@ -161,50 +161,18 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                     ctjs::BooleanAttr boolean;
                     bool exactBoolean = true;
                     for (bool literalSide : {true, false}) {
-                        llvm::SmallVector<mlir::Value, 4> pending{
-                            literalSide ? (reversed ? compare.getLhs() : compare.getRhs()) : input};
-                        while (!pending.empty() && exactBoolean) {
-                            if (!spend(1)) { return {}; }
-                            auto current = pending.pop_back_val();
-                            if (literalSide) {
-                                auto literal = current.getDefiningOp<ctjs::ConstantOp>();
-                                auto leaf =
-                                    literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
-                                            : ctjs::BooleanAttr{};
-                                if (leaf) {
-                                    if (boolean && boolean != leaf) {
-                                        exactBoolean = false;
-                                        break;
-                                    }
-                                    boolean = leaf;
-                                    continue;
-                                }
-                            } else if (directBoolean(current)) {
-                                continue;
-                            }
-                            auto selected = current.getDefiningOp<mlir::scf::IfOp>();
-                            if (!selected) {
-                                exactBoolean = false;
-                                break;
-                            }
-                            const auto position =
-                                llvm::cast<mlir::OpResult>(current).getResultNumber();
-                            for (mlir::Region & region : selected->getRegions()) {
-                                if (!spend(1)) { return {}; }
-                                if (!llvm::hasSingleElement(region) || region.front().empty() ||
-                                    region.front().getNumArguments() != 0) {
-                                    exactBoolean = false;
-                                    break;
-                                }
-                                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(
-                                    region.front().getTerminator());
-                                if (!yield || yield.getNumOperands() != selected.getNumResults()) {
-                                    exactBoolean = false;
-                                    break;
-                                }
-                                pending.push_back(yield.getOperand(position));
-                            }
-                        }
+                        if (!exactBoolean) { break; }
+                        const auto walked = ifLeaves(
+                            literalSide ? (reversed ? compare.getLhs() : compare.getRhs()) : input,
+                            spend, [&](mlir::Value leaf) {
+                                if (!literalSide) { return directBoolean(leaf); }
+                                auto literal = ctjs::constantAttr<ctjs::BooleanAttr>(leaf);
+                                if (!literal || (boolean && boolean != literal)) { return false; }
+                                boolean = literal;
+                                return true;
+                            });
+                        if (!walked) { return {}; }
+                        exactBoolean = *walked;
                     }
                     // Equality with a Boolean preserves or reverses truthiness
                     // only when the other operand is already exactly Boolean.
@@ -246,13 +214,7 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
         // The census and replay still validate every arm's producers and effects.
         mlir::Attribute common;
         mlir::Value identity;
-        llvm::SmallVector<mlir::Value, 4> pending{left, right};
-        while (!pending.empty()) {
-            if (!spend(1)) {
-                complete = false;
-                return false;
-            }
-            auto current = pending.pop_back_val();
+        const auto leaf = [&](mlir::Value current) {
             if (auto literal = current.getDefiningOp<ctjs::ConstantOp>()) {
                 auto attribute = literal.getValue();
                 if (identity ||
@@ -262,30 +224,20 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                     return false;
                 }
                 common = attribute;
-                continue;
+                return true;
             }
-            auto selected = current.getDefiningOp<mlir::scf::IfOp>();
-            if (!selected) {
-                if (common || (identity && identity != current)) { return false; }
-                identity = current;
-                continue;
-            }
-            const auto position = llvm::cast<mlir::OpResult>(current).getResultNumber();
-            for (mlir::Region & region : selected->getRegions()) {
-                if (!spend(1)) {
-                    complete = false;
-                    return false;
-                }
-                if (!llvm::hasSingleElement(region) || region.front().empty() ||
-                    region.front().getNumArguments() != 0) {
-                    return false;
-                }
-                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                if (!yield || yield.getNumOperands() != selected.getNumResults()) { return false; }
-                pending.push_back(yield.getOperand(position));
-            }
+            if (common || (identity && identity != current)) { return false; }
+            identity = current;
+            return true;
+        };
+        // Right's leaves first, as one stack seeded {left, right} visited them.
+        auto walked = ifLeaves(right, spend, leaf);
+        if (walked && *walked) { walked = ifLeaves(left, spend, leaf); }
+        if (!walked) {
+            complete = false;
+            return false;
         }
-        return bool(common) || bool(identity);
+        return *walked && (bool(common) || bool(identity));
     };
     const auto sameComparison = [&](mlir::Value left, mlir::Value right) {
         auto first = left.getDefiningOp<ctjs::CompareOp>();
@@ -325,21 +277,9 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                     if (!selected) { continue; }
                     for (mlir::OpResult result : selected.getResults()) {
                         std::optional<bool> polarity;
-                        for (mlir::Region & region : selected->getRegions()) {
+                        for (mlir::Value arm : armYields(result)) {
                             if (!spend(1)) { return {}; }
-                            if (!llvm::hasSingleElement(region) || region.front().empty() ||
-                                region.front().getNumArguments() != 0) {
-                                polarity.reset();
-                                break;
-                            }
-                            auto yield =
-                                llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                            if (!yield || yield.getNumOperands() != selected.getNumResults()) {
-                                polarity.reset();
-                                break;
-                            }
-                            const auto incoming =
-                                stripBoolean(yield.getOperand(result.getResultNumber()));
+                            const auto incoming = stripBoolean(arm);
                             if (!incoming.first) { return {}; }
                             if (!sameComparison(incoming.first, compare.getResult()) ||
                                 (polarity && *polarity != incoming.second)) {
@@ -373,21 +313,10 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
         if (auto branch = input.getDefiningOp<mlir::scf::IfOp>()) {
             // Both incoming chains must retain one SSA representative and polarity.
             // This selects no arm: census and replay still check every effect.
-            const auto position = llvm::cast<mlir::OpResult>(input).getResultNumber();
             std::pair<mlir::Value, bool> common;
-            for (mlir::Region & region : branch->getRegions()) {
+            for (mlir::Value arm : armYields(llvm::cast<mlir::OpResult>(input))) {
                 if (!spend(1)) { return {}; }
-                if (!llvm::hasSingleElement(region) || region.front().empty() ||
-                    region.front().getNumArguments() != 0) {
-                    common = {};
-                    break;
-                }
-                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                if (!yield || yield.getNumOperands() != branch.getNumResults()) {
-                    common = {};
-                    break;
-                }
-                const auto incoming = booleanInput(yield.getOperand(position));
+                const auto incoming = booleanInput(arm);
                 if (!incoming.first) { return {}; }
                 if (common.first && common != incoming) {
                     auto first = common.first.getDefiningOp<ctjs::ConstantOp>();
