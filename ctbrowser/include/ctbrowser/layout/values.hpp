@@ -164,7 +164,7 @@ struct length {
     // measured in the box-sizing box, the same box the author's number names,
     // and the percentage is of the containing block like any other.
     [[nodiscard]] constexpr float apply(float size, float basis, float font_size) const noexcept {
-        return size_factor * size + calc_percent / 100.0f * basis + calc_px + calc_em * font_size;
+        return size_factor * size + calc_percent * basis / 100.0f + calc_px + calc_em * font_size;
     }
     // Resolve against a containing-block basis. `auto` has no answer here -
     // the caller decides what auto means for the property it is resolving,
@@ -174,7 +174,7 @@ struct length {
         switch (u) {
         case unit::px:
         case unit::none: size = value; break;
-        case unit::percent: size = value / 100.0f * basis + offset_px; break;
+        case unit::percent: size = value * basis / 100.0f + offset_px; break;
         case unit::em: size = value * font_size; break;
         case unit::rem: size = value * 16.0f; break;
         case unit::auto_:

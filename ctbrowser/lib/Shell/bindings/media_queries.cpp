@@ -158,7 +158,11 @@ void dom_bindings::install_media_queries(context & cx) {
     auto * proto = cx.allocate<script::object_object>();
     proto->prototype = event_target_prototype_;
     media_query_list_prototype_ = value::object(proto);
-    define_getter(cx, *proto, "media", [](context & c, std::span<value>) {
+    define_getter(cx, *proto, "media", [this](context & c, std::span<value>) {
+        if (!is_media_query_list(c.current_this())) {
+            c.throw_error("TypeError", "Illegal invocation");
+            return value::undefined();
+        }
         return c.string(slot_string(c, c.current_this(), media_slot));
     });
     define_getter(cx, *proto, "matches", [this](context & c, std::span<value>) {
@@ -173,6 +177,10 @@ void dom_bindings::install_media_queries(context & cx) {
     define_getter(
         cx, *proto, "onchange",
         [this](context & c, std::span<value>) {
+            if (!is_media_query_list(c.current_this())) {
+                c.throw_error("TypeError", "Illegal invocation");
+                return value::undefined();
+            }
             return event_handler_get(c, c.current_this(), "onchange");
         },
         [this](context & c, std::span<value> a) {
@@ -202,6 +210,10 @@ void dom_bindings::install_media_queries(context & cx) {
                 return value::undefined();
             },
             script::attr_writable | script::attr_enumerable | script::attr_configurable);
+        if (value * made = proto->find(alias)) {
+            static_cast<script::native_object *>(made->as_heap())
+                ->define("length", value::number(1), script::attr_configurable);
+        }
     }
     auto * ctor =
         cx.allocate<script::native_object>("MediaQueryList", [](context & c, std::span<value>) {

@@ -697,6 +697,76 @@ void dom_bindings::install_range(context & cx) {
             }
         }
         const spot parent = reference.none() ? s.node : parent_of(reference);
+        // STEP 7, "ensure pre-insertion validity" of node into parent before
+        // reference (DOM 4.2.3), and BEFORE step 8 splits the start text node:
+        // a doctype or a document handed to insertNode throws with the tree
+        // untouched, not after the split has left an empty text node behind.
+        // The checks are asked here rather than of insertBefore because a node
+        // of another document is only adopted by the insertion itself.
+        const auto refuse = [&](const char * why) {
+            throw_dom_exception(c, "HierarchyRequestError", std::string{"insertNode: "} + why);
+            return false;
+        };
+        const auto valid = [&]() -> bool {
+            const unsigned into = type_of(parent);
+            if (into != type_document && into != type_fragment && into != type_element) {
+                return refuse("the parent cannot have children");
+            }
+            if (inclusive_ancestor(node, parent)) {
+                return refuse("the node is an inclusive ancestor of the parent");
+            }
+            const unsigned what = type_of(node);
+            if (what == type_document || what == type_attr) {
+                return refuse("a document or an attribute is no child");
+            }
+            if ((is_text(node) && into == type_document) ||
+                (what == type_doctype && into != type_document)) {
+                return refuse("that node cannot be a child of that parent");
+            }
+            if (into != type_document) { return true; }
+            const std::vector<node_id> kids = children_of(parent);
+            const auto kind_at = [&](node_id id) { return type_of(spot{parent.owner, id}); };
+            const auto has_kind = [&](unsigned kind) {
+                return std::ranges::any_of(kids, [&](node_id id) { return kind_at(id) == kind; });
+            };
+            // The children from `reference` on (a doctype "following" it) and
+            // before it (an element "preceding" it).
+            const auto at = reference.none() ? kids.end() : std::ranges::find(kids, reference.id);
+            const bool doctype_after =
+                !reference.none() && std::any_of(at, kids.end(), [&](node_id id) {
+                    return kind_at(id) == type_doctype;
+                });
+            const bool reference_is_doctype =
+                !reference.none() && type_of(reference) == type_doctype;
+            if (what == type_fragment) {
+                std::size_t elements = 0;
+                for (const node_id id : children_of(node)) {
+                    const spot kid{node.owner, id};
+                    if (is_text(kid)) { return refuse("a document cannot hold text"); }
+                    if (type_of(kid) == type_element) { ++elements; }
+                }
+                if (elements > 1) { return refuse("a document has one element"); }
+                if (elements == 1 &&
+                    (has_kind(type_element) || reference_is_doctype || doctype_after)) {
+                    return refuse("a document has one element, after its doctype");
+                }
+            } else if (what == type_element) {
+                if (has_kind(type_element) || reference_is_doctype || doctype_after) {
+                    return refuse("a document has one element, after its doctype");
+                }
+            } else if (what == type_doctype) {
+                const bool element_before =
+                    !reference.none() && std::any_of(kids.begin(), at, [&](node_id id) {
+                        return kind_at(id) == type_element;
+                    });
+                if (has_kind(type_doctype) || element_before ||
+                    (reference.none() && has_kind(type_element))) {
+                    return refuse("a document has one doctype, before its element");
+                }
+            }
+            return true;
+        };
+        if (!valid()) { return; }
         // The live-range steps of "insert" and "remove", DOM 4.2.3, applied
         // to this range's two points.
         const auto inserted = [&](spot into, double index, double count) {

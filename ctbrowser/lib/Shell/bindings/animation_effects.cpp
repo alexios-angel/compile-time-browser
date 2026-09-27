@@ -39,6 +39,20 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             parent_font_size = font_of(up).value_or(font_size);
         }
     }
+    // WHERE THE ELEMENT SITS AMONG ITS SIBLINGS, for a keyframe's
+    // `sibling-index()` and `sibling-count()` (CSS Values 5 §tree-counting): a
+    // keyframe value is computed on the element it animates, as the element's
+    // own declaration would be, and moves when a sibling does.
+    {
+        const auto txn = doc_->read();
+        if (const node_id up = txn.parent(id)) {
+            for (const node_id sibling : txn.children(up)) {
+                if (txn.kind(sibling).value_or(node_kind::text) != node_kind::element) { continue; }
+                ++ctx.sibling_count;
+                if (sibling == id) { ctx.sibling_index = ctx.sibling_count; }
+            }
+        }
+    }
     // THE CONTAINERS A KEYFRAME'S `cq*` UNITS MEASURE (CSS Conditional 5
     // §4), as the cascade finds them: the nearest ancestor size container on
     // each axis, its content box as last laid out.
@@ -172,6 +186,15 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                                (ascii_iequals(value, "initial") ||
                                 (ascii_iequals(value, "unset") && !known->inherited))) {
                         value = known->initial;
+                    }
+                    // A tree-counting function has its answer here, on this
+                    // element (sibling-index-keyframe-*-dynamic).
+                    std::string counted;
+                    if (value.find("sibling-") != std::string_view::npos) {
+                        counted =
+                            style::css::fold_math(value, own, style::css::math_context_of(property))
+                                .text;
+                        value = counted;
                     }
                     points.push_back(point{k.offset, resolved_color(value), k.easing, k.composite});
                 }

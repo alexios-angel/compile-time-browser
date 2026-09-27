@@ -9,6 +9,10 @@ inline auto context::set_external_roots(std::function<void(const root_visitor &)
     external_roots_ = std::move(enumerate);
 }
 
+inline auto context::set_weak_prune(std::function<void(const survives_fn &)> prune) -> void {
+    weak_prune_ = std::move(prune);
+}
+
 // COLLECT AT EVERY SAFEPOINT, FOR TESTS.
 //
 // Until 2026-09-12 the only thing that collected in an ordinary run was

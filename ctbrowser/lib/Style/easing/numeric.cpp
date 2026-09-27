@@ -443,6 +443,13 @@ namespace ctbrowser::style::easing_detail {
             if (ascii_iequals(text, word)) { return std::string{length}; }
         }
     }
+    // zoom animates by its computed number (CSS Viewport 1 §5): `100%` to
+    // `300%` is 1 to 3, and `normal` is 1 (zoom-interpolation).
+    if (property == "zoom") {
+        if (std::string computed = css::computed_zoom(text, ctx); !computed.empty()) {
+            return computed;
+        }
+    }
     // offset-rotate's keywords are angles too: `reverse` is `auto 180deg`, so
     // it pairs with `auto 100deg` (offset-rotate-interpolation).
     if (property == "offset-rotate") {

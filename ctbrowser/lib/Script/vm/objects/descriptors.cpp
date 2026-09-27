@@ -249,6 +249,17 @@ bool context::own_property(value target, const std::string & name, property_desc
             return true;
         }
         if (accessor_entry * entry = obj->find_accessor(name)) {
+            // A MODULE NAMESPACE'S EXPORT (10.4.6.5): { [[Value]]: the
+            // binding's, writable, enumerable, !configurable } - a data
+            // property whose storage here is a getter over the cell, so the
+            // value is read through it (a native: no page code runs).
+            if (entry->getter.is_callable() && obj->find(module_namespace_key) != nullptr) {
+                const value getter = entry->getter;
+                out = property_descriptor::data(call(getter, {}, target),
+                                                attr_writable | attr_enumerable);
+                out.virtual_slot = true;
+                return true;
+            }
             out = property_descriptor::accessor(entry->getter, entry->setter, entry->attrs);
             return true;
         }
@@ -607,6 +618,21 @@ bool context::delete_own_property(value target, const std::string & name) {
 // (Reflect.defineProperty).
 bool context::define_own_property(value target, const std::string & name,
                                   const property_descriptor & wanted) {
+    // 10.4.6.6 [[DefineOwnProperty]] OF A MODULE NAMESPACE, for a string key:
+    // nothing is ever defined - a description the export already satisfies
+    // answers true, any other false. A symbol key (@@toStringTag) is an
+    // ordinary property's.
+    if (target.is_object() && !name.starts_with(symbol_key_mark) &&
+        static_cast<object_object *>(target.as_heap())->find(module_namespace_key) != nullptr) {
+        property_descriptor current;
+        if (!own_property(target, name, current) || !current.is_data()) { return false; }
+        if ((wanted.has_configurable && wanted.configurable) ||
+            (wanted.has_enumerable && !wanted.enumerable) || wanted.is_accessor() ||
+            (wanted.has_writable && !wanted.writable)) {
+            return false;
+        }
+        return !wanted.has_value || wanted.held.same_value(current.held);
+    }
     // 10.5.6: the `defineProperty` trap sees the descriptor as an OBJECT
     // (FromPropertyDescriptor, step 8), or the target defines it.
     if (target.is_kind(heap_kind::proxy)) {

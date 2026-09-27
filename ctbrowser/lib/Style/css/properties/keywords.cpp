@@ -112,7 +112,16 @@ constexpr or_grammar or_grammars[] = {
      "contain scale-down",
      "scale-down"},
     {"hanging-punctuation", "none", {"first", "force-end allow-end", "last"}, false},
-    {"text-emphasis-position", "auto", {"over under", "right left"}, true},
+    // `right` is the default side and the shortest spelling leaves it out
+    // (CSSOM §6.7.2): `over right` is `over` (text-emphasis-position-valid).
+    {"text-emphasis-position",
+     "auto",
+     {"over under", "right left"},
+     true,
+     "over right",
+     "over",
+     "under right",
+     "under"},
     {"ruby-position", "inter-character", {"alternate", "over under"}, true},
     {"text-autospace",
      "normal auto no-autospace",
@@ -1058,6 +1067,9 @@ constexpr pair_grammar pair_grammars[] = {
     for (const std::vector<std::size_t> & item : *items) {
         std::string name;
         std::vector<std::string> tactics, words;
+        // `<dashed-ident> || <try-tactic>`: the tactic's keywords are one
+        // component, so the name may not stand between two of them.
+        bool before_name = false, after_name = false;
         for (const std::size_t i : item) {
             if (ts.tokens[i].type != token_type::ident) { return std::nullopt; }
             const std::string_view word = ts.text_of(ts.tokens[i]);
@@ -1069,6 +1081,8 @@ constexpr pair_grammar pair_grammars[] = {
             const std::string lower = ascii_lower_copy(word);
             if (has_keyword("flip-block flip-inline flip-start flip-x flip-y", lower)) {
                 if (std::ranges::find(tactics, lower) != tactics.end()) { return std::nullopt; }
+                (name.empty() ? before_name : after_name) = true;
+                if (before_name && after_name) { return std::nullopt; }
                 tactics.push_back(lower);
             } else {
                 words.push_back(lower);
@@ -1610,6 +1624,25 @@ std::string computed_offset_rotate(std::string_view specified, bool keep_auto) {
     if (!automatic) { return angle; }
     if (keep_auto && degrees == 0) { return "auto"; }
     return "auto " + angle;
+}
+
+std::string computed_zoom(std::string_view specified, const length_context & ctx) {
+    const std::string_view text = trim(specified, html_whitespace);
+    double factor = 1;
+    if (!ascii_iequals(text, "normal")) {
+        const math_answer answer = evaluate_math(text, ctx);
+        if (answer.outcome != math_outcome::resolved) { return {}; }
+        const calc_result & v = answer.value;
+        if (v.is_number) {
+            factor = v.px;
+        } else if (v.has_percent && v.px == 0) {
+            factor = v.percent / 100;
+        } else {
+            return {};
+        }
+    }
+    if (!(factor > 0)) { factor = 1; }
+    return serialize_number(factor);
 }
 
 std::optional<std::string_view> font_width_percentage(std::string_view keyword) {

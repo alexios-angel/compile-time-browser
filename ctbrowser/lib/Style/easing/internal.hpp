@@ -197,8 +197,12 @@ void promote(transform_fn & fn);
 
 [[nodiscard]] transform_fn identity_like(const transform_fn & fn);
 
+// nullopt, with `singular` set, when a matrix the lists blend through will
+// not decompose: the pair is then not interpolable at all (CSS Transforms 1
+// §10).
 [[nodiscard]] std::optional<std::string> interpolate_transform(std::string_view from,
-                                                               std::string_view to, double p);
+                                                               std::string_view to, double p,
+                                                               bool * singular = nullptr);
 
 // --- filter lists (Filter Effects 1 §11) ---
 

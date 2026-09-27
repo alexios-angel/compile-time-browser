@@ -35,9 +35,28 @@ std::string compiler_impl::decode_string_literal(std::string_view lexeme) {
 std::string compiler_impl::decode_string_body(std::string_view lexeme) {
     std::string out;
     out.reserve(lexeme.size());
+    // U+2028 and U+2029 in UTF-8, the two line terminators past ASCII.
+    const auto separator_at = [&](std::size_t at) {
+        return at + 2 < lexeme.size() && lexeme[at] == '\xE2' && lexeme[at + 1] == '\x80' &&
+               (lexeme[at + 2] == '\xA8' || lexeme[at + 2] == '\xA9');
+    };
     for (std::size_t i = 0; i < lexeme.size(); ++i) {
+        // A TEMPLATE'S RAW <CR><LF> OR <CR> IS <LF> (12.9.6 TV of a
+        // LineTerminatorSequence), as its raw string already reads it. A
+        // string literal cannot hold one, so this is the template's alone.
+        if (lexeme[i] == '\r') {
+            out.push_back('\n');
+            if (i + 1 < lexeme.size() && lexeme[i + 1] == '\n') { ++i; }
+            continue;
+        }
         if (lexeme[i] != '\\' || i + 1 >= lexeme.size()) {
             out.push_back(lexeme[i]);
+            continue;
+        }
+        // A backslash before U+2028 or U+2029 is a LineContinuation too
+        // (12.9.4), which contributes nothing.
+        if (separator_at(i + 1)) {
+            i += 3;
             continue;
         }
         switch (lexeme[++i]) {

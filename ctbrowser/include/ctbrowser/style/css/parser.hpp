@@ -23,6 +23,14 @@ namespace ctbrowser::style::css {
 // result is ready for the cascade with no further conversion.
 [[nodiscard]] stylesheet parse_stylesheet(std::string_view css, atom_table & atoms);
 
+// A FETCHED STYLESHEET'S BYTES AS TEXT, CSS Syntax 3 §3.2: decoded with the
+// fallback encoding - the protocol's label, else an `@charset "...";` the bytes
+// begin with (a UTF-16 one meaning UTF-8), else the referring document's
+// `environment` encoding, else UTF-8 - and a byte order mark overriding them
+// all. A `<link charset>` is no part of it.
+[[nodiscard]] std::string decode_stylesheet(std::string_view bytes, std::string_view protocol,
+                                            std::string_view environment);
+
 // A `style="..."` attribute: a declaration list with no selector and no braces.
 //
 // Its own entry point rather than wrapping the text in `*{...}` for the sheet

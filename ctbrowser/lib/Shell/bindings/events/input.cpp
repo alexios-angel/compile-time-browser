@@ -369,7 +369,8 @@ bool dom_bindings::dispatch_mouse(std::string_view type, node_id target,
 // the method and it is the difference between `click()` and `dispatchEvent`:
 // the latter reaches a disabled checkbox and toggles it, which
 // Event-dispatch-click.html asserts for both. `disabled` here is the control's
-// own attribute or an enclosing <fieldset>'s, as the browser's is_disabled says.
+// own attribute or an enclosing <fieldset>'s, as the browser's is_disabled says -
+// outside that fieldset's first <legend>.
 bool dom_bindings::click(node_id target) {
     if (cx_ == nullptr || !target || doc_ == nullptr) { return false; }
     {
@@ -379,9 +380,20 @@ bool dom_bindings::click(node_id target) {
             control_kind::none) {
             const atom disabled = atoms_->intern("disabled");
             const atom fieldset = atoms_->intern_lower("fieldset");
-            for (node_id at = target; at; at = txn.parent(at)) {
-                if ((at == target || txn.tag(at).value_or(atom{}) == fieldset) &&
-                    txn.has_attribute(at, disabled)) {
+            const atom legend = atoms_->intern_lower("legend");
+            // ...less the one exemption HTML 4.10.18.5 makes: a control inside
+            // a disabled fieldset's FIRST <legend> child is not disabled by it.
+            const auto first_legend_of = [&](node_id set) {
+                for (const node_id child : txn.children(set)) {
+                    if (txn.tag(child).value_or(atom{}) == legend) { return child; }
+                }
+                return node_id{};
+            };
+            node_id below;
+            for (node_id at = target; at; below = at, at = txn.parent(at)) {
+                if (at == target && txn.has_attribute(at, disabled)) { return false; }
+                if (at != target && txn.tag(at).value_or(atom{}) == fieldset &&
+                    txn.has_attribute(at, disabled) && below != first_legend_of(at)) {
                     return false;
                 }
             }

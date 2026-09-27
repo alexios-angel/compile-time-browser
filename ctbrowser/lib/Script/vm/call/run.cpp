@@ -7,6 +7,7 @@
 // include/ctbrowser/script/vm.hpp - so they split across translation units
 // with nothing to declare.
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 
@@ -69,7 +70,8 @@ run_result context::run_reentrant(const program & prog) {
 }
 
 bool context::global_declaration_instantiation(const program & prog) {
-    if (prog.kind != script_kind::classic || prog.eval_code ||
+    if (prog.eval_code) { return !prog.eval_global || eval_declaration_instantiation(prog); }
+    if (prog.kind != script_kind::classic ||
         (prog.lexical_names.empty() && prog.function_names.empty() && prog.hoisted_vars.empty())) {
         return true;
     }
@@ -94,16 +96,142 @@ bool context::global_declaration_instantiation(const program & prog) {
             return refuse(name);
         }
     }
+    // An Annex B name is not a VarName (B.3.2.2): a collision skips it
+    // instead (annex_b_skipped).
+    const auto annex_b = [&](const std::string & name) {
+        return std::ranges::binary_search(prog.annex_b_names, name);
+    };
     for (const std::string & name : prog.hoisted_vars) {
-        if (realm.lexical.contains(name)) { return refuse(name); }
+        if (realm.lexical.contains(name) && !annex_b(name)) { return refuse(name); }
     }
     for (const std::string & name : prog.function_names) {
         if (realm.lexical.contains(name)) { return refuse(name); }
     }
+    // CanDeclareGlobalFunction and CanDeclareGlobalVar (9.1.1.4.15-16, 16.1.7
+    // steps 8-12): a function may replace a configurable property or a
+    // writable, enumerable data one; any other name needs the global object
+    // extensible unless it already owns one. A TypeError otherwise, before a
+    // single binding exists. Read from the two stores behind the traps - the
+    // target, then the table - because the traps' own invariant check refuses
+    // a table name once the target is not extensible.
+    const bool extensible = !holder.is_heap() || is_extensible(holder);
+    const auto global_own = [&](const std::string & name, property_descriptor & out) {
+        if (holder.is_object() && own_property(holder, name, out)) { return true; }
+        const auto it = realm.globals.find(name);
+        if (it == realm.globals.end() || realm.lexical.contains(name)) { return false; }
+        out = property_descriptor::data(it->second, realm.builtin.contains(name)
+                                                        ? attr_writable | attr_configurable
+                                                        : attr_default);
+        return true;
+    };
+    const auto cannot = [&](const std::string & name) {
+        throw_error("TypeError", "Cannot declare global '" + name + "'");
+        return false;
+    };
+    for (const std::string & name : prog.function_names) {
+        property_descriptor existing;
+        if (!global_own(name, existing)) {
+            if (!extensible) { return cannot(name); }
+        } else if (!existing.configurable &&
+                   !(existing.is_data() && existing.writable && existing.enumerable)) {
+            return cannot(name);
+        }
+    }
+    for (const std::string & name : prog.hoisted_vars) {
+        if (property_descriptor existing;
+            !extensible && !annex_b(name) && !global_own(name, existing)) {
+            return cannot(name);
+        }
+    }
     for (const std::string & name : prog.lexical_names) { realm.lexical[name] = true; }
-    for (const std::string & name : prog.hoisted_vars) { realm.var_names[name] = true; }
+    for (const std::string & name : prog.hoisted_vars) {
+        if (!annex_b_skipped(prog, name)) { realm.var_names[name] = true; }
+    }
     for (const std::string & name : prog.function_names) { realm.var_names[name] = true; }
     return true;
+}
+
+bool context::eval_declaration_instantiation(const program & prog) {
+    realm_record & realm = current_realm();
+    // Step 3.a: a var or function name the global environment has as a
+    // lexical binding - a `let x` of a script, and then `eval('var x')`. Not
+    // an Annex B block function's, which is skipped instead (B.3.2.3,
+    // annex_b_skipped).
+    const auto annex_b = [&](const std::string & name) {
+        return std::ranges::binary_search(prog.annex_b_names, name);
+    };
+    for (const auto * names : {&prog.hoisted_vars, &prog.function_names}) {
+        for (const std::string & name : *names) {
+            if (realm.lexical.contains(name) && (names == &prog.function_names || !annex_b(name))) {
+                throw_error("SyntaxError", "Identifier '" + name + "' has already been declared");
+                return false;
+            }
+        }
+    }
+    // Steps 8-10, as GlobalDeclarationInstantiation asks them (above).
+    value holder = realm.global_this;
+    if (holder.is_kind(heap_kind::proxy)) {
+        holder = static_cast<proxy_object *>(holder.as_heap())->target;
+    }
+    const bool extensible = !holder.is_heap() || is_extensible(holder);
+    const auto global_own = [&](const std::string & name, property_descriptor & out) {
+        if (holder.is_object() && own_property(holder, name, out)) { return true; }
+        const auto it = realm.globals.find(name);
+        if (it == realm.globals.end() || realm.lexical.contains(name)) { return false; }
+        out = property_descriptor::data(it->second, realm.builtin.contains(name)
+                                                        ? attr_writable | attr_configurable
+                                                        : attr_default);
+        return true;
+    };
+    for (const std::string & name : prog.function_names) {
+        property_descriptor existing;
+        const bool definable =
+            global_own(name, existing)
+                ? existing.configurable ||
+                      (existing.is_data() && existing.writable && existing.enumerable)
+                : extensible;
+        if (!definable) {
+            throw_error("TypeError", "Cannot declare global function '" + name + "'");
+            return false;
+        }
+    }
+    for (const std::string & name : prog.hoisted_vars) {
+        if (property_descriptor existing;
+            !extensible && !annex_b(name) && !global_own(name, existing)) {
+            throw_error("TypeError", "Cannot declare global variable '" + name + "'");
+            return false;
+        }
+    }
+    // NOT recorded as var names: an eval's bindings are configurable, and a
+    // later script's `let` of the same name shadows them (16.1.7 step 3.c's
+    // NOTE - only a restricted, non-configurable global property collides).
+    return true;
+}
+
+// B.3.2.2 step 12.b.i / B.3.2.3 step 11.b.ii: an Annex B block function's
+// name becomes a global var only when the global environment has no lexical
+// binding of it and CanDeclareGlobalVar(F) - an own property of the global
+// object (the target's or the table's), or an extensible one - allows it.
+// Otherwise it is fnDefinable false, and skipped without an error.
+//
+// KNOWN WRONG: the declaration's evaluation still copies the function into
+// the global of that name (compile_function_decl emits the set_global
+// whatever this decides), so `let f = 1` and then `{ function f() {} }` in
+// another script or an eval leaves f the function rather than 1. Skipping
+// that write needs the copy's instruction told apart from a `f = x`, which
+// is the same op::set_global.
+bool context::annex_b_skipped(const program & prog, const std::string & name) {
+    if (!std::ranges::binary_search(prog.annex_b_names, name)) { return false; }
+    realm_record & realm = current_realm();
+    if (realm.lexical.contains(name)) { return true; }
+    value holder = realm.global_this;
+    if (holder.is_kind(heap_kind::proxy)) {
+        holder = static_cast<proxy_object *>(holder.as_heap())->target;
+    }
+    if (!holder.is_heap() || is_extensible(holder)) { return false; }
+    property_descriptor own;
+    if (holder.is_object() && own_property(holder, name, own)) { return false; }
+    return !realm.globals.contains(name);
 }
 
 run_result context::run(const program & prog) {
@@ -123,7 +251,10 @@ run_result context::run(const program & prog) {
     handlers_.clear();
     if (global_declaration_instantiation(prog)) {
         for (const std::string & name : prog.hoisted_vars) {
-            declare_global_var(name, prog.eval_code);
+            if (!annex_b_skipped(prog, name)) { declare_global_var(name, prog.eval_code); }
+        }
+        for (const std::string & name : prog.function_names) {
+            declare_global_function(name, prog.eval_code);
         }
         result.returned = execute(prog, prog.functions[0]);
     }

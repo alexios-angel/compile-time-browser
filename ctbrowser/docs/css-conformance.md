@@ -11,6 +11,25 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Round thirteen — 2026-09-26
+
+Full `css/` at `037fbaae`: **2,234/3,014 runnable files PASS, 101,800
+subtests PASS**, from 2,187 and 99,154 at `6011bf8d` - +47 files, +2,646
+subtests. Round thirteen's CSS4 (16 commits, merged whole at its last green
+gate when the session limit cut it off): calc-size() and interpolate-size
+(css-values +1,737 subtests - `calc-size/animation/*` and the keyword
+sizes), css-sizing +230, css-transforms +220 (palettes, track lists,
+origins, em transforms, singular matrices), css-fonts +88, css-grid +80,
+cssom-view +76 (a reversed flex container scrolls from its end), selectors
++59 (`:focus-visible`'s UA ring, `:placeholder-shown`, dir=auto on text
+controls), and a pseudo-element's box hit-testing as its originating element.
+**Three files lost**: `css-transforms/animation/transform-interpolation-007`
+(a 2D-equivalent matrix3d now serialises as matrix3d),
+`transform-non-invertible-no-transition` and
+`css-values/viewport-units-scroll-no-cycles-001.tentative` - round
+fourteen's CSS5 has them first. CSS4's ungated last batch (every size
+keyword through calc-size, more easing) went to CSS5 as a patch.
+
 ## The outage batch — 2026-09-26
 
 Full `css/` at `6011bf8d`: **2,187/3,014 runnable files PASS, 99,154

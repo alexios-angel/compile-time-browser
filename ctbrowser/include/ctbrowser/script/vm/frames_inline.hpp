@@ -2,6 +2,8 @@
 
 #include "../vm.hpp"
 
+#include <algorithm>
+
 namespace ctbrowser::script {
 
 // The `this` a frame actually sees. For an ordinary function that is its
@@ -23,11 +25,44 @@ inline auto context::raise(std::string message) -> void {
     error_ = std::move(message) + current_stack();
 }
 
+// THE INSTRUCTION A THROW LEAVES, before a frame goes: the innermost frame's
+// `ip` is already past it (the loop's fetch increments first), and a native
+// pushes no frame, so a throw from inside one names its call site. A frame
+// whose proto keeps no offset table - a compiled body, a build without
+// CTBROWSER_SCRIPT_DEBUG_NAMES - leaves no site rather than a caller's.
+//
+// A FINALLY'S OR AN ITERATOR CLOSE'S RETHROW (function_proto::rethrows) is
+// the throw it caught, going on, and keeps that throw's site: `try { null.x }
+// finally { log() }` is reported at `null.x`, not at the finally. Only while
+// the value is still the one the site was recorded for - a throw caught
+// inside the finally replaced the site, and then there is none to keep.
+inline auto context::note_throw_site() noexcept -> void {
+    const throw_site caught = throw_site_;
+    throw_site_ = {};
+    if (frames_.empty()) { return; }
+    const call_frame & f = frames_.back();
+    const function_proto * fp = f.proto;
+    if (fp == nullptr || fp->aot_entry != nullptr || f.ip == 0 || f.ip > fp->code_offsets.size()) {
+        return;
+    }
+    if (std::ranges::binary_search(fp->rethrows, static_cast<std::uint32_t>(f.ip - 1))) {
+        if (thrown_.bits() == throw_site_value_) { throw_site_ = caught; }
+        return;
+    }
+    const std::uint32_t offset = fp->code_offsets[f.ip - 1];
+    if (offset == function_proto::no_offset) { return; }
+    throw_site_.source =
+        f.closure != nullptr && f.closure->owner != nullptr ? f.closure->owner : program_;
+    throw_site_.offset = offset;
+    throw_site_value_ = thrown_.bits();
+}
+
 // Find the innermost live handler and jump to it, discarding every call
 // frame between here and the one that owns it. Returning false means
 // nothing caught it, which is an uncaught exception.
 [[nodiscard]] inline auto context::unwind_to_handler() -> bool {
     ++unwinds_;
+    note_throw_site();
     while (!handlers_.empty()) {
         const handler h = handlers_.back();
         handlers_.pop_back();

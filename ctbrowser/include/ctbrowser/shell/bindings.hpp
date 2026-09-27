@@ -623,6 +623,7 @@ private:
     [[nodiscard]] value matrix_object(context & cx, const transform & t);
 
     [[nodiscard]] value canvas_context_object(context & cx, node_id id);
+    void install_canvas_2d(context & cx);
 
     [[nodiscard]] value webgl_context_object(context & cx, node_id id, int version);
     void install_webgl_constants(script::object_object * obj, bool webgl2);
@@ -1094,6 +1095,11 @@ public:
 
 private:
     std::unique_ptr<html::tree_builder> parser_;
+    // Parsers document.open() replaced while one of their calls was still on
+    // the stack (a mutation observer's document.write, at the checkpoint
+    // before a <script> is prepared): aborted, and freed once not busy().
+    std::vector<std::unique_ptr<html::tree_builder>> retired_parsers_;
+    void replace_parser();
     script_runner run_script_;
     std::vector<parser_script> deferred_scripts_;
     std::vector<parser_script> asap_scripts_;

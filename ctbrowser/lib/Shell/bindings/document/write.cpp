@@ -66,6 +66,46 @@ namespace {
 
 } // namespace
 
+// A NEW PARSER FOR THE DOCUMENT, the old one aborted ("stop document
+// loading") and kept until nothing of it is on the stack - document.open()
+// can be reached from inside the old parser's own pump.
+void dom_bindings::replace_parser() {
+    std::erase_if(retired_parsers_, [](const auto & held) { return !held->busy(); });
+    if (parser_ != nullptr) {
+        parser_->abort();
+        retired_parsers_.push_back(std::move(parser_));
+    }
+    parser_ = std::make_unique<html::tree_builder>(*doc_, *atoms_);
+    parser_->set_script_hook([this](node_id script) { prepare_parser_script(script); });
+    parser_->set_custom_element_hooks(
+        [this](std::string_view name, const std::vector<html::token_attribute> & attributes,
+               node_id parent) { return parser_create_custom_element(name, attributes, parent); },
+        [this](node_id element) { parser_inserted_custom_element(element); });
+    // 13.2.6.4.8 step 8: WHAT THE PARSER BUILT IS ANNOUNCED, THEN A MICROTASK
+    // CHECKPOINT, THEN THE SCRIPT IS PREPARED - so a mutation observer's
+    // callback sees the <script> before it runs and may change its type
+    // (microtask_before_prepare_the_script_element-01.html) or document.write
+    // with no insertion point, which opens the document and aborts this
+    // parse (document-write/mutation-observer.html). The checkpoint is only
+    // performed when no script is on the stack; inside a written script it
+    // waits for that script's end.
+    // ONE MUTATION RECORD PER PARSER INSERTION, as the DOM's insert steps
+    // queue them (MutationObserver-document.html: the <p>, then the <script>,
+    // then the script's text - three records, not one) - asked only while an
+    // observer is registered, since each announcement diffs the observed
+    // subtree.
+    parser_->set_insertion_hook([this] {
+        if (mutation_registrations_.empty()) { return; }
+        doc_->note_unversioned_change();
+        mutated();
+    });
+    parser_->set_checkpoint_hook([this] {
+        doc_->note_unversioned_change();
+        mutated();
+        if (cx_ != nullptr && cx_->current_stack().empty()) { cx_->drain_microtasks(); }
+    });
+}
+
 parse_result dom_bindings::parse_document(std::string_view html) {
     deferred_scripts_.clear();
     asap_scripts_.clear();
@@ -73,20 +113,18 @@ parse_result dom_bindings::parse_document(std::string_view html) {
     // A NAVIGATION'S DOCUMENT, so a `<template shadowrootmode>` in the page is
     // a shadow root (HTML 7.4.6.4 "create and initialize a Document object").
     doc_->set_allow_declarative_shadow_roots(true);
-    parser_ = std::make_unique<html::tree_builder>(*doc_, *atoms_);
-    parser_->set_script_hook([this](node_id script) { prepare_parser_script(script); });
-    parser_->set_custom_element_hooks(
-        [this](std::string_view name, const std::vector<html::token_attribute> & attributes,
-               node_id parent) { return parser_create_custom_element(name, attributes, parent); },
-        [this](node_id element) { parser_inserted_custom_element(element); });
+    replace_parser();
     // THE BYTES, DECODED (HTML 13.2.3.1): the loader sniffed the encoding
     // into the document's name; a windows-1251 page reaches the tokenizer as
     // UTF-8 here, and a UTF-8 one passes through untouched.
-    parser_->begin(decode_document_bytes(html, doc_->encoding()), false);
+    // THIS parser's results: a script it ran may have document.open()ed and
+    // put another in parser_.
+    html::tree_builder & parser = *parser_;
+    parser.begin(decode_document_bytes(html, doc_->encoding()), false);
     parse_result out;
-    out.root = parser_->document_element();
-    out.svg_sources = parser_->foreign_sources();
-    if (parser_->finished()) { parser_finished(true); }
+    out.root = parser.document_element();
+    out.svg_sources = parser.foreign_sources();
+    if (parser.finished()) { parser_finished(true); }
     return out;
 }
 
@@ -95,15 +133,9 @@ parse_result dom_bindings::parse_document(std::string_view html) {
 // browser's runner (a classic script) or, for a module, its loader.
 void dom_bindings::prepare_parser_script(node_id script) {
     if (parser_ == nullptr || parser_->aborted()) { return; }
-    // 13.2.6.4.8 step 8: WHAT THE PARSER BUILT IS ANNOUNCED, THEN A
-    // MICROTASK CHECKPOINT, THEN THE SCRIPT IS PREPARED - so a mutation
-    // observer's callback sees the <script> before it runs and may change its
-    // type (microtask_before_prepare_the_script_element-01.html does exactly
-    // that). The checkpoint is only performed when no script is on the stack;
-    // inside a written script it waits for that script's end.
-    doc_->note_unversioned_change();
-    mutated();
-    if (cx_ != nullptr && cx_->current_stack().empty()) { cx_->drain_microtasks(); }
+    // The parser whose </script> this is: the pending-script steps below
+    // belong to it. (Its checkpoint hook ran first - see replace_parser.)
+    html::tree_builder * const parser = parser_.get();
     const atom src_name = atoms_->intern("src");
     const bool svg = doc_->read().element_ns(script) == node_ns::svg;
     parser_script prepared{script, {}, {}, false};
@@ -219,24 +251,36 @@ void dom_bindings::prepare_parser_script(node_id script) {
         return;
     }
     const bool external = !src.empty();
-    if (!run_script_) {
-        // A FRAME'S DOCUMENT HAS NO RUNNER - the browser's is the page's - but
-        // it has a realm, and its parser pauses at this `</script>` like the
-        // page's does: the script runs now, in the frame's realm.
-        if (realm_ != nullptr && cx_ != nullptr && !prepared.module) {
-            execute_script_element(*cx_, script, prepared.source);
-            if (external) { announce_load(script, true); }
-        }
-        return;
-    }
-    if (!run_script_(prepared)) {
-        parser_->abort();
-        return;
-    }
     // "Execute the script element" step 8: `load` at the element for an
     // external script, once it has run; an inline classic script fires
     // nothing at all.
-    if (external) { announce_load(script, true); }
+    const auto execute = [this, parser, script, external, prepared = std::move(prepared)] {
+        if (!run_script_) {
+            // A FRAME'S DOCUMENT HAS NO RUNNER - the browser's is the page's -
+            // but it has a realm, and its parser pauses at this `</script>`
+            // like the page's does: the script runs in the frame's realm.
+            if (realm_ != nullptr && cx_ != nullptr) {
+                execute_script_element(*cx_, script, prepared.source);
+                if (external) { announce_load(script, true); }
+            }
+            return;
+        }
+        if (!run_script_(prepared)) {
+            parser->abort();
+            return;
+        }
+        if (external) { announce_load(script, true); }
+    };
+    // An inline classic script runs NOW (step 33's last case). An external
+    // one is the PENDING PARSING-BLOCKING SCRIPT, which the parser runs once
+    // no script is on the stack - at once for the page's own parse, after the
+    // writing script for one document.write wrote (script_005.html and
+    // friends: [1, 2, 3, 4], not [1, 3, 2, 4]).
+    if (external) {
+        parser->set_pending_blocking_script(execute);
+        return;
+    }
+    execute();
 }
 
 // "THE END", HTML 13.2.7, from step 2 - the readiness change - on. Step 3's
@@ -353,18 +397,25 @@ void dom_bindings::document_open(context & cx) {
     // Step 12: no-quirks mode - and the parser decides again from what is
     // written: a doctype keeps it, anything else first puts it in quirks.
     doc_->set_quirks(false);
+    if (auto * doc = document_object()) { doc->set("compatMode", cx.string("CSS1Compat")); }
+    // Step 11: a FULLY ACTIVE document takes the URL of the ENTRY document -
+    // the page whose script started this, which a frame's function called
+    // from the parent does not change (url-entry-document*.window.js). Fully
+    // active here: it has a window and is still reached through the live
+    // frame tree - a removed frame's document, or one whose frame navigated
+    // on, keeps its URL (url.window.js).
+    const bool fully_active = window_object() != nullptr && find_bindings_of(window_view_) == this;
+    if (const dom_bindings * entry = find_bindings_of(cx.entry_realm().global_this);
+        fully_active && entry != nullptr && entry != this) {
+        take_url_of(cx, *entry);
+    }
     // Steps 13-16: "loading", and a new, script-created parser whose insertion
     // point is the end of its (empty) input stream.
     set_ready_state("loading");
     deferred_scripts_.clear();
     asap_scripts_.clear();
     parser_script_created_ = true;
-    parser_ = std::make_unique<html::tree_builder>(*doc_, *atoms_);
-    parser_->set_script_hook([this](node_id script) { prepare_parser_script(script); });
-    parser_->set_custom_element_hooks(
-        [this](std::string_view name, const std::vector<html::token_attribute> & attributes,
-               node_id parent) { return parser_create_custom_element(name, attributes, parent); },
-        [this](node_id element) { parser_inserted_custom_element(element); });
+    replace_parser();
     parser_->begin({}, true, !secondary_);
     doc_->note_unversioned_change();
     mutated();
@@ -432,11 +483,20 @@ void dom_bindings::document_close(context & cx) {
 void dom_bindings::install_dynamic_markup(context & cx, script::object_object & doc) {
     set_method(cx, doc, "open", [this](context & c, std::span<value> args) {
         // `open(url, name, features)` is window.open under another name (8.4.2,
-        // the three-argument overload) and this engine has no second window.
+        // the three-argument overload): the window open steps of this
+        // document's window, or an InvalidAccessError when it has none.
         if (args.size() >= 3) {
-            throw_dom_exception(c, "InvalidAccessError",
-                                "document.open(url, name, features) cannot open a window here");
-            return value::undefined();
+            script::object_object * window = window_object();
+            const value open = window == nullptr ? value::undefined()
+                                                 : c.lookup_property(value::object(window), "open");
+            if (!open.is_callable()) {
+                throw_dom_exception(c, "InvalidAccessError",
+                                    "document.open(url, name, features): no browsing context");
+                return value::undefined();
+            }
+            const value three[3] = {args[0], args[1], args[2]};
+            return c.call(open, three,
+                          window_view_.is_object() ? window_view_ : value::object(window));
         }
         document_open(c);
         return c.failed() ? value::undefined() : document_;

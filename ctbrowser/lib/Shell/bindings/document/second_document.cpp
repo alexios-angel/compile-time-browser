@@ -45,6 +45,12 @@ void dom_bindings::adopt_interfaces_of(const dom_bindings & primary) {
     event_target_prototype_ = primary.event_target_prototype_;
     event_prototype_ = primary.event_prototype_;
     custom_event_prototype_ = primary.custom_event_prototype_;
+    // What click() and dispatch_mouse make and recognise: without them a made
+    // document's click() built a plain Event, which activation behaviour
+    // (dispatch.cpp) does not take for a click.
+    mouse_event_prototype_ = primary.mouse_event_prototype_;
+    pointer_event_prototype_ = primary.pointer_event_prototype_;
+    message_event_prototype_ = primary.message_event_prototype_;
     dom_exception_prototype_ = primary.dom_exception_prototype_;
     // The flag `ensure_dom_interfaces` reads. Without it the first `wrap()` on
     // this document would rebuild the whole table and redefine the globals.

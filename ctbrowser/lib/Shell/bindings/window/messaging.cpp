@@ -7,9 +7,9 @@
 // later. The task is what a page observes most: the event never arrives
 // inside postMessage, so `w.postMessage(x); w.onmessage = f` still hears x.
 //
-// WHAT IS NOT HERE: MessagePort. With no ports the transfer list can only be
-// empty, so a non-empty one is refused with the DataCloneError a
-// non-transferable value gets (StructuredSerializeWithTransfer step 4), and
+// WHAT IS NOT HERE: MessagePort. With no ports the transfer list holds
+// ArrayBuffers or nothing - anything else is the DataCloneError a
+// non-transferable value gets (StructuredSerializeWithTransfer step 4) - and
 // `ports` is always the empty frozen array.
 
 #include "internal.hpp"
@@ -19,6 +19,7 @@
 #include <ctbrowser/shell/net/url.hpp>
 
 #include <string>
+#include <vector>
 
 namespace ctbrowser::shell {
 
@@ -73,19 +74,20 @@ void dom_bindings::install_post_message(context & cx, script::object_object & wi
             }
             target_origin = parsed.origin;
         }
-        if (transfer.is_object_like() && c.lookup_property(transfer, "length").is_number() &&
-            context::to_number(c.lookup_property(transfer, "length")) > 0) {
-            throw_dom_exception(c, "DataCloneError",
-                                "Failed to execute 'postMessage' on 'Window': this engine has no "
-                                "transferable objects.");
-            return value::undefined();
-        }
         // Step 7: serialize NOW, so a later change to `message` is not seen
-        // and a value that cannot be cloned throws at the caller.
+        // and a value that cannot be cloned throws at the caller - WITH the
+        // transfer list, whose ArrayBuffers are detached here and arrive in
+        // the event's data.
         value data = value::undefined();
         if (const value clone = c.global("structuredClone"); clone.is_callable()) {
-            const value one[1] = {message};
-            data = c.call(clone, one);
+            value options = value::undefined();
+            if (!transfer.is_undefined()) {
+                options = c.make_object();
+                static_cast<script::object_object *>(options.as_heap())->set("transfer", transfer);
+            }
+            const context::rooted keep_options{c, options};
+            const value both[2] = {message, options};
+            data = c.call(clone, both);
             if (c.throw_pending()) { return value::undefined(); }
         }
         // Step 8: the task, on the event loop every window here shares.
@@ -127,6 +129,31 @@ void dom_bindings::install_post_message(context & cx, script::object_object & wi
     window.set("postMessage", post);
     // The window is the global object, so the bare name is the same method.
     cx.define_global("postMessage", post);
+    // THE [Serializable] INTERFACES this engine has (HTML 2.7.2), each with the
+    // own properties its binding keeps an instance's state in - which is what
+    // structuredClone copies of one, and all it copies: a page's expando stays
+    // behind. Every other interface's instance is a DataCloneError there (and
+    // so here, which clones through it).
+    //
+    // A File is a Blob with a name here, on Blob's own prototype
+    // (window.cpp), so an instance is found as whichever of the two the
+    // clone's interface walk met first - and the two lists are one.
+    const std::vector<std::string> blob{"size", "type", "__bytes", "name", "lastModified"};
+    cx.set_serializable_interface("Blob", blob);
+    cx.set_serializable_interface("File", blob);
+    // data_transfer.cpp's files_key: the list's Files.
+    cx.set_serializable_interface("FileList", {CTBROWSER_PRIVATE_KEY("ctbrowser:file-list")});
+    cx.set_serializable_interface("ImageData", {"width", "height", "data"});
+    // exceptions.cpp's private_key and message_key: name and message.
+    cx.set_serializable_interface(
+        "DOMException", {"__ctbrowser_domexception_name", "__ctbrowser_domexception_message"});
+    for (const char * point : {"DOMPoint", "DOMPointReadOnly"}) {
+        cx.set_serializable_interface(point, {"x", "y", "z", "w"});
+    }
+    for (const char * rect : {"DOMRect", "DOMRectReadOnly"}) {
+        cx.set_serializable_interface(rect, {"x", "y", "width", "height"});
+    }
+    cx.set_serializable_interface("DOMQuad", {"p1", "p2", "p3", "p4"});
 }
 
 } // namespace ctbrowser::shell

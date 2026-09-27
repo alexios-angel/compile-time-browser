@@ -211,6 +211,27 @@ public:
     // (or defers it, or ignores it) and may call `write` from inside.
     using script_hook = std::function<void(node_id)>;
     void set_script_hook(script_hook hook) { on_script_ = std::move(hook); }
+    // THE PENDING PARSING-BLOCKING SCRIPT (13.2.6.4.8, "an end tag whose tag
+    // name is script"): the hook prepared an external classic script the
+    // parser must not read past. It runs once the script nesting level is
+    // back to zero - straight after the hook for the document's own parser,
+    // and for a `<script src>` that document.write wrote, only when the
+    // script that called write() has returned: until then the parser is
+    // PAUSED at the written `</script>`, the rest of the written text
+    // waiting in the stream.
+    void set_pending_blocking_script(std::function<void()> run) {
+        pending_blocking_ = std::move(run);
+    }
+    // BEFORE a script's end tag moves the insertion point and the nesting
+    // level (13.2.6.4.8): what the parser built is announced and, with no
+    // script on the stack, a microtask checkpoint runs - so a mutation
+    // observer sees the <script> first, and a document.write there has no
+    // insertion point and opens the document, aborting this parser.
+    void set_checkpoint_hook(std::function<void()> hook) { on_checkpoint_ = std::move(hook); }
+    // AFTER EACH NODE THE PARSER INSERTS OR MOVES: the DOM's insert steps
+    // queue a mutation record per insertion, so the host announces each one
+    // rather than the batch a later checkpoint would see as a single change.
+    void set_insertion_hook(std::function<void()> hook) { on_insert_ = std::move(hook); }
 
     // "CREATE AN ELEMENT FOR A TOKEN" FOR A CUSTOM ELEMENT (13.2.6.1 steps
     // 7-11), which only the shell can do: it owns the registry and runs the
@@ -263,6 +284,10 @@ public:
     // The spec's "script nesting level": how many parser-run scripts are on
     // the C++ stack right now. `document.open()` from one is a no-op.
     [[nodiscard]] int script_nesting() const noexcept { return nesting_; }
+    // Whether any call into this parser is still on the stack - a
+    // document.open() from a mutation observer's callback replaces the
+    // parser while its own pump is running, and it must outlive that.
+    [[nodiscard]] bool busy() const noexcept { return pumping_ > 0; }
     [[nodiscard]] node_id document_element() const noexcept { return root_; }
 
 private:
@@ -541,6 +566,11 @@ private:
     bool finished_ = false;
     bool aborted_ = false;
     int nesting_ = 0;
+    std::function<void()> pending_blocking_;
+    std::function<void()> on_checkpoint_;
+    std::function<void()> on_insert_;
+    bool paused_ = false; // the parser pause flag
+    int pumping_ = 0;     // see busy()
 };
 
 } // namespace ctbrowser::html

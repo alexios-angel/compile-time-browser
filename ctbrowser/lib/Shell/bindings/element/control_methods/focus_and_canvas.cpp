@@ -1,5 +1,7 @@
 #include "helpers.hpp"
 
+#include "../../canvas_objects.hpp"
+
 namespace ctbrowser::shell {
 using namespace detail;
 using namespace input_types;
@@ -73,8 +75,14 @@ void dom_bindings::install_control_focus_canvas(context & cx) {
 
     // --- canvas --------------------------------------------------------
     define_operation(cx, canvas, "getContext", 1, [this](context & c, std::span<value> args) {
+        // `contextId` is required (2d.canvas.context.invalid.args).
+        if (args.empty()) {
+            c.throw_error("TypeError", "getContext: 1 argument required, but only 0 present");
+            return value::undefined();
+        }
         const node_id id = receiver(c);
         const std::string kind = arg_string(c, args, 0);
+        if (c.throw_pending()) { return value::undefined(); }
         // "2d" and "webgl". `webgl2` IS NOT IMPLEMENTED AND RETURNS NULL, and
         // getting that right took two wrong answers.
         //
@@ -115,7 +123,18 @@ void dom_bindings::install_control_focus_canvas(context & cx) {
             return webgl_context_object(c, id, 2);
         }
         if (!id || kind != "2d") { return value::null(); }
-        return canvas_context_object(c, id);
+        const value made = canvas_context_object(c, id);
+        // The settings belong to the context's creation, so only the first
+        // getContext('2d') reads them; later calls return the same context.
+        if (made.is_object()) {
+            auto * held = static_cast<script::object_object *>(made.as_heap());
+            if (held->find(canvas_detail::settings_key) == nullptr) {
+                const value settings = canvas_detail::context_settings(c, arg(args, 1));
+                if (c.throw_pending()) { return value::undefined(); }
+                held->set(canvas_detail::settings_key, settings);
+            }
+        }
+        return made;
     });
 
     // `canvas.toDataURL()` and `canvas.toBlob()` - READING A CANVAS BACK OUT.

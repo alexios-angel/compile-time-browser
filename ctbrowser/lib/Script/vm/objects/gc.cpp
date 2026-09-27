@@ -200,6 +200,11 @@ std::size_t context::collect() {
         }
     }
     for (const value v : pinned_results_) { mark(v); }
+    // Everything that survives is marked now; what the host holds weakly and
+    // nothing marked goes from its list before the sweep frees it.
+    if (weak_prune_) {
+        weak_prune_([](value v) { return !v.is_heap() || v.as_heap()->marked; });
+    }
     return sweep();
 }
 

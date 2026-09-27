@@ -53,6 +53,14 @@ void dom_bindings::observe_location(std::string href, std::string hash) {
 // document it has made; a secondary never registers.
 void dom_bindings::register_roots(context & cx) {
     cx.set_external_roots([this](const context::root_visitor & mark) { mark_roots(mark); });
+    // THE LIVE RANGES ARE WEAK (DOM 5.5: a live range is updated while it
+    // exists, and nothing keeps it existing). As roots, every Range and
+    // NodeIterator a page ever made lived for good and every mutation walked
+    // them all: dom/ranges/Range-surroundContents.html made thousands and
+    // reached the 4 GB cap in 22 seconds.
+    cx.set_weak_prune([this](const context::survives_fn & survives) {
+        std::erase_if(live_ranges_, [&](const value & range) { return !survives(range); });
+    });
 }
 
 dom_bindings::~dom_bindings() = default;
@@ -112,6 +120,12 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
         if (obj != nullptr) { mark(value::object(obj)); }
     }
     mark(blob_prototype_);
+    // The rendering contexts' prototypes: their natives capture the
+    // CanvasGradient, CanvasPattern and TextMetrics prototypes by pointer and
+    // reach them through private keys here, and a page may delete the globals.
+    mark(canvas2d_prototype_);
+    mark(webgl_prototype_);
+    mark(webgl2_prototype_);
     // Event.prototype and CustomEvent.prototype, for the same reason
     // Blob.prototype is here: they are held on a global a page can delete,
     // and an event whose prototype was collected stops being an Event.
@@ -131,7 +145,6 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
         mark(a.finished);
     }
     for (const keyframe_effect_record & e : effects_) { mark(e.self); }
-    for (const value & range : live_ranges_) { mark(range); }
     for (const value & list : pending_media_changes_) { mark(list); }
     for (const value & promise : rejections_to_notify_) { mark(promise); }
     for (const value & promise : outstanding_rejections_) { mark(promise); }
@@ -459,7 +472,12 @@ void dom_bindings::run_inserted_scripts() {
                                                 bytes.size());
                                execute_script_element(c, id, text);
                            }
-                           announce_load(id, !bytes.empty());
+                           // IN THIS TASK, not the next tick's: "execute the
+                           // script element" fires `load` - and a failed fetch
+                           // `error` - as part of the task that ran it, so a
+                           // task queued meanwhile (a rejection notification)
+                           // comes after (promise-resolution-order.html).
+                           settle_frame(c, pending_frame{id, !bytes.empty(), true});
                            return value::undefined();
                        }),
                 0, false);

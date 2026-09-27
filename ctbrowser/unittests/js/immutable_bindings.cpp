@@ -57,5 +57,11 @@ int main() {
     // A direct eval sees the caller's const as a const.
     js_expect(thrown("const c = 1; eval('c = 2')"), "TypeError");
     js_expect(thrown("const c = 1; (function(){ eval('c = 2'); })()"), "TypeError");
+    // A named class expression's own binding is in its dead zone while its
+    // heritage runs; a method reads the class.
+    js_expect("(function(){ try { (class x extends x {}); } catch (e) { return e.name; } })()",
+              "ReferenceError");
+    js_expect("(function(){ var C = class K { m() { return K; } }; return new C().m() === C; })()",
+              "true");
     REPORT("immutable_bindings");
 }

@@ -200,7 +200,7 @@ void install_262(context & cx) {
     // it outlives the closures the script leaves behind.
     method("evalScript", [](context & c, std::span<value> args) {
         const std::string source = args.empty() ? std::string{} : c.to_string(args[0]);
-        program compiled = ctbrowser::script::compiler::compile(source);
+        program compiled = ctbrowser::script::compiler::compile_script(source);
         if (!compiled.ok) {
             c.throw_error("SyntaxError", compiled.error);
             return value::undefined();
@@ -592,7 +592,8 @@ int main(int argc, char ** argv) {
         // been reused, and the first test to FAIL an assertion segfaults inside
         // the message it was building. Which is exactly how this was found -
         // every passing test passed and every failing one crashed.
-        const program & compiled = cx.own_program(ctbrowser::script::compiler::compile(source));
+        const program & compiled =
+            cx.own_program(ctbrowser::script::compiler::compile_script(source));
         if (!compiled.ok) {
             host_error(prelude.string() + ": " + compiled.error);
             return 3;
@@ -691,7 +692,10 @@ int main(int argc, char ** argv) {
     // a semicolon and a newline, before anything else the metadata asks for.
     if (opts.strict) { source = "\"use strict\";\n" + source; }
 
-    const program & compiled = cx.own_program(ctbrowser::script::compiler::compile(source));
+    // A TEST IS A Script (16.1), so compile_script: a top-level `return` or
+    // `new.target` is the SyntaxError the suite expects, where compile() takes
+    // it as the embedder's way of returning a value.
+    const program & compiled = cx.own_program(ctbrowser::script::compiler::compile_script(source));
     if (!compiled.ok) {
         report_compile_failure(compiled);
         return 1;

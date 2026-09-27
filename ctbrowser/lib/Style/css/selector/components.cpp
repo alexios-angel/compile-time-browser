@@ -47,6 +47,8 @@ namespace ctbrowser::style::css::selector_detail {
     // always defined - so it belongs here rather than in the state bits nothing sets.
     if (ascii_iequals(name, "defined")) { return structural_defined; }
     if (ascii_iequals(name, "placeholder-shown")) { return structural_placeholder_shown; }
+    if (ascii_iequals(name, "valid")) { return structural_valid; }
+    if (ascii_iequals(name, "invalid")) { return structural_invalid; }
     return 0;
 }
 

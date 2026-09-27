@@ -447,6 +447,13 @@ struct function_proto {
     // between them is made once per FUNCTION: the prologue and the implicit
     // return are emitted with no statement in hand.
     bool debug_offsets = false;
+    // THE COMPILER'S OWN RETHROWS: the index of each op::throw_value that
+    // throws again a value a handler caught - a finally's, an iterator close's
+    // - rather than a `throw` the source wrote. In emission order, so sorted.
+    // Kept beside code_offsets and only when it is, for the one reader that
+    // needs it: context::note_throw_site, where such a throw keeps the site of
+    // the throw it caught.
+    std::vector<std::uint32_t> rethrows;
 
     // THE COMPILED BODY, or null, which is almost always. Runtime-only: the
     // compiler never sets it, no image ever carries it, and `image_fingerprint`
@@ -541,13 +548,28 @@ struct program {
     // (19.2.1.3 step 17: CreateGlobalVarBinding(vn, true)), where a script's
     // are not (16.1.7 step 17, `false`) - see context::declare_global_var.
     bool eval_code = false;
+    // AN EVAL WHOSE VARIABLE ENVIRONMENT IS THE GLOBAL ONE - indirect, or
+    // direct from global code, and sloppy (19.2.1.1 steps 16-17): its `var`s
+    // and top-level functions are globals, checked and made by
+    // EvalDeclarationInstantiation (context::global_declaration_instantiation,
+    // context::eval_declaration_instantiation).
+    bool eval_global = false;
     // A CLASSIC SCRIPT'S TOP-LEVEL LEXICAL NAMES - `let`, `const`, `class` -
     // and its top-level FUNCTION declarations: with hoisted_vars, what
     // 16.1.7 GlobalDeclarationInstantiation checks against the bindings
     // earlier scripts made before this one may run (context::run). Data, like
-    // hoisted_vars. Empty for a module and an eval.
+    // hoisted_vars. Empty for a module; an eval_global eval lists its
+    // functions (and no lexical names - those are the eval's own).
     std::vector<std::string> lexical_names;
     std::vector<std::string> function_names;
+    // THE NAMES IN hoisted_vars THAT ONLY A BLOCK'S FUNCTION DECLARATION PUT
+    // THERE - no `var` and no top-level function declares them (B.3.2.2,
+    // B.3.2.3: a sloppy script's or eval's block function is also a var).
+    // Sorted. Such a name is never a refusal: one the global environment has
+    // as a lexical binding, or cannot take as a var (CanDeclareGlobalVar), is
+    // simply not created - context::annex_b_skipped - where a real `var` of
+    // it is the SyntaxError or TypeError. Data, like hoisted_vars.
+    std::vector<std::string> annex_b_names;
     // THE SOURCE THIS WAS COMPILED FROM, kept so a function can be printed.
     // A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
     std::string source;
@@ -555,6 +577,10 @@ struct program {
     script_kind kind = script_kind::classic;
     bool ok = true;
     std::string error;
+    // WHERE THE SOURCE FAILED TO PARSE, 1-based as `error`'s " - at L:C"
+    // spells it; 0 when the failure has no position.
+    std::uint32_t error_line = 0;
+    std::uint32_t error_column = 0;
 };
 
 } // namespace ctbrowser::script

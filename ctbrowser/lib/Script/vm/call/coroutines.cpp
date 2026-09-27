@@ -271,17 +271,22 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         // `.throw()`/`.return()`. Under the native that resumed us the
         // throw is parked (context::call), so it is taken back here; one
         // that already unwound past us (the interpreter asked directly) is
-        // the caller's, and this resume is over.
-        const std::size_t unwound = unwinds_;
+        // the caller's, and this resume is over. A PARKED throw counts in
+        // unwinds_ too - it unwound to call's fence - so `landed` asks for
+        // an unwind that nothing parked; until 2026-09-26 it asked for any,
+        // and every getter throw here went to the caller of `.throw()`.
+        std::size_t unwound = unwinds_;
+        const auto landed = [&] { return failed_ || (unwinds_ != unwound && !has_pending_throw_); };
         const auto took = [&] {
-            if (unwinds_ != unwound || !throw_pending()) { return false; }
+            if (!has_pending_throw_) { return false; }
             forwarded = take_pending_throw();
             threw = true;
+            unwound = unwinds_;
             return true;
         };
         const value method =
             lookup_property(iterator, how == resume_mode::thrown ? "throw" : "return");
-        if (unwinds_ != unwound) { return value::undefined(); }
+        if (landed()) { return value::undefined(); }
         const bool no_method = !took() && method.is_nullish();
         if (threw) {
             // GetMethod threw - handled with the rest below.
@@ -295,7 +300,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
             // No `throw`: close the inner iterator, then a TypeError at the
             // yield - the protocol was violated by the delegate (7.b.iii).
             const value close = lookup_property(iterator, "return");
-            if (unwinds_ != unwound) { return value::undefined(); }
+            if (landed()) { return value::undefined(); }
             if (!took() && close.is_callable()) {
                 value thrown_by = value::undefined();
                 bool close_threw = false;
@@ -334,10 +339,10 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         value final = value::undefined();
         if (!threw && !(no_method && how == resume_mode::returned)) {
             finished = truthy(lookup_property(forwarded, "done"));
-            if (unwinds_ != unwound) { return value::undefined(); }
+            if (landed()) { return value::undefined(); }
             if (!took() && finished) {
                 final = lookup_property(forwarded, "value");
-                if (unwinds_ != unwound) { return value::undefined(); }
+                if (landed()) { return value::undefined(); }
                 (void)took();
             }
         }

@@ -150,7 +150,7 @@ void install_function(context & cx) {
                // a constructor exactly when its target is (10.4.1.3 step 5).
                fn->define(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"), self, attr_none);
                fn->is_constructor = is_constructor(self);
-               fn->proto_link = proto;
+               fn->proto_link = proto.is_null() ? value::undefined() : proto; // explicit
                // 20.2.3.2: a bound function's `length` is the target's less the
                // arguments already supplied, floored at zero, and its `name` is
                // "bound " prefixed to the target's - both { false, false, true }. It
@@ -540,7 +540,17 @@ void install_dynamic_function(context & cx) {
                     return value::undefined();
                 }
                 const program & kept = c.own_program(std::move(compiled));
-                for (const std::string & name : kept.hoisted_vars) { c.declare_global_var(name); }
+                // FROM GLOBAL CODE its declarations are globals, instantiated
+                // as an indirect eval's are (program::eval_global).
+                if (kept.eval_global && !c.eval_declaration_instantiation(kept)) {
+                    return value::undefined();
+                }
+                for (const std::string & name : kept.hoisted_vars) {
+                    if (!c.annex_b_skipped(kept, name)) { c.declare_global_var(name); }
+                }
+                for (const std::string & name : kept.function_names) {
+                    c.declare_global_function(name, true);
+                }
                 auto * entry = c.allocate<closure_object>(&kept.functions[0]);
                 entry->owner = &kept;
                 entry->realm = caller != nullptr && caller->realm != nullptr ? caller->realm
@@ -703,6 +713,9 @@ void install_class_defined(context & cx) {
         }
         value * proto = ctor->find("prototype");
         if (proto == nullptr || !proto->is_object()) { return value::undefined(); }
+        // MakeConstructor(F, false, proto) (15.7.14 step 16): a class's
+        // `prototype` is not writable, where a function's is.
+        ctor->set_attrs("prototype", attr_none);
         auto * table = static_cast<object_object *>(proto->as_heap());
         table->defining_class = false;
         std::vector<std::pair<std::string, std::uint8_t>> entries;
