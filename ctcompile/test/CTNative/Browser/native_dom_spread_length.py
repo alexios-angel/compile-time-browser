@@ -161,38 +161,34 @@ def main():
     ):
         ir, contract = dom.prepare(args, name, source, 1, entry_name="spreadLength")
         contract["initial_intrinsics"] = ["Array", "Element", "Function"]
-        for owned in (False, True):
-            manifest = dict(
-                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+        for owned, optimize, manifest in dom.variants(contract):
+            case = f"spread-{name}-{owned}-{optimize}"
+            native = dom.lower(args, ir, manifest, case, optimize=optimize)
+            if '"ctnative::Element.prototype.querySelectorAll.call"' not in native.read_text():
+                raise RuntimeError("spread count lost its public Style selector call")
+            dom.standalone(
+                args,
+                native,
+                case,
+                checks + (OWNED_CHECKS if owned else ""),
+                compilers,
+                includes,
+                libraries,
             )
-            for optimize in (False, True):
-                case = f"spread-{name}-{owned}-{optimize}"
-                native = dom.lower(args, ir, manifest, case, optimize=optimize)
-                if '"ctnative::Element.prototype.querySelectorAll.call"' not in native.read_text():
-                    raise RuntimeError("spread count lost its public Style selector call")
-                dom.standalone(
+            for missing in ("Array", "Element", "Function"):
+                dom.lower(
                     args,
-                    native,
-                    case,
-                    checks + (OWNED_CHECKS if owned else ""),
-                    compilers,
-                    includes,
-                    libraries,
+                    ir,
+                    dict(
+                        manifest,
+                        initial_intrinsics=[
+                            item for item in manifest["initial_intrinsics"] if item != missing
+                        ],
+                    ),
+                    f"{case}-missing-{missing}",
+                    optimize=optimize,
+                    success=False,
                 )
-                for missing in ("Array", "Element", "Function"):
-                    dom.lower(
-                        args,
-                        ir,
-                        dict(
-                            manifest,
-                            initial_intrinsics=[
-                                item for item in manifest["initial_intrinsics"] if item != missing
-                            ],
-                        ),
-                        f"{case}-missing-{missing}",
-                        optimize=optimize,
-                        success=False,
-                    )
     for name, body in REFUSALS.items():
         source = (
             "function bad(element) { const nodes=element.querySelectorAll('*'); " + body + " }\n"

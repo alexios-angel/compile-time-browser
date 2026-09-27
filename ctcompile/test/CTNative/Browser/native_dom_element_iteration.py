@@ -71,54 +71,48 @@ def main():
     for kind in ("direct", "explicit", "omitted", "undefined"):
         ir, contract = dom.prepare(args, kind, source(kind), 2, entry_name="findElements")
         contract.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
-        for owned in (False, True):
-            manifest = dict(
-                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+        for owned, optimize, manifest in dom.variants(contract):
+            name = f"element-iteration-{kind}-{owned}-{optimize}"
+            native = dom.lower(args, ir, manifest, name, optimize=optimize)
+            text = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
+            if "std::vector<ctnative::js_element_t>" not in text or any(
+                helper in text for helper in INTRINSICS[4:]
+            ):
+                raise RuntimeError(f"{name}: iterator protocol survived typed snapshot lowering")
+            client = (
+                CURRENT_DOCUMENT_CHECKS
+                + indexed.CHECKS
+                + INPUT_CHECKS
+                + (indexed.OWNED_CHECKS if owned else "")
             )
-            for optimize in (False, True):
-                name = f"element-iteration-{kind}-{owned}-{optimize}"
-                native = dom.lower(args, ir, manifest, name, optimize=optimize)
-                text = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
-                if "std::vector<ctnative::js_element_t>" not in text or any(
-                    helper in text for helper in INTRINSICS[4:]
-                ):
-                    raise RuntimeError(
-                        f"{name}: iterator protocol survived typed snapshot lowering"
-                    )
-                client = (
-                    CURRENT_DOCUMENT_CHECKS
-                    + indexed.CHECKS
-                    + INPUT_CHECKS
-                    + (indexed.OWNED_CHECKS if owned else "")
+            client = client.replace(
+                "@DEFAULT@", "true" if kind in ("omitted", "undefined") else "false"
+            )
+            dom.standalone(args, native, name, client, compilers, includes, libraries)
+            dom.lower(
+                args,
+                ir,
+                manifest,
+                name + "-budget",
+                max_steps=0,
+                optimize=optimize,
+                success=False,
+            )
+            refusals += 1
+            for intrinsic in INTRINSICS[4:] + ["Array", "Element"]:
+                bad = dict(
+                    manifest,
+                    initial_intrinsics=[item for item in INTRINSICS if item != intrinsic],
                 )
-                client = client.replace(
-                    "@DEFAULT@", "true" if kind in ("omitted", "undefined") else "false"
-                )
-                dom.standalone(args, native, name, client, compilers, includes, libraries)
                 dom.lower(
                     args,
                     ir,
-                    manifest,
-                    name + "-budget",
-                    max_steps=0,
+                    bad,
+                    name + "-missing-" + intrinsic,
                     optimize=optimize,
                     success=False,
                 )
                 refusals += 1
-                for intrinsic in INTRINSICS[4:] + ["Array", "Element"]:
-                    bad = dict(
-                        manifest,
-                        initial_intrinsics=[item for item in INTRINSICS if item != intrinsic],
-                    )
-                    dom.lower(
-                        args,
-                        ir,
-                        bad,
-                        name + "-missing-" + intrinsic,
-                        optimize=optimize,
-                        success=False,
-                    )
-                    refusals += 1
     for name, body in REFUSALS.items():
         text = f"function bad(anchor, expected) {{ const R={{{indexed.FIND}}}; {body} }}\n"
         ir, manifest = dom.prepare(args, name, text, 2, entry_name="bad")

@@ -212,62 +212,53 @@ def main():
             current_document_parameter=0,
             initial_intrinsics=["Array", "Element", "Function", "Number"],
         )
-        for owned in (False, True):
-            manifest = dict(
-                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
-            )
-            for optimize in (False, True):
-                name = f"find-elements-{kind}-{owned}-{optimize}"
-                native = dom.lower(args, ir, manifest, name, optimize=optimize)
-                text = native.read_text()
-                if (
-                    "ctnative::Element.prototype.querySelectorAll.call" not in text
-                    or "std::vector<ctnative::js_element_t>" not in text
-                    or "std::vector<ctbrowser::element_ref>" in text
-                    or (kind != "explicit" and "ctnative::document.documentElement" not in text)
-                ):
-                    raise RuntimeError(f"{name}: R.find bypassed its typed public DOM/Style views")
-                client = (
-                    CURRENT_DOCUMENT_CHECKS
-                    + CHECKS
-                    + INPUT_CHECKS
-                    + (OWNED_CHECKS if owned else "")
-                ).replace("@DEFAULT@", "false" if kind == "explicit" else "true")
-                dom.standalone(args, native, name, client, compilers, includes, libraries)
-                controls = [
-                    ("budget", manifest, 0),
-                    ("dataset", dict(manifest, dataset_parameters=[0]), None),
-                ]
-                if kind != "explicit":
-                    missing = dict(manifest)
-                    del missing["current_document_parameter"]
-                    controls.append(("unbound", missing, None))
-                for intrinsic in manifest["initial_intrinsics"]:
-                    controls.append(
-                        (
-                            f"missing-{intrinsic}",
-                            dict(
-                                manifest,
-                                initial_intrinsics=[
-                                    item
-                                    for item in manifest["initial_intrinsics"]
-                                    if item != intrinsic
-                                ],
-                            ),
-                            None,
-                        )
+        for owned, optimize, manifest in dom.variants(contract):
+            name = f"find-elements-{kind}-{owned}-{optimize}"
+            native = dom.lower(args, ir, manifest, name, optimize=optimize)
+            text = native.read_text()
+            if (
+                "ctnative::Element.prototype.querySelectorAll.call" not in text
+                or "std::vector<ctnative::js_element_t>" not in text
+                or "std::vector<ctbrowser::element_ref>" in text
+                or (kind != "explicit" and "ctnative::document.documentElement" not in text)
+            ):
+                raise RuntimeError(f"{name}: R.find bypassed its typed public DOM/Style views")
+            client = (
+                CURRENT_DOCUMENT_CHECKS + CHECKS + INPUT_CHECKS + (OWNED_CHECKS if owned else "")
+            ).replace("@DEFAULT@", "false" if kind == "explicit" else "true")
+            dom.standalone(args, native, name, client, compilers, includes, libraries)
+            controls = [
+                ("budget", manifest, 0),
+                ("dataset", dict(manifest, dataset_parameters=[0]), None),
+            ]
+            if kind != "explicit":
+                missing = dict(manifest)
+                del missing["current_document_parameter"]
+                controls.append(("unbound", missing, None))
+            for intrinsic in manifest["initial_intrinsics"]:
+                controls.append(
+                    (
+                        f"missing-{intrinsic}",
+                        dict(
+                            manifest,
+                            initial_intrinsics=[
+                                item for item in manifest["initial_intrinsics"] if item != intrinsic
+                            ],
+                        ),
+                        None,
                     )
-                for suffix, bad, budget in controls:
-                    dom.lower(
-                        args,
-                        ir,
-                        bad,
-                        f"{name}-{suffix}",
-                        optimize=optimize,
-                        max_steps=budget,
-                        success=False,
-                    )
-                    refusals += 1
+                )
+            for suffix, bad, budget in controls:
+                dom.lower(
+                    args,
+                    ir,
+                    bad,
+                    f"{name}-{suffix}",
+                    optimize=optimize,
+                    max_steps=budget,
+                    success=False,
+                )
+                refusals += 1
     for name, body in REFUSALS.items():
         ir, manifest = dom.prepare(
             args,

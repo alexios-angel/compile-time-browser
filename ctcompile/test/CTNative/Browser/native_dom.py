@@ -516,6 +516,17 @@ def parse_args(description, *, oracles=False, switches=()):
     return args
 
 
+PROVIDERS = ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1")
+
+
+def variants(contract):
+    """(owned, optimize, manifest): both DOM providers - owned is the session
+    one - under both policies, each with its own copy of `contract`."""
+    for owned, provider in enumerate(PROVIDERS):
+        for optimize in (False, True):
+            yield bool(owned), optimize, dict(contract, provider=provider)
+
+
 def prepare(args, name, source, parameters, *, entry_name=None):
     js = args.work / f"{name}.js"
     ir = args.work / f"{name}.mlir"

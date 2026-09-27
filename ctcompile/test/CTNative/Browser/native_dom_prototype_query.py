@@ -130,57 +130,53 @@ def main():
     for case, source, parameters, checks, owned_checks, extra_intrinsics in cases:
         ir, contract = dom.prepare(args, case, source, parameters)
         contract["initial_intrinsics"] = ["Element", "Function", *extra_intrinsics]
-        for owned in (False, True):
-            manifest = dict(
-                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+        for owned, optimize, manifest in dom.variants(contract):
+            name = f"prototype-{case}-{owned}-{optimize}"
+            native = dom.lower(args, ir, manifest, name, optimize=optimize)
+            emitted = native.read_text()
+            if case in ("query", "matches", "closest") and (
+                '"ctnative::js_element_t"' not in emitted
+                or "ctcompile/CTNative/Runtime/Browser.hpp" not in emitted
+            ):
+                raise RuntimeError(f"{case}: selector lost its typed browser receiver")
+            if case in ("query", "closest") and (
+                '"std::optional<ctnative::js_element_t>"' not in emitted
+                or '"ctnative::element_or_null"' not in emitted
+            ):
+                raise RuntimeError(f"{case}: selector lost its typed nullable result")
+            for method in {
+                "query": ("querySelector", "querySelectorAll"),
+                "query-all": ("querySelectorAll",),
+                "matches": ("matches",),
+                "closest": ("closest",),
+            }[case]:
+                if f'"ctnative::Element.prototype.{method}.call"' not in emitted:
+                    raise RuntimeError(f"{case}: prototype call bypassed the native method")
+            dom.standalone(
+                args,
+                native,
+                name,
+                PROTOTYPE_CHECKS + checks + (owned_checks if owned else ""),
+                compilers,
+                includes,
+                libraries,
             )
-            for optimize in (False, True):
-                name = f"prototype-{case}-{owned}-{optimize}"
-                native = dom.lower(args, ir, manifest, name, optimize=optimize)
-                emitted = native.read_text()
-                if case in ("query", "matches", "closest") and (
-                    '"ctnative::js_element_t"' not in emitted
-                    or "ctcompile/CTNative/Runtime/Browser.hpp" not in emitted
-                ):
-                    raise RuntimeError(f"{case}: selector lost its typed browser receiver")
-                if case in ("query", "closest") and (
-                    '"std::optional<ctnative::js_element_t>"' not in emitted
-                    or '"ctnative::element_or_null"' not in emitted
-                ):
-                    raise RuntimeError(f"{case}: selector lost its typed nullable result")
-                for method in {
-                    "query": ("querySelector", "querySelectorAll"),
-                    "query-all": ("querySelectorAll",),
-                    "matches": ("matches",),
-                    "closest": ("closest",),
-                }[case]:
-                    if f'"ctnative::Element.prototype.{method}.call"' not in emitted:
-                        raise RuntimeError(f"{case}: prototype call bypassed the native method")
-                dom.standalone(
+            for missing in ("Element", "Function"):
+                dom.lower(
                     args,
-                    native,
-                    name,
-                    PROTOTYPE_CHECKS + checks + (owned_checks if owned else ""),
-                    compilers,
-                    includes,
-                    libraries,
+                    ir,
+                    dict(
+                        manifest,
+                        initial_intrinsics=[
+                            intrinsic
+                            for intrinsic in manifest["initial_intrinsics"]
+                            if intrinsic != missing
+                        ],
+                    ),
+                    f"{name}-missing-{missing}",
+                    optimize=optimize,
+                    success=False,
                 )
-                for missing in ("Element", "Function"):
-                    dom.lower(
-                        args,
-                        ir,
-                        dict(
-                            manifest,
-                            initial_intrinsics=[
-                                intrinsic
-                                for intrinsic in manifest["initial_intrinsics"]
-                                if intrinsic != missing
-                            ],
-                        ),
-                        f"{name}-missing-{missing}",
-                        optimize=optimize,
-                        success=False,
-                    )
     for name, body in REFUSALS.items():
         source = f"function bad(element) {{ {body} }}\n"
         ir, manifest = dom.prepare(args, name, source, 1, entry_name="bad")

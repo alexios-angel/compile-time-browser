@@ -345,74 +345,65 @@ def main():
         contract.update(
             current_document_parameter=anchor, initial_intrinsics=["Array", "Element", "Function"]
         )
-        for owned in (False, True):
-            manifest = dict(
-                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
-            )
-            for optimize in (False, True):
-                name = f"{case}-{owned}-{optimize}"
-                native = dom.lower(args, ir, manifest, name, optimize=optimize)
-                text = native.read_text()
-                if (
-                    "ctnative::document_scope" not in text
-                    or "ctnative::document.documentElement" not in text
-                    or "ctnative::Element.prototype.querySelectorAll.call" not in text
-                ):
-                    raise RuntimeError(f"{name}: original default root bypassed public DOM/Style")
-                client = (
-                    CURRENT_DOCUMENT_CHECKS
-                    + checks
-                    + INPUT_CHECKS
-                    + (owned_checks if owned else "")
-                ).replace("@ARGUMENTS@", "expected, anchor" if anchor else "anchor, expected")
-                dom.standalone(args, native, name, client, compilers, includes, libraries)
-                executions += 4
-                if not case.startswith("default-root-"):
-                    dom.lower(
-                        args,
-                        ir,
-                        manifest,
-                        f"{name}-budget",
-                        optimize=optimize,
-                        max_steps=0,
-                        success=False,
+        for owned, optimize, manifest in dom.variants(contract):
+            name = f"{case}-{owned}-{optimize}"
+            native = dom.lower(args, ir, manifest, name, optimize=optimize)
+            text = native.read_text()
+            if (
+                "ctnative::document_scope" not in text
+                or "ctnative::document.documentElement" not in text
+                or "ctnative::Element.prototype.querySelectorAll.call" not in text
+            ):
+                raise RuntimeError(f"{name}: original default root bypassed public DOM/Style")
+            client = (
+                CURRENT_DOCUMENT_CHECKS + checks + INPUT_CHECKS + (owned_checks if owned else "")
+            ).replace("@ARGUMENTS@", "expected, anchor" if anchor else "anchor, expected")
+            dom.standalone(args, native, name, client, compilers, includes, libraries)
+            executions += 4
+            if not case.startswith("default-root-"):
+                dom.lower(
+                    args,
+                    ir,
+                    manifest,
+                    f"{name}-budget",
+                    optimize=optimize,
+                    max_steps=0,
+                    success=False,
+                )
+                refusals += 1
+                continue
+            missing = dict(manifest)
+            del missing["current_document_parameter"]
+            controls = [
+                ("unbound", missing, None),
+                ("wrong-index", dict(manifest, current_document_parameter=2), None),
+                ("stale", dict(manifest, module_sha256="0" * 64), None),
+                ("budget", manifest, 0),
+            ]
+            for intrinsic in ("Array", "Element", "Function"):
+                controls.append(
+                    (
+                        f"missing-{intrinsic}",
+                        dict(
+                            manifest,
+                            initial_intrinsics=[
+                                item for item in manifest["initial_intrinsics"] if item != intrinsic
+                            ],
+                        ),
+                        None,
                     )
-                    refusals += 1
-                    continue
-                missing = dict(manifest)
-                del missing["current_document_parameter"]
-                controls = [
-                    ("unbound", missing, None),
-                    ("wrong-index", dict(manifest, current_document_parameter=2), None),
-                    ("stale", dict(manifest, module_sha256="0" * 64), None),
-                    ("budget", manifest, 0),
-                ]
-                for intrinsic in ("Array", "Element", "Function"):
-                    controls.append(
-                        (
-                            f"missing-{intrinsic}",
-                            dict(
-                                manifest,
-                                initial_intrinsics=[
-                                    item
-                                    for item in manifest["initial_intrinsics"]
-                                    if item != intrinsic
-                                ],
-                            ),
-                            None,
-                        )
-                    )
-                for suffix, bad, budget in controls:
-                    dom.lower(
-                        args,
-                        ir,
-                        bad,
-                        f"{name}-{suffix}",
-                        optimize=optimize,
-                        max_steps=budget,
-                        success=False,
-                    )
-                    refusals += 1
+                )
+            for suffix, bad, budget in controls:
+                dom.lower(
+                    args,
+                    ir,
+                    bad,
+                    f"{name}-{suffix}",
+                    optimize=optimize,
+                    max_steps=budget,
+                    success=False,
+                )
+                refusals += 1
     for name, body in REFUSALS.items():
         rejected_source = f"function bad(anchor, expected) {{ const R={{{FIND}}}; {body} }}\n"
         ir, manifest = dom.prepare(args, name, rejected_source, 2, entry_name="bad")

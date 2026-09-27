@@ -96,17 +96,13 @@ def main():
     compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     ir, contract = dom.prepare(args, "query", SOURCE, 2)
-    for owned in (False, True):
-        manifest = dict(
-            contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
-        )
-        for optimize in (False, True):
-            name = f"query-{owned}-{optimize}"
-            native = dom.lower(args, ir, manifest, name, optimize=optimize)
-            if '"ctnative::Element.prototype.querySelector.call"' not in native.read_text():
-                raise RuntimeError("querySelector bypassed its native method object")
-            checks = CHECKS + (OWNED_CHECKS if owned else "")
-            dom.standalone(args, native, name, checks, compilers, includes, libraries)
+    for owned, optimize, manifest in dom.variants(contract):
+        name = f"query-{owned}-{optimize}"
+        native = dom.lower(args, ir, manifest, name, optimize=optimize)
+        if '"ctnative::Element.prototype.querySelector.call"' not in native.read_text():
+            raise RuntimeError("querySelector bypassed its native method object")
+        checks = CHECKS + (OWNED_CHECKS if owned else "")
+        dom.standalone(args, native, name, checks, compilers, includes, libraries)
     refusals = (
         "return element.querySelector('button').matches(':scope');",
         "return element.querySelector('button');",
