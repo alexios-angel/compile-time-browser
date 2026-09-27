@@ -277,26 +277,13 @@ void lowering::convertBoundaries(ctjs::FuncOp fn) {
             }
         } else if (auto yielded = llvm::dyn_cast<ctjs::TryYieldOp>(op)) {
             convert(0, yielded->getParentOfType<ctjs::TryOp>().getResult().getType());
-        } else if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(op)) {
-            for (unsigned i = 0; i < op->getNumOperands(); ++i) {
-                convert(i, loop.getBefore().front().getArgument(i).getType());
-            }
-        } else if (auto loop = llvm::dyn_cast<mlir::scf::ForOp>(op)) {
-            for (unsigned i = 3; i < op->getNumOperands(); ++i) {
-                convert(i, loop->getResult(i - 3).getType());
-            }
-        } else if (llvm::isa<mlir::scf::YieldOp, ctjs::InvokeYieldOp>(op)) {
+        } else if (llvm::isa<ctjs::InvokeYieldOp>(op)) {
             // A proved invoke's String failure arm widens into its json result.
-            mlir::Operation * parent = op->getParentOp();
             for (unsigned i = 0; i < op->getNumOperands(); ++i) {
-                auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(parent);
-                convert(i, loop ? loop.getBefore().front().getArgument(i).getType()
-                                : parent->getResult(i).getType());
+                convert(i, op->getParentOp()->getResult(i).getType());
             }
-        } else if (llvm::isa<mlir::scf::ConditionOp>(op)) {
-            for (unsigned i = 1; i < op->getNumOperands(); ++i) {
-                convert(i, op->getParentOp()->getResult(i - 1).getType());
-            }
+        } else {
+            for (unsigned i = 0; i < op->getNumOperands(); ++i) { convert(i, edgeTarget(op, i)); }
         }
     }
 }

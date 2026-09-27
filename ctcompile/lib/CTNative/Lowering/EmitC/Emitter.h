@@ -21,6 +21,9 @@ inline constexpr llvm::StringLiteral kDOMElementViewVectorType =
 ec::CallOpaqueOp callWithConstValueOperands(mlir::OpBuilder & builder, mlir::Location where,
                                             mlir::TypeRange results, mlir::StringAttr callee,
                                             mlir::ValueRange operands);
+// The type SCF operand `index` flows into: a while's before argument, a for's
+// or condition's result, a yield's parent result or before argument. Null otherwise.
+mlir::Type edgeTarget(mlir::Operation * op, unsigned index);
 // The single result of callWithConstValueOperands.
 mlir::Value callValue(mlir::OpBuilder & builder, mlir::Location where, mlir::Type result,
                       const llvm::Twine & callee, mlir::ValueRange operands);

@@ -4,6 +4,26 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+mlir::Type edgeTarget(mlir::Operation * op, unsigned index) {
+    if (llvm::isa<mlir::scf::YieldOp>(op)) {
+        if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(op->getParentOp())) {
+            op = loop;
+        } else {
+            return op->getParentOp()->getResult(index).getType();
+        }
+    }
+    if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(op)) {
+        return loop.getBefore().front().getArgument(index).getType();
+    }
+    if (llvm::isa<mlir::scf::ForOp>(op) && index >= 3) {
+        return op->getResult(index - 3).getType();
+    }
+    if (llvm::isa<mlir::scf::ConditionOp>(op) && index > 0) {
+        return op->getParentOp()->getResult(index - 1).getType();
+    }
+    return {};
+}
+
 // Retype every JavaScript value in the function from the lattice. Done
 // BEFORE any operation is replaced, so the replacements see carriers.
 void lowering::retype(ctjs::FuncOp fn) {
@@ -206,22 +226,14 @@ void lowering::retype(ctjs::FuncOp fn) {
             op->setOperand(
                 index, ec::AddressOfOp::create(at, op->getLoc(), pointer, op->getOperand(index)));
         };
-        if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(op)) {
-            for (unsigned index = 0; index < op->getNumOperands(); ++index) {
-                borrow(index, loop.getBeforeArguments()[index].getType());
-            }
-        } else if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op)) {
-            auto * parent = yield->getParentOp();
-            auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(parent);
-            if (!loop && !llvm::isa<mlir::scf::IfOp>(parent)) { return; }
-            for (unsigned index = 0; index < op->getNumOperands(); ++index) {
-                borrow(index, loop ? loop.getBeforeArguments()[index].getType()
-                                   : parent->getResult(index).getType());
-            }
-        } else if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(op)) {
-            for (unsigned index = 1; index < op->getNumOperands(); ++index) {
-                borrow(index, condition->getParentOp()->getResult(index - 1).getType());
-            }
+        // Only while/if yields borrow, and a for loop's operands never do.
+        if (llvm::isa<mlir::scf::ForOp>(op) ||
+            (llvm::isa<mlir::scf::YieldOp>(op) &&
+             !llvm::isa<mlir::scf::WhileOp, mlir::scf::IfOp>(op->getParentOp()))) {
+            return;
+        }
+        for (unsigned index = 0; index < op->getNumOperands(); ++index) {
+            if (auto target = edgeTarget(op, index)) { borrow(index, target); }
         }
     });
     // NOW THE SHAPES. The census gave every closed literal in the module

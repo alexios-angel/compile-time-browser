@@ -122,20 +122,12 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             mlir::Operation * user = use.getOwner();
             const unsigned index = use.getOperandNumber();
             mlir::Type expected;
-            if (llvm::isa<mlir::scf::YieldOp>(user)) {
-                mlir::Operation * parent = user->getParentOp();
-                if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(parent)) {
-                    expected = loop.getBefore().front().getArgument(index).getType();
-                } else if (llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp>(parent)) {
-                    expected = parent->getResult(index).getType();
-                }
-            } else if (llvm::isa<mlir::scf::ConditionOp>(user) && index > 0) {
-                expected = user->getParentOp()->getResult(index - 1).getType();
-            } else if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(user)) {
-                expected = loop.getBefore().front().getArgument(index).getType();
-            } else if (llvm::isa<mlir::scf::ForOp>(user) && index >= 3) {
-                expected = user->getResult(index - 3).getType();
-            } else if (auto exit = llvm::dyn_cast<ctjs::TryExitOp>(user)) {
+            if (!llvm::isa<mlir::scf::YieldOp>(user) ||
+                llvm::isa<mlir::scf::WhileOp, mlir::scf::IfOp, mlir::scf::ForOp>(
+                    user->getParentOp())) {
+                expected = edgeTarget(user, index);
+            }
+            if (auto exit = llvm::dyn_cast<ctjs::TryExitOp>(user)) {
                 auto parent = exit->getParentOfType<ctjs::TryOp>();
                 if (index == 1) {
                     expected = parent.getResult().getType();
