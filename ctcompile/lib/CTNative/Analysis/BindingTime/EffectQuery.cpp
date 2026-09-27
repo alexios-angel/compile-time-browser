@@ -113,13 +113,6 @@ bool closedEffectEnvironment(mlir::ModuleOp module) {
 
 namespace {
 constexpr unsigned maxQuerySteps = 4096, maxReachable = 256;
-bool clean(const fact & value, const flow & state) {
-    return value.time == BindingTime::Static && !value.nodes.empty() &&
-           llvm::all_of(value.nodes, [&](mlir::Operation * id) {
-               auto found = state.heaps.find(id);
-               return found != state.heaps.end() && !found->second.dynamic;
-           });
-}
 bool local(const fact & value, ctjs::FuncOp caller) {
     return llvm::all_of(value.nodes, [&](mlir::Operation * id) {
         return id->getParentOfType<ctjs::FuncOp>() == caller;
