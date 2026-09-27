@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Execute finite Map key/value storage and independently proved read types."""
 
-import argparse
 import importlib.util
 import os
 from pathlib import Path
 import re
-import shutil
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers
+from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, native_args, native_tools
 
 spec = importlib.util.spec_from_file_location(
     "representation", Path(__file__).with_name("map-representation.py")
@@ -219,19 +217,9 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fixtures", type=Path, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__, "fixtures")
     node, reference = args.node, args.reference
-    compilers = find_compilers()
-    nm = shutil.which("nm")
-    assert all(compilers) and nm
+    compilers, nm = native_tools(reference)
     source = (args.fixtures / "mixed.js").read_text()
     for ordered in (False, True):
         name = "ordered" if ordered else "associative"

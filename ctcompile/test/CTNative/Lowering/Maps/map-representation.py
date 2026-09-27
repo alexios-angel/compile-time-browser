@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """Check associative lookup, ordered fallback, aliases, and owning Map values."""
 
-import argparse
 import os
 from pathlib import Path
 import re
-import shutil
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers, node_globals, run
+from CTNative.harness import (
+    CORE_INCLUDE,
+    RUNTIME_INCLUDE,
+    native_args,
+    native_tools,
+    node_globals,
+    run,
+)
 from CTNative.Exports import boundary
 
 
@@ -47,21 +52,10 @@ int main() {
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fixtures", type=Path, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__, "fixtures")
     tests = Path(__file__).resolve().parents[3]
     node, reference = args.node, args.reference
-    nm = shutil.which("nm")
-    if not nm:
-        raise RuntimeError("Map representation regression requires nm")
-    compilers = find_compilers()
+    compilers, nm = native_tools(reference)
     cases = [
         (
             "associative",

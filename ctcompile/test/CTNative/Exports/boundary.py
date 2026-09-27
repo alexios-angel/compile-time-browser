@@ -5,13 +5,12 @@ These are measured boundary tests. Update the admission expectations only when
 an explicit live consumer implements the corresponding ownership/call gate.
 """
 
-import argparse
 import json
 from pathlib import Path
 import re
 
 from CTNative.HostContract import contract as host
-from CTNative.harness import REFUSAL, forge_module, prepare_js
+from CTNative.harness import REFUSAL, forge_module, native_args, prepare_js
 
 FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE = re.compile(r"^\s*emitc\.func\b", re.M)
@@ -82,14 +81,7 @@ def follow(args, ir, name):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__)
     reference, node = args.reference, args.node
     sources = {
         "scalar": "var host = {}; host.slot = 42; var trace = host.slot;",

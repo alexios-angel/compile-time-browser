@@ -1,25 +1,17 @@
 #!/usr/bin/env python3
 """Prove SCF vector borrows preserve entry-owner lifetime and JavaScript identity."""
 
-import argparse
 import hashlib
-from pathlib import Path
 import re
 
-from CTNative.harness import CLEANUP, FLAGS, find_compilers, node_globals, run
+from CTNative.harness import CLEANUP, FLAGS, find_compilers, native_args, node_globals, run
 from Target.Cpp.harness import function_body
 
 ORIGINAL_SHA256 = "ac17441800c02afebc9c0f2ca529984c3fd21653ba676eff991ade6028daf490"
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("original", "fixtures", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__, "original", "fixtures")
     original = args.original.read_text().split("//--- alias.js\n", 1)[1]
     if hashlib.sha256(original.encode()).hexdigest() != ORIGINAL_SHA256:
         raise RuntimeError("the preserved 165-byte alias.js source changed")

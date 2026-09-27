@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """Execute nullable global observations without changing their source type proof."""
 
-import argparse
 from pathlib import Path
 import re
-import shutil
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "Ownership"))
 from native_owned_global_maps.driver_common import boundary, host, owned
 
-from CTNative.harness import find_compilers, node_globals
+from CTNative.harness import native_args, native_tools, node_globals
 
 SOURCE = r"""function scalar(which) {
     return which === 0 ? void 0 : which === 1 ? null : which === 2 ? -0 :
@@ -88,18 +86,9 @@ def normalized(output):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
-    compilers = find_compilers()
+    args = native_args(__doc__)
     reference, node = args.reference, args.node
-    nm = shutil.which("nm")
-    assert all(compilers) and nm and owned.VM.search(host.run([nm, "-C", str(reference)]).stdout)
+    compilers, nm = native_tools(reference)
     js, prepared, count = boundary.prepare(args, "nullable-global-output", SOURCE)
     assert count == 9
     expected = "".join(f"{name}={EXPECTED[name]}\n" for name in sorted(EXPECTED))

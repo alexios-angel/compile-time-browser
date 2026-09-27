@@ -5,13 +5,12 @@ import argparse
 import os
 from pathlib import Path
 import re
-import shutil
 
 from CTNative.harness import (
     CORE_INCLUDE,
     REFUSAL,
     RUNTIME_INCLUDE,
-    find_compilers,
+    native_tools,
     prepare_js,
     run,
 )
@@ -148,10 +147,7 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     tests = Path(__file__).resolve().parents[3]
     reference = args.reference
-    compilers = find_compilers()
-    nm = shutil.which("nm") or shutil.which("llvm-nm")
-    if not nm or not VM_SYMBOL.search(run([nm, "-C", str(reference)]).stdout):
-        raise RuntimeError("VM symbol check cannot detect the interpreter in its positive control")
+    compilers, nm = native_tools(reference)
 
     programs = [
         ("specimen", args.specimen, 6, "result=4211\n", ["exports"]),

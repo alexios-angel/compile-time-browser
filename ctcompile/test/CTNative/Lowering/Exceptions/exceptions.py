@@ -6,9 +6,8 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 
-from CTNative.harness import CLEANUP, CORE_INCLUDE, FLAGS, REFUSAL, VM_SYMBOL, find_compilers, run
+from CTNative.harness import CLEANUP, CORE_INCLUDE, FLAGS, REFUSAL, VM_SYMBOL, native_tools, run
 from CTNative.Browser.native_dom import link_options
 
 PROGRAMS = {
@@ -443,15 +442,6 @@ def generated_helper_limits(fixtures):
     (fixtures / "helper_work_limit.js").write_text(work + suffix)
 
 
-def execution_tools(args):
-    compilers = find_compilers()
-    reference = args.reference
-    nm = shutil.which("nm") or shutil.which("llvm-nm")
-    if not nm or not VM_SYMBOL.search(run([nm, "-C", str(reference)]).stdout):
-        raise RuntimeError("VM symbol detector failed its interpreter positive control")
-    return reference, compilers, nm
-
-
 def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False):
     # Typed Number/String concatenation calls the same public Core as the VM.
     _, libraries = link_options(
@@ -582,7 +572,8 @@ def main():
         return
     if not (args.translate and args.opt and args.reference):
         parser.error("--translate, --opt and --reference are required unless --oracle-only")
-    reference, compilers, nm = execution_tools(args)
+    reference = args.reference
+    compilers, nm = native_tools(reference)
     register_flow_controls(args)
     report = []
     for name, (denominator, expected) in PROGRAMS.items():

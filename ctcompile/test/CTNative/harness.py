@@ -9,10 +9,12 @@ RUN line passes `--node %node --reference %native_reference`, both configured
 by CMake (lit.site.cfg.py.in).
 """
 
+import argparse
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 
 from Target.Cpp.harness import (
@@ -76,6 +78,28 @@ def run(command, *, success=True, environment=None, input_text=None):
             f"unexpected tool status {result.returncode}: {command!r}\n{result.stdout}{result.stderr}"
         )
     return result
+
+
+def native_args(description, *paths):
+    """The usual driver command line, every option required: the four tools,
+    then --work (created) and `paths` as Paths."""
+    parser = argparse.ArgumentParser(description=description)
+    for name in ("translate", "opt", "node", "reference"):
+        parser.add_argument("--" + name, required=True)
+    for name in ("work", *paths):
+        parser.add_argument("--" + name, type=Path, required=True)
+    args = parser.parse_args()
+    args.work.mkdir(parents=True, exist_ok=True)
+    return args
+
+
+def native_tools(reference):
+    """Both compilers, and an nm shown to find the interpreter in `reference`
+    before it is trusted to find none in a native binary."""
+    nm = shutil.which("nm") or shutil.which("llvm-nm")
+    if not nm or not VM_SYMBOL.search(run([nm, "-C", str(reference)]).stdout):
+        raise RuntimeError("the VM symbol check cannot see the interpreter in its positive control")
+    return find_compilers(), nm
 
 
 def threshold(passes, low=0, high=100000):
