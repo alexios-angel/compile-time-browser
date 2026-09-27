@@ -74,6 +74,11 @@ void browser::load_author_styles() {
         if (state == nullptr || !state->value_edited) { return std::nullopt; }
         return state->value;
     });
+    // WHAT :valid AND :invalid MATCH (HTML 4.16.3): the bindings' answer, the
+    // same flags `validity` reports, so a sheet and a script cannot disagree.
+    styles_->set_validity([this](node_id id) -> std::optional<bool> {
+        return bindings_ ? bindings_->control_validity(id) : std::nullopt;
+    });
     styles_->set_container_size(
         [this](node_id id) -> std::optional<ctbrowser::style::engine::container_size> {
             const ctbrowser::layout::fragment * f = fragments_.find(id);
