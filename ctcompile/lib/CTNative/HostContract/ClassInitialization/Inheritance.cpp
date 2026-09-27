@@ -811,7 +811,10 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     // Publication and own-key snapshots both need the complete leaf body,
     // including all effects and field writes from its proved super chain.
     if (!sinkConstructorPublication(closure, instances, contract)) { return false; }
-    if (!ownFieldSnapshots(closure, instances, definitions, methodKeys, contract)) { return false; }
+    if (!ownFieldSnapshots(closure, instances, definitions, methodKeys, staticDefinitions,
+                           staticMethods, contract)) {
+        return false;
+    }
     llvm::SmallVector<ctjs::SetPropertyOp> allMethods(definitions);
     for (const auto & [key, definition] : staticMethods) {
         if (!step()) { return false; }

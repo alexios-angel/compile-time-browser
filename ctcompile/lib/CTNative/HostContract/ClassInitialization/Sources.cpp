@@ -582,11 +582,11 @@ bool classInitialization::borrowedHelperReads(mlir::OpOperand & use,
     return true;
 }
 
-bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
-                                            llvm::ArrayRef<ctjs::ConstructOp> instances,
-                                            llvm::ArrayRef<ctjs::SetPropertyOp> definitions,
-                                            const llvm::StringSet<> & methodKeys,
-                                            const HostContract & contract) {
+bool classInitialization::ownFieldSnapshots(
+    ctjs::CreateClosureOp constructor, llvm::ArrayRef<ctjs::ConstructOp> instances,
+    llvm::ArrayRef<ctjs::SetPropertyOp> definitions, const llvm::StringSet<> & methodKeys,
+    const llvm::StringMap<ctjs::DefineAccessorOp> & staticDefinitions,
+    const llvm::StringMap<ctjs::SetPropertyOp> & staticMethods, const HostContract & contract) {
     auto function = target(constructor);
     auto inherited = heritage.lookup(constructor.getResult());
     const auto base = inherited ? sourceValue(inherited.getArgs()[1]) : mlir::Value{};
@@ -724,8 +724,56 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
         }
         return reason.empty();
     };
+    // An exact class's `this.constructor.K` reads this class, and a static read
+    // of K on it runs K's getter with this class as receiver. When that getter
+    // always throws, nothing after the read on that path runs: its receiver
+    // uses and fields never reach a completed instance.
+    // ponytail: exact classes and single-block getters whose first effect is
+    // the throwing receiver read; an extended class needs per-leaf getters.
+    const auto staticGetter = [&](llvm::StringRef key) -> ctjs::FuncOp {
+        if (staticMethods.contains(key)) { return {}; }
+        auto definition = staticDefinitions.lookup(key);
+        if (!definition && inherited) {
+            auto environment = inheritedGetters.find(base);
+            if (environment != inheritedGetters.end()) {
+                definition = environment->second.lookup(key);
+            }
+        }
+        return definition ? target(definition.getGetter().getDefiningOp<ctjs::CreateClosureOp>())
+                          : ctjs::FuncOp{};
+    };
+    const auto alwaysThrows = [&](auto && recurse, ctjs::FuncOp fn, unsigned depth) -> bool {
+        if (!step() || !fn || depth == 64) { return false; }
+        if (throwingGetters.contains(fn)) { return true; }
+        if (!fn.getBody().hasOneBlock()) { return false; }
+        auto & entry = fn.getBody().front();
+        for (mlir::Operation & op : entry) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::RootOp>(op)) { continue; }
+            auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+            return read && read.getObject() == entry.getArgument(ctjs::arg_receiver) &&
+                   ctjs::ordinaryKey(read.getKey()) &&
+                   recurse(recurse, staticGetter(ctjs::constantKey(read.getKey())), depth + 1);
+        }
+        return false;
+    };
+    const auto throwingRead = [&](ctjs::GetPropertyOp read,
+                                  llvm::ArrayRef<llvm::StringRef> ordered) {
+        auto owner = sourceValue(read.getObject()).getDefiningOp<ctjs::GetPropertyOp>();
+        if (baseClasses.contains(constructor.getResult()) || !owner ||
+            sourceValue(owner.getObject()) != self ||
+            ctjs::constantKey(owner.getKey()) != "constructor" ||
+            !ctjs::ordinaryKey(read.getKey()) || hasField(ordered, "constructor")) {
+            return false;
+        }
+        for (mlir::Operation * user : owner.getResult().getUsers()) {
+            if (!step() || (user != read && !llvm::isa<ctjs::RootOp>(user))) { return false; }
+        }
+        return alwaysThrows(alwaysThrows, staticGetter(ctjs::constantKey(read.getKey())), 0);
+    };
     const auto inspect = [&](auto && visit, mlir::Block & block,
-                             llvm::SmallVector<llvm::StringRef> & ordered, unsigned depth) -> bool {
+                             llvm::SmallVector<llvm::StringRef> & ordered, unsigned depth,
+                             bool & dead) -> bool {
         if (!step() || depth == 64) {
             return refuse("class own-key snapshot field proof exceeds its depth bound");
         }
@@ -733,20 +781,24 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
             if (!step()) { return false; }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
                 llvm::SmallVector<llvm::StringRef> joined;
-                for (auto [i, region] : llvm::enumerate(branch->getRegions())) {
+                bool live = false;
+                for (auto & region : branch->getRegions()) {
                     for (auto field : ordered) {
                         (void)field;
                         if (!step()) { return false; }
                     }
                     auto path = ordered;
+                    bool throws = false;
                     if (!region.empty() &&
                         (!region.hasOneBlock() ||
                          !llvm::isa<mlir::scf::YieldOp>(region.front().getTerminator()) ||
-                         !visit(visit, region.front(), path, depth + 1))) {
+                         !visit(visit, region.front(), path, depth + 1, throws))) {
                         return refuse("class own-key snapshot requires fixed constructor fields");
                     }
-                    if (i == 0) {
+                    if (throws) { continue; }
+                    if (!live) {
                         joined = std::move(path);
+                        live = true;
                     } else {
                         if (joined.size() != path.size()) {
                             return refuse("class own-key snapshot branches change ordered fields");
@@ -759,6 +811,10 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
                             }
                         }
                     }
+                }
+                if (!live) {
+                    dead = true;
+                    return true;
                 }
                 ordered = std::move(joined);
                 continue;
@@ -775,6 +831,11 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
             }
             if (llvm::isa<ctjs::LoadGlobalOp, ctjs::LoadUpvalueOp, ctjs::CellGetOp,
                           ctjs::GetPropertyOp, ctjs::CallOp, ctjs::CallDirectOp>(op)) {
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+                    read && throwingRead(read, ordered)) {
+                    dead = true;
+                    return true;
+                }
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
                     read && sourceValue(read.getObject()) == self &&
                     (ctjs::constantKey(read.getKey()) == "constructor" ||
@@ -819,7 +880,8 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
         }
         return true;
     };
-    if (!inspect(inspect, function.getBody().front(), fields, 0)) { return false; }
+    bool throws = false;
+    if (!inspect(inspect, function.getBody().front(), fields, 0, throws)) { return false; }
     llvm::StringSet<> fieldSet;
     for (auto field : fields) {
         if (!step()) { return false; }

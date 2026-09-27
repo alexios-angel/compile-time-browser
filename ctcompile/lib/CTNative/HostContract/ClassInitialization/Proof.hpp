@@ -125,7 +125,10 @@ struct classInitialization {
     bool ownFieldSnapshots(ctjs::CreateClosureOp constructor,
                            llvm::ArrayRef<ctjs::ConstructOp> instances,
                            llvm::ArrayRef<ctjs::SetPropertyOp> definitions,
-                           const llvm::StringSet<> & methodKeys, const HostContract & contract);
+                           const llvm::StringSet<> & methodKeys,
+                           const llvm::StringMap<ctjs::DefineAccessorOp> & staticDefinitions,
+                           const llvm::StringMap<ctjs::SetPropertyOp> & staticMethods,
+                           const HostContract & contract);
     bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
                     bool methodsAvailable = false);
