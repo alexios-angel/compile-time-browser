@@ -22,70 +22,85 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Bootstrap B static rungs and the measured W/B ladder, 2026-09-27 UTC
+## Bootstrap static rungs, component getters and the measured ladder, 2026-09-27 UTC
 
 Claude compiler worker (`claude-ctcompile`), resumed after a WSL crash. Linux
 and Windows process checks showed no browser worker, so the broad authorization
-applied; no browser file changed. The user restated the test policy: focused
+applied; no browser implementation changed (one aot `.def` comment/COVERS edit
+came with the bitwise branch). The user restated the test policy: focused
 checks only. The big class harness lit case (`class-initialization.mlir`, every
-fixture, 30+ min) is now run as a SUBSET: import
+fixture, 30+ min) is run as a SUBSET: import
 `CTNative.Lowering.Objects.class_initialization`, narrow `OBSERVATIONS` to the
 affected names and call `main()` with the lit RUN-line arguments (pattern:
-`class_terminal_publication.py`).
+`class_terminal_publication.py`; the driver used this session is ~20 lines).
 
-Landed:
+Landed (all focused subsets of `class_initialization.py`):
 
 - **61fdf6f23 / acd155363** (resumed iteration-2 work): a constructor arm that
   reads `this.constructor.K`, where K's getter on the exact class always
-  throws, ends there; the own-key snapshot join ignores that arm.
-  Subset of 22 fixtures (throwing arms, bootstrap-base/-data, 15 own-key
-  branch joins) PASS 52.9 s: 56 native executions, 44 unprepared and 16
-  preparation refusals.
+  throws, ends there; the own-key snapshot join ignores that arm. 22 fixtures
+  PASS 52.9 s (56 native executions).
 - **c8ffaca45**: a derived class's own static getters join the inherited
-  getter environment when none shadows an inherited key (B's
-  DATA_KEY/EVENT_KEY/VERSION beside W's Default/DefaultType/NAME). Shadowing
-  still refuses with `derived class requires receiver-preserving super
-  normalization`.
+  getter environment (B's DATA_KEY/EVENT_KEY/VERSION beside W's getters).
 - **656a9a582**: inside a static method, `this.m(args)` for an own static
-  method m is the same direct call as `C.m(args)`. `new this` still refuses.
-- Both with nine sources in `class-initialization/53.mlir`; subset of 35
-  fixtures (new ones, throwing arms, every `static-call-*`, static getter
-  chains, plain inherited controls, bootstrap-base/-data) PASS 81.7 s: 96
-  native executions, 70 unprepared and 47 preparation refusals.
+  method is the same direct call as `C.m(args)`; `new this` still refuses.
+  With c8ffaca45: 35 fixtures PASS 81.7 s (96 native executions).
+- **42d74a6bf**: an OVERRIDDEN inherited static getter. Inherited getters
+  whose receiver reads reach an override get a per-class copy (fresh indexed
+  function, registered in `functions`), proved and expanded in the class's
+  environment; the throwing-arm resolver uses the copy. Still refused: a class
+  with copies that is itself extended, and a copy that would throw (the
+  throwing expansion needs closure transport). 47 fixtures PASS 126.0 s (160
+  native executions).
+- **13643e6a2**: an inherited METHOD reading an overridden/copied getter
+  through `this.constructor` gets a per-class copy installed on the derived
+  prototype as a synthesized override (own-method proof, fresh closure with
+  the original's upvalues, `__home` to the derived prototype). The shared-read
+  refusal applies only to bodies the class's instances still reach. 70
+  fixtures (all inherited-static-*, override-*, inherited-method-*,
+  static-call-*, throwing arms, chains, bootstrap-base/-data) PASS 204.4 s
+  (280 native executions, 140 unprepared, 61 preparation refusals).
+- **f50545c94** merges `claude-ctcompile-bitwise` (subagent): the six bitwise
+  opcodes import as re-entering `ctjs.binary`/`ct_aot_binary_op`, matching the
+  VM's ToNumeric; analyses accept a bitwise `ctjs.binary` only on proved
+  primitive operands. 8 branch lit, 5 exact CTests (escape_analysis_arrays
+  6.03 s, inventories, importer_coverage, differential, host_contract 2.79 s)
+  and two harness subsets PASS; post-merge sanity (tools rebuilt, EmitC
+  `bitwise.mlir` 1/1, 5 mixed class fixtures) PASS.
+- **c93d44eca** merges test-only fixes (subagent) for six escape-claims lit
+  cases that failed at the tip before any of this: nine stale CLAIM lines
+  (`escapes:stored` -> `confined`, oracle 0 violations) and two RECORD lines
+  following VM `91e7c17ff` (fractional Number keys name properties). 6/6 PASS.
 
-**Measured W/B ladder** (variants of the authentic fixtures run through
-`--ctnative-specialize-class-initialization` with the current `ctjs-opt`;
-each step removes the previous blocker from the source):
+17 new sources live in `class-initialization/53.mlir` (five more in `52.mlir`). Full CTest/lit,
+broad corpora, WPT/test262 and sanitizers were skipped.
 
-1. `declared intrinsic identity escapes, is reflected or is mutated` - W's
-   `_typeCheckConfig` calls `Object.entries(e)` (Contract.cpp admits only
-   `Object.getOwnPropertyNames`). The module census would then also see the
-   `Object` load, `RegExp`, `TypeError`, `s(e)` and `H` in method bodies.
-2. `static method receiver requires an exact own getter read` - B's
-   `getOrCreateInstance` now fails only on `new this(...)`. A read-only design
-   review found `new this` needs, first, constructs inside `scf.if` arms of the
-   helper block (census 701-709, instanceof, publication, closure lifting
-   Constructors.cpp:128); after that, inlining exact static factories at each
-   `C.m(args)` before the class-use census is the small step.
-3. bootstrap-base: `class receiver escapes or observes a prototype/descriptor`
-   (`this` passed to `e.set` for the unknown global `e`). bootstrap-base-data
-   (real Data holder): `class method capture is not its constructor or an
-   inert sibling helper` - the holder's methods capture the Map `t`, which is
-   not a proved class Map because B's keys are an element object and
-   `this.constructor.DATA_KEY`, not literal strings.
-4. Real components (Alert, Button, ...) are leaves of B that SHADOW W's
-   `NAME`/`Default`/`DefaultType`. They need (a) per-leaf clones of inherited
-   static getters whose bodies read a shadowed key (B's DATA_KEY reads
-   `this.NAME`) - the throwing-arm `staticGetter` must resolve to the clone,
-   since the base DATA_KEY is in `throwingGetters`; and (b) per-leaf bodies
-   for inherited instance methods that read a shadowed getter through
-   `this.constructor` (W's `_typeCheckConfig`, `_mergeConfigObj`), because
-   today one shared read is resolved once and Rewrite keeps the first
-   resolution.
+**Measured ladder** (variants of authentic fixtures through
+`--ctnative-specialize-class-initialization`, each removing the prior blocker):
 
-In flight: branch `claude-ctcompile-bitwise` (rebased onto 5cbf64882 as
-f7c9ae1ef, 186474396) is being finished and focused-gated by a subagent in
-`.claude/worktrees/agent-a8b0625305d773ab5`, devbox dir `projects/ct-ctc-tests`.
+- Authentic W/B (`bootstrap-base`, `-data`): (1) `declared intrinsic identity
+  escapes, is reflected or is mutated` - `Object.entries` in `_typeCheckConfig`
+  (Contract.cpp admits only `Object.getOwnPropertyNames`; the census would then
+  see `Object`, `RegExp`, `TypeError`, `s`, `H` in method bodies); (2)
+  `getOrCreateInstance`'s `new this` (a read-only design review: first admit
+  constructs inside `scf.if` arms of the helper block - census 701-709,
+  instanceof, publication, closure lifting Constructors.cpp:128 - then inline
+  exact static factories at each `C.m(args)`); (3) `-data`: the Data holder's
+  methods capture Map `t`, not a proved class Map because B's keys are an
+  element object and `this.constructor.DATA_KEY`.
+- **Authentic component** (W + B + Button `U` + the real Data holder, `new
+  U(null, null)`): the static getter/method rungs now pass; the FIRST refusal
+  is `class own-key snapshot constructor observes its receiver`. For a
+  component DATA_KEY is `"bs.button"`, so the constructor arm is live and
+  `e.set(this._element, this.constructor.DATA_KEY, this)` publishes the
+  receiver into the nested Data Maps with an element-object outer key and a
+  getter-computed inner key. The existing publication proof
+  (`sinkConstructorPublication`, `class-map-record-nested-vendor-constructor`)
+  needs literal keys. **This is the next rung for real components**: Data
+  registration keyed by the constructor's element and an expanded static
+  getter string. After it: `static jQueryInterface` calls
+  `U.getOrCreateInstance` from a nested closure, `q(X, ...)`/`g(U)` receive
+  the class value, and the census needs the real `P`/`H`/`s`/`b` helpers.
 
 ## Saved Number/null writes, UTF-16 order and Bootstrap B arms, 2026-09-27 UTC
 
