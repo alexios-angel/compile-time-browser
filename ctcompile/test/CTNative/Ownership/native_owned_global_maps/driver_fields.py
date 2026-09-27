@@ -3,6 +3,7 @@ from .driver_common import (
     StringValue,
     boundary,
     check_call_preservation,
+    check_census,
     comparable_provenance,
     contract,
     distinguish,
@@ -32,16 +33,7 @@ STRING_FIELD_OBSERVERS = (
 
 
 def check_string_field_census(args, ir, name):
-    if name not in string_field_cases():
-        return
-    row = string_field_cases()[name]
-    raw = (args.work / f"{name}.raw.mlir").read_text()
-    if (
-        len(boundary.FUNCTION.findall(raw)) != 5
-        or len(source_calls(raw)) != row["raw_calls"]
-        or len(source_calls(ir.read_text())) != row["prepared_calls"]
-    ):
-        raise RuntimeError(f"{name}: changed the exact five-function field source/call census")
+    check_census(args, ir, name, string_field_cases, "String-field")
 
 
 def check_string_field_observations(args, node, reference):

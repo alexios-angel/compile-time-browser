@@ -4,6 +4,7 @@ from .driver_common import (
     CONSTANT_GLOBAL_NODE,
     boundary,
     check_call_preservation,
+    check_census,
     contract,
     delete_size_cases,
     delete_size_observer_source,
@@ -18,7 +19,6 @@ from .driver_common import (
     one_size_observer_source,
     owned,
     re,
-    source_calls,
     shutil,
     zero_size_cases,
     zero_size_observer_source,
@@ -26,16 +26,7 @@ from .driver_common import (
 
 
 def check_zero_size_census(args, ir, name):
-    if name not in zero_size_cases():
-        return
-    row = zero_size_cases()[name]
-    raw = (args.work / f"{name}.raw.mlir").read_text()
-    if (
-        len(boundary.FUNCTION.findall(raw)) != 5
-        or len(source_calls(raw)) != row["raw_calls"]
-        or len(source_calls(ir.read_text())) != row["prepared_calls"]
-    ):
-        raise RuntimeError(f"{name}: changed exact zero-size function/call census")
+    check_census(args, ir, name, zero_size_cases, "zero-size")
 
 
 def check_zero_size_observations(args, node, reference):
@@ -198,16 +189,7 @@ def check_exact_size_refusals(args, positives, cases, census):
 
 
 def check_one_size_census(args, ir, name):
-    if name not in one_size_cases():
-        return
-    row = one_size_cases()[name]
-    raw = (args.work / f"{name}.raw.mlir").read_text()
-    if (
-        len(boundary.FUNCTION.findall(raw)) != 5
-        or len(source_calls(raw)) != row["raw_calls"]
-        or len(source_calls(ir.read_text())) != row["prepared_calls"]
-    ):
-        raise RuntimeError(f"{name}: changed exact one-size function/call census")
+    check_census(args, ir, name, one_size_cases, "one-size")
 
 
 def check_one_size_observations(args, node, reference):
@@ -288,16 +270,7 @@ def check_one_size_observations(args, node, reference):
 
 
 def check_delete_size_census(args, ir, name):
-    if name not in delete_size_cases():
-        return
-    row = delete_size_cases()[name]
-    raw = (args.work / f"{name}.raw.mlir").read_text()
-    if (
-        len(boundary.FUNCTION.findall(raw)) != 5
-        or len(source_calls(raw)) != row["raw_calls"]
-        or len(source_calls(ir.read_text())) != row["prepared_calls"]
-    ):
-        raise RuntimeError(f"{name}: changed exact deletion function/call census")
+    check_census(args, ir, name, delete_size_cases, "deletion")
 
 
 def check_delete_size_refusals(args, positives):
@@ -386,19 +359,7 @@ def check_delete_size_observations(args, node, reference):
 
 
 def check_join_size_census(args, ir, name):
-    if name not in join_size_cases():
-        return
-    row = join_size_cases()[name]
-    raw = (args.work / f"{name}.raw.mlir").read_text()
-    prepared = ir.read_text()
-    if (
-        len(boundary.FUNCTION.findall(raw)) != 5
-        or len(source_calls(raw)) != row["raw_calls"]
-        or len(source_calls(prepared)) != row["prepared_calls"]
-    ):
-        raise RuntimeError(f"{name}: changed exact branch-cardinality function/call census")
-    if "scf.if" not in prepared or prepared.count("scf.yield") < 2:
-        raise RuntimeError(f"{name}: lost either structural branch before the cardinality proof")
+    check_census(args, ir, name, join_size_cases, "branch-cardinality", branched=True)
 
 
 def check_join_size_refusals(args, positives):
@@ -468,19 +429,7 @@ def check_join_size_observations(args, node, reference):
 
 
 def check_mutation_size_census(args, ir, name):
-    if name not in mutation_size_cases():
-        return
-    row = mutation_size_cases()[name]
-    raw = (args.work / f"{name}.raw.mlir").read_text()
-    prepared = ir.read_text()
-    if (
-        len(boundary.FUNCTION.findall(raw)) != 5
-        or len(source_calls(raw)) != row["raw_calls"]
-        or len(source_calls(prepared)) != row["prepared_calls"]
-    ):
-        raise RuntimeError(f"{name}: changed the exact after-join mutation function/call census")
-    if "scf.if" not in prepared or prepared.count("scf.yield") < 2:
-        raise RuntimeError(f"{name}: removed a structural arm before the mutation size proof")
+    check_census(args, ir, name, mutation_size_cases, "after-join mutation", branched=True)
 
 
 def check_mutation_size_refusals(args, positives):

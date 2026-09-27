@@ -160,6 +160,24 @@ def comparable_provenance(cpp, input_ir):
     )
 
 
+def check_census(args, ir, name, cases, what, *, branched=False):
+    """A five-function case of `cases()` keeps its exact raw/prepared call census
+    and, when `branched`, both structural arms."""
+    row = cases().get(name)
+    if row is None:
+        return
+    raw = (args.work / f"{name}.raw.mlir").read_text()
+    prepared = ir.read_text()
+    if (
+        len(boundary.FUNCTION.findall(raw)) != 5
+        or len(source_calls(raw)) != row["raw_calls"]
+        or len(source_calls(prepared)) != row["prepared_calls"]
+    ):
+        raise RuntimeError(f"{name}: changed the exact {what} function/call census")
+    if branched and ("scf.if" not in prepared or prepared.count("scf.yield") < 2):
+        raise RuntimeError(f"{name}: lost a structural branch before the {what} proof")
+
+
 def observe(args, name, source, values):
     """Node and the VM must both print exactly `values` (Numbers, bools, "null" or
     "undefined") for `source`, with those tags. Returns the printed text."""
