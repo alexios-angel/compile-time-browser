@@ -13,7 +13,7 @@
 // CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj confined
@@ -165,7 +165,7 @@
 // CHECK: escape {{[0-9a-f]+}} 155 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 156 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 157 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 158 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 158 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 159 {{[0-9]+}} obj escapes:stored
 
 // CHECK: escape {{[0-9a-f]+}} 160 {{[0-9]+}} obj confined
