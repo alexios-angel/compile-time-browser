@@ -96,6 +96,11 @@ OBSERVATIONS.update(
         "inherited-static-getters": (7, 7),
         "inherited-static-getters-shadow": (7, 7),
         "inherited-static-getters-base-reads-leaf": (7, 7),
+        "inherited-static-getters-component": (7, 7),
+        "inherited-static-getters-shadow-both": (7, 7),
+        "inherited-static-getters-shadow-method": (7, 7),
+        "inherited-static-getters-shadow-extended": (7, 7),
+        "inherited-static-getters-shadow-throwing": (7, 7),
         "static-call-this-method": (7, 7),
         "static-call-this-getter-chain": (6, 6),
         "static-call-this-detached": (7, 7),
@@ -104,7 +109,14 @@ OBSERVATIONS.update(
     }
 )
 POSITIVES.update(
-    {"inherited-static-getters", "static-call-this-method", "static-call-this-getter-chain"}
+    {
+        "inherited-static-getters",
+        "inherited-static-getters-shadow",
+        "inherited-static-getters-component",
+        "inherited-static-getters-shadow-both",
+        "static-call-this-method",
+        "static-call-this-getter-chain",
+    }
 )
 POSITIVES.update(
     {
@@ -530,7 +542,13 @@ def main():
                 "__ctbrowser_super_get",
             ]
         if name.startswith(
-            ("static-throw-", "static-error-", "inherited-own-fields-iterate-throwing-arm")
+            (
+                "static-throw-",
+                "static-error-",
+                "inherited-own-fields-iterate-throwing-arm",
+                "inherited-static-getters-component",
+                "inherited-static-getters-shadow-throwing",
+            )
         ) or name in (
             "bootstrap-base",
             "bootstrap-base-data",
@@ -582,7 +600,9 @@ def main():
             "inherited-own-fields-iterate-throwing-arm-static-shadow": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-iterate-throwing-arm-returning": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-iterate-throwing-arm-escape-before": "class own-key snapshot constructor observes its receiver",
-            "inherited-static-getters-shadow": "derived class requires receiver-preserving super normalization",
+            "inherited-static-getters-shadow-method": "derived class requires receiver-preserving super normalization",
+            "inherited-static-getters-shadow-extended": "derived class requires receiver-preserving super normalization",
+            "inherited-static-getters-shadow-throwing": "derived class requires receiver-preserving super normalization",
             "inherited-static-getters-base-reads-leaf": "static getter receiver lacks an exact local getter dependency",
             "static-call-this-detached": "static method escapes its exact local call",
             "static-call-this-foreign": "static method escapes its exact local call",

@@ -40,6 +40,9 @@ struct classInitialization {
     llvm::DenseSet<mlir::Value> baseClasses;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<ctjs::SetPropertyOp>> inheritedMethods;
     llvm::DenseMap<mlir::Value, llvm::StringMap<ctjs::DefineAccessorOp>> inheritedGetters;
+    // Per derived class: copies of inherited getters whose receiver reads reach
+    // a key that class shadows, proved and expanded in its own environment.
+    llvm::DenseMap<mlir::Value, llvm::StringMap<ctjs::FuncOp>> receiverGetters;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<llvm::StringRef>> snapshotFields;
     llvm::DenseSet<mlir::Operation *> snapshotMethods;
     llvm::SmallVector<std::pair<ctjs::CallOp, ctjs::SetPropertyOp>> inheritedSlots;
@@ -136,6 +139,9 @@ struct classInitialization {
     bool retainedMapReads(mlir::OpOperand & use, const llvm::StringSet<> & methodKeys,
                           llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads);
 
+    bool cloneReceiverGetters(mlir::Value leaf,
+                              const llvm::StringMap<ctjs::DefineAccessorOp> & environment,
+                              const llvm::StringSet<> & shadowed);
     bool staticGetters(const llvm::StringMap<ctjs::DefineAccessorOp> & definitions,
                        llvm::ArrayRef<ctjs::GetPropertyOp> reads, ctjs::CallOp helper);
 

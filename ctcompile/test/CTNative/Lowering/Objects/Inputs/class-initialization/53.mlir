@@ -131,3 +131,99 @@ function static_call_this_new_this() {
     return Shape.make(1);
 }
 var a = static_call_this_new_this();
+
+// Bootstrap's component shape: W's NAME throws, B's own DATA_KEY and
+// EVENT_KEY read it through `this`, and a leaf overrides NAME. The leaf gets
+// its own copies of B's getters, so its EVENT_KEY is ".bs.alert".
+//--- inherited-static-getters-component.js
+function inherited_static_getters_component() {
+    class W {
+        static get NAME() { throw new Error("NAME required"); }
+    }
+    class B extends W {
+        constructor() { super(); this.n = 3; }
+        static get DATA_KEY() { return `bs.${this.NAME}`; }
+        static get EVENT_KEY() { return `.${this.DATA_KEY}`; }
+    }
+    class Alert extends B {
+        constructor() { super(); this.k = (this.constructor.EVENT_KEY === ".bs.alert") * 4; }
+        static get NAME() { return "alert"; }
+    }
+    const alert = new Alert();
+    return alert.k + (alert.n === 3) * 3;
+}
+var a = inherited_static_getters_component();
+
+// The base keeps its own resolution while the leaf reads its copy: the same
+// base constructor read selects "bs.base" for Base and "bs.leaf" for Leaf.
+//--- inherited-static-getters-shadow-both.js
+function inherited_static_getters_shadow_both() {
+    class Base {
+        constructor() {
+            this.k = this.constructor.KEY === "bs.base" ? 1 : this.constructor.KEY === "bs.leaf" ? 2 : 0;
+        }
+        static get NAME() { return "base"; }
+        static get KEY() { return "bs." + this.NAME; }
+    }
+    class Leaf extends Base {
+        constructor() { super(); }
+        static get NAME() { return "leaf"; }
+    }
+    return new Base().k * 3 + new Leaf().k * 2;
+}
+var a = inherited_static_getters_shadow_both();
+
+// A shared inherited method resolves `this.constructor.NAME` once for every
+// class; an override needs per-class method bodies.
+//--- inherited-static-getters-shadow-method.js
+function inherited_static_getters_shadow_method() {
+    class Base {
+        constructor() { this.n = 3; }
+        read() { return (this.constructor.NAME === "leaf") * 4; }
+        static get NAME() { return "base"; }
+    }
+    class Leaf extends Base {
+        constructor() { super(); }
+        static get NAME() { return "leaf"; }
+    }
+    const leaf = new Leaf();
+    return leaf.read() + (leaf.n === 3) * 3;
+}
+var a = inherited_static_getters_shadow_method();
+
+// Copies belong to one class: a class derived from the leaf would inherit
+// the shared definition instead.
+//--- inherited-static-getters-shadow-extended.js
+function inherited_static_getters_shadow_extended() {
+    class Base {
+        constructor() { this.n = 3; }
+        static get NAME() { return "base"; }
+        static get KEY() { return "bs." + this.NAME; }
+    }
+    class Leaf extends Base {
+        constructor() { super(); this.k = (this.constructor.KEY === "bs.leaf") * 4; }
+        static get NAME() { return "leaf"; }
+    }
+    class Sub extends Leaf {}
+    const leaf = new Leaf();
+    return leaf.k + (leaf.n === 3) * 3 + (new Sub().k === 0) * 0;
+}
+var a = inherited_static_getters_shadow_extended();
+
+// A copy that reaches a throwing getter would need its own closure transport.
+//--- inherited-static-getters-shadow-throwing.js
+function inherited_static_getters_shadow_throwing() {
+    class Base {
+        constructor() { this.n = 3; }
+        static get NAME() { return "base"; }
+        static get BAD() { throw new Error("bad"); }
+        static get KEY() { return this.NAME + this.BAD; }
+    }
+    class Leaf extends Base {
+        constructor() { super(); this.k = (this.constructor.NAME === "leaf") * 4; }
+        static get NAME() { return "leaf"; }
+    }
+    const leaf = new Leaf();
+    return leaf.k + (leaf.n === 3) * 3;
+}
+var a = inherited_static_getters_shadow_throwing();

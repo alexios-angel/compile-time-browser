@@ -739,6 +739,11 @@ bool classInitialization::ownFieldSnapshots(
                 definition = environment->second.lookup(key);
             }
         }
+        // A copy made for this receiver answers instead of the shared body.
+        if (auto copies = receiverGetters.find(constructor.getResult());
+            definition && copies != receiverGetters.end()) {
+            if (auto clone = copies->second.lookup(key)) { return clone; }
+        }
         return definition ? target(definition.getGetter().getDefiningOp<ctjs::CreateClosureOp>())
                           : ctjs::FuncOp{};
     };
@@ -1181,55 +1186,71 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
     return reason.empty();
 }
 
+bool classInitialization::cloneReceiverGetters(
+    mlir::Value leaf, const llvm::StringMap<ctjs::DefineAccessorOp> & environment,
+    const llvm::StringSet<> & shadowed) {
+    // An inherited getter whose receiver reads reach a key this class shadows
+    // selects different bodies when this class is the receiver. Give the class
+    // its own copy; every other inherited body resolves as in its base.
+    auto & clones = receiverGetters[leaf];
+    llvm::DenseMap<mlir::Operation *, bool> reaches;
+    const auto inherited = [&](llvm::StringRef key) -> ctjs::FuncOp {
+        auto definition = environment.lookup(key);
+        if (!definition || sourceValue(definition.getTarget()) == leaf) { return {}; }
+        return target(definition.getGetter().getDefiningOp<ctjs::CreateClosureOp>());
+    };
+    const auto depends = [&](auto && self, llvm::StringRef key, unsigned depth) -> bool {
+        if (!step()) { return false; }
+        if (depth == 64) { return refuse("static getter dependency cycle"); }
+        if (shadowed.contains(key)) { return true; }
+        auto fn = inherited(key);
+        if (!fn) { return false; } // Own getters are proved in this environment.
+        if (auto known = reaches.find(fn); known != reaches.end()) { return known->second; }
+        reaches[fn] = false; // A cycle is refused by the dependency fixpoint.
+        bool result = false;
+        for (mlir::OpOperand & use :
+             fn.getBody().front().getArgument(ctjs::arg_receiver).getUses()) {
+            auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+            if (!read || !ctjs::ordinaryKey(read.getKey())) { continue; } // Body proof refuses.
+            result |= self(self, ctjs::constantKey(read.getKey()), depth + 1);
+            if (!reason.empty()) { return false; }
+        }
+        return reaches[fn] = result;
+    };
+    unsigned next = 0;
+    for (auto function : module.getOps<ctjs::FuncOp>()) {
+        if (!step()) { return false; }
+        if (auto index = functionIndex(function)) { next = std::max(next, *index + 1); }
+    }
+    for (const auto & item : environment) {
+        const auto key = item.first();
+        auto source = inherited(key);
+        if (!source) { continue; }
+        const bool reached = depends(depends, key, 0);
+        if (!reason.empty()) { return false; }
+        if (!reached) { continue; }
+        auto copy = llvm::cast<ctjs::FuncOp>(source->clone());
+        copy.setSymName((source.getSymName().rsplit('$').first + "$" + llvm::Twine(next++)).str());
+        module.getBody()->push_back(copy);
+        clones[key] = copy;
+    }
+    return true;
+}
+
 bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccessorOp> & definitions,
                                         llvm::ArrayRef<ctjs::GetPropertyOp> reads,
                                         ctjs::CallOp helper) {
     llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> dependencies;
     const auto firstRead = getterReads.size();
+    const auto clones = receiverGetters.lookup(helper.getArgs().front());
     const auto resolve = [&](ctjs::GetPropertyOp read) -> ctjs::FuncOp {
-        auto definition = definitions.lookup(ctjs::constantKey(read.getKey()));
+        const auto key = ctjs::constantKey(read.getKey());
+        auto definition = definitions.lookup(key);
         if (!ctjs::ordinaryKey(read.getKey()) || !definition) { return {}; }
+        if (auto clone = clones.lookup(key)) { return clone; }
         return target(definition.getGetter().getDefiningOp<ctjs::CreateClosureOp>());
     };
-    for (const auto & item : definitions) {
-        // Closure metadata and the compiler's home field precede accessors
-        // in the interpreter. Keep their source reads until that boundary
-        // has one semantics across the interpreter and native output.
-        const auto key = item.first();
-        if (closureMetadataKey(key)) { return refuse("static getter shadows closure metadata"); }
-        auto definition = item.second;
-        auto closure = definition.getGetter().getDefiningOp<ctjs::CreateClosureOp>();
-        auto fn = target(closure);
-        // An inherited environment contains the exact already-proved
-        // definitions. Its source bodies and dependency targets stay unchanged.
-        if (setup.contains(definition) && getters.contains(fn) && getterExpansion.contains(fn)) {
-            continue;
-        }
-        if (!step() || !fn || !ctjs::ordinaryKey(item.first()) ||
-            !undefined(definition.getSetter()) || closure->getBlock() != helper->getBlock() ||
-            !closure->isBeforeInBlock(definition) || !undefined(closure.getEnclosingThis()) ||
-            !closure.getUpvalues().empty()) {
-            return refuse(
-                "static getter needs a unique local capture-free getter without a setter");
-        }
-        ctjs::SetPropertyOp getterHome;
-        for (mlir::OpOperand & use : closure.getResult().getUses()) {
-            if (!step()) { return false; }
-            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-            if (use.getOwner() == definition && use.getOperandNumber() == 1) { continue; }
-            auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
-            if (getterHome || !write || use.getOperandNumber() != 0 ||
-                ctjs::constantKey(write.getKey()) != "__home" ||
-                write.getValue() != helper.getArgs().front() ||
-                write->getBlock() != helper->getBlock() || !closure->isBeforeInBlock(write) ||
-                !write->isBeforeInBlock(helper)) {
-                return refuse("static getter callable identity escapes its definition");
-            }
-            getterHome = write;
-        }
-        // The body census below forbids observing this metadata. Keep the
-        // exact source assignment in the setup proof before erasing it.
-        if (getterHome) { setup.insert(getterHome); }
+    const auto proveBody = [&](ctjs::FuncOp fn) {
         auto & entry = fn.getBody().front();
         if (!llvm::hasSingleElement(fn.getBody()) || entry.getNumArguments() != 3 ||
             !entry.getArgument(ctjs::arg_callee).use_empty() ||
@@ -1270,8 +1291,55 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
             getterReads.emplace_back(read, callee);
         }
         getters.insert(fn);
+        return true;
+    };
+    for (const auto & item : definitions) {
+        // Closure metadata and the compiler's home field precede accessors
+        // in the interpreter. Keep their source reads until that boundary
+        // has one semantics across the interpreter and native output.
+        const auto key = item.first();
+        if (closureMetadataKey(key)) { return refuse("static getter shadows closure metadata"); }
+        auto definition = item.second;
+        auto closure = definition.getGetter().getDefiningOp<ctjs::CreateClosureOp>();
+        auto fn = target(closure);
+        // An inherited environment contains the exact already-proved
+        // definitions. Its source bodies and dependency targets stay unchanged.
+        if (setup.contains(definition) && getters.contains(fn) && getterExpansion.contains(fn)) {
+            continue;
+        }
+        if (!step() || !fn || !ctjs::ordinaryKey(item.first()) ||
+            !undefined(definition.getSetter()) || closure->getBlock() != helper->getBlock() ||
+            !closure->isBeforeInBlock(definition) || !undefined(closure.getEnclosingThis()) ||
+            !closure.getUpvalues().empty()) {
+            return refuse(
+                "static getter needs a unique local capture-free getter without a setter");
+        }
+        ctjs::SetPropertyOp getterHome;
+        for (mlir::OpOperand & use : closure.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            if (use.getOwner() == definition && use.getOperandNumber() == 1) { continue; }
+            auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+            if (getterHome || !write || use.getOperandNumber() != 0 ||
+                ctjs::constantKey(write.getKey()) != "__home" ||
+                write.getValue() != helper.getArgs().front() ||
+                write->getBlock() != helper->getBlock() || !closure->isBeforeInBlock(write) ||
+                !write->isBeforeInBlock(helper)) {
+                return refuse("static getter callable identity escapes its definition");
+            }
+            getterHome = write;
+        }
+        // The body census below forbids observing this metadata. Keep the
+        // exact source assignment in the setup proof before erasing it.
+        if (getterHome) { setup.insert(getterHome); }
+        if (!proveBody(fn)) { return false; }
         getterClosures.push_back(closure);
         setup.insert(definition);
+    }
+    // A receiver-specific copy is proved like an own getter, in this class's
+    // environment, and has no definition, closure or home of its own.
+    for (const auto & item : clones) {
+        if (!step() || !proveBody(item.second)) { return false; }
     }
     // ponytail: bounded fixpoint over fixed getter environments; overrides
     // require separate receiver-specific bodies before widening.
@@ -1319,6 +1387,14 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
             getterOrder.push_back(llvm::cast<ctjs::FuncOp>(fn));
         }
         if (completed.size() == before) { return refuse("static getter dependency cycle"); }
+    }
+    // ponytail: a throwing copy would need its own closure transport in the
+    // throwing expansion; only returning copies are expanded inline.
+    for (const auto & item : clones) {
+        if (!step()) { return false; }
+        if (throwingGetters.contains(item.second)) {
+            return refuse("derived class requires receiver-preserving super normalization");
+        }
     }
     for (ctjs::GetPropertyOp read : reads) {
         if (!step()) { return false; }

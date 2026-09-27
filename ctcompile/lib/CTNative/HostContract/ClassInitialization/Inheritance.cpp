@@ -771,7 +771,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
         definitions.push_back(write);
     }
-    bool shadowsInheritedGetter = false;
+    llvm::StringSet<> shadowedGetters;
     llvm::SmallVector<ctjs::SetPropertyOp> baseDefinitions, selectedBaseDefinitions;
     if (auto inherited = heritage.lookup(closure.getResult())) {
         auto base = inheritedMethods.find(sourceValue(inherited.getArgs()[1]));
@@ -790,13 +790,17 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
         // One shared method/getter body has one selected target. Reuse the
         // complete base getter environment, including transitive dependencies.
-        // Own getters join it only when they shadow no inherited key, so every
-        // inherited body's receiver reads still select what they did in the
-        // base. Overrides need separate bodies for the actual derived receiver.
+        // An own getter overrides its inherited key; an inherited getter whose
+        // receiver reads reach an override gets a copy for this receiver.
         for (const auto & item : inheritedGetters[sourceValue(inherited.getArgs()[1])]) {
             if (!step()) { return false; }
-            shadowsInheritedGetter |=
-                !staticDefinitions.try_emplace(item.first(), item.second).second;
+            if (!staticDefinitions.try_emplace(item.first(), item.second).second) {
+                shadowedGetters.insert(item.first());
+            }
+        }
+        if (!shadowedGetters.empty() &&
+            !cloneReceiverGetters(closure.getResult(), staticDefinitions, shadowedGetters)) {
+            return false;
         }
     }
     llvm::DenseSet<mlir::Operation *> methodHomes;
@@ -934,7 +938,11 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
     }
     if (auto inherited = heritage.lookup(closure.getResult())) {
-        if (shadowsInheritedGetter) {
+        // Receiver copies live in this class's environment alone: a class
+        // derived from it would inherit the shared definitions instead.
+        auto copies = receiverGetters.find(closure.getResult());
+        const bool copied = copies != receiverGetters.end() && !copies->second.empty();
+        if (copied && baseClasses.contains(closure.getResult())) {
             return refuse("derived class requires receiver-preserving super normalization");
         }
         // Recheck inherited receiver uses against the final method table:
@@ -949,6 +957,15 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             if (!step() || !fieldsOnly(fn.getBody().front().getArgument(ctjs::arg_receiver),
                                        methodKeys, receiverReads, true)) {
                 return false;
+            }
+            // A shared inherited body resolves each read once, for every class.
+            // ponytail: overridden or copied getters need per-class method bodies.
+            for (ctjs::GetPropertyOp read : receiverReads) {
+                if (!step()) { return false; }
+                const auto key = ctjs::constantKey(read.getKey());
+                if (shadowedGetters.contains(key) || (copied && copies->second.contains(key))) {
+                    return refuse("derived class requires receiver-preserving super normalization");
+                }
             }
             staticReads.append(receiverReads);
         }
