@@ -13,6 +13,41 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
     bool selectorFeedsWrite = false;
     ctjs::CreateObjectOp discardedResult;
     llvm::DenseSet<mlir::Operation *> discardedFields;
+    // Missing JavaScript arguments are undefined. The complete helper proof
+    // excludes arguments/new.target observers before inlining.
+    const auto bindArguments = [&](mlir::OpBuilder & at, mlir::IRMapping & mapping) {
+        auto & body = target.getBody().front();
+        mapping.map(body.getArgument(ctjs::arg_callee), callee);
+        mapping.map(body.getArgument(ctjs::arg_receiver), receiver);
+        for (auto [index, formal] :
+             llvm::enumerate(body.getArguments().drop_front(ctjs::implicit_arguments))) {
+            if (!step()) { return false; }
+            mlir::Value actual = index < arguments.size() ? arguments[index] : mlir::Value{};
+            if (!actual) {
+                actual = ctjs::ConstantOp::create(at, call->getLoc(),
+                                                  ctjs::UndefinedAttr::get(call->getContext()));
+                ++operationCount;
+            }
+            mapping.map(formal, actual);
+        }
+        return true;
+    };
+    // Substitute captures at each invocation, including branch-local loads;
+    // never bind a shared body to its first caller.
+    const auto bindCapture = [&](ctjs::LoadUpvalueOp load, mlir::OpBuilder & at,
+                                 mlir::IRMapping & mapping) {
+        auto & capture = captures[static_cast<unsigned>(load.getIndex())];
+        mlir::Value value;
+        if (capture.enclosingIndex >= 0) {
+            value = ctjs::LoadUpvalueOp::create(
+                at, load.getLoc(), load.getType(),
+                function.getBody().front().getArgument(ctjs::arg_callee), capture.enclosingIndex);
+            ++operationCount;
+        } else {
+            value = capture.value();
+        }
+        mapping.map(load.getResult(), value);
+    };
     auto abrupt = llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(call->getNextNode());
     auto rethrow = abrupt && abrupt.getNoInline() && !abrupt.getNumResults() &&
                            abrupt.getRegion().hasOneBlock() &&
@@ -90,21 +125,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 mlir::OpBuilder at(invocation);
                 mlir::IRMapping mapping;
                 auto & body = target.getBody().front();
-                mapping.map(body.getArgument(ctjs::arg_callee), callee);
-                mapping.map(body.getArgument(ctjs::arg_receiver), receiver);
-                for (auto [index, formal] :
-                     llvm::enumerate(body.getArguments().drop_front(ctjs::implicit_arguments))) {
-                    if (!step()) { return false; }
-                    mlir::Value actual;
-                    if (index < arguments.size()) {
-                        actual = arguments[index];
-                    } else {
-                        actual = ctjs::ConstantOp::create(
-                            at, call->getLoc(), ctjs::UndefinedAttr::get(call->getContext()));
-                        ++operationCount;
-                    }
-                    mapping.map(formal, actual);
-                }
+                if (!bindArguments(at, mapping)) { return false; }
                 auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
                 const auto emit =
                     [&](auto && self, mlir::Block::iterator cursor,
@@ -117,18 +138,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             continue;
                         }
                         if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
-                            auto & capture = captures[static_cast<unsigned>(load.getIndex())];
-                            mlir::Value value;
-                            if (capture.enclosingIndex >= 0) {
-                                value = ctjs::LoadUpvalueOp::create(
-                                    into, load.getLoc(), load.getType(),
-                                    function.getBody().front().getArgument(ctjs::arg_callee),
-                                    capture.enclosingIndex);
-                                ++operationCount;
-                            } else {
-                                value = capture.value();
-                            }
-                            mapping.map(load.getResult(), value);
+                            bindCapture(load, into, mapping);
                         } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
                             auto & normal = invocation.getNormalBody().front();
                             normal.getArgument(0).replaceAllUsesWith(
@@ -697,23 +707,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
     auto & body = target.getBody().front();
     mlir::OpBuilder at(protectedInvocation ? protectedInvocation.getOperation() : call);
     mlir::IRMapping mapping;
-    mapping.map(body.getArgument(ctjs::arg_callee), callee);
-    mapping.map(body.getArgument(ctjs::arg_receiver), receiver);
-    for (auto [index, formal] :
-         llvm::enumerate(body.getArguments().drop_front(ctjs::implicit_arguments))) {
-        if (!step()) { return false; }
-        mlir::Value actual;
-        if (index < arguments.size()) {
-            actual = arguments[index];
-        } else {
-            // Missing JavaScript arguments are undefined. The complete helper
-            // proof excludes arguments/new.target observers before inlining.
-            actual = ctjs::ConstantOp::create(at, call->getLoc(),
-                                              ctjs::UndefinedAttr::get(call->getContext()));
-            ++operationCount;
-        }
-        mapping.map(formal, actual);
-    }
+    if (!bindArguments(at, mapping)) { return false; }
     const auto cloneBody = [&](auto && self, mlir::Block & source, mlir::OpBuilder & at) -> bool {
         for (mlir::Operation & operation : source) {
             if (!step()) { return false; }
@@ -725,19 +719,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             if (discardedResult && &operation == discardedResult) { continue; }
             if (discardedFields.contains(&operation)) { continue; }
             if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
-                // Substitute at each invocation, including branch-local
-                // loads, never bind a shared body to its first caller.
-                auto & capture = captures[static_cast<unsigned>(load.getIndex())];
-                mlir::Value value;
-                if (capture.enclosingIndex >= 0) {
-                    value = ctjs::LoadUpvalueOp::create(at, load.getLoc(), load.getType(),
-                                                        block.getArgument(ctjs::arg_callee),
-                                                        capture.enclosingIndex);
-                    ++operationCount;
-                } else {
-                    value = capture.value();
-                }
-                mapping.map(load.getResult(), value);
+                bindCapture(load, at, mapping);
             } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
                 if (protectedInvocation && protectedInvocation.getNumResults() &&
                     result.getValue() != protectedLeaf.getResult()) {
