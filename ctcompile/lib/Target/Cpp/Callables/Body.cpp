@@ -1,6 +1,5 @@
 #include "Body.h"
 #include "../Const/Bindings.h"
-#include "ctcompile/Support/CppLiterals.hpp"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSet.h"
@@ -10,9 +9,13 @@ namespace {
 
 // The lowering spells every name with a generated prefix (ctn_, capture_,
 // argument_), so a plain identifier check is the whole validation.
-bool is_identifier(llvm::StringRef value) {
+bool identifier(llvm::StringRef value) {
+    const auto word = [](char ch) {
+        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+               ch == '_';
+    };
     return !value.empty() && !(value.front() >= '0' && value.front() <= '9') &&
-           llvm::all_of(value, is_identifier_char);
+           llvm::all_of(value, word);
 }
 
 } // namespace
@@ -36,9 +39,9 @@ mlir::FailureOr<CallableBody> callableBodyPlan(mlir::emitc::FuncOp function) {
     if (!type || !binder || !name || !captures || !parameters || description.size() != 5 ||
         captures.size() + parameters.size() != function.getNumArguments() ||
         !type.getValue().starts_with("ctnative::ctn_env_") ||
-        !is_identifier(type.getValue().drop_front(10)) ||
-        !binder.getValue().starts_with("ctn_bind_") || !is_identifier(binder.getValue()) ||
-        !name.getValue().starts_with("ctn_") || !is_identifier(name.getValue())) {
+        !identifier(type.getValue().drop_front(10)) ||
+        !binder.getValue().starts_with("ctn_bind_") || !identifier(binder.getValue()) ||
+        !name.getValue().starts_with("ctn_") || !identifier(name.getValue())) {
         return invalid();
     }
     result.type = type.str();
@@ -50,7 +53,7 @@ mlir::FailureOr<CallableBody> callableBodyPlan(mlir::emitc::FuncOp function) {
     for (auto group : {captures, parameters}) {
         for (mlir::Attribute attribute : group) {
             auto value = llvm::dyn_cast<mlir::StringAttr>(attribute);
-            if (!value || !is_identifier(value.getValue()) ||
+            if (!value || !identifier(value.getValue()) ||
                 !occupied.insert(value.getValue()).second) {
                 return invalid();
             }
