@@ -641,8 +641,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                 mlir::Value current =
                     callWithConstValueOperands(
                         b, where,
-                        mlir::TypeRange{
-                            isBoolean ? boolean : ec::OpaqueType::get(context, "ctnative::js_num")},
+                        mlir::TypeRange{isBoolean ? boolean
+                                                  : ec::OpaqueType::get(context, kNumberType)},
                         b.getStringAttr(isBoolean ? "ctnative::global_boolean"
                                                   : "ctnative::global_number"),
                         mlir::ValueRange{loaded})

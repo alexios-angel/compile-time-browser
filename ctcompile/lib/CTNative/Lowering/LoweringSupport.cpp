@@ -145,6 +145,11 @@ bool isPrimitiveCarrier(carrier value) {
     return isScalarCarrier(value) || isStringCarrier(value) || isStringUnionCarrier(value);
 }
 
+bool isCallableCarrier(carrier value) {
+    return isScalarCarrier(value) || isStringCarrier(value) || isObjectCarrier(value) ||
+           value == carrier::domElement || value == carrier::map;
+}
+
 llvm::StringRef opaqueSpelling(mlir::Type type) {
     if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
         type = value.getValueType();

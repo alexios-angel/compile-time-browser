@@ -18,20 +18,7 @@ std::string callableLocal(llvm::StringRef prefix, llvm::StringRef hint, unsigned
 } // namespace
 
 bool lowering::hasConcreteCallableSignature(ctjs::CreateClosureOp made) const {
-    const auto supported = [](mlir::Type type) {
-        switch (carrierOf(type)) {
-        case carrier::nullable:
-        case carrier::number:
-        case carrier::boolean:
-        case carrier::string:
-        case carrier::nullableString:
-        case carrier::objectValue:
-        case carrier::objectIdentity:
-        case carrier::domElement:
-        case carrier::map: return true;
-        default: return false;
-        }
-    };
+    const auto supported = [](mlir::Type type) { return isCallableCarrier(carrierOf(type)); };
     auto fn = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
         made, mlir::FlatSymbolRefAttr::get(context, environmentTarget(made)));
     if (!fn || fn.getBody().empty() || !supported(joinedReturnType(fn))) { return false; }
@@ -45,22 +32,19 @@ bool lowering::hasConcreteCallableSignature(ctjs::CreateClosureOp made) const {
 }
 
 std::string lowering::callableTypeSpelling(mlir::Type type) {
-    switch (carrierOf(type)) {
-    case carrier::nullable: return kNullableType.str();
-    case carrier::number: return "ctnative::js_num";
-    case carrier::boolean: return kBooleanType.str();
-    case carrier::string: return "ctnative::js_string";
-    case carrier::nullableString: return kNullableStringType.str();
-    case carrier::objectValue: needsObjectValue = true; return kObjectValueType.str();
-    case carrier::objectIdentity: needsObjectIdentity = true; return kObjectIdentityType.str();
-    case carrier::domElement: needsDOM = true; return kDOMElementType.str();
-    case carrier::map: {
+    const auto c = carrierOf(type);
+    if (!isCallableCarrier(c)) {
+        llvm::report_fatal_error("stored callable has an unproved concrete signature");
+    }
+    needsObjectValue |= c == carrier::objectValue;
+    needsObjectIdentity |= c == carrier::objectIdentity;
+    needsDOM |= c == carrier::domElement;
+    if (c == carrier::map) {
         const auto map = llvm::cast<MapType>(type);
         needsObjectValue |= mapNeedsObjectValues(map);
         return llvm::cast<ec::OpaqueType>(mapCarrierType(map)).getValue().str();
     }
-    default: llvm::report_fatal_error("stored callable has an unproved concrete signature");
-    }
+    return llvm::cast<ec::OpaqueType>(carrierType(context, c)).getValue().str();
 }
 
 void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda) {

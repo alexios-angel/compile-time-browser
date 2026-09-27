@@ -91,6 +91,8 @@ inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
 bool isScalarCarrier(carrier value);
 bool isStringUnionCarrier(carrier value);
 bool isPrimitiveCarrier(carrier value);
+// The carriers a stored callable's concrete signature may use.
+bool isCallableCarrier(carrier value);
 mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternatives alternatives);
 // An emitc opaque type's spelling, through an lvalue; empty for anything else.
 llvm::StringRef opaqueSpelling(mlir::Type type);

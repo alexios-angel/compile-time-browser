@@ -36,28 +36,14 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                         continue;
                     }
                 }
+                // The stored-callable carriers, less nullable Strings and Elements.
                 const auto type = typeOf(captured);
-                switch (carrierOf(type)) {
-                case carrier::nullable: definition += kNullableType; break;
-                case carrier::number: definition += "ctnative::js_num"; break;
-                case carrier::boolean: definition += kBooleanType; break;
-                case carrier::string: definition += "ctnative::js_string"; break;
-                case carrier::objectValue:
-                    needsObjectValue = true;
-                    definition += kObjectValueType;
-                    break;
-                case carrier::objectIdentity:
-                    needsObjectIdentity = true;
-                    definition += kObjectIdentityType;
-                    break;
-                case carrier::map: {
-                    const auto map = llvm::cast<MapType>(type);
-                    needsObjectValue |= mapNeedsObjectValues(map);
-                    definition += llvm::cast<ec::OpaqueType>(mapCarrierType(map)).getValue();
-                    break;
+                const auto c = carrierOf(type);
+                if (!isCallableCarrier(c) || c == carrier::nullableString ||
+                    c == carrier::domElement) {
+                    llvm::report_fatal_error("native environment has an unowned capture");
                 }
-                default: llvm::report_fatal_error("native environment has an unowned capture");
-                }
+                definition += callableTypeSpelling(type);
             }
             environments.push_back(definition + ">;\n}\n");
         });
