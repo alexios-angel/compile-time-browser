@@ -50,3 +50,23 @@ Check first: inherited-own-fields-implicit refuses implicit derived constructors
 ("derived class requires receiver-preserving super normalization"); authentic U
 has none of its own. The 2026-09-27 ladder probe (tmp driver) did reach the
 snapshot refusal with authentic U, so that path differs - confirm with a fixture.
+
+## Correction, measured after R1a landed (b37bd1d9b)
+
+R1a (decided constructor arms) is in. But on the authentic probe (W + B + Button
+U + real Data holder, `new U(null, null)`) the snapshot refusal comes from
+**B's own examine**, before U is examined: B is a base class, so neither the
+throwing-arm proof nor R1a (both require a non-extended class) applies to B's
+arm, and B's `dispose` makes B's own-key snapshot proof walk B's constructor,
+which publishes `this` into `e.set`. Removing B's snapshot line moves the probe
+to `static method receiver requires an exact own getter read`
+(`getOrCreateInstance`'s `new this`). U's implicit constructor is
+`gather_rest` + `call_spread` (super(...args)).
+
+So the first component rung is a base-class one: B's snapshot proof for a base
+that is constructed only through its leaves' super calls. Leaves consume the
+base's result through `snapshotFields[base]` (ownFieldSnapshots), so the base
+proof cannot simply be skipped: either compute B's fields per leaf after super
+normalization (where R1a/R1b can decide the arm on the leaf's actuals), or
+record B's two arm shapes and let each leaf select one. R1b (helper
+evaluation) only pays off after that.

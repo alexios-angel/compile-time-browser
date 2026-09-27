@@ -102,6 +102,21 @@ broad corpora, WPT/test262 and sanitizers were skipped.
   `U.getOrCreateInstance` from a nested closure, `q(X, ...)`/`g(U)` receive
   the class value, and the census needs the real `P`/`H`/`s`/`b` helpers.
 
+**Landed after this section was first written: b37bd1d9b (R1a).** Constructor
+arms on a formal whose actual has the same truthiness at every exact `new` of a
+non-extended class are spliced right after super normalization (dropped-arm
+records purged; risky dropped arms declined). Five throwing-arm controls,
+`helper-selected-receiver` and `own-fields-conditional` now take their actual
+from a fixture parameter so they keep testing undecided arms. 30 branch
+fixtures PASS one by one; a subset of 90 PASS in 245.0 s (344 native
+executions, 180 unprepared, 75 preparation refusals).
+
+**Measured correction:** on the authentic Button probe the snapshot refusal is
+raised in **B's own examine** (B is a base, so R1a and the throwing arm do not
+apply); without B's snapshot line the probe reaches `new this`. The next rung
+is B's own-key snapshot for a base constructed only through leaf super calls
+(see the correction at the end of the design note). Original plan follows.
+
 **Next step (designed, not started):** a read-only review
 (`bootstrap-native-next/05-component-data-registration-design.md`) found the
 component fixture's arm never runs (`a(null)` is null). Smallest sound route:
