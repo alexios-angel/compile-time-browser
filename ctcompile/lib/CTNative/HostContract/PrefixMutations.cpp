@@ -89,10 +89,8 @@ struct mapPathReader {
             return diagnostics.operation(operation, values);
         }
         if (auto construct = llvm::dyn_cast<ctjs::ConstructOp>(operation)) {
-            auto load = construct.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            if (!load || load.getName() != "Map" ||
-                values.lookup(construct.getCallee()).kind != prefixValue::Kind::mapConstructor ||
-                construct.getNewTarget() != construct.getCallee() || !construct.getArgs().empty()) {
+            if (!plainMapConstruction(construct) ||
+                values.lookup(construct.getCallee()).kind != prefixValue::Kind::mapConstructor) {
                 return {};
             }
             unsigned id = 0;

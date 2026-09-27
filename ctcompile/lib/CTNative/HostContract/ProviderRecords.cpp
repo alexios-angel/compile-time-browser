@@ -204,17 +204,14 @@ std::string analyzer::localRecordProblem() {
             operations.insert(read);
             const auto key = ctjs::constantKey(read.getKey());
             if (key == "size") { continue; }
-            static const llvm::StringMap<unsigned> arities{
-                {"set", 2}, {"get", 1}, {"has", 1}, {"delete", 1}, {"clear", 0}};
-            auto method = key.size() <= 6 ? arities.find(key) : arities.end();
-            if (method == arities.end()) { return reject(); }
+            const auto arity = mapMethodArity(key);
+            if (!arity) { return reject(); }
             for (mlir::OpOperand & selected : read.getResult().getUses()) {
                 if (!step()) { return reject(); }
                 if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
                 auto call = llvm::dyn_cast<ctjs::CallOp>(selected.getOwner());
                 if (!call || selected.getOperandNumber() != 0 || call->getParentOp() != entry ||
-                    call.getReceiver() != made.getResult() ||
-                    call.getArgs().size() != method->second ||
+                    call.getReceiver() != made.getResult() || call.getArgs().size() != *arity ||
                     !dominance.properlyDominates(read.getOperation(), call)) {
                     return reject();
                 }

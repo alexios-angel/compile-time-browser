@@ -63,9 +63,8 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
             if (load.getName() != "Map" || !owner.globals["Map"].empty()) { return false; }
             constructors.insert(load);
         } else if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(operation)) {
-            auto constructor = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            if (!constructor || !constructors.contains(constructor) ||
-                made.getNewTarget() != made.getCallee() || !made.getArgs().empty() ||
+            if (!plainMapConstruction(made) ||
+                !constructors.contains(made.getCallee().getDefiningOp()) ||
                 !owner.dominance.dominates(made.getCallee(), made)) {
                 return false;
             }
@@ -411,8 +410,7 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
                 continue;
             }
             if (!maps.contains(read.getObject()) ||
-                (key != "size" && key != "set" && key != "get" && key != "has" && key != "delete" &&
-                 key != "clear" && key != "keys")) {
+                (key != "size" && key != "keys" && !mapMethodArity(key))) {
                 return false;
             }
             if (key == "keys" && !prepareSnapshots()) { return false; }
@@ -442,10 +440,8 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
                 return false;
             }
             const auto key = ctjs::constantKey(read.getKey());
-            static const llvm::StringMap<unsigned> arities{{"set", 2}, {"clear", 0}, {"keys", 0}};
-            const auto method = key.size() <= 5 ? arities.find(key) : arities.end();
-            const unsigned arity = method != arities.end() ? method->second : 1U;
-            if (key == "size" || invoke.getArgs().size() != arity) { return false; }
+            const auto arity = key == "keys" ? std::optional(0u) : mapMethodArity(key);
+            if (invoke.getArgs().size() != arity) { return false; }
             const auto origin = maps.lookup(invoke.getReceiver());
             if (!origin.first) { return false; }
             if ((key == "set" || key == "delete" || key == "clear") && !invalidateAliases(origin)) {

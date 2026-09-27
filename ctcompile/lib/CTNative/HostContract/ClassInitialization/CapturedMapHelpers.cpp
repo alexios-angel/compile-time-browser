@@ -102,11 +102,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
     };
     const auto localMap = [&](mlir::Value value) {
         auto made = sourceValue(value).getDefiningOp<ctjs::ConstructOp>();
-        auto load =
-            made ? made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
-        return made && load && load.getName() == "Map" && made.getArgs().empty() &&
-                       made.getNewTarget() == made.getCallee() &&
-                       entryPosition(made)->getBlock() == &entry
+        return made && plainMapConstruction(made) && entryPosition(made)->getBlock() == &entry
                    ? made
                    : ctjs::ConstructOp{};
     };
@@ -189,16 +185,14 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                 operations.insert(read);
                 continue;
             }
-            const unsigned arity = key == "set" ? 2u : key == "clear" ? 0u : 1u;
-            if (key != "set" && key != "get" && key != "has" && key != "delete" && key != "clear") {
-                return refuse("class nested Map has an unproved member");
-            }
+            const auto arity = mapMethodArity(key);
+            if (!arity) { return refuse("class nested Map has an unproved member"); }
             for (mlir::OpOperand & selected : read.getResult().getUses()) {
                 if (!step()) { return false; }
                 if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
                 auto call = llvm::dyn_cast<ctjs::CallOp>(selected.getOwner());
                 if (!call || selected.getOperandNumber() != 0 ||
-                    call.getReceiver() != read.getObject() || call.getArgs().size() != arity ||
+                    call.getReceiver() != read.getObject() || call.getArgs().size() != *arity ||
                     entryPosition(call)->getBlock() != &entry) {
                     return refuse("class nested Map method escapes its exact receiver call");
                 }
@@ -374,9 +368,8 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                                  : llvm::dyn_cast<ctjs::GetPropertyOp>(nested);
                 if (read && mapCandidate(mapCandidate, read.getObject(), 0)) {
                     const auto key = ctjs::constantKey(read.getKey());
-                    const unsigned arity = key == "set" ? 2u : key == "clear" ? 0u : 1u;
-                    if ((key == "set" || key == "get" || key == "has" || key == "delete" ||
-                         key == "clear" || (!call && key == "size")) &&
+                    const auto arity = mapMethodArity(key);
+                    if ((arity || (!call && key == "size")) &&
                         (!call || (call.getReceiver() == read.getObject() &&
                                    call.getArgs().size() == arity))) {
                         return mlir::WalkResult::advance();
@@ -506,10 +499,8 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                         }
                         continue;
                     }
-                    const unsigned arity = action == "set" ? 2u : action == "clear" ? 0u : 1u;
-                    if (call.getReceiver() != read.getObject() || call.getArgs().size() != arity ||
-                        (action != "set" && action != "get" && action != "has" &&
-                         action != "delete" && action != "clear")) {
+                    const auto arity = mapMethodArity(action);
+                    if (call.getReceiver() != read.getObject() || call.getArgs().size() != arity) {
                         return refuse("class nested Map child has an unproved invocation");
                     }
                     if (action == "clear") {
@@ -801,22 +792,15 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                                                : mlir::WalkResult::interrupt();
             }
             if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
-                auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-                if (!load || load.getName() != "Map" || !made.getArgs().empty() ||
-                    made.getNewTarget() != made.getCallee()) {
-                    return mlir::WalkResult::interrupt();
-                }
+                if (!plainMapConstruction(made)) { return mlir::WalkResult::interrupt(); }
                 captures.insert(made.getResult());
                 return mlir::WalkResult::advance();
             }
             if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
                 if (!captures.contains(read.getObject())) { return mlir::WalkResult::interrupt(); }
                 const auto key = ctjs::constantKey(read.getKey());
-                if (key != "size" && key != "set" && key != "get" && key != "has" &&
-                    key != "delete" && key != "clear") {
-                    return mlir::WalkResult::interrupt();
-                }
-                return mlir::WalkResult::advance();
+                return key == "size" || mapMethodArity(key) ? mlir::WalkResult::advance()
+                                                            : mlir::WalkResult::interrupt();
             }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
                 auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -825,8 +809,7 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                     return mlir::WalkResult::interrupt();
                 }
                 const auto key = ctjs::constantKey(read.getKey());
-                const unsigned arity = key == "set" ? 2u : key == "clear" ? 0u : 1u;
-                if (key == "size" || call.getArgs().size() != arity) {
+                if (call.getArgs().size() != mapMethodArity(key)) {
                     return mlir::WalkResult::interrupt();
                 }
                 // A get is only a candidate child origin. Nested routing and

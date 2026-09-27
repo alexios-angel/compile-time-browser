@@ -519,9 +519,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
             if (load.getName() == "Map") {
                 auto construct = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner());
-                if (construct && use.getOperandNumber() < 2 &&
-                    construct.getCallee() == load.getResult() &&
-                    construct.getNewTarget() == load.getResult() && construct.getArgs().empty()) {
+                if (construct && use.getOperandNumber() < 2 && plainMapConstruction(construct)) {
                     continue;
                 }
             } else if (load.getName() == "Error") {

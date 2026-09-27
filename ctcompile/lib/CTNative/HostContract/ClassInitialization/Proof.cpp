@@ -188,14 +188,10 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         if (domEntry || !llvm::is_contained(contract.initialIntrinsics, "Map")) { continue; }
         for (ctjs::ConstructOp made : scope.getBody().front().getOps<ctjs::ConstructOp>()) {
             if (!step()) { return false; }
-            auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            if (!load || load.getName() != "Map" || !made.getArgs().empty() ||
-                made.getNewTarget() != made.getCallee()) {
-                continue;
-            }
+            if (!plainMapConstruction(made)) { continue; }
             maps.insert(made.getResult());
             mapOperations.insert(made);
-            mapOperations.insert(load);
+            mapOperations.insert(made.getCallee().getDefiningOp());
         }
     }
     if (!proveHeritage(contract)) { return false; }

@@ -80,10 +80,8 @@ bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
             continue;
         }
         if (auto built = llvm::dyn_cast<ctjs::ConstructOp>(operation)) {
-            auto load = built.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            if (!load || load.getName() != "Map" ||
-                !llvm::is_contained(contract.initialIntrinsics, "Map") ||
-                built.getNewTarget() != load.getResult() || !built.getArgs().empty()) {
+            if (!plainMapConstruction(built) ||
+                !llvm::is_contained(contract.initialIntrinsics, "Map")) {
                 return false;
             }
             // Standard zero-argument Map construction cannot inspect the

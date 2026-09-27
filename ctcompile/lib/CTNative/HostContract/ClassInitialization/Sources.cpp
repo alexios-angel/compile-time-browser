@@ -188,17 +188,14 @@ bool classInitialization::proveMaps() {
             const auto key = ctjs::constantKey(read.getKey());
             mapOperations.insert(read);
             if (key == "size") { continue; }
-            static const llvm::StringMap<unsigned> arities{
-                {"set", 2}, {"get", 1}, {"has", 1}, {"delete", 1}, {"clear", 0}};
-            const auto method = key.size() <= 6 ? arities.find(key) : arities.end();
-            const unsigned arity = method != arities.end() ? method->second : 99U;
-            if (arity == 99U) { return refuse("class captured Map has an unproved member"); }
+            const auto arity = mapMethodArity(key);
+            if (!arity) { return refuse("class captured Map has an unproved member"); }
             for (mlir::OpOperand & selected : read.getResult().getUses()) {
                 if (!step()) { return false; }
                 if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
                 auto call = llvm::dyn_cast<ctjs::CallOp>(selected.getOwner());
                 if (!call || selected.getOperandNumber() != 0 ||
-                    call.getReceiver() != read.getObject() || call.getArgs().size() != arity) {
+                    call.getReceiver() != read.getObject() || call.getArgs().size() != *arity) {
                     return refuse("class captured Map method escapes its exact receiver call");
                 }
                 if (key == "set") {

@@ -79,17 +79,13 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             result.initialization ? result.initialization.getValue() : result.cell.getInitial();
     }
     result.allocation = resource.getDefiningOp<ctjs::ConstructOp>();
-    if (!result.allocation || !result.allocation.getArgs().empty() ||
-        result.allocation.getNewTarget() != result.allocation.getCallee() ||
+    if (!result.allocation || !plainMapConstruction(result.allocation) ||
         result.allocation->getBlock() != closure->getBlock() ||
         !result.allocation->isBeforeInBlock(closure)) {
         return {};
     }
     result.intrinsic = result.allocation.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-    if (!result.intrinsic || result.intrinsic.getName() != "Map" || !globals["Map"].empty() ||
-        !before(result.intrinsic, result.allocation)) {
-        return {};
-    }
+    if (!globals["Map"].empty() || !before(result.intrinsic, result.allocation)) { return {}; }
     if (prepared) {
         for (mlir::OpOperand & use : resource.getUses()) {
             if (!step()) { return {}; }
@@ -316,9 +312,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 return outer;
             }
             if (auto made = value.getDefiningOp<ctjs::ConstructOp>()) {
-                auto intrinsic = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-                if (intrinsic && intrinsic.getName() == "Map" && globals["Map"].empty() &&
-                    made.getNewTarget() == made.getCallee() && made.getArgs().empty() &&
+                if (plainMapConstruction(made) && globals["Map"].empty() &&
                     dominance.dominates(made.getCallee(), made)) {
                     return value;
                 }
