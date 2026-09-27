@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 
-from CTNative.harness import inline_runtime
+from CTNative.harness import inline_runtime, run_sanitized
 
 from .sources import (
     methods,
@@ -97,31 +97,7 @@ def instrument_maps(cpp, *, declarations=""):
 
 
 def run_sanitized_lifetime(source, binary, compiler):
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    return subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
+    return run_sanitized(compiler, source, binary, owned.FLAGS)
 
 
 def check_result_calls(cpp, name, mode):

@@ -9,6 +9,7 @@ RUN line passes `--node %node --reference %native_reference`, both configured
 by CMake (lit.site.cfg.py.in).
 """
 
+import os
 from pathlib import Path
 import subprocess
 
@@ -47,3 +48,29 @@ def run(command, *, success=True, environment=None, input_text=None):
             f"unexpected tool status {result.returncode}: {command!r}\n{result.stdout}{result.stderr}"
         )
     return result
+
+
+# The lifetime gate: AddressSanitizer + UBSan, leaks and use-after-return on.
+SANITIZE = [
+    "-O1",
+    "-g",
+    "-fno-omit-frame-pointer",
+    "-fsanitize=address,undefined",
+    "-fsanitize-address-use-after-scope",
+]
+SANITIZER_ENVIRONMENT = {
+    "ASAN_OPTIONS": "detect_stack_use_after_return=1:detect_leaks=1",
+    "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1",
+}
+
+
+def run_sanitized(compiler, source, binary, flags):
+    """Build `source` with `flags` plus SANITIZE, run it, and return the result unchecked."""
+    run([compiler, *flags, *SANITIZE, str(source), "-o", str(binary)])
+    return subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(os.environ, **SANITIZER_ENVIRONMENT),
+    )
