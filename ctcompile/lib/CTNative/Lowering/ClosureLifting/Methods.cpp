@@ -527,30 +527,26 @@ void closureLifter::argumentCensus() {
             }
         }
     }
-    for (const auto & [function, sites] : directCalls) {
+    // `callable`'s object slots onto `function` and every site `sitesOf` lists.
+    const auto publish = [&](mlir::Operation * callable, mlir::Operation * function,
+                             const auto & sitesOf) {
         llvm::SmallVector<int32_t> indices;
-        for (unsigned slot : objectSlotsOf.lookup(function)) {
+        for (unsigned slot : objectSlotsOf.lookup(callable)) {
             indices.push_back(static_cast<int32_t>(ctjs::implicit_arguments + slot));
         }
-        if (indices.empty()) { continue; }
+        if (indices.empty()) { return; }
         auto attribute = mlir::Builder(context).getDenseI32ArrayAttr(indices);
         function->setAttr("ctnative.object_args", attribute);
-        for (const auto & site : sites) { site.op->setAttr("ctnative.object_args", attribute); }
+        for (const auto & site : sitesOf()) { site.op->setAttr("ctnative.object_args", attribute); }
+    };
+    for (const auto & [function, sites] : directCalls) {
+        publish(function, function, [&]() -> const auto & { return sites; });
     }
     // Declarations are already direct and need no closure rewrite. Give their
     // proved borrows the same caller/callee carrier as lifted local helpers.
     for (const auto & declaration : objectArgumentDeclarations) {
         auto made = declaration.second;
-        llvm::SmallVector<int32_t> indices;
-        for (unsigned slot : objectSlotsOf.lookup(made.getOperation())) {
-            indices.push_back(static_cast<int32_t>(ctjs::implicit_arguments + slot));
-        }
-        if (indices.empty()) { continue; }
-        auto attribute = mlir::Builder(context).getDenseI32ArrayAttr(indices);
-        targetOf(made)->setAttr("ctnative.object_args", attribute);
-        for (const auto & site : objectArgumentCalls(made)) {
-            site.op->setAttr("ctnative.object_args", attribute);
-        }
+        publish(made, targetOf(made), [&] { return objectArgumentCalls(made); });
     }
     // AND THE REASON, ONTO THE LITERAL, for every object argument this
     // rule did NOT take. It is written here rather than worked out by
@@ -651,6 +647,22 @@ void closureLifter::methodCensus() {
             if (initialized) { instanceStores.insert(set); }
         }
     }
+    // No write can replace `key` of `receiver`: every set_property that may
+    // reach it has a constant key, and `key` only by stores `owned` accepts.
+    // Distinct fresh literals cannot be the receiver; unknown aliases,
+    // including every formal, still count.
+    const auto stableKey = [&](mlir::Value receiver, llvm::StringRef key, const auto & owned) {
+        bool stable = true;
+        module.walk([&](ctjs::SetPropertyOp set) {
+            if (set.getObject().getDefiningOp<ctjs::CreateObjectOp>() &&
+                set.getObject() != receiver) {
+                return;
+            }
+            const auto written = ctjs::constantKey(set.getKey());
+            if (written.empty() || (written == key && !owned(set))) { stable = false; }
+        });
+        return stable;
+    };
     const auto collect = [&](mlir::Value object, bool constructed) {
         if (!closedAfterLift(object)) { return; }
         llvm::StringMap<unsigned> writes;
@@ -672,22 +684,11 @@ void closureLifter::methodCensus() {
             // condition 2 forbids. The key is simply not admitted, and the
             // call through it stays a ctjs.call - refused by name below.
             if (writes[entry.first()] != 1) { continue; }
-            bool stable = true;
-            if (constructed) {
-                // Distinct fresh literals cannot be the constructed receiver.
-                // Unknown aliases, including every formal, still count.
-                module.walk([&](ctjs::SetPropertyOp set) {
-                    if (set.getObject().getDefiningOp<ctjs::CreateObjectOp>() &&
-                        set.getObject() != object) {
-                        return;
-                    }
-                    const auto key = ctjs::constantKey(set.getKey());
-                    if (key.empty() || (key == entry.first() && !instanceStores.contains(set))) {
-                        stable = false;
-                    }
-                });
+            if (!constructed || stableKey(object, entry.first(), [&](ctjs::SetPropertyOp set) {
+                    return instanceStores.contains(set);
+                })) {
+                into[entry.first()] = entry.second;
             }
-            if (stable) { into[entry.first()] = entry.second; }
         }
         behind[object].push_back(object);
     };
@@ -707,17 +708,10 @@ void closureLifter::methodCensus() {
             auto method = field.getValue().getDefiningOp<ctjs::CreateClosureOp>();
             if (!method) { continue; }
             const auto key = ctjs::constantKey(field.getKey());
-            bool stable = true;
             // As with post-construction methods, all receiver writes count.
-            module.walk([&](ctjs::SetPropertyOp set) {
-                if (set.getObject().getDefiningOp<ctjs::CreateObjectOp>() &&
-                    set.getObject() != origin) {
-                    return;
-                }
-                auto written = ctjs::constantKey(set.getKey());
-                if (written.empty() || (written == key && set != field)) { stable = false; }
-            });
-            if (!stable) { continue; }
+            if (!stableKey(origin, key, [&](ctjs::SetPropertyOp set) { return set == field; })) {
+                continue;
+            }
             methodsOf[origin][key] = methodField{field, method};
             methodsOf[built.getResult()][key] = methodField{field, method};
         }
