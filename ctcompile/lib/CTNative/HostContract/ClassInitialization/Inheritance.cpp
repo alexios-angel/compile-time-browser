@@ -861,17 +861,52 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             return refuse("class method observes its identity, home or an unproved receiver");
         }
         if (isStatic) {
-            // ponytail: own getter reads only; inherited receivers, static
-            // dispatch and new this need separate constructor-identity proofs.
-            for (mlir::OpOperand & use : block.getArgument(ctjs::arg_receiver).getUses()) {
+            // A static body only runs from an exact local call, so its receiver
+            // is this class: an own getter read, or an own static method called
+            // on it, selects the body an exact `C.key` would.
+            // ponytail: inherited receivers and new this need separate
+            // constructor-identity proofs.
+            const auto receiver = block.getArgument(ctjs::arg_receiver);
+            llvm::SmallPtrSet<mlir::Operation *, 4> receiverCalls;
+            for (mlir::OpOperand & use : receiver.getUses()) {
                 if (!step()) { return false; }
-                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
                 auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
-                if (use.getOperandNumber() != 0 || !read ||
-                    !staticDefinitions.contains(ctjs::constantKey(read.getKey()))) {
+                if (use.getOperandNumber() != 0 || !read) { continue; }
+                const auto key = ctjs::constantKey(read.getKey());
+                if (staticDefinitions.contains(key)) {
+                    staticReads.push_back(read);
+                    continue;
+                }
+                auto callee = staticMethods.lookup(key);
+                auto fn = callee ? target(callee.getValue().getDefiningOp<ctjs::CreateClosureOp>())
+                                 : ctjs::FuncOp{};
+                if (!fn) {
                     return refuse("static method receiver requires an exact own getter read");
                 }
-                staticReads.push_back(read);
+                for (mlir::OpOperand & call : read.getResult().getUses()) {
+                    if (!step()) { return false; }
+                    if (llvm::isa<ctjs::RootOp>(call.getOwner())) { continue; }
+                    auto invocation = llvm::dyn_cast<ctjs::CallOp>(call.getOwner());
+                    if (!invocation || call.getOperandNumber() != 0 ||
+                        invocation.getReceiver() != receiver ||
+                        invocation.getArgs().size() + ctjs::implicit_arguments >
+                            fn.getBody().front().getNumArguments()) {
+                        return refuse("static method escapes its exact local call");
+                    }
+                    helperCalls.insert(invocation);
+                    receiverCalls.insert(invocation);
+                }
+                staticMethodReads.emplace_back(read, fn);
+            }
+            for (mlir::OpOperand & use : receiver.getUses()) {
+                if (!step()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                    (use.getOperandNumber() == 0 &&
+                     llvm::isa<ctjs::GetPropertyOp>(use.getOwner())) ||
+                    (use.getOperandNumber() == 1 && receiverCalls.contains(use.getOwner()))) {
+                    continue;
+                }
+                return refuse("static method receiver requires an exact own getter read");
             }
             // Static bodies retain the strict complete helper census, even
             // for DOM entries. Instance method probes grant them no authority.

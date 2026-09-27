@@ -69,3 +69,65 @@ function inherited_static_getters_base_reads_leaf() {
     return leaf.k + (leaf.n === 3) * 3;
 }
 var a = inherited_static_getters_base_reads_leaf();
+
+// A static method may call an own static method on its exact receiver: the
+// call selects the same body an exact local `Shape.base(n)` does.
+//--- static-call-this-method.js
+function static_call_this_method() {
+    class Shape {
+        static base(n) { return n + 1; }
+        static read(n) { return this.base(n) * 2; }
+    }
+    var instance = new Shape();
+    return Shape.read(2) + 1;
+}
+var a = static_call_this_method();
+
+// The receiver call may pass fewer arguments and read an own getter too.
+//--- static-call-this-getter-chain.js
+function static_call_this_getter_chain() {
+    class Shape {
+        static get BASE() { return 3; }
+        static add(n, m) { return m ? n + m : n + this.BASE; }
+        static read(n) { return this.add(n) + this.add(n, 1); }
+    }
+    var instance = new Shape();
+    return Shape.read(1);
+}
+var a = static_call_this_getter_chain();
+
+// A detached receiver method loses its receiver; it is not the exact call.
+//--- static-call-this-detached.js
+function static_call_this_detached() {
+    class Shape {
+        static base(n) { return n + 1; }
+        static read(n) { const f = this.base; return f(n) * 2; }
+    }
+    var instance = new Shape();
+    return Shape.read(2) + 1;
+}
+var a = static_call_this_detached();
+
+// A different receiver for the same body is still not the exact receiver.
+//--- static-call-this-foreign.js
+function static_call_this_foreign() {
+    class Shape {
+        static base(n) { return n + 1; }
+        static read(n) { return this.base.call(undefined, n) * 2; }
+    }
+    var instance = new Shape();
+    return Shape.read(2) + 1;
+}
+var a = static_call_this_foreign();
+
+// Bootstrap B's getOrCreateInstance: a receiver method call beside new this.
+//--- static-call-this-new-this.js
+function static_call_this_new_this() {
+    class Shape {
+        static find(n) { return n ? 7 : 0; }
+        static make(n) { return this.find(n) || new this(); }
+    }
+    var instance = new Shape();
+    return Shape.make(1);
+}
+var a = static_call_this_new_this();

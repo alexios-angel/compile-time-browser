@@ -90,15 +90,22 @@ PREPARED_ONLY.update(
         "inherited-own-fields-iterate-throwing-arm-own-getter",
     }
 )
-# Own static getters beside inherited ones.
+# Own static getters beside inherited ones, and own static calls on `this`.
 OBSERVATIONS.update(
     {
         "inherited-static-getters": (7, 7),
         "inherited-static-getters-shadow": (7, 7),
         "inherited-static-getters-base-reads-leaf": (7, 7),
+        "static-call-this-method": (7, 7),
+        "static-call-this-getter-chain": (6, 6),
+        "static-call-this-detached": (7, 7),
+        "static-call-this-foreign": (7, 7),
+        "static-call-this-new-this": (7, 7),
     }
 )
-POSITIVES.add("inherited-static-getters")
+POSITIVES.update(
+    {"inherited-static-getters", "static-call-this-method", "static-call-this-getter-chain"}
+)
 POSITIVES.update(
     {
         "own-fields-length",
@@ -577,6 +584,9 @@ def main():
             "inherited-own-fields-iterate-throwing-arm-escape-before": "class own-key snapshot constructor observes its receiver",
             "inherited-static-getters-shadow": "derived class requires receiver-preserving super normalization",
             "inherited-static-getters-base-reads-leaf": "static getter receiver lacks an exact local getter dependency",
+            "static-call-this-detached": "static method escapes its exact local call",
+            "static-call-this-foreign": "static method escapes its exact local call",
+            "static-call-this-new-this": "static method receiver requires an exact own getter read",
             "inherited-own-fields-iterate-forward-missing": "class construction helper requires an existing own field",
             "inherited-own-fields-iterate-forward-recursive": "class construction helper proof exceeds its depth bound",
             "inherited-own-fields-iterate-forward-unused-effects": "unknown call, binding or reflective effect",
