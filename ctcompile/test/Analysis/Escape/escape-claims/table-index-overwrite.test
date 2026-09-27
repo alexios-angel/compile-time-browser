@@ -317,9 +317,9 @@
 // RECORD-LABEL: fn 70 entries 1 params 0 frame {{[0-9]+}} name unconvertedFractionalTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 // RECORD-LABEL: fn 71 entries 1 params 0 frame {{[0-9]+}} name arithmeticFractionalTableKey
-// The VM currently truncates numeric fractional array keys in store_index.
-// Node retains the child; the compiler's Stored control above stays conservative.
-// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// A fractional Number key names a property ("0.9"), not an index, so the VM, like
+// Node, retains the child; the compiler's Stored control above is exact.
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 // RECORD-LABEL: fn 72 entries 1 params 0 frame {{[0-9]+}} name mutatedFractionalTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
@@ -488,7 +488,7 @@
 // RECORD-LABEL: fn 147 entries 1 params 0 frame {{[0-9]+}} name mutatedAfterReadPlus
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 // RECORD-LABEL: fn 148 entries 1 params 0 frame {{[0-9]+}} name originalPropertyAfterReadPlus
-// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 // RECORD-LABEL: fn 149 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberSubZero
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
 
