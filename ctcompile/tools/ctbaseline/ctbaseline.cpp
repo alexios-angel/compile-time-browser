@@ -28,13 +28,12 @@
 #include <ctbrowser/style/engine.hpp>
 
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,11 +43,8 @@ namespace {
 using clock_type = std::chrono::steady_clock;
 
 [[nodiscard]] std::string read_file(const std::string & path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) { return {}; }
-    std::ostringstream all;
-    all << in.rdbuf();
-    return all.str();
+    auto buffer = llvm::MemoryBuffer::getFile(path);
+    return buffer ? (*buffer)->getBuffer().str() : std::string{};
 }
 
 // The median of several runs, not the mean and not the best.
@@ -169,6 +165,9 @@ int main(int argc, char ** argv) {
             stages.push_back(
                 stage{"js_parse_and_compile", compile, source.size(), functions, true, {}});
 
+            // ONE UNTIMED COMPILE serves the image stage and the top-level run.
+            const auto program = ctbrowser::script::compiler::compile(source);
+
             // AND THE WHOLE POINT: loading the same program from an image
             // instead of compiling it.
             //
@@ -178,8 +177,7 @@ int main(int argc, char ** argv) {
             // of the 264 ms being compared against, and an image stage that
             // skipped it would be measured against a padded baseline.
             {
-                const auto whole = ctbrowser::script::compiler::compile(source);
-                const auto image = ctbrowser::script::write_image(whole);
+                const auto image = ctbrowser::script::write_image(program);
                 if (!image.empty()) {
                     std::size_t loaded = 0;
                     bool ok = true;
@@ -194,13 +192,13 @@ int main(int argc, char ** argv) {
                     // A GUARD, NOT A STATISTIC: an image that quietly loads
                     // fewer functions than the compile produced would read as a
                     // win. The count has to match or the number means nothing.
-                    if (loaded != whole.functions.size()) {
+                    if (loaded != program.functions.size()) {
                         stages.back().completed = false;
                         stages.back().stopped_because = "the image loaded " +
                                                         std::to_string(loaded) +
                                                         " functions, the "
                                                         "compile produced " +
-                                                        std::to_string(whole.functions.size());
+                                                        std::to_string(program.functions.size());
                     }
                 }
             }
@@ -208,7 +206,6 @@ int main(int argc, char ** argv) {
             // AND RUNNING THE TOP LEVEL, which for a UMD bundle is where the
             // library installs itself - the work a packaged application still
             // has to do even once its code is native.
-            const auto program = ctbrowser::script::compiler::compile(source);
             if (!program.ok) {
                 stages.push_back(stage{"js_parse_and_compile", compile, source.size(), functions,
                                        false, program.error});

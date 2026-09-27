@@ -35,12 +35,12 @@
 #include "llvm/Option/OptTable.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <bitset>
 #include <exception>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <span>
 #include <string>
@@ -87,6 +87,12 @@ public:
 std::vector<std::byte> bytes_of(std::string_view text) {
     const std::span<const std::byte> bytes = std::as_bytes(std::span{text});
     return {bytes.begin(), bytes.end()};
+}
+
+// A whole file, or empty when it cannot be read.
+std::string read_file(const std::filesystem::path & path) {
+    auto buffer = llvm::MemoryBuffer::getFile(path.string());
+    return buffer ? (*buffer)->getBuffer().str() : std::string{};
 }
 
 bool write_file(const std::filesystem::path & path, std::span<const std::byte> bytes) {
@@ -137,9 +143,12 @@ int main(int argc, char ** argv) try {
         }
         seen.set(id);
     }
-    if (options.hasArg(OPT_help)) {
-        table.printHelp(llvm::outs(), "ctcompile [options] <application-directory>",
+    const auto help = [&](llvm::raw_ostream & to) {
+        table.printHelp(to, "ctcompile [options] <application-directory>",
                         "ctcompile - ahead-of-time compiler for ctbrowser applications");
+    };
+    if (options.hasArg(OPT_help)) {
+        help(llvm::outs());
         llvm::outs() << "\nPackages classic scripts as bytecode in a launcher executable "
                         "(or a .ctapp with --bundle).\n"
                         "This command does not compile JavaScript to native C++.\n";
@@ -152,8 +161,7 @@ int main(int argc, char ** argv) try {
     }
     const auto * application_arg = options.getLastArg(OPT_INPUT, OPT_application);
     if (!application_arg) {
-        table.printHelp(llvm::errs(), "ctcompile [options] <application-directory>",
-                        "ctcompile - ahead-of-time compiler for ctbrowser applications");
+        help(llvm::errs());
         return 2;
     }
 
@@ -200,11 +208,7 @@ int main(int argc, char ** argv) try {
     // compiles, and which resources it went looking for. A packager that
     // re-derived either would be keeping a second copy of a rule that lives in
     // the engine, free to drift from the one that decides at run time.
-    std::string html;
-    {
-        std::ifstream in{entry, std::ios::binary};
-        html.assign(std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{});
-    }
+    const std::string html = read_file(entry);
     if (html.empty()) {
         std::cerr << "ctcompile: " << entry << " is empty\n";
         return 2;
@@ -385,16 +389,13 @@ int main(int argc, char ** argv) try {
         // fixed `fonts/` is a prefix substitution on names the ENGINE produced,
         // not a second implementation of how a face is named.
         const std::string from = font_directory + "/";
+        const auto rename = [&](std::string & name) {
+            if (name.rfind(from, 0) == 0) { name = "fonts/" + name.substr(from.size()); }
+        };
         for (ctbrowser::shell::bundle_entry & one : bundle.entries) {
-            if (one.kind == ctbrowser::shell::bundle_kind::asset && one.name.rfind(from, 0) == 0) {
-                one.name = "fonts/" + one.name.substr(from.size());
-            }
+            if (one.kind == ctbrowser::shell::bundle_kind::asset) { rename(one.name); }
         }
-        for (ctcompile::manifest_resource & one : record.resources) {
-            if (one.name.rfind(from, 0) == 0) {
-                one.name = "fonts/" + one.name.substr(from.size());
-            }
-        }
+        for (ctcompile::manifest_resource & one : record.resources) { rename(one.name); }
         font_directory = "fonts";
         record.font_directory = font_directory;
         bundle.entries.push_back(
@@ -455,13 +456,7 @@ int main(int argc, char ** argv) try {
             return 1;
         }
         if (aliases_input(launcher)) { return 2; }
-        std::vector<std::byte> base;
-        {
-            std::ifstream in{launcher, std::ios::binary};
-            const std::string raw{std::istreambuf_iterator<char>{in},
-                                  std::istreambuf_iterator<char>{}};
-            base = bytes_of(raw);
-        }
+        const std::vector<std::byte> base = bytes_of(read_file(launcher));
         if (base.empty()) {
             std::cerr << "ctcompile: cannot read the launcher " << launcher << '\n';
             return 1;

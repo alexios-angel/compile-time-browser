@@ -11,13 +11,12 @@
 #include <ctbrowser.hpp>
 
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -26,10 +25,8 @@ namespace {
 using clock_type = std::chrono::steady_clock;
 
 [[nodiscard]] std::string read_file(const std::string & path) {
-    std::ifstream in{path, std::ios::binary};
-    std::ostringstream all;
-    all << in.rdbuf();
-    return all.str();
+    auto buffer = llvm::MemoryBuffer::getFile(path);
+    return buffer ? (*buffer)->getBuffer().str() : std::string{};
 }
 
 template <typename F> [[nodiscard]] double median_ms(int runs, F && once) {
