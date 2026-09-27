@@ -1,5 +1,4 @@
 #include "Proof.hpp"
-#include "ctbrowser/style/css/parser.hpp"
 #include "mlir/IR/Verifier.h"
 
 namespace ctcompile::ctnative::dom_source_detail {
@@ -627,11 +626,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 for (std::size_t i = 0; i < selector.getValue().size(); ++i) {
                     if (!step()) { return false; }
                 }
-                ctbrowser::atom_table atoms;
-                bool invalid = false;
-                const std::string_view text{selector.getValue().data(), selector.getValue().size()};
-                (void)ctbrowser::style::css::parse_selector_text(text, atoms, invalid);
-                if (invalid) { return false; }
+                if (!validSelector(selector.getValue())) { return false; }
             }
             suffixValues.append({method.getResult(), protectedLeaf.getResult(),
                                  discardedResult ? discardedResult.getResult() : mlir::Value{},

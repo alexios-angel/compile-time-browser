@@ -5,6 +5,13 @@
 #include <ctbrowser/dom/element.hpp>
 #include <ctbrowser/style/css/parser.hpp>
 
+bool ctcompile::ctnative::validSelector(llvm::StringRef text) {
+    ctbrowser::atom_table atoms;
+    bool invalid = false;
+    (void)ctbrowser::style::css::parse_selector_text({text.data(), text.size()}, atoms, invalid);
+    return !invalid;
+}
+
 namespace ctcompile::ctnative::dom_entry_detail {
 
 std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block & body,
@@ -432,16 +439,12 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             for (std::size_t i = 0; i < name.getValue().size(); ++i) {
                 if (!spend()) { return false; }
             }
-            const std::string_view text{name.getValue().data(), name.getValue().size()};
-            if (matches) {
-                ctbrowser::atom_table atoms;
-                bool invalid = false;
-                (void)ctbrowser::style::css::parse_selector_text(text, atoms, invalid);
-                if (invalid) {
-                    refusal = "DOM suppressed matches requires a valid literal selector";
-                    return false;
-                }
-            } else if (!ctbrowser::is_valid_attribute_name(text)) {
+            if (matches && !validSelector(name.getValue())) {
+                refusal = "DOM suppressed matches requires a valid literal selector";
+                return false;
+            }
+            if (!matches && !ctbrowser::is_valid_attribute_name(
+                                {name.getValue().data(), name.getValue().size()})) {
                 refusal = "DOM suppressed attribute requires a valid literal name";
                 return false;
             }
