@@ -1,4 +1,4 @@
-#include "Importer.h"
+#include "OperatorTables.h"
 
 namespace ctcompile::js::bytecode_detail {
 
@@ -13,6 +13,54 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         return slot < state.registers.size() ? state.registers[slot] : mlir::Value{};
     };
     const auto set = [&](std::uint16_t slot, mlir::Value v) { state.write(slot, v); };
+    // THE `in.b` ARGUMENTS ARE THE REGISTERS ABOVE THE CALLEE, which is the
+    // interpreter's own layout: `arg_base = base + in.a + 1`. The callee's
+    // frame starts where its arguments already are, which is why the bytecode
+    // puts them there. False after giving up on one outside the frame.
+    const auto arguments_above = [&](llvm::SmallVector<mlir::Value> & args) {
+        for (unsigned i = 0; i < in.b; ++i) {
+            const auto slot = static_cast<std::uint16_t>(in.a + 1 + i);
+            if (slot >= state.registers.size()) {
+                state.give_up(at, in.code, "an argument register is outside the frame");
+                return false;
+            }
+            args.push_back(reg(slot));
+        }
+        return true;
+    };
+
+    // THE OPERATOR TABLES FIRST: each row is one CTJS operation over b and c.
+    for (const binary_row & row : binary_rows) {
+        if (row.code != in.code) { continue; }
+        const auto kind = ctjs::BinaryKindAttr::get(context, row.kind);
+        set(in.a,
+            row.re_entering
+                ? ctjs::BinaryOp::create(into, where, value_type, kind, reg(in.b), reg(in.c))
+                      .getResult()
+                : ctjs::BinaryStaticOp::create(into, where, value_type, kind, reg(in.b), reg(in.c))
+                      .getResult());
+        return;
+    }
+    for (const compare_row & row : compare_rows) {
+        if (row.code != in.code) { continue; }
+        mlir::Value made = ctjs::CompareOp::create(into, where, value_type,
+                                                   ctjs::CompareKindAttr::get(context, row.kind),
+                                                   reg(in.b), reg(in.c));
+        if (row.negate) {
+            made = ctjs::UnaryOp::create(into, where, value_type,
+                                         ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not),
+                                         made);
+        }
+        set(in.a, made);
+        return;
+    }
+    for (const unary_row & row : unary_rows) {
+        if (row.code != in.code) { continue; }
+        set(in.a, ctjs::UnaryOp::create(into, where, value_type,
+                                        ctjs::UnaryKindAttr::get(context, row.kind), reg(in.b)));
+        return;
+    }
+
     switch (in.code) {
     case op::load_undef: set(in.a, state.undefined(where)); break;
     case op::load_null: set(in.a, state.constant(where, ctjs::NullAttr::get(context))); break;
@@ -184,42 +232,29 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
     }
     case op::get_global:
     case op::get_global_typeof:
-        if (in.bx() >= proto.names.size()) {
-            state.give_up(at, in.code, "name index out of range");
-            break;
+        if (const std::string * name = state.name_at(at, in.code, in.bx())) {
+            set(in.a,
+                ctjs::LoadGlobalOp::create(into, where, value_type, into.getStringAttr(*name),
+                                           into.getBoolAttr(in.code == op::get_global_typeof)));
         }
-        set(in.a, ctjs::LoadGlobalOp::create(into, where, value_type,
-                                             into.getStringAttr(proto.names[in.bx()]),
-                                             into.getBoolAttr(in.code == op::get_global_typeof)));
         break;
     case op::set_global:
-        if (in.bx() >= proto.names.size()) {
-            state.give_up(at, in.code, "name index out of range");
-            break;
+        if (const std::string * name = state.name_at(at, in.code, in.bx())) {
+            ctjs::StoreGlobalOp::create(into, where, into.getStringAttr(*name), reg(in.a));
         }
-        ctjs::StoreGlobalOp::create(into, where, into.getStringAttr(proto.names[in.bx()]),
-                                    reg(in.a));
         break;
-    case op::get_prop: {
-        if (in.c >= proto.names.size()) {
-            state.give_up(at, in.code, "name index out of range");
-            break;
+    case op::get_prop:
+        if (const std::string * name = state.name_at(at, in.code, in.c)) {
+            const mlir::Value key = state.constant(where, ctjs::StringAttr::get(context, *name));
+            set(in.a, ctjs::GetPropertyOp::create(into, where, value_type, reg(in.b), key));
         }
-        const mlir::Value key =
-            state.constant(where, ctjs::StringAttr::get(context, proto.names[in.c]));
-        set(in.a, ctjs::GetPropertyOp::create(into, where, value_type, reg(in.b), key));
         break;
-    }
-    case op::set_prop: {
-        if (in.b >= proto.names.size()) {
-            state.give_up(at, in.code, "name index out of range");
-            break;
+    case op::set_prop:
+        if (const std::string * name = state.name_at(at, in.code, in.b)) {
+            const mlir::Value key = state.constant(where, ctjs::StringAttr::get(context, *name));
+            ctjs::SetPropertyOp::create(into, where, reg(in.a), key, reg(in.c));
         }
-        const mlir::Value key =
-            state.constant(where, ctjs::StringAttr::get(context, proto.names[in.b]));
-        ctjs::SetPropertyOp::create(into, where, reg(in.a), key, reg(in.c));
         break;
-    }
     case op::get_index:
         set(in.a, ctjs::GetPropertyOp::create(into, where, value_type, reg(in.b), reg(in.c)));
         break;
@@ -346,44 +381,41 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         // names[b] by the module at specifier names[c]". Filling the
         // operation in reading order compiles and raises `module
         // `count` was not loaded` at run time.
-        if (in.b >= proto.names.size() || in.c >= proto.names.size()) {
-            state.give_up(at, in.code, "name index out of range");
-            break;
-        }
+        //
         // WHAT LANDS HERE IS A CELL, and it must NOT be boxed again -
         // the compiler marked this local boxed and deliberately emitted
         // no new_cell, so every later read is already a ctjs.cell_get.
-        set(in.a, ctjs::ModuleImportCellOp::create(into, where, value_type,
-                                                   into.getStringAttr(proto.names[in.c]),
-                                                   into.getStringAttr(proto.names[in.b])));
+        if (const std::string *exported = state.name_at(at, in.code, in.b),
+            *specifier = state.name_at(at, in.code, in.c);
+            exported != nullptr && specifier != nullptr) {
+            set(in.a, ctjs::ModuleImportCellOp::create(into, where, value_type,
+                                                       into.getStringAttr(*specifier),
+                                                       into.getStringAttr(*exported)));
+        }
         break;
     case op::bind_export:
         // bx(), NOT b. b is the HIGH half of the pair, so it is 0 for
         // every module with fewer than 65,536 names - which is all of
         // them - and a decoder that reads b alone publishes name 0
         // under this name, silently.
-        if (in.bx() >= proto.names.size()) {
-            state.give_up(at, in.code, "name index out of range");
-            break;
-        }
+        //
         // reg(in.a) IS A SOURCE AS WELL AS THE DESTINATION. The write
         // is conditional on a module being evaluated, and outside one
         // the register keeps the local being exported - so the
         // operation carries that value and answers it back rather than
         // answering undefined and destroying the local.
-        set(in.a,
-            ctjs::ModuleExportCellOp::create(into, where, value_type,
-                                             into.getStringAttr(proto.names[in.bx()]), reg(in.a)));
+        if (const std::string * name = state.name_at(at, in.code, in.bx())) {
+            set(in.a, ctjs::ModuleExportCellOp::create(into, where, value_type,
+                                                       into.getStringAttr(*name), reg(in.a)));
+        }
         break;
     case op::load_namespace:
-        if (in.b >= proto.names.size()) {
-            state.give_up(at, in.code, "name index out of range");
-            break;
-        }
         // A PLAIN 16-BIT b HERE, where bind_export uses the bx pair:
         // three module opcodes, two encodings for one name table.
-        set(in.a, ctjs::ModuleNamespaceOp::create(into, where, value_type,
-                                                  into.getStringAttr(proto.names[in.b])));
+        if (const std::string * name = state.name_at(at, in.code, in.b)) {
+            set(in.a, ctjs::ModuleNamespaceOp::create(into, where, value_type,
+                                                      into.getStringAttr(*name)));
+        }
         break;
     case op::dyn_import:
         // b IS A REGISTER, not a name index - the specifier is computed,
@@ -473,59 +505,31 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
     case op::call_method:
     case op::call_computed:
     case op::call_receiver: {
-        // THE ARGUMENTS ARE THE REGISTERS ABOVE THE CALLEE, which is
-        // the interpreter's own layout: `arg_base = base + in.a + 1`,
-        // and `in.b` of them. The callee's frame starts where its
-        // arguments already are, which is why the bytecode puts them
-        // there.
         mlir::Value callee = reg(in.a);
         mlir::Value receiver = state.undefined(where);
         if (in.code == op::call_receiver) {
             receiver = reg(in.c);
         } else if (in.code == op::call_method) {
-            if (in.c >= proto.names.size()) {
-                state.give_up(at, in.code, "name index out of range");
-                break;
-            }
+            const std::string * name = state.name_at(at, in.code, in.c);
+            if (name == nullptr) { break; }
             // THROUGH THE SAME LOOKUP AS get_prop, which the
             // interpreter is explicit about: `s.split(...)` and
             // `var f = s.split; f(...)` must find the same function.
             receiver = reg(in.a);
-            const mlir::Value key =
-                state.constant(where, ctjs::StringAttr::get(context, proto.names[in.c]));
+            const mlir::Value key = state.constant(where, ctjs::StringAttr::get(context, *name));
             callee = ctjs::GetPropertyOp::create(into, where, value_type, receiver, key);
         } else if (in.code == op::call_computed) {
             receiver = reg(in.a);
             callee = ctjs::GetPropertyOp::create(into, where, value_type, receiver, reg(in.c));
         }
         llvm::SmallVector<mlir::Value> args;
-        bool reachable = true;
-        for (unsigned i = 0; i < in.b; ++i) {
-            const auto slot = static_cast<std::uint16_t>(in.a + 1 + i);
-            if (slot >= state.registers.size()) {
-                state.give_up(at, in.code, "an argument register is outside the frame");
-                reachable = false;
-                break;
-            }
-            args.push_back(reg(slot));
-        }
-        if (!reachable) { break; }
+        if (!arguments_above(args)) { break; }
         set(in.a, ctjs::CallOp::create(into, where, value_type, callee, receiver, args));
         break;
     }
     case op::construct: {
         llvm::SmallVector<mlir::Value> args;
-        bool reachable = true;
-        for (unsigned i = 0; i < in.b; ++i) {
-            const auto slot = static_cast<std::uint16_t>(in.a + 1 + i);
-            if (slot >= state.registers.size()) {
-                state.give_up(at, in.code, "an argument register is outside the frame");
-                reachable = false;
-                break;
-            }
-            args.push_back(reg(slot));
-        }
-        if (!reachable) { break; }
+        if (!arguments_above(args)) { break; }
         // NEW.TARGET IS THE CALLEE for a plain `new C()`. A super() call
         // hands a different one along, and that is op::pass_new_target's
         // business rather than this opcode's.

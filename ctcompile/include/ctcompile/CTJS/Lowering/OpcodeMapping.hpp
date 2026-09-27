@@ -14,7 +14,26 @@
 
 #include "ctcompile/CTJS/IR/CTJSEnums.h"
 
+#include <iterator>
+#include <string_view>
+
 namespace ctcompile::ctjs {
+
+// EVERY OPCODE'S NAME, expanded from the same .def the VM decodes with, so the
+// table cannot be a second list that disagrees with the first.
+#define CT_OPCODE(name_, ...) #name_,
+inline constexpr std::string_view opcode_names[] = {
+#include <ctbrowser/script/bytecode_opcodes.def>
+};
+#undef CT_OPCODE
+
+static_assert(std::size(opcode_names) == ctbrowser::script::opcode_count,
+              "the opcode-name table and `enum class op` disagree");
+
+[[nodiscard]] constexpr std::string_view opcode_name(ctbrowser::script::op code) {
+    const auto index = static_cast<std::size_t>(code);
+    return index < std::size(opcode_names) ? opcode_names[index] : "<unknown>";
+}
 
 // THE SAME KIND MEANS TWO DIFFERENT OPCODES, which is why this is two functions
 // rather than one table. `ctjs.binary add` is source `+` and compiles to

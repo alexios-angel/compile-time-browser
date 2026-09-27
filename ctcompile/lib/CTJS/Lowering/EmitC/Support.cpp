@@ -17,26 +17,15 @@ ec::PointerType pointer_to(mlir::MLIRContext * context, llvm::StringRef spelling
     return ec::PointerType::get(opaque(context, spelling));
 }
 
-// AN OPCODE'S C++ ENUMERATOR NAME, from the same file the enum is generated
-// from.
+// AN OPCODE'S C++ ENUMERATOR NAME.
 //
 // `uint32_t op_kind` in the ABI is a ctbrowser::script::op and aot_bridge/operators.cpp
 // casts it back, so the emitted call must name the OPERATOR. Spelling it as a
 // number would survive the renumbering Phases 13 and 14 do deliberately and
 // silently mean something else; spelling it as an enumerator makes that a build
 // error in the generated translation unit.
-#define CT_OPCODE(name_, ...) #name_,
-constexpr std::string_view opcode_names[] = {
-#include <ctbrowser/script/bytecode_opcodes.def>
-};
-#undef CT_OPCODE
-
-static_assert(std::size(opcode_names) == ctbrowser::script::opcode_count,
-              "the backend's opcode-name table and `enum class op` disagree");
-
 std::string opcode_spelling(ctbrowser::script::op which) {
-    const auto index = static_cast<std::size_t>(which);
-    return "static_cast<uint32_t>(ctbrowser::script::op::" + std::string(opcode_names[index]) + ")";
+    return "static_cast<uint32_t>(ctbrowser::script::op::" + std::string(opcode_name(which)) + ")";
 }
 
 // EVERY HELPER IS CALLED BY ITS QUALIFIED C++ NAME.
