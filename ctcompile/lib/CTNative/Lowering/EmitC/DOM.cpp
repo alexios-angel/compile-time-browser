@@ -652,10 +652,17 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         return true; // The enclosing invocation consumes its original call.
     }
     const auto & edge = found->second;
-    if (edge.kind == HostDOMMethod::number && (isBooleanCarrier(call.getArgs().front().getType()) ||
-                                               call.getArgs().front().getType().isInteger(1) ||
-                                               isNumberCarrier(call.getArgs().front().getType()) ||
-                                               call.getArgs().front().getType().isF64())) {
+    // The host proof admits Number/Boolean/null literals, undefined and
+    // one arithmetic operation on Number literals, including produced NaN.
+    const auto numeric = [](mlir::Value argument) {
+        return isNumberCarrier(argument.getType()) || argument.getType().isF64() ||
+               isBooleanCarrier(argument.getType()) || argument.getType().isInteger(1);
+    };
+    const auto indexType = ec::OpaqueType::get(context, "std::size_t");
+    const auto sizeConstant = [&](llvm::StringRef value) -> mlir::Value {
+        return ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, value));
+    };
+    if (edge.kind == HostDOMMethod::number && numeric(call.getArgs().front())) {
         swap(number(at, where, call.getArgs().front()));
         return true;
     }
@@ -687,25 +694,21 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         auto prefix = stringConstant(at, where, "bs");
         auto matches =
             memberCall(at, where, at.getI1Type(), call.getReceiver(), "startsWith", prefix);
-        const auto indexType = ec::OpaqueType::get(context, "std::size_t");
-        auto zero = ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "0"));
-        auto two = ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "2"));
+        auto zero = sizeConstant("0");
+        auto two = sizeConstant("2");
         auto offset = ec::ConditionalOp::create(at, where, indexType, matches, two, zero);
         swap(memberCall(at, where, rawString, rawText(call.getReceiver()), "substr",
                         mlir::ValueRange{offset}));
         return true;
     }
-    if (edge.kind == HostDOMMethod::replaceUppercase) {
+    if (edge.kind == HostDOMMethod::replaceUppercase || edge.kind == HostDOMMethod::filterStrings) {
+        const bool replace = edge.kind == HostDOMMethod::replaceUppercase;
         auto callback = edge.callback;
-        swap(callValue(at, where, carrierType(context, carrier::string),
-                       "ctnative::replace_uppercase<" + names.lookup(callback.getSymName()) + ">",
-                       call.getReceiver()));
-        return true;
-    }
-    if (edge.kind == HostDOMMethod::filterStrings) {
-        auto callback = edge.callback;
-        swap(callValue(at, where, ec::OpaqueType::get(context, kStringVectorType),
-                       "ctnative::filter_strings<" + names.lookup(callback.getSymName()) + ">",
+        swap(callValue(at, where,
+                       replace ? carrierType(context, carrier::string)
+                               : ec::OpaqueType::get(context, kStringVectorType),
+                       (replace ? "ctnative::replace_uppercase<" : "ctnative::filter_strings<") +
+                           names.lookup(callback.getSymName()) + ">",
                        call.getReceiver()));
         return true;
     }
@@ -730,16 +733,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         const auto unitsType = ec::OpaqueType::get(context, "std::u16string");
         auto units = callValue(at, where, unitsType, "ctbrowser::wtf8_to_utf16",
                                rawText(call.getReceiver()));
-        const auto indexType = ec::OpaqueType::get(context, "std::size_t");
-        // The host proof admits Number/Boolean/null literals, undefined and
-        // one arithmetic operation on Number literals, including produced NaN.
         // Null selects zero; undefined retains the default slice end.
-        const auto numericIndex = [](mlir::Value argument) {
-            return isNumberCarrier(argument.getType()) || argument.getType().isF64() ||
-                   isBooleanCarrier(argument.getType()) || argument.getType().isInteger(1);
-        };
-        const bool startIndex = !call.getArgs().empty() && numericIndex(call.getArgs().front());
-        const bool endIndex = call.getArgs().size() == 2 && numericIndex(call.getArgs()[1]);
+        const bool startIndex = !call.getArgs().empty() && numeric(call.getArgs().front());
+        const bool endIndex = call.getArgs().size() == 2 && numeric(call.getArgs()[1]);
         const bool nullEnd =
             call.getArgs().size() == 2 && call.getArgs()[1].getType() == optionalString;
         mlir::Value length;
@@ -761,9 +757,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             // Guard the cast itself: infinity and a Number at/above size_t's
             // limit cannot become an unsigned index. Keep length comparisons
             // in size_t so rounding a long String's length cannot move its end.
-            auto maximum = ec::ConstantOp::create(
-                at, where, indexType,
-                ec::OpaqueAttr::get(context, "std::numeric_limits<std::size_t>::max()"));
+            auto maximum = sizeConstant("std::numeric_limits<std::size_t>::max()");
             auto representable =
                 ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt, magnitude,
                                   ec::CastOp::create(at, where, at.getF64Type(), maximum));
@@ -787,16 +781,12 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             auto fromEnd = ec::SubOp::create(at, where, indexType, length, clamped);
             return ec::ConditionalOp::create(at, where, indexType, negative, fromEnd, clamped);
         };
-        mlir::Value start = !startIndex ? ec::ConstantOp::create(at, where, indexType,
-                                                                 ec::OpaqueAttr::get(context, "0"))
-                                        : offset(call.getArgs().front());
-        llvm::SmallVector<mlir::Value> range{start};
+        llvm::SmallVector<mlir::Value> range{!startIndex ? sizeConstant("0")
+                                                         : offset(call.getArgs().front())};
         if (edge.kind == HostDOMMethod::stringCharAt) {
-            range.push_back(
-                ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "1")));
+            range.push_back(sizeConstant("1"));
         } else if (nullEnd) {
-            range.push_back(
-                ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "0")));
+            range.push_back(sizeConstant("0"));
         } else if (endIndex) {
             auto end = offset(call.getArgs()[1]);
             auto reversed = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt, end,
