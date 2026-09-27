@@ -126,15 +126,9 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
 endif()
 
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-host-contract)
-  target_link_libraries(ctcompile-test-host-contract PRIVATE ctcompile::ctnative-lowering MLIRParser)
-  ctcompile_target(ctcompile-test-host-contract)
-  add_test(NAME ctcompile_host_contract COMMAND ctcompile-test-host-contract)
+  ctcompile_unit_test(host-contract LIBS ctcompile::ctnative-lowering MLIRParser)
   # checkSeededMapResults - the seeded/per-key/joined Map result proofs over the
   # shared two-method fixture - has been its own executable since 2026-09-08,
   # when HostContract.cpp reached 1,068 lines. Same fixtures (HostContractFixtures.h).
-  add_executable(ctcompile-test-host-contract-seeded-maps)
-  target_link_libraries(ctcompile-test-host-contract-seeded-maps PRIVATE CTNativeAnalysis MLIRParser)
-  ctcompile_target(ctcompile-test-host-contract-seeded-maps)
-  add_test(NAME ctcompile_host_contract_seeded_maps COMMAND ctcompile-test-host-contract-seeded-maps)
+  ctcompile_unit_test(host-contract-seeded-maps LIBS CTNativeAnalysis MLIRParser)
 endif()

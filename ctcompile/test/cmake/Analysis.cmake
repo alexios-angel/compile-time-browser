@@ -16,14 +16,11 @@
 #
 # It needs no MLIR: a recording is the INTERPRETER's opinion, and asking the
 # compiler anything here would beg the question.
-add_executable(ctcompile-test-type-oracle)
-target_link_libraries(ctcompile-test-type-oracle PRIVATE ctbrowser::ctbrowser)
-ctcompile_target(ctcompile-test-type-oracle)
-
+#
 # THE SELF-TEST ALONE, always registered. Its numbers are hand-computed - see
 # the fixture's comment in TypeOracle.cpp - so it fails with a name rather than
 # with a diff.
-add_test(NAME ctcompile_type_oracle COMMAND ctcompile-test-type-oracle)
+ctcompile_unit_test(type-oracle LIBS ctbrowser::ctbrowser)
 
 # THE TWO-IMPLEMENTATION COMPARISON - TypeOracle.cpp walking the recorder in
 # memory against tools/check/type-oracle.py parsing the file it writes, one's
@@ -43,12 +40,9 @@ find_package(Python3 QUIET COMPONENTS Interpreter)
 #
 # Behind the MLIR guard, like every other target that names a dialect.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-type-inference)
-  target_link_libraries(ctcompile-test-type-inference
-    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
-            MLIRControlFlowDialect MLIRSCFDialect MLIRUBDialect)
-  ctcompile_target(ctcompile-test-type-inference)
-  add_test(NAME ctcompile_type_inference COMMAND ctcompile-test-type-inference)
+  ctcompile_unit_test(type-inference
+    LIBS CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
+         MLIRControlFlowDialect MLIRSCFDialect MLIRUBDialect)
 endif()
 
 # ============================================================================
@@ -101,15 +95,8 @@ set(_cyc_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/cycle.js")
 # THE DRIVER READS THE SAME FILE EVERYTHING ELSE DOES - the recorder, the
 # claims, the printed module - for gc-roots.js's reason: two copies of one
 # fixture are two programs.
-set(_cyc_inc "${CMAKE_CURRENT_BINARY_DIR}/escape-cycle.js.inc")
-add_custom_command(
-  OUTPUT "${_cyc_inc}"
-  COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_cyc_js} -DOUTPUT=${_cyc_inc}
-          -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-  DEPENDS "${_cyc_js}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-  COMMENT "Embedding escape-cycle.js for the driver"
-  VERBATIM)
-set(_cyc_sources "${_cyc_inc}")
+ctcompile_embed_js(escape-cycle.js.inc "${_cyc_js}")
+set(_cyc_sources "${CMAKE_CURRENT_BINARY_DIR}/escape-cycle.js.inc")
 set(_cyc_has_module OFF)
 if(TARGET ctjs-translate)
   # THE PRINTED MODULE, embedded the same way. ctjs-translate is an
@@ -118,21 +105,14 @@ if(TARGET ctjs-translate)
   # contain the delimiter. When there is no ctjs-translate the executable says
   # SKIPPED for (f) rather than the suite silently shrinking.
   set(_cyc_mlir "${CMAKE_CURRENT_BINARY_DIR}/escape-cycle.ctjs.mlir")
-  set(_cyc_mlir_inc "${CMAKE_CURRENT_BINARY_DIR}/escape-cycle.ctjs.inc")
   add_custom_command(
     OUTPUT "${_cyc_mlir}"
     COMMAND $<TARGET_FILE:ctjs-translate> --ctbrowser-js-to-ctjs "${_cyc_js}" -o "${_cyc_mlir}"
     DEPENDS "${_cyc_js}" ctjs-translate
     COMMENT "Importing escape-cycle.js to ctjs for the ctnative.weak check"
     VERBATIM)
-  add_custom_command(
-    OUTPUT "${_cyc_mlir_inc}"
-    COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_cyc_mlir} -DOUTPUT=${_cyc_mlir_inc}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-    DEPENDS "${_cyc_mlir}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-    COMMENT "Embedding the ctjs module of escape-cycle.js for the driver"
-    VERBATIM)
-  list(APPEND _cyc_sources "${_cyc_mlir_inc}")
+  ctcompile_embed_js(escape-cycle.ctjs.inc "${_cyc_mlir}")
+  list(APPEND _cyc_sources "${CMAKE_CURRENT_BINARY_DIR}/escape-cycle.ctjs.inc")
   set(_cyc_has_module ON)
 endif()
 add_executable(ctcompile-test-escape-cycle ${_cyc_sources})
@@ -164,34 +144,11 @@ add_test(NAME ctcompile_escape_cycle COMMAND ctcompile-test-escape-cycle)
 # the all-write census, loads, provenance) and the array contents/retention
 # tables. Every row is where it was, verbatim; they share EscapeAnalysisHarness.h.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-escape-analysis-sinks)
-  target_link_libraries(ctcompile-test-escape-analysis-sinks
-    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
-            MLIRControlFlowDialect)
-  ctcompile_target(ctcompile-test-escape-analysis-sinks)
-  add_test(NAME ctcompile_escape_analysis_sinks COMMAND ctcompile-test-escape-analysis-sinks)
-
-  add_executable(ctcompile-test-escape-analysis-completion)
-  target_link_libraries(ctcompile-test-escape-analysis-completion
-    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
-            MLIRControlFlowDialect)
-  ctcompile_target(ctcompile-test-escape-analysis-completion)
-  add_test(NAME ctcompile_escape_analysis_completion
-           COMMAND ctcompile-test-escape-analysis-completion)
-
-  add_executable(ctcompile-test-escape-analysis-storage)
-  target_link_libraries(ctcompile-test-escape-analysis-storage
-    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
-            MLIRControlFlowDialect)
-  ctcompile_target(ctcompile-test-escape-analysis-storage)
-  add_test(NAME ctcompile_escape_analysis_storage COMMAND ctcompile-test-escape-analysis-storage)
-
-  add_executable(ctcompile-test-escape-analysis-arrays)
-  target_link_libraries(ctcompile-test-escape-analysis-arrays
-    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
-            MLIRControlFlowDialect)
-  ctcompile_target(ctcompile-test-escape-analysis-arrays)
-  add_test(NAME ctcompile_escape_analysis_arrays COMMAND ctcompile-test-escape-analysis-arrays)
+  foreach(_part IN ITEMS sinks completion storage arrays)
+    ctcompile_unit_test(escape-analysis-${_part}
+      LIBS CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
+           MLIRControlFlowDialect)
+  endforeach()
 endif()
 
 # === PHASE 55A-claims: the escape claims emitter ===
@@ -242,65 +199,30 @@ add_test(NAME ctcompile_escape_oracle COMMAND ctcompile-test-type-oracle --escap
 # A compiled frame's ip contains a catch-pad id, never a bytecode coordinate.
 # Real AOT entries cover return, caught throw and mixed AOT/VM unwind without
 # allowing their uninstrumented allocations to join native escape claims.
-add_executable(ctcompile-test-escape-oracle-aot)
-target_link_libraries(ctcompile-test-escape-oracle-aot PRIVATE ctbrowser::ctbrowser)
-ctcompile_target(ctcompile-test-escape-oracle-aot)
-add_test(NAME ctcompile_escape_oracle_aot COMMAND ctcompile-test-escape-oracle-aot)
+ctcompile_unit_test(escape-oracle-aot LIBS ctbrowser::ctbrowser)
 # Both AOT recordings through the Python checker: Analysis/Escape/aot-oracle.test.
 
 # Observe the real boxed emitter's normalized return value, retaining the
 # compiled sentinel coordinate rather than inventing a static source site.
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set(_aot_return_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/aot-return.js")
-  set(_aot_return_inc "${CMAKE_CURRENT_BINARY_DIR}/escape-oracle-aot-return.js.inc")
-  set(_aot_return_cpp "${CMAKE_CURRENT_BINARY_DIR}/escape-oracle-aot-return.generated.cpp")
-  add_custom_command(OUTPUT "${_aot_return_inc}"
-    COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_aot_return_js} -DOUTPUT=${_aot_return_inc}
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-    DEPENDS "${_aot_return_js}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake" VERBATIM)
-  add_custom_command(OUTPUT "${_aot_return_cpp}"
-    COMMAND "${CMAKE_COMMAND}" -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-      -DOPT=$<TARGET_FILE:ctjs-opt> -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
-      -DSOURCE=${_aot_return_js} "-DENTRIES=oracleReturn;oracleLocal;oracleCtor"
-      -DOUTPUT=${_aot_return_cpp} -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
-    DEPENDS "${_aot_return_js}" ctjs-translate ctjs-opt
-      "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake" VERBATIM)
-  set_source_files_properties("${_aot_return_cpp}" PROPERTIES
-    COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
-  add_executable(ctcompile-test-escape-oracle-aot-return "${_aot_return_cpp}" "${_aot_return_inc}")
-  target_include_directories(ctcompile-test-escape-oracle-aot-return PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-  target_link_libraries(ctcompile-test-escape-oracle-aot-return PRIVATE ctbrowser::ctbrowser)
-  ctcompile_target(ctcompile-test-escape-oracle-aot-return)
-  add_test(NAME ctcompile_escape_oracle_aot_return COMMAND ctcompile-test-escape-oracle-aot-return)
+  ctcompile_embed_js(escape-oracle-aot-return.js.inc "${_aot_return_js}")
+  ctcompile_compile_js(escape-oracle-aot-return.generated.cpp "${_aot_return_js}"
+                       ENTRIES oracleReturn oracleLocal oracleCtor)
+  ctcompile_boxed_test(escape-oracle-aot-return escape-oracle-aot-return.generated.cpp
+                       EMBED escape-oracle-aot-return.js.inc LIBS ctbrowser::ctbrowser)
 endif()
 
 # A slot census is usable only after its entire bounded proof completes.
-if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-owned-method-table-slots)
-  target_link_libraries(ctcompile-test-owned-method-table-slots PRIVATE CTNativeAnalysis MLIRParser)
-  ctcompile_target(ctcompile-test-owned-method-table-slots)
-  add_test(NAME ctcompile_owned_method_table_slots COMMAND ctcompile-test-owned-method-table-slots)
-  add_executable(ctcompile-test-owned-global-roots)
-  target_link_libraries(ctcompile-test-owned-global-roots PRIVATE CTNativeAnalysis MLIRParser)
-  ctcompile_target(ctcompile-test-owned-global-roots)
-  add_test(NAME ctcompile_owned_global_roots COMMAND ctcompile-test-owned-global-roots)
-  add_executable(ctcompile-test-owned-global-methods)
-  target_link_libraries(ctcompile-test-owned-global-methods PRIVATE CTNativeAnalysis MLIRParser)
-  ctcompile_target(ctcompile-test-owned-global-methods)
-  add_test(NAME ctcompile_owned_global_methods COMMAND ctcompile-test-owned-global-methods)
-  # checkSharedMap - the shared two- and three-method Map family and its refusals -
-  # has been its own executable since 2026-09-08, when OwnedGlobalMethods.cpp
-  # reached 1,099 lines. Same fixtures (OwnedGlobalMethodsFixtures.h).
-  add_executable(ctcompile-test-owned-global-shared-map)
-  target_link_libraries(ctcompile-test-owned-global-shared-map PRIVATE CTNativeAnalysis MLIRParser)
-  ctcompile_target(ctcompile-test-owned-global-shared-map)
-  add_test(NAME ctcompile_owned_global_shared_map COMMAND ctcompile-test-owned-global-shared-map)
-endif()
-
+#
+# checkSharedMap - the shared two- and three-method Map family and its refusals -
+# has been its own executable since 2026-09-08, when OwnedGlobalMethods.cpp
+# reached 1,099 lines. Same fixtures (OwnedGlobalMethodsFixtures.h).
+#
 # Private provider transactions preserve JS Map equality and withhold partial state.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-provider-state)
-  target_link_libraries(ctcompile-test-provider-state PRIVATE CTNativeAnalysis MLIRParser)
-  ctcompile_target(ctcompile-test-provider-state)
-  add_test(NAME ctcompile_provider_state COMMAND ctcompile-test-provider-state)
+  foreach(_test IN ITEMS owned-method-table-slots owned-global-roots owned-global-methods
+                         owned-global-shared-map provider-state)
+    ctcompile_unit_test(${_test} LIBS CTNativeAnalysis MLIRParser)
+  endforeach()
 endif()

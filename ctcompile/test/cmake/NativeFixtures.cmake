@@ -36,22 +36,7 @@
 # printing gate over the modules this function has the build write. Only the
 # module and the census floors are registered here.
 #
-# The two functions have different preconditions (claims also needs Python3),
-# so each is checked on its own rather than gating the file.
-function(ctcompile_native_fixture name rel)
-  cmake_parse_arguments(_fx "NO_DEFAULT_OPTIMIZATIONS" "" "CLAIMS" ${ARGN})
-  set(_js "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/${rel}")
-  if(COMMAND ctcompile_add_native_pipeline)
-    set(_options)
-    if(_fx_NO_DEFAULT_OPTIMIZATIONS)
-      set(_options NO_DEFAULT_OPTIMIZATIONS)
-    endif()
-    ctcompile_add_native_pipeline(${name} "${_js}" ${_options})
-  endif()
-  if(DEFINED _fx_CLAIMS AND COMMAND ctcompile_add_native_claims)
-    ctcompile_add_native_claims(${name} "${_js}" ${_fx_CLAIMS})
-  endif()
-endfunction()
+# `ctcompile_native_fixture` (Native.cmake) registers both.
 
 # Phase 63 Step 5: the EMITTED half of docs/native-divergences.md - `**` and
 # its guard, `%` as fmod, -0, undefined as NaN, an out-of-range index as NaN.
