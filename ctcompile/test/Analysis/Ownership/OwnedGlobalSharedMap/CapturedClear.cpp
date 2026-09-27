@@ -129,8 +129,7 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
     const auto variant = [&](const std::string & text, bool expected, const char * message,
                              unsigned mask = Alternatives::Undefined) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared captured clear fixture parses");
+        auto module = parsed(context, text, "source/prepared captured clear fixture parses");
         if (!module) { return; }
         auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);
@@ -265,9 +264,8 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
                 "    %outerCleared = ctjs.call %outerClearer(%state)\n"
                 "    scf.if %flag {\n      scf.yield\n    }\n"
                 "    ctjs.return %loaded";
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(
-                replaced(base, "    ctjs.return %loaded", scoped), &context);
-            check(static_cast<bool>(module), "clear dependency scope fixture parses");
+            auto module = parsed(context, replaced(base, "    ctjs.return %loaded", scoped),
+                                 "clear dependency scope fixture parses");
             if (!module) { continue; }
             mlir::Builder attributes(&context);
             module->walk([&](mlir::Operation * operation) {
@@ -359,8 +357,7 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
     }
     check(scopeMutations == 8, "all scalar, callee, flag and fluent Map scope controls ran");
     for (const auto & [text, label] : {std::pair{base, "unseen key"}, {bothArms, "two arms"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "clear budget fixture parses");
+        auto module = parsed(context, text, "clear budget fixture parses");
         if (!module) { continue; }
         auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);

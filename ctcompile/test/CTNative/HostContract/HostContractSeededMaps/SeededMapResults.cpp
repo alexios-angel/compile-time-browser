@@ -81,9 +81,8 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                               "    %getKey = ctjs.constant");
         }
         for (const bool prepared : {false, true}) {
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(
-                prepared ? prepare(source) : source, &context);
-            check(static_cast<bool>(module), "source/prepared seeded Map result fixture parses");
+            auto module = parsed(context, prepared ? prepare(source) : source,
+                                 "source/prepared seeded Map result fixture parses");
             if (!module) { continue; }
             auto contract = requested(*module);
             HostContractAnalysis query(*module, contract);
@@ -187,9 +186,8 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                                      mlir::TypeID expectedTag =
                                          mlir::TypeID::get<ctjs::NumberAttr>(),
                                      bool checkJoins = false) {
-                auto changed = mlir::parseSourceString<mlir::ModuleOp>(
-                    prepared ? prepare(program) : program, &context);
-                check(static_cast<bool>(changed), "seeded Map presence variant parses");
+                auto changed = parsed(context, prepared ? prepare(program) : program,
+                                      "seeded Map presence variant parses");
                 if (!changed) { return; }
                 HostContractAnalysis result(*changed, requested(*changed));
                 check(result.proved() == expected && !result.exhausted() &&
@@ -483,9 +481,8 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                             "SameValueZero duplicates never inflate a size bound past two");
                 }
                 for (const auto & specimen : {nonempty, twoEntries}) {
-                    auto checked = mlir::parseSourceString<mlir::ModuleOp>(
-                        prepared ? prepare(specimen) : specimen, &context);
-                    check(static_cast<bool>(checked), "nonempty size budget fixture parses");
+                    auto checked = parsed(context, prepared ? prepare(specimen) : specimen,
+                                          "nonempty size budget fixture parses");
                     if (!checked) { continue; }
                     const auto sizeContract = requested(*checked);
                     HostContractAnalysis complete(*checked, sizeContract);

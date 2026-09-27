@@ -13,8 +13,7 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
     const auto variant = [&](const std::string & text, bool expected, const char * message,
                              unsigned fields = 0, unsigned outerKeys = 1,
                              unsigned outerFormals = 2) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "retained sibling key fixture parses");
+        auto module = parsed(context, text, "retained sibling key fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         HostContractAnalysis host(*module, contract);

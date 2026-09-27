@@ -58,8 +58,7 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
     const auto variant = [&](const std::string & program, bool expected, const char * message,
                              mlir::TypeID tag = mlir::TypeID::get<ctjs::NumberAttr>()) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared conditional Map fixture parses");
+        auto module = parsed(context, program, "source/prepared conditional Map fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         HostContractAnalysis result(*module, contract);

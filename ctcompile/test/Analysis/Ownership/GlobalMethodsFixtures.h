@@ -26,6 +26,7 @@ using ctcompile::ctnative::HostContract;
 using ctcompile::ctnative::HostContractAnalysis;
 using ctcompile::ctnative::hostContractFingerprint;
 using ctcompile::ctnative::OwnedGlobalRoots;
+using host_contract::parsed;
 using host_contract::replaced;
 
 inline constexpr const char * fixture = R"MLIR(

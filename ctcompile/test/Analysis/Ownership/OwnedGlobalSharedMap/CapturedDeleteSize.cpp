@@ -101,8 +101,7 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, bool expected, const char * message) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared delete cardinality fixture parses");
+        auto module = parsed(context, text, "source/prepared delete cardinality fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);
@@ -404,9 +403,8 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
 
     for (const auto & [body, expectedKey] : {std::pair{joinBody + inserted + size, "%two"},
                                              {joinBody + absentDelete + size, "%one"}}) {
-        auto mutated =
-            mlir::parseSourceString<mlir::ModuleOp>(program(body, expectedKey), &context);
-        check(static_cast<bool>(mutated), "joined mutation live-control fixture parses");
+        auto mutated = parsed(context, program(body, expectedKey),
+                              "joined mutation live-control fixture parses");
         if (!mutated) { continue; }
         auto contract = requested(*mutated);
         OwnedGlobalRoots complete(*mutated, contract);
@@ -551,8 +549,7 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
     }
 
     for (const auto & [text, label] : {std::pair{last, "last key"}, {remaining, "one of two"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "delete-size live mutation fixture parses");
+        auto module = parsed(context, text, "delete-size live mutation fixture parses");
         if (!module) { continue; }
         auto contract = requested(*module);
         OwnedGlobalRoots complete(*module, contract);

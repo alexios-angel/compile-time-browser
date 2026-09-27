@@ -62,8 +62,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                                                      {retained, true, false},
                                                      {conditional, false, true},
                                                      {conditionalize(retained), true, true}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared nested child owner fixture parses");
+        auto module = parsed(context, program, "source/prepared nested child owner fixture parses");
         if (!module) { continue; }
         auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);
@@ -207,8 +206,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
         }
     }
     const auto refuse = [&](const std::string & program, const char * message) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared child owner refusal parses");
+        auto module = parsed(context, program, "source/prepared child owner refusal parses");
         if (!module) { return; }
         OwnedGlobalRoots query(*module, requested(*module));
         check(!query.proved() && !query.exhausted() && empty(*module, query), message);
@@ -245,8 +243,8 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
               "leaf-only ownership preserves all historical source operations");
     };
     const auto leafOwner = [&](const std::string & program, const char * message) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared leaf-only child owner fixture parses");
+        auto module =
+            parsed(context, program, "source/prepared leaf-only child owner fixture parses");
         if (!module) { return; }
         OwnedGlobalRoots query(*module, requested(*module));
         checkLeafContents(*module, query, message);
@@ -277,8 +275,8 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     %replaced = ctjs.call %setter(%state, %entryKey, %replacement)
     %childReader = ctjs.get_property)MLIR");
     for (const auto & program : {branchOrigins, repeated, replacement}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared returned-child identity control parses");
+        auto module =
+            parsed(context, program, "source/prepared returned-child identity control parses");
         if (!module) { continue; }
         const auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);
@@ -500,8 +498,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                               bool reverse = false, bool exhaustive = false, int scalarRead = -1,
                               bool leafOnly = false) {
         ++nullableRows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared nullable child fixture parses");
+        auto module = parsed(context, program, "source/prepared nullable child fixture parses");
         if (!module) { return; }
         auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
         auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
@@ -715,8 +712,7 @@ void checkCallerPayloadOwner(mlir::MLIRContext & context, const std::string & so
     const auto variant = [&](const std::string & text, bool expected, const char * message,
                              unsigned objects = 3) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared caller payload fixture parses");
+        auto module = parsed(context, text, "source/prepared caller payload fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         HostContractAnalysis host(*module, contract);
@@ -799,8 +795,7 @@ void checkCallerPayloadOwner(mlir::MLIRContext & context, const std::string & so
     variant(
         replaced(fixture, "    ctjs.return %size\n  }\n}\n", "    ctjs.return %value\n  }\n}\n"),
         false, "a payload formal still cannot escape through an owning result");
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(observed, &context);
-    check(static_cast<bool>(module), "caller payload mutation fixture parses");
+    auto module = parsed(context, observed, "caller payload mutation fixture parses");
     if (!module) { return; }
     OwnedGlobalRoots owner(*module, requested(*module));
     if (!owner.proved()) { return; }

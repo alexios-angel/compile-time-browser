@@ -103,8 +103,7 @@ void checkNullableMapResults(mlir::MLIRContext & context, const std::string & sc
                              unsigned expectedCalls = 3,
                              unsigned expectedMask = Alternatives::String | Alternatives::Null) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared nullable Map fixture parses");
+        auto module = parsed(context, program, "source/prepared nullable Map fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         HostContractAnalysis result(*module, contract);
@@ -228,8 +227,7 @@ void checkNullableMapResults(mlir::MLIRContext & context, const std::string & sc
             "source-order get-to-put-to-get results close an independently checked Boolean census");
     const auto checkBudgets = [&](const std::string & program, const char * label,
                                   unsigned expectedCalls) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "nullable budget fixture parses");
+        auto module = parsed(context, program, "nullable budget fixture parses");
         if (!module) { return; }
         auto contract = requested(*module);
         HostContractAnalysis complete(*module, contract);

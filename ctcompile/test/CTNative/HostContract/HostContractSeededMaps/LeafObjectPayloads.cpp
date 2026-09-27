@@ -128,8 +128,7 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
         const auto variant = [&](const std::string & text, bool expected, const char * message,
                                  bool localLeaf = true) {
             ++rows;
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-            check(static_cast<bool>(module), "source/prepared leaf Map fixture parses");
+            auto module = parsed(context, text, "source/prepared leaf Map fixture parses");
             if (!module) { return; }
             const auto contract = requested(*module);
             HostContractAnalysis query(*module, contract);
@@ -330,8 +329,7 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
 
         for (const auto & [text, label] :
              {std::pair{program, "empty"}, {numeric, "number field"}}) {
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-            check(static_cast<bool>(module), "leaf object budget fixture parses");
+            auto module = parsed(context, text, "leaf object budget fixture parses");
             if (!module) { continue; }
             auto contract = requested(*module);
             HostContractAnalysis query(*module, contract);

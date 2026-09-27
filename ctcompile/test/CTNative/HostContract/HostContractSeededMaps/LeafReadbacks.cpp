@@ -84,8 +84,7 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
     };
     const auto variant = [&](const std::string & text, bool expected, const char * message) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared leaf readback fixture parses");
+        auto module = parsed(context, text, "source/prepared leaf readback fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         HostContractAnalysis query(*module, contract);
@@ -196,9 +195,8 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
                                    "      scf.yield\n"
                                    "    }\n"
                                    "    %same =";
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(replaced(same, "    %same =", branch),
-                                                              &context);
-        check(static_cast<bool>(module), "leaf scope mutation fixture parses before mutation");
+        auto module = parsed(context, replaced(same, "    %same =", branch),
+                             "leaf scope mutation fixture parses before mutation");
         if (!module) { continue; }
         mlir::Builder attributes(&context);
         module->walk([&](mlir::Operation * operation) {
@@ -243,8 +241,7 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
     }
 
     for (const auto & [text, label] : {std::pair{same, "identity"}, {savedAfter, "saved field"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "leaf readback budget fixture parses");
+        auto module = parsed(context, text, "leaf readback budget fixture parses");
         if (!module) { continue; }
         auto contract = requested(*module);
         HostContractAnalysis query(*module, contract);

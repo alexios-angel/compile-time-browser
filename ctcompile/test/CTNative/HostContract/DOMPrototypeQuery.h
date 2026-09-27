@@ -49,8 +49,7 @@ module {
     };
     const auto query = [&](const std::string & text, bool expected, bool rootGuard = false,
                            bool checkedRoot = false) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(input), "independent prototype selector fixture parses");
+        auto input = parsed(context, text, "independent prototype selector fixture parses");
         if (!input) { return; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -207,8 +206,7 @@ module {
          }) {
         query(invalid, false);
     }
-    auto input = mlir::parseSourceString<mlir::ModuleOp>(document, &context);
-    check(static_cast<bool>(input), "mutable document snapshot fixture parses");
+    auto input = parsed(context, document, "mutable document snapshot fixture parses");
     if (!input) { return; }
     ctjs::CallOp call;
     input->walk([&](ctjs::CallOp found) { call = found; });

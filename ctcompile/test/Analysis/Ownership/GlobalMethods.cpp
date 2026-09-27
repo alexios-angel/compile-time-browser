@@ -194,8 +194,7 @@ void checkCapturedMap(mlir::MLIRContext & context) {
                              lifted, 2, 1});
     }
     for (const auto & [source, lifted, reads, calls] : specimens) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-        check(static_cast<bool>(module), "captured Map source and prepared fixtures parse");
+        auto module = parsed(context, source, "captured Map source and prepared fixtures parse");
         if (!module) { continue; }
         const auto contract = requested(*module);
         HostContractAnalysis host(*module, contract);
@@ -291,9 +290,8 @@ void checkCapturedMap(mlir::MLIRContext & context) {
     }
     const auto refuse = [&](llvm::StringRef source, llvm::StringRef from, llvm::StringRef to,
                             const char * message) {
-        auto module =
-            mlir::parseSourceString<mlir::ModuleOp>(replaced(source.str(), from, to), &context);
-        check(static_cast<bool>(module), "captured Map refusal variant parses");
+        auto module = parsed(context, replaced(source.str(), from, to),
+                             "captured Map refusal variant parses");
         if (!module) { return; }
         OwnedGlobalRoots result(*module, requested(*module));
         check(!result.proved() && !result.exhausted() && empty(*module, result), message);
@@ -426,8 +424,7 @@ int main() {
     context.getOrLoadDialect<ctjs::CTJSDialect>();
     checkCapturedMap(context);
     // checkSharedMap(context) is OwnedGlobalSharedMap.cpp now.
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(fixture, &context);
-    check(static_cast<bool>(module), "owned global method fixture parses");
+    auto module = parsed(context, fixture, "owned global method fixture parses");
     if (!module) { return 1; }
     const auto contract = contractFor(*module);
     HostContractAnalysis host(*module, contract);

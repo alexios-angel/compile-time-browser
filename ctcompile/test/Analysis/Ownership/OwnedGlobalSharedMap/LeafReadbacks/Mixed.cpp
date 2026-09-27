@@ -36,8 +36,7 @@ void checkExactScalarReturns(mlir::MLIRContext & context, const std::string & di
                              std::optional<mlir::TypeID> second, const char * label,
                              bool live = false, bool publish = true) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "exact scalar source/prepared fixture parses");
+        auto module = parsed(context, text, "exact scalar source/prepared fixture parses");
         if (!module) { return; }
         module->walk([&](mlir::Operation * operation) {
             operation->setAttr("ctnative.host_owner_proved", mlir::UnitAttr::get(&context));
@@ -246,8 +245,7 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
     const auto variant = [&](const std::string & text, bool expected, const char * label,
                              unsigned expectedCalls = 4, unsigned expectedLeaves = 0) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared mixed child readback fixture parses");
+        auto module = parsed(context, text, "source/prepared mixed child readback fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         HostContractAnalysis host(*module, contract);
@@ -498,8 +496,7 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
     const auto invocationVariant = [&](const std::string & text, bool expected, const char * label,
                                        bool live = false) {
         ++invocationRows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "object-key invocation source/prepared fixture parses");
+        auto module = parsed(context, text, "object-key invocation source/prepared fixture parses");
         if (!module) { return; }
         module->walk([&](mlir::Operation * operation) {
             operation->setAttr("ctnative.host_owner_proved", mlir::UnitAttr::get(&context));
@@ -637,8 +634,7 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
     checkExactScalarReturns(context, distinct, prepared);
 
     for (const auto & liveFixture : {returnedIdentity, guarded, unguarded}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(liveFixture, &context);
-        check(static_cast<bool>(module), "returned-child live source fixture parses");
+        auto module = parsed(context, liveFixture, "returned-child live source fixture parses");
         if (!module) { return; }
         module->walk([&](mlir::Operation * operation) {
             operation->setAttr("ctnative.host_owner_proved", mlir::UnitAttr::get(&context));
@@ -762,8 +758,7 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
                     mutations, completion);
     }
 
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(fixture, &context);
-    check(static_cast<bool>(module), "mixed child live proof fixture parses");
+    auto module = parsed(context, fixture, "mixed child live proof fixture parses");
     if (!module) { return; }
     module->walk([&](mlir::Operation * operation) {
         operation->setAttr("ctnative.host_owner_proved", mlir::UnitAttr::get(&context));

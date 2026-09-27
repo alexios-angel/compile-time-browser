@@ -6,7 +6,7 @@
 // used to construct the shared two-method Map fixture inline in
 // checkCapturedCallables, lifted so the seeded-result executable can build the
 // same string. `inline` in a named namespace only so both can include this.
-// The Analysis/Ownership tests take their string helpers from here too.
+// The Analysis/Ownership tests take `parsed` and `replaced` from here too.
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
@@ -17,6 +17,7 @@
 
 #include <cstdio>
 #include <string>
+#include <string_view>
 
 #include "check.hpp"
 
@@ -91,6 +92,14 @@ inline HostContract contractFor(mlir::ModuleOp module) {
     contract.roots = {{"host", {"slot"}}};
     contract.observations = {"trace"};
     return contract;
+}
+
+// parseSourceString, with the parse checked under `label`.
+inline mlir::OwningOpRef<mlir::ModuleOp> parsed(mlir::MLIRContext & context, llvm::StringRef text,
+                                                std::string_view label) {
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+    check(static_cast<bool>(module), label);
+    return module;
 }
 
 inline std::string replaced(std::string source, llvm::StringRef from, llvm::StringRef to) {

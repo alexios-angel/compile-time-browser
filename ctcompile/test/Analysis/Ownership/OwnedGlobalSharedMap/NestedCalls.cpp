@@ -28,8 +28,7 @@ void checkNestedOwner(mlir::MLIRContext & context, const std::string & source, b
           {extra(false, "#ctjs.null"), Alternatives::String | Alternatives::Null, 4u},
           {extra(false, "#ctjs.undefined"), Alternatives::String | Alternatives::Undefined, 4u}}) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared nested owner fixture parses");
+        auto module = parsed(context, program, "source/prepared nested owner fixture parses");
         if (!module) { continue; }
         auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);

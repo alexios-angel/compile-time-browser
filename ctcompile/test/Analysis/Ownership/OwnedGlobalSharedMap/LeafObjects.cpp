@@ -22,8 +22,7 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
         replaced(numeric, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"owned\">");
     for (const auto & [program, hasField] :
          {std::pair{source, false}, {numeric, true}, {string, true}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared leaf owner fixture parses");
+        auto module = parsed(context, program, "source/prepared leaf owner fixture parses");
         if (!module) { continue; }
         auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);
@@ -144,8 +143,7 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
                     lifted ? "prepared" : "source", hasField ? "field" : "empty", completion);
     }
     const auto refuse = [&](const std::string & program, const char * message) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared leaf owner refusal parses");
+        auto module = parsed(context, program, "source/prepared leaf owner refusal parses");
         if (!module) { return; }
         OwnedGlobalRoots query(*module, requested(*module));
         check(!query.proved() && !query.exhausted() && empty(*module, query), message);

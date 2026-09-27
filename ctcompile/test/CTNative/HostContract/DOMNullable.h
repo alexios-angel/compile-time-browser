@@ -63,8 +63,7 @@ module {
     contract.elementParameters = {0};
     contract.initialIntrinsics = {"decodeURIComponent"};
     const auto query = [&](const std::string & text, bool expected, bool budgets = false) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "nullable typeof guard fixture parses");
+        auto module = parsed(context, text, "nullable typeof guard fixture parses");
         if (!module) { return; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*module);

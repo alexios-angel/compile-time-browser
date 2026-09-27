@@ -27,8 +27,7 @@ module {
   }
 }
 )MLIR";
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-    check(static_cast<bool>(module), "DOM URI completion fixture parses");
+    auto module = parsed(context, source, "DOM URI completion fixture parses");
     if (!module) { return; }
     HostContract contract;
     contract.provider = HostContract::Provider::ctbrowserDOM;
@@ -118,8 +117,7 @@ module {
     payload.setType(ctjs::ValueType::get(&context));
 
     const auto refused = [&](const std::string & text) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(input), "URI capability mutation fixture parses");
+        auto input = parsed(context, text, "URI capability mutation fixture parses");
         if (!input) { return; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -170,8 +168,7 @@ module {
     })MLIR";
     const auto numericQuery = [&](const std::string & text, bool expected, bool budgets = false,
                                   bool declareNumber = true) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(input), "numeric attribute completion fixture parses");
+        auto input = parsed(context, text, "numeric attribute completion fixture parses");
         if (!input) { return; }
         HostContract request;
         request.entry = "numeric$0";

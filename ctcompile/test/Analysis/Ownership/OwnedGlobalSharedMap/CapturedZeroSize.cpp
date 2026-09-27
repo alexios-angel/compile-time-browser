@@ -80,8 +80,7 @@ void checkCapturedMapZeroSizeOwner(mlir::MLIRContext & context, const std::strin
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, bool expected, const char * message) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared exact-zero owner fixture parses");
+        auto module = parsed(context, text, "source/prepared exact-zero owner fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);
@@ -162,8 +161,7 @@ void checkCapturedMapZeroSizeOwner(mlir::MLIRContext & context, const std::strin
     check(rows == 21, "all exact-zero owner and conservative join controls ran");
 
     for (const auto & [text, label] : {std::pair{fixture, "saved"}, {bothArms, "both arms"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "exact-zero budget fixture parses");
+        auto module = parsed(context, text, "exact-zero budget fixture parses");
         if (!module) { continue; }
         auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);

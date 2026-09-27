@@ -96,8 +96,7 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, bool expected, const char * message) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared exact-size owner fixture parses");
+        auto module = parsed(context, text, "source/prepared exact-size owner fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);
@@ -211,8 +210,7 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
 
     for (const auto & [text, label] :
          {std::pair{fixture, "one"}, {twoEntries, "two"}, {bothArms, "both arms"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "exact-size budget and live-mutation fixture parses");
+        auto module = parsed(context, text, "exact-size budget and live-mutation fixture parses");
         if (!module) { continue; }
         auto contract = requested(*module);
         OwnedGlobalRoots complete(*module, contract);
@@ -422,8 +420,7 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
 
     for (const auto & [text, label] :
          {std::pair{inverted, "inverted"}, {continued, "continued"}, {filtered, "filtered"}}) {
-        auto guarded = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(guarded), "source/prepared guard budget fixture parses");
+        auto guarded = parsed(context, text, "source/prepared guard budget fixture parses");
         if (!guarded) { continue; }
         const auto contract = requested(*guarded);
         OwnedGlobalRoots complete(*guarded, contract);
@@ -472,8 +469,7 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
     auto foreign = enterFrame(straight, "get$3", "otherFrame");
     foreign = replaced(foreign, "    ctjs.return %size",
                        "    ctjs.frame_exit %otherFrame\n    ctjs.return %size");
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(foreign, &context);
-    check(static_cast<bool>(module), "foreign-frame live-edit control parses");
+    auto module = parsed(context, foreign, "foreign-frame live-edit control parses");
     if (!module) { return; }
     const auto contract = requested(*module);
     check(OwnedGlobalRoots(*module, contract).proved(),

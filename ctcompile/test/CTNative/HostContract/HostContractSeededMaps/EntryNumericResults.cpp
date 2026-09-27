@@ -146,8 +146,7 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
         const auto variant = [&](const std::string & text, bool expected, const char * message,
                                  unsigned count = 4, bool mixedObject = false) {
             ++rows;
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-            check(static_cast<bool>(module), "source/prepared entry numeric fixture parses");
+            auto module = parsed(context, text, "source/prepared entry numeric fixture parses");
             if (!module) { return; }
             auto contract = requested(*module);
             HostContractAnalysis query(*module, contract);
@@ -247,11 +246,9 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
                                     "      scf.yield\n    } else {\n"
                                     "      %elseSum = ctjs.binary add %putResult, %secondResult\n"
                                     "      scf.yield\n    }\n";
-                    auto module = mlir::parseSourceString<mlir::ModuleOp>(
-                        replaced(program, "    %combined =", branches + "    %combined ="),
-                        &context);
-                    check(static_cast<bool>(module),
-                          "numeric scope fixture parses before live mutation");
+                    auto module = parsed(
+                        context, replaced(program, "    %combined =", branches + "    %combined ="),
+                        "numeric scope fixture parses before live mutation");
                     if (!module) { continue; }
                     mlir::Builder attributes(&context);
                     module->walk([&](mlir::Operation * operation) {
@@ -319,12 +316,11 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
                     "      scf.yield %elseNumber : !ctjs.value\n"
                     "    }\n"
                     "    %combined = ctjs.binary add %selected, %thirdResult";
-                auto module = mlir::parseSourceString<mlir::ModuleOp>(
-                    replaced(program, "    %combined = ctjs.binary add %sum, %thirdResult",
-                             selection),
-                    &context);
-                check(static_cast<bool>(module),
-                      "selected numeric yield fixture parses before mutation");
+                auto module =
+                    parsed(context,
+                           replaced(program, "    %combined = ctjs.binary add %sum, %thirdResult",
+                                    selection),
+                           "selected numeric yield fixture parses before mutation");
                 if (!module) { continue; }
                 mlir::Builder attributes(&context);
                 module->walk([&](mlir::Operation * operation) {
@@ -395,8 +391,7 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
         check(scopeMutations == 20,
               "all known/unknown numeric scopes, yield directions and predicate scopes ran");
         for (const auto & [text, label] : {std::pair{program, "direct"}, {saved, "saved"}}) {
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-            check(static_cast<bool>(module), "numeric budget fixture parses");
+            auto module = parsed(context, text, "numeric budget fixture parses");
             if (!module) { continue; }
             auto contract = requested(*module);
             HostContractAnalysis complete(*module, contract);

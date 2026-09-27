@@ -112,8 +112,7 @@ void checkNullablePayloadResults(mlir::MLIRContext & context, const std::string 
     const auto variant = [&](const std::string & program, bool expected, const char * message,
                              unsigned resultMask = Alternatives::String | Alternatives::Null) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared nullable payload fixture parses");
+        auto module = parsed(context, program, "source/prepared nullable payload fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         HostContractAnalysis query(*module, contract);
@@ -214,8 +213,7 @@ void checkNullablePayloadResults(mlir::MLIRContext & context, const std::string 
     check(rows == 16, "all nullable payload propagation and refusal rows ran");
     for (const auto & [program, label] :
          {std::pair{source, "nullable payload"}, std::pair{conditional, "nullable payload join"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "nullable payload budget fixture parses");
+        auto module = parsed(context, program, "nullable payload budget fixture parses");
         if (!module) { continue; }
         auto contract = requested(*module);
         HostContractAnalysis complete(*module, contract);

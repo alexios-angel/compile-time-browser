@@ -124,8 +124,7 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
     const auto variant = [&](const std::string & text, bool expected, const char * message,
                              unsigned mask = Alternatives::Undefined) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared definite absence fixture parses");
+        auto module = parsed(context, text, "source/prepared definite absence fixture parses");
         if (!module) { return; }
         auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);
@@ -235,9 +234,8 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
                                    "      %elseSame = ctjs.compare strict_eq %loaded, %undefined\n"
                                    "      scf.yield\n    }\n"
                                    "    ctjs.return %loaded";
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(
-            replaced(base, "    ctjs.return %loaded", scoped), &context);
-        check(static_cast<bool>(module), "absence scope fixture parses before live mutation");
+        auto module = parsed(context, replaced(base, "    ctjs.return %loaded", scoped),
+                             "absence scope fixture parses before live mutation");
         if (!module) { continue; }
         mlir::Builder attributes(&context);
         module->walk([&](mlir::Operation * operation) {
@@ -288,9 +286,8 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
                 "    %outerLoad = ctjs.call %outerReader(%state, %entryKey)\n"
                 "    scf.if %flag {\n      scf.yield\n    }\n"
                 "    ctjs.return %loaded";
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(
-                replaced(base, "    ctjs.return %loaded", scoped), &context);
-            check(static_cast<bool>(module), "absence dependency scope fixture parses");
+            auto module = parsed(context, replaced(base, "    ctjs.return %loaded", scoped),
+                                 "absence dependency scope fixture parses");
             if (!module) { continue; }
             mlir::Builder attributes(&context);
             module->walk([&](mlir::Operation * operation) {
@@ -372,8 +369,7 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
     }
     check(scopeMutations == 6, "all outer and sibling dependency scope controls ran");
     for (const auto & [text, label] : {std::pair{base, "deleted"}, {bothArms, "two arms"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "definite absence budget fixture parses");
+        auto module = parsed(context, text, "definite absence budget fixture parses");
         if (!module) { continue; }
         auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);

@@ -51,8 +51,7 @@ module {
       scf.yield %count, %index : !ctjs.value, !ctjs.value
     }
 )MLIR" + suffix;
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-    check(static_cast<bool>(module), "independent prepared dataset loop fixture parses");
+    auto module = parsed(context, source, "independent prepared dataset loop fixture parses");
     if (!module) { return; }
     HostContract contract;
     contract.entry = "iterate$0";
@@ -116,8 +115,7 @@ module {
                    "    %length = ctjs.get_property %other[%lengthName]"),
           replaced(source, "scf.yield %count, %index : !ctjs.value, !ctjs.value",
                    "scf.yield %index, %count : !ctjs.value, !ctjs.value")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "unsupported induction witness parses");
+        auto input = parsed(context, invalid, "unsupported induction witness parses");
         if (!input) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -173,8 +171,7 @@ module {
         request.initialIntrinsics.clear();
         request.datasetParameters.clear();
         for (const auto & candidate : {queried, mutated, ordinary, ordinaryMutated}) {
-            auto input = mlir::parseSourceString<mlir::ModuleOp>(candidate, &context);
-            check(static_cast<bool>(input), "independent element snapshot loop parses");
+            auto input = parsed(context, candidate, "independent element snapshot loop parses");
             if (!input) { continue; }
             request.moduleSha256 = hostContractFingerprint(*input);
             DOMEntryAnalysis proof(*input, request);
@@ -238,8 +235,7 @@ module {
               replaced(replaced(ordinary, "        %key = ctjs.get_property %keys[%index]\n", ""),
                        "      %less =",
                        "      %key = ctjs.get_property %keys[%index]\n      %less =")}) {
-            auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-            check(static_cast<bool>(input), "invalid element snapshot witness parses");
+            auto input = parsed(context, invalid, "invalid element snapshot witness parses");
             if (!input) { continue; }
             request.moduleSha256 = hostContractFingerprint(*input);
             DOMEntryAnalysis refused(*input, request);
@@ -278,8 +274,7 @@ module {
     };
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(iterated, &context);
-        check(static_cast<bool>(input), "element for-of normalization fixture parses");
+        auto input = parsed(context, iterated, "element for-of normalization fixture parses");
         if (!input) { continue; }
         auto request = iterationRequest(*input);
         request.provider = provider;
@@ -330,8 +325,7 @@ module {
                        "exact source materialization arm"},
              std::pair{discardedInput, "would discard a recorded input"},
          }) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "unsafe element materialization fixture parses");
+        auto input = parsed(context, invalid, "unsafe element materialization fixture parses");
         if (!input) { continue; }
         auto request = iterationRequest(*input);
         const auto reason = llvm::toString(normalizeDOMIteration(*input, request, 100000));
@@ -384,8 +378,7 @@ module {
         "ctjs.return %loop#2", "ctjs.return %target");
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(assigned, &context);
-        check(static_cast<bool>(input), "single snapshot assignment fixture parses");
+        auto input = parsed(context, assigned, "single snapshot assignment fixture parses");
         if (!input) { continue; }
         auto request = contract;
         request.provider = provider;
@@ -450,8 +443,7 @@ module {
                  "      %length = ctjs.get_property %keys[%lengthName]\n"
                  "      %less ="),
          }) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "unproved snapshot assignment fixture parses");
+        auto input = parsed(context, invalid, "unproved snapshot assignment fixture parses");
         if (!input) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -511,8 +503,7 @@ module {
     };
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(stripped, &context);
-        check(static_cast<bool>(input), "filtered prefix assignment fixture parses");
+        auto input = parsed(context, stripped, "filtered prefix assignment fixture parses");
         if (!input) { continue; }
         auto request = prefixRequest(*input);
         request.provider = provider;
@@ -550,8 +541,7 @@ module {
                       "ctjs.set_property %target[%stripped], %value\n"
                       "        ctjs.set_property %target[%key], %value"),
          }) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "unproved prefix assignment fixture parses");
+        auto input = parsed(context, invalid, "unproved prefix assignment fixture parses");
         if (!input) { continue; }
         auto request = prefixRequest(*input);
         DOMEntryAnalysis proof(*input, request);
@@ -572,8 +562,7 @@ module {
                    "%fresh = ctjs.get_property %element[%datasetName]\n        "
                    "%value = ctjs.get_property %fresh[%key]"),
           replaced(valueSource, "    %dataset =", mutation + "    %dataset =")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(admitted, &context);
-        check(static_cast<bool>(input), "independent present dataset member fixture parses");
+        auto input = parsed(context, admitted, "independent present dataset member fixture parses");
         if (!input) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -640,8 +629,7 @@ module {
              replaced(valueSource, memberRead, mutation + "        " + memberRead),
              otherElement,
          }) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "unsupported dataset membership fixture parses");
+        auto input = parsed(context, invalid, "unsupported dataset membership fixture parses");
         if (!input) { continue; }
         auto request = contract;
         if (invalid == otherElement) {
@@ -743,8 +731,7 @@ module {
                                            "    %testElement = ctjs.truthy %twice")}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-            auto input = mlir::parseSourceString<mlir::ModuleOp>(admitted, &context);
-            check(static_cast<bool>(input), "guarded dataset value loop fixture parses");
+            auto input = parsed(context, admitted, "guarded dataset value loop fixture parses");
             if (!input) { continue; }
             auto request = contract;
             request.provider = provider;
@@ -773,8 +760,7 @@ module {
     for (const auto & budgetSource : {guarded, undefinedGuard}) {
         bool completedGuardBudget = false;
         for (unsigned budget = 0; budget < 4096; ++budget) {
-            auto input = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
-            check(static_cast<bool>(input), "guard budget fixture parses");
+            auto input = parsed(context, budgetSource, "guard budget fixture parses");
             if (!input) { break; }
             auto request = contract;
             request.moduleSha256 = hostContractFingerprint(*input);
@@ -835,8 +821,7 @@ module {
           replaced(guarded, "    %absent = ctjs.unary not %element", R"MLIR(
     %ordinary = ctjs.create_object
     %absent = ctjs.unary not %ordinary)MLIR")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(unproved, &context);
-        check(static_cast<bool>(input), "unproved element guard fixture parses");
+        auto input = parsed(context, unproved, "unproved element guard fixture parses");
         if (!input) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -854,8 +839,7 @@ module {
     }
     for (const auto & parameters :
          {std::vector<unsigned>{}, std::vector<unsigned>{1}, std::vector<unsigned>{0, 0}}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(guarded, &context);
-        check(static_cast<bool>(input), "invalid guard declaration fixture parses");
+        auto input = parsed(context, guarded, "invalid guard declaration fixture parses");
         if (!input) { continue; }
         auto request = contract;
         request.elementParameters = parameters;
@@ -936,8 +920,7 @@ module {
       scf.yield %count, %index, %answer : !ctjs.value, !ctjs.value, !ctjs.value
     }
 )MLIR" + suffix;
-    auto normalized = mlir::parseSourceString<mlir::ModuleOp>(completion, &context);
-    check(static_cast<bool>(normalized), "source completion tuple fixture parses");
+    auto normalized = parsed(context, completion, "source completion tuple fixture parses");
     if (!normalized) { return; }
     auto error = expandDOMHelpers(*normalized, contract.entry, 100000);
     check(!error, "completion normalizer preserves the loop condition and terminal tuple");

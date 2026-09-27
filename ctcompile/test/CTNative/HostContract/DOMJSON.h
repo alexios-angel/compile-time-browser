@@ -39,8 +39,7 @@ module {
   }
 }
 )MLIR";
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-    check(static_cast<bool>(module), "DOM JSON chain fixture parses");
+    auto module = parsed(context, source, "DOM JSON chain fixture parses");
     if (!module) { return; }
     HostContract contract;
     contract.entry = "parse$0";
@@ -108,8 +107,7 @@ module {
               "typed JSON contract neither infers nor duplicates intrinsic identity");
     }
     const auto refused = [&](const std::string & text) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(input), "JSON capability mutation fixture parses");
+        auto input = parsed(context, text, "JSON capability mutation fixture parses");
         if (!input) { return; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -138,8 +136,7 @@ module {
     }
     ctjs.return %observed)MLIR";
     const auto checkTypeOf = [&](const std::string & text) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(input), "DOM JSON typeof fixture parses");
+        auto input = parsed(context, text, "DOM JSON typeof fixture parses");
         if (!input) { return; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -202,8 +199,7 @@ module {
                 refused(text);
                 continue;
             }
-            auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-            check(static_cast<bool>(input), "DOM JSON primitive join fixture parses");
+            auto input = parsed(context, text, "DOM JSON primitive join fixture parses");
             if (!input) { continue; }
             auto request = contract;
             request.moduleSha256 = hostContractFingerprint(*input);
@@ -249,8 +245,7 @@ module {
         return replaced(source, "ctjs.return %answer", tail);
     };
     const auto checkSpread = [&](const std::string & tail) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(spreadSource(tail), &context);
-        check(static_cast<bool>(input), "DOM JSON spread fixture parses");
+        auto input = parsed(context, spreadSource(tail), "DOM JSON spread fixture parses");
         if (!input) { return; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -483,8 +478,7 @@ module {
                    "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
           replaced(protectedHolder, "%answer = ctjs.compare strict_eq %element, %element",
                    "%answer = ctjs.unary typeof %element")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
-        check(static_cast<bool>(input), "protected immutable callable fixture parses");
+        auto input = parsed(context, valid, "protected immutable callable fixture parses");
         if (!input) { continue; }
         auto error = expandDOMHelpers(*input, "entry$0", 100000);
         check(!error, "independently inert helper discharges exact unused-result suppression");
@@ -1473,8 +1467,7 @@ module {
              std::pair{replaced(protectedRead, "data-closed", "bad name"), false},
              std::pair{replaced(protectedAttribute, "data-closed", "bad name"), false},
          }) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
-        check(static_cast<bool>(input), "protected attribute helper fixture parses");
+        auto input = parsed(context, valid, "protected attribute helper fixture parses");
         if (!input) { continue; }
         auto error = expandDOMHelpers(*input, "entry$0", 100000);
         check(!error, "attribute preparation expands with write suppression intact");
@@ -2085,8 +2078,7 @@ module {
              replaced(fifthRead, "ctjs.call %fifthMethod(%element, %fifthName, %fifthPresent)",
                       "ctjs.call %fifthMethod(%element, %fifthName, %fourthPresent)"),
          }) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
-        check(static_cast<bool>(input), "shared cleanup snapshot fixture parses");
+        auto input = parsed(context, valid, "shared cleanup snapshot fixture parses");
         if (!input) { continue; }
         unsigned originalReads = 0, originalWrites = 0;
         input->walk([&](ctjs::CallOp call) {
@@ -2264,8 +2256,7 @@ module {
                           "ctjs.call %secondMethod(%text, %secondName, %present)"),
                  false},
          }) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
-        check(static_cast<bool>(input), "conditional cleanup snapshot fixture parses");
+        auto input = parsed(context, valid, "conditional cleanup snapshot fixture parses");
         if (!input) { continue; }
         const auto readOrder = [&] {
             std::vector<std::pair<std::string, std::string>> order;
@@ -2532,8 +2523,7 @@ module {
                                 "ctjs.call %guardMethod(%text, %guardReadName)"),
                        false},
          }) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
-        check(static_cast<bool>(input), "nested cleanup fixture parses");
+        auto input = parsed(context, valid, "nested cleanup fixture parses");
         if (!input) { continue; }
         // Compare every lookup, read, value use and guard before/after expansion.
         // The caller's surrounding guard adds one common level of nesting.
@@ -2671,8 +2661,8 @@ module {
         }
     }
     for (unsigned mutation = 0; mutation != 4; ++mutation) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(conditionalNestedElse, &context);
-        check(static_cast<bool>(input), "nested malformed-region fixture parses before mutation");
+        auto input = parsed(context, conditionalNestedElse,
+                            "nested malformed-region fixture parses before mutation");
         if (!input) { continue; }
         mlir::scf::IfOp nested;
         input->walk([&](mlir::scf::IfOp guard) {
@@ -3493,8 +3483,7 @@ module {
           replaced(
               replaced(protectedHolder, "state()", "state(%element)"),
               "^bb0(%error: !ctjs.value):", "^bb0(%error: !ctjs.value, %state: !ctjs.value):")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "unproved protected helper fixture parses");
+        auto input = parsed(context, invalid, "unproved protected helper fixture parses");
         if (!input) { continue; }
         auto error = expandDOMHelpers(*input, "entry$0", 100000);
         check(static_cast<bool>(error),
@@ -3517,8 +3506,7 @@ module {
         }
     }
     for (unsigned budget : {0U, 64U, 128U}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(protectedHolder, &context);
-        check(static_cast<bool>(input), "protected helper budget fixture parses");
+        auto input = parsed(context, protectedHolder, "protected helper budget fixture parses");
         if (!input) { continue; }
         auto error = expandDOMHelpers(*input, "entry$0", budget);
         check(llvm::toString(std::move(error)).find("budget") != std::string::npos,
@@ -3533,8 +3521,7 @@ module {
                    slot + "    ctjs.return %answer"),
           replaced(holderSource, "      %method =", slot + "      %method ="),
           replaced(holderSource, "%method(%holder, %element)", "%method(%element, %element)")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "invalid guarded callable holder fixture parses");
+        auto input = parsed(context, invalid, "invalid guarded callable holder fixture parses");
         if (!input) { continue; }
         auto error = expandDOMHelpers(*input, "entry$0", 100000);
         check(static_cast<bool>(error),
@@ -3566,8 +3553,7 @@ module {
     for (auto payload : {"#ctjs.number<4607182418800017408>", "#ctjs.string<\"saved\">",
                          "#ctjs.boolean<true>", "#ctjs.null"}) {
         auto text = replaced(throwingSource, "#ctjs.number<4607182418800017408>", payload);
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(input), "saved primitive throw fixture parses");
+        auto input = parsed(context, text, "saved primitive throw fixture parses");
         if (!input) { continue; }
         auto bound = contract;
         bound.entry = "saved$0";
@@ -3603,8 +3589,7 @@ module {
           replaced(throwingSource, "      ctjs.frame_exit %frame\n", ""),
           replaced(throwingSource, "    ctjs.return %answer",
                    "    ctjs.store_global \"escaped\", %element\n    ctjs.return %answer")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "unsupported saved throw fixture parses");
+        auto input = parsed(context, invalid, "unsupported saved throw fixture parses");
         if (!input) { continue; }
         auto bound = contract;
         bound.entry = "saved$0";

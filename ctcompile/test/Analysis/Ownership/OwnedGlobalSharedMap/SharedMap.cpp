@@ -139,8 +139,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
                                                     {prepare(source), 2u, true},
                                                     {three, 3u, false},
                                                     {prepare(three), 3u, true}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "shared Map source and prepared fixtures parse");
+        auto module = parsed(context, program, "shared Map source and prepared fixtures parse");
         if (!module) { continue; }
         const auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);
@@ -227,8 +226,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
                     members, lifted ? "prepared" : "source", completion);
     }
     const auto refuse = [&](std::string program, const char * message) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "shared Map refusal fixture parses");
+        auto module = parsed(context, program, "shared Map refusal fixture parses");
         if (!module) { return; }
         OwnedGlobalRoots query(*module, requested(*module));
         check(!query.proved() && !query.exhausted() && empty(*module, query), message);
@@ -331,9 +329,8 @@ void checkSharedMap(mlir::MLIRContext & context) {
         checkCapturedMapDeleteSizeOwner(context, program, lifted);
     }
     for (const bool lifted : {false, true}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(
-            lifted ? prepare(parameterized) : parameterized, &context);
-        check(static_cast<bool>(module), "parameterized shared source and prepared forms parse");
+        auto module = parsed(context, lifted ? prepare(parameterized) : parameterized,
+                             "parameterized shared source and prepared forms parse");
         if (!module) { continue; }
         const auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);
@@ -512,8 +509,8 @@ void checkSharedMap(mlir::MLIRContext & context) {
                     "%priorEnv = ctjs.load_upvalue %priorGetter[0]\n"
                     "    %prior = ctjs.call_direct @get$3(%owned, %u, %priorGetter, %priorEnv)");
             }
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-            check(static_cast<bool>(module), "source/prepared result-argument fixtures parse");
+            auto module =
+                parsed(context, program, "source/prepared result-argument fixtures parse");
             if (!module) { continue; }
             const auto contract = requested(*module);
             OwnedGlobalRoots query(*module, contract);
@@ -617,8 +614,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
                 "%priorEnv = ctjs.load_upvalue %priorGetter[0]\n"
                 "    %prior = ctjs.call_direct @get$3(%owned, %u, %priorGetter, %priorEnv)");
         }
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "same-method Undefined result fixture parses");
+        auto module = parsed(context, program, "same-method Undefined result fixture parses");
         if (!module) { continue; }
         OwnedGlobalRoots query(*module, requested(*module));
         check(query.proved() && query.roots().size() == 1,

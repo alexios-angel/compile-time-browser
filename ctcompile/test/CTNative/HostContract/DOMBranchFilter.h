@@ -93,8 +93,7 @@ module {
     for (const auto & valid : {source, captured, loop, loopAfter, capturedLoop,
                                replaced(source, "ctjs.call %helper(%u, %text)",
                                         "ctjs.call_direct @parse$1(%u, %u, %helper, %text)")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
-        check(static_cast<bool>(input), "nested helper source fixture parses");
+        auto input = parsed(context, valid, "nested helper source fixture parses");
         if (!input) { continue; }
         auto error = expandDOMHelpers(*input, "entry$0", 100000);
         check(!error, "an enclosing helper and its initialized capture precede the nested call");
@@ -162,8 +161,7 @@ module {
     for (const auto & omitted :
          {replaced(source, "ctjs.call %helper(%u, %text)", "ctjs.call %helper(%u)"),
           replaced(varying, "ctjs.call %helper(%u, %element)", "ctjs.call %helper(%u)")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(omitted, &context);
-        check(static_cast<bool>(input), "omitted helper argument fixture parses");
+        auto input = parsed(context, omitted, "omitted helper argument fixture parses");
         if (!input) { continue; }
         auto error = expandDOMHelpers(*input, "entry$0", 100000);
         check(!error, "omitted helper arguments expand without specializing other calls");
@@ -205,8 +203,7 @@ module {
                    "ctjs.call %helper(%u, %text, %element)"),
           replaced(source, "    %answer = scf.if",
                    "    ctjs.store_global \"saved\", %helper\n    %answer = scf.if")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "unsupported nested helper fixture parses");
+        auto input = parsed(context, invalid, "unsupported nested helper fixture parses");
         if (!input) { continue; }
         auto error = expandDOMHelpers(*input, "entry$0", 100000);
         check(static_cast<bool>(error),
@@ -304,8 +301,7 @@ module {
                                  replaced(nestedThrow, "      scf.yield %inactive",
                                           "      ctjs.store_global \"effect\", %payload\n"
                                           "      scf.yield %inactive")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "unproved helper abrupt branch fixture parses");
+        auto input = parsed(context, invalid, "unproved helper abrupt branch fixture parses");
         if (!input) { continue; }
         auto error = expandDOMHelpers(*input, "entry$0", 100000);
         check(static_cast<bool>(error),
@@ -451,8 +447,7 @@ module {
                    "    %ignored =", "    %observed = ctjs.truthy %joined\n    %ignored ="),
           replaced(mixedThrow, "    %ignored =",
                    "    %suffix = ctjs.call %set(%element, %suffixKey, %text)\n    %ignored =")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "observed and effectful throw joins parse");
+        auto input = parsed(context, invalid, "observed and effectful throw joins parse");
         if (!input) { continue; }
         auto error = expandDOMHelpers(*input, "entry$0", 100000);
         check(!error, "unprojected helper retains its observer or effectful suffix");
@@ -534,8 +529,7 @@ module {
                    "    %answer =", "    %read = ctjs.get_property %object[%key]\n    %answer ="),
           replaced(source,
                    "    %answer =", "    ctjs.store_global \"saved\", %object\n    %answer =")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "unsupported data-object source fixture parses");
+        auto input = parsed(context, invalid, "unsupported data-object source fixture parses");
         if (!input) { continue; }
         const auto before = hostContractFingerprint(*input);
         auto refused = expandDOMHelpers(*input, "entry$0", 100000);
@@ -826,8 +820,7 @@ module {
                    "%not = ctjs.unary not %element\n    %condition = ctjs.truthy %not"),
           replaced(source,
                    "%filtered =", "ctjs.set_property %keys[%filterName], %u\n      %filtered =")}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "complete branch callback refusal fixture parses");
+        auto input = parsed(context, invalid, "complete branch callback refusal fixture parses");
         if (!input) { continue; }
         const auto before = hostContractFingerprint(*input);
         auto prepared = expandDOMHelpers(*input, "branch$0", 100000);

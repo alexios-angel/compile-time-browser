@@ -138,8 +138,7 @@ void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shar
                                  unsigned count = 3, unsigned mask = Alternatives::String,
                                  unsigned dependencies = 1) {
             ++rows;
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-            check(static_cast<bool>(module), "source/prepared nested Map fixture parses");
+            auto module = parsed(context, text, "source/prepared nested Map fixture parses");
             if (!module) { return; }
             const auto contract = requested(*module);
             HostContractAnalysis query(*module, contract);
@@ -209,8 +208,7 @@ void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shar
         for (const auto & [text, label, count, mask] :
              {std::tuple{program, "String", 3u, unsigned(Alternatives::String)},
               {nullBefore, "nullable", 4u, nullable}}) {
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-            check(static_cast<bool>(module), "nested result budget fixture parses");
+            auto module = parsed(context, text, "nested result budget fixture parses");
             if (!module) { continue; }
             auto contract = requested(*module);
             HostContractAnalysis complete(*module, contract);
