@@ -8,10 +8,7 @@
 namespace ctcompile::test::exception_recovery {
 
 bool check(bool condition, llvm::StringRef label) {
-    if (!condition) {
-        llvm::errs() << "FAIL " << label << '\n';
-        ++ctbrowser_test_failures;
-    }
+    ::check(condition, label);
     return condition;
 }
 

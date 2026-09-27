@@ -17,6 +17,8 @@
 #include <cstdlib>
 #include <thread>
 
+#include "check.hpp"
+
 namespace ctnative {
 struct identity_object {};
 } // namespace ctnative
@@ -59,18 +61,9 @@ struct convertible_number {
 enum unrelated_number {
     three = 3
 };
-
-int failures = 0;
-void check(bool value, const char * message) {
-    if (value) { return; }
-    std::fprintf(stderr, "FAIL: %s\n", message);
-    ++failures;
-}
 } // namespace
 
-// The build is -DNDEBUG, so assert() would check nothing: every line is a check().
-#define CHECK(expression) check(static_cast<bool>(expression), #expression)
-
+// The build is -DNDEBUG, so assert() would check nothing: every line is a CHECK().
 int main() {
     using namespace ctnative;
     static_assert(std::is_same_v<ctnative::js_num, js_basic_num<double>>);
@@ -466,7 +459,9 @@ int main() {
                 const auto checkLeft = [&](const auto & value) {
                     std::apply(
                         [&](const auto &... right) {
-                            (CHECK(add(value, right) == number_string{expected}), ...);
+                            (check(add(value, right) == number_string{expected},
+                                   "add(value, right) == number_string{expected}"),
+                             ...);
                         },
                         rightValues);
                 };
@@ -916,5 +911,5 @@ int main() {
         CHECK(ctnative::document.documentElement() == outerRoot);
     }
     CHECK(unbound());
-    return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    REPORT("native_runtime");
 }
