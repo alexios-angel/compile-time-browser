@@ -12,7 +12,7 @@ import re
 import shutil
 import subprocess
 
-from CTNative.harness import CLEANUP, FLAGS, FUNCTION, find_compilers, run
+from CTNative.harness import CLEANUP, FLAGS, FUNCTION, find_compilers, forge_module, run
 from CTNative.HostContract.contract import fingerprint
 
 ACTION = """function toggle(element) {
@@ -901,16 +901,11 @@ def main():
                 raise RuntimeError(f"{name}: missing intended proof refusal\n{diagnostic}")
         if name == "unknown-receiver":
             forged = args.work / "forged.mlir"
-            text, count = re.subn(
-                r"\bmodule( attributes)? \{",
-                lambda match: 'module attributes {ctnative.host_proved = true, ctnative.dom_entry = "trusted"'
-                + (", " if match[1] else "} {"),
-                ir.read_text(),
-                count=1,
+            forged.write_text(
+                forge_module(
+                    ir.read_text(), 'ctnative.host_proved = true, ctnative.dom_entry = "trusted"'
+                )
             )
-            if count != 1:
-                raise RuntimeError("forged-evidence control did not add its report attributes")
-            forged.write_text(text)
             fresh = dict(manifest, module_sha256=fingerprint(args.opt, forged))
             lower(args, forged, fresh, "fresh-forged", success=False)
     for name, changed in (

@@ -5,7 +5,7 @@ import json
 
 from CTNative.Browser import native_dom as dom
 from CTNative.HostContract.contract import fingerprint
-from CTNative.harness import find_compilers, run
+from CTNative.harness import find_compilers, forge_module, run
 
 # Independent language inventory: a missing catalog entry must fail this check.
 KEYS = (
@@ -342,14 +342,8 @@ def main():
         args, "forged", "function bad(element) { return typeof Symbol.for('x'); }", 1
     )
     forged.write_text(
-        forged.read_text().replace(
-            "module attributes {",
-            'module attributes {ctnative.host_proved = true, ctnative.host_reason = "", ',
-            1,
-        )
+        forge_module(forged.read_text(), 'ctnative.host_proved = true, ctnative.host_reason = ""')
     )
-    if "ctnative.host_proved" not in forged.read_text():
-        raise RuntimeError("forged metadata control was not installed")
     contract.update(module_sha256=fingerprint(args.opt, forged), initial_intrinsics=["Symbol"])
     dom.lower(args, forged, contract, "forged-refused", success=False)
     print(

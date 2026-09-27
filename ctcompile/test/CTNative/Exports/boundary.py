@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 
 from CTNative.HostContract import contract as host
-from CTNative.harness import REFUSAL
+from CTNative.harness import REFUSAL, forge_module
 
 FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE = re.compile(r"^\s*emitc\.func\b", re.M)
@@ -275,17 +275,13 @@ def main():
     # A claimed complete proof copied onto the real published source is not a
     # live export proof. Global R3 and the table's storage refusal still apply.
     forged = args.work / "published-forged.mlir"
-    text, changed = re.subn(
-        r"\bmodule attributes \{",
-        "module attributes {"
-        "ctnative.host_proved = true, ctnative.host_slots = [], "
-        'ctnative.host_fingerprint = "forged", ',
-        after,
-        count=1,
+    forged.write_text(
+        forge_module(
+            after,
+            "ctnative.host_proved = true, ctnative.host_slots = [], "
+            'ctnative.host_fingerprint = "forged"',
+        )
     )
-    if changed != 1:
-        raise RuntimeError("forgery control could not mark the module")
-    forged.write_text(text)
     first, forged_reasons = native(args, forged, "published-forged", count)
     _, rerun_reasons = native(args, first, "published-forged-rerun", count)
     if forged_reasons != reasons or rerun_reasons != reasons:

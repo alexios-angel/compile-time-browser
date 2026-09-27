@@ -6,7 +6,7 @@ from urllib.parse import quote_from_bytes
 
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_numbers as numbers
-from CTNative.harness import run
+from CTNative.harness import forge_module, run
 
 READ = "const t = element.getAttribute('data-bs-config');"
 GUARD = "if ('string' != typeof t) return t;"
@@ -239,17 +239,10 @@ def refusal_checks(args, prepared):
     )
     if count != 1:
         raise RuntimeError("nullable URI branch predicate anchor changed")
-    text, count = re.subn(
-        r"\bmodule( attributes)? \{",
-        lambda match: 'module attributes {ctnative.host_proved = true, ctnative.dom_entry = "trusted"'
-        + (", " if match[1] else "} {"),
-        text,
-        count=1,
-    )
-    if count != 1:
-        raise RuntimeError("nullable URI forged-report mutation anchor changed")
     forged = args.work / "nullable-uri-forged-predicate.mlir"
-    forged.write_text(text)
+    forged.write_text(
+        forge_module(text, 'ctnative.host_proved = true, ctnative.dom_entry = "trusted"')
+    )
     cases.append(
         (
             "nullable_uri_forged_predicate",

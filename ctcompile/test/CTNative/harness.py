@@ -52,6 +52,20 @@ def inline_runtime(cpp):
     )
 
 
+def forge_module(text, attributes):
+    """`text` with `attributes` first in its module's attribute dictionary: the
+    report a pass would have written, forged, which a proof must not trust."""
+    text, count = re.subn(
+        r"\bmodule( attributes)? \{",
+        lambda match: "module attributes {" + attributes + (", " if match[1] else "} {"),
+        text,
+        count=1,
+    )
+    if count != 1:
+        raise RuntimeError("the forged attributes found no module")
+    return text
+
+
 def run(command, *, success=True, environment=None, input_text=None):
     result = subprocess.run(
         command, capture_output=True, text=True, timeout=120, env=environment, input=input_text

@@ -6,7 +6,7 @@ import re
 
 from CTNative.Browser import native_dom as dom
 from CTNative.HostContract.contract import fingerprint
-from CTNative.harness import find_compilers, run
+from CTNative.harness import find_compilers, forge_module, run
 from Target.Cpp.harness import FLAGS
 
 STATE = """function state() {
@@ -4568,16 +4568,9 @@ def main():
         raise RuntimeError("changed Symbol identity accepted a stale fingerprint")
 
     forged, manifest = prepare(args, "forged", "function bad() { return typeof Symbol.for('x'); }")
-    text, count = re.subn(
-        r"\bmodule( attributes)? \{",
-        lambda match: 'module attributes {ctnative.host_proved = true, ctnative.host_reason = ""'
-        + (", " if match[1] else "} {"),
-        forged.read_text(),
-        count=1,
+    forged.write_text(
+        forge_module(forged.read_text(), 'ctnative.host_proved = true, ctnative.host_reason = ""')
     )
-    if count != 1:
-        raise RuntimeError("forged metadata control was not installed")
-    forged.write_text(text)
     manifest["module_sha256"] = fingerprint(args.opt, forged)
     refuse(forged, manifest, "forged-refused")
     ir, contract = accepted["parameter-state"]

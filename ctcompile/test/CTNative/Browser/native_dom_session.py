@@ -8,7 +8,7 @@ import re
 import shutil
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers, run
+from CTNative.harness import find_compilers, forge_module, run
 from CTNative.HostContract.contract import fingerprint
 from Target.Cpp.harness import FLAGS
 
@@ -155,19 +155,7 @@ def main():
             )
             dom.lower(args, ir, dict(contract, roots=[]), "mixed-contract", success=False)
             forged = args.work / "forged.mlir"
-            text, count = re.subn(
-                r"\bmodule attributes \{",
-                "module attributes {ctnative.host_dom_session = true, ",
-                ir.read_text(),
-                count=1,
-            )
-            if not count:
-                text = text.replace(
-                    "module {", "module attributes {ctnative.host_dom_session = true} {", 1
-                )
-            forged.write_text(text)
-            if forged.read_text() == ir.read_text():
-                raise RuntimeError("forged session control did not add an attribute")
+            forged.write_text(forge_module(ir.read_text(), "ctnative.host_dom_session = true"))
             unproved = run(
                 [args.opt, str(forged), "--ctnative-lower-to-emitc=optimize=false"]
             ).stdout

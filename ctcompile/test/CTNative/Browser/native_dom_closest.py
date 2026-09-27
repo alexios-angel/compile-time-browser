@@ -4,7 +4,7 @@
 import re
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers, run
+from CTNative.harness import find_compilers, forge_module, run
 from CTNative.HostContract.contract import fingerprint
 from Target.Cpp.harness import FLAGS
 
@@ -217,16 +217,7 @@ def main():
     forged, manifest = dom.prepare(
         args, "forged", "function bad(first, second) { " + REFUSALS["absent-arm"] + " }", 2
     )
-    text, count = re.subn(
-        r"\bmodule( attributes)? \{",
-        lambda match: "module attributes {ctnative.dom_nonnull = true"
-        + ("," if match.group(1) else "} {"),
-        forged.read_text(),
-        count=1,
-    )
-    if count != 1:
-        raise RuntimeError("forged-proof control did not inject its attribute")
-    forged.write_text(text)
+    forged.write_text(forge_module(forged.read_text(), "ctnative.dom_nonnull = true"))
     manifest["module_sha256"] = fingerprint(args.opt, forged)
     dom.lower(args, forged, manifest, "forged-proof", success=False)
     print(
