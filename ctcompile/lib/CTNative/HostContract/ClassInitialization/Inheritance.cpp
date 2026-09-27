@@ -3,6 +3,19 @@
 
 namespace ctcompile::ctnative::class_detail {
 
+void classInitialization::forgetRecords(mlir::Region & region) {
+    region.walk([&](mlir::Operation * op) {
+        helperCalls.erase(op);
+        mapOperations.erase(op);
+        if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
+            mapCaptures.erase(read.getResult());
+            holderCaptures.erase(read.getResult());
+            callableCaptures.erase(read);
+            llvm::erase(captureReads, read);
+        }
+    });
+}
+
 bool classInitialization::proveHeritage(const HostContract & contract) {
     llvm::DenseMap<mlir::Value, ctjs::CallOp> completed;
     for (ctjs::CallOp call : calls) {
@@ -487,23 +500,11 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
     }
     // Base records still describe live source bodies, including bases shared
     // by several leaves. Only the replaced derived body loses its records.
-    llvm::erase_if(captureReads, [&](ctjs::LoadUpvalueOp read) {
-        if (!step()) { return false; }
-        if (read->getParentOfType<ctjs::FuncOp>() != function) { return false; }
-        callableCaptures.erase(read);
-        holderCaptures.erase(read.getResult());
-        return true;
-    });
-    auto removed = function.walk([&](mlir::Operation * op) {
-        if (!step()) { return mlir::WalkResult::interrupt(); }
-        helperCalls.erase(op);
-        mapOperations.erase(op);
-        if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
-            mapCaptures.erase(read.getResult());
-        }
-        return mlir::WalkResult::advance();
-    });
-    if (!reason.empty() || removed.wasInterrupted()) { return false; }
+    if (!spend(captureReads.size()) ||
+        !spendWalk(function, [](mlir::Operation *) { return uint64_t(1); }) || !reason.empty()) {
+        return false;
+    }
+    forgetRecords(function.getBody());
     for (auto [read, helper] : copiedCaptures) {
         if (!step()) { return false; }
         captureReads.push_back(read);
@@ -677,16 +678,7 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
         if (!reason.empty()) { return false; }
         if (risky.wasInterrupted()) { continue; }
         // The dropped arm loses its records, as a replaced super body does.
-        dropped.walk([&](mlir::Operation * nested) {
-            helperCalls.erase(nested);
-            mapOperations.erase(nested);
-            if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(nested)) {
-                mapCaptures.erase(read.getResult());
-                holderCaptures.erase(read.getResult());
-                callableCaptures.erase(read);
-                llvm::erase(captureReads, read);
-            }
-        });
+        forgetRecords(dropped);
         if (kept.empty()) {
             if (branch->getNumResults()) { continue; }
             branch.erase();

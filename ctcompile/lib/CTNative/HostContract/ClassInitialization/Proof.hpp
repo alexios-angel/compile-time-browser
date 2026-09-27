@@ -209,6 +209,8 @@ struct classInitialization {
 
     bool normalizeSuperMethods(ctjs::FuncOp function,
                                llvm::ArrayRef<ctjs::SetPropertyOp> baseDefinitions);
+    // Drop the helper-call, Map and capture records of a replaced body.
+    void forgetRecords(mlir::Region & region);
 
     bool examine(ctjs::CallOp call, const HostContract & contract, bool domEntry);
 
