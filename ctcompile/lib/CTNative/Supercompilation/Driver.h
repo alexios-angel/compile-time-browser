@@ -43,7 +43,7 @@ private:
     mlir::ModuleOp module;
     ctjs::FuncOp source;
     Limits limits;
-    symbolic::Budget budget;
+    WorkBudget budget;
     mlir::OwningOpRef<mlir::ModuleOp> drafts;
     llvm::SmallVector<Configuration> configurations;
     llvm::SmallVector<std::pair<ctjs::CallDirectOp, ctjs::FuncOp>> redirects;

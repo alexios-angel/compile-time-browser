@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/DenseMap.h"
 
@@ -25,19 +26,6 @@ struct Fact {
     bool operator==(const Fact &) const = default;
 };
 
-struct Budget {
-    unsigned limit, steps = 0;
-    bool exhausted = false;
-    bool take() {
-        if (steps == limit) {
-            exhausted = true;
-            return false;
-        }
-        ++steps;
-        return true;
-    }
-};
-
 Fact literalFact(mlir::Attribute literal);
 Fact join(Fact left, Fact right);
 llvm::StringRef domainName(Fact fact);
@@ -45,13 +33,13 @@ std::optional<bool> condition(Fact fact);
 
 class Analysis {
 public:
-    Analysis(mlir::ModuleOp module, Budget & budget) : module(module), budget(budget) {}
+    Analysis(mlir::ModuleOp module, WorkBudget & budget) : module(module), budget(budget) {}
     void run();
     Fact get(mlir::Value value) const;
 
 private:
     mlir::ModuleOp module;
-    Budget & budget;
+    WorkBudget & budget;
     llvm::DenseMap<mlir::Value, Fact> facts;
     llvm::DenseMap<mlir::Value, Fact> arguments;
     llvm::DenseMap<mlir::Operation *, Fact> returns;
@@ -64,6 +52,6 @@ private:
 struct Changes {
     unsigned expressions = 0, branches = 0;
 };
-Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, Budget & budget);
+Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, WorkBudget & budget);
 
 } // namespace ctcompile::ctnative::symbolic

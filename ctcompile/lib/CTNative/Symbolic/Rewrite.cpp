@@ -69,7 +69,7 @@ bool select(mlir::scf::IfOp branch, bool take) {
 }
 } // namespace
 
-Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, Budget & budget) {
+Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, WorkBudget & budget) {
     // The patterns capture this invocation's analysis by reference; the
     // frozen set and applicator are destroyed before it goes out of scope.
     // Truthiness returns i1 and arith.trunci an integer, so those two become
@@ -104,7 +104,7 @@ Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, Budget & budge
     Changes changes;
     mlir::PatternRewriter rewriter(module.getContext());
     for (mlir::Operation * op : candidates) {
-        if (!budget.take()) { break; }
+        if (!budget.spend()) { break; }
         if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
             if (auto take = condition(analysis.get(branch.getCondition()));
                 take && select(branch, *take)) {

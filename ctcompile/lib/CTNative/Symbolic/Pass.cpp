@@ -16,10 +16,11 @@ struct CTNativePrecomputePass : impl::CTNativePrecomputeBase<CTNativePrecomputeP
             op->removeAttr("ctnative.symbolic_results");
             op->removeAttr("ctnative.precompute_summary");
         });
-        symbolic::Budget budget{maxSteps};
+        WorkBudget budget{maxSteps};
         symbolic::Analysis analysis(module, budget);
         analysis.run();
         const auto changes = symbolic::rewrite(module, analysis, budget);
+        const auto steps = static_cast<unsigned>(maxSteps - budget.remaining);
         mlir::Builder at(&getContext());
         module.walk([&](mlir::Operation * op) {
             if (op->getNumResults() == 0) { return; }
@@ -34,11 +35,11 @@ struct CTNativePrecomputePass : impl::CTNativePrecomputeBase<CTNativePrecomputeP
             at.getDictionaryAttr(
                 {at.getNamedAttr("expressions", at.getI64IntegerAttr(changes.expressions)),
                  at.getNamedAttr("branches", at.getI64IntegerAttr(changes.branches)),
-                 at.getNamedAttr("steps", at.getI64IntegerAttr(budget.steps)),
+                 at.getNamedAttr("steps", at.getI64IntegerAttr(steps)),
                  at.getNamedAttr("budget_exhausted", at.getBoolAttr(budget.exhausted))}));
         if (report) {
             module.emitRemark() << "precomputation: " << changes.expressions << " expression(s), "
-                                << changes.branches << " structured branch(es), " << budget.steps
+                                << changes.branches << " structured branch(es), " << steps
                                 << " step(s)" << (budget.exhausted ? "; budget exhausted" : "");
         }
     }

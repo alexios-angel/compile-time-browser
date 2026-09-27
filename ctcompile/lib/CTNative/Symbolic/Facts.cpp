@@ -183,7 +183,7 @@ bool Analysis::region(mlir::Region & body) {
         // remain unknown: an initializer is not a fact about every iteration.
         for (mlir::BlockArgument arg : block.getArguments()) { facts[arg] = arguments.lookup(arg); }
         for (mlir::Operation & op : block) {
-            if (!budget.take()) { return false; }
+            if (!budget.spend()) { return false; }
             for (mlir::Region & nested : op.getRegions()) {
                 if (!region(nested)) { return false; }
             }
@@ -223,7 +223,7 @@ bool Analysis::collectCallers(llvm::ArrayRef<ctjs::FuncOp> functions) {
         // caller evidence. Reports and supplied native annotations are inert.
         auto charged = module.walk([&](mlir::Operation * op) {
             for (unsigned i = 0; i <= op->getNumOperands(); ++i) {
-                if (!budget.take()) { return mlir::WalkResult::interrupt(); }
+                if (!budget.spend()) { return mlir::WalkResult::interrupt(); }
             }
             return mlir::WalkResult::advance();
         });
@@ -292,7 +292,7 @@ void Analysis::run() {
                 Fact common;
                 bool first = true;
                 for (auto call : sites) {
-                    if (!budget.take()) { return; }
+                    if (!budget.spend()) { return; }
                     auto actual = get(call->getOperand(arg.getArgNumber()));
                     common = first ? actual : join(common, actual);
                     first = false;

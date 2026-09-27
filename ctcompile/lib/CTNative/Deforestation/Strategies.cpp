@@ -1,5 +1,6 @@
 #include "Strategies.h"
 
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -94,7 +95,7 @@ bool readOnly(mlir::Operation * op) {
 
 struct constraints {
     ec::CallOpaqueOp producer;
-    unsigned remaining;
+    WorkBudget budget;
     std::string & reason;
     llvm::SmallVector<mlir::Value> pending;
     llvm::DenseSet<mlir::Value> visited;
@@ -103,10 +104,7 @@ struct constraints {
     llvm::SmallVector<ec::CallOpaqueOp> consumers;
 
     bool spend() {
-        if (remaining) {
-            --remaining;
-            return true;
-        }
+        if (budget.spend()) { return true; }
         reason = "fusion inference exceeded its scan budget";
         return false;
     }
@@ -219,7 +217,7 @@ bool isSnapshot(ec::CallOpaqueOp call) {
 
 std::optional<strategy> inferStrategy(ec::CallOpaqueOp producer, unsigned maxScan,
                                       std::string & reason) {
-    constraints flow{producer, maxScan, reason, {}, {}, {}, {}, {}};
+    constraints flow{producer, {maxScan}, reason, {}, {}, {}, {}, {}};
     if (!flow.collect()) { return std::nullopt; }
     // Lumberhack §5.4: conflicting consumer upper bounds yield identity.
     // No producer duplication or eager evaluation of consumer code is used.
