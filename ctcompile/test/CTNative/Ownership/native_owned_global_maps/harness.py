@@ -9,6 +9,29 @@ from .harness_objects import *
 from .harness_entries import *
 from .harness_fields import *
 
+# The object-argument cases with an object-key lifetime observer (object
+# payloads have one too), and each saved-size case's observer and its check.
+OBJECT_ARGUMENT_LIFETIMES = frozenset(
+    {
+        "object_argument_exact",
+        "object_argument_global",
+        "object_argument_global_alias",
+        "object_argument_global_alias_chain",
+        "object_argument_siblings_global_chain",
+        "object_argument_siblings",
+        "object_argument_siblings_named",
+        "object_argument_siblings_global",
+        "parameter_object",
+    }
+)
+SIZE_LIFETIMES = {
+    "zero_size_saved_lifetime": (zero_size_lifetime_cpp, zero_size_lifetime),
+    "size_one_saved_lifetime": (one_size_lifetime_cpp, one_size_lifetime),
+    "size_deleted_saved_lifetime": (delete_size_lifetime_cpp, delete_size_lifetime),
+    "joined_size_saved_lifetime": (zero_size_lifetime_cpp, zero_size_lifetime),
+    "joined_mutation_saved_lifetime": (zero_size_lifetime_cpp, zero_size_lifetime),
+}
+
 
 def standalone(args, output, name, value, compilers, nm):
     deduced = args.work / f"{name}.deduced.mlir"
@@ -166,79 +189,12 @@ def standalone(args, output, name, value, compilers, nm):
         if name == "field_string_lifetime":
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(string_field_lifetime_cpp(cpp))
-        if name == "zero_size_saved_lifetime":
+        if name in SIZE_LIFETIMES:
             source = args.work / f"{name}.{mode}.identity.cpp"
-            source.write_text(zero_size_lifetime_cpp(cpp))
-        if name == "size_one_saved_lifetime":
+            source.write_text(SIZE_LIFETIMES[name][0](cpp))
+        if object_payload or name in OBJECT_ARGUMENT_LIFETIMES:
             source = args.work / f"{name}.{mode}.identity.cpp"
-            source.write_text(one_size_lifetime_cpp(cpp))
-        if name == "size_deleted_saved_lifetime":
-            source = args.work / f"{name}.{mode}.identity.cpp"
-            source.write_text(delete_size_lifetime_cpp(cpp))
-        if name in {"joined_size_saved_lifetime", "joined_mutation_saved_lifetime"}:
-            source = args.work / f"{name}.{mode}.identity.cpp"
-            source.write_text(zero_size_lifetime_cpp(cpp))
-        if name in {
-            "object_argument_exact",
-            "object_argument_global",
-            "object_argument_global_alias",
-            "object_argument_global_alias_chain",
-            "object_argument_siblings_global_chain",
-            "object_argument_siblings",
-            "object_argument_siblings_named",
-            "object_argument_siblings_global",
-            "parameter_object",
-        }:
-            source = args.work / f"{name}.{mode}.identity.cpp"
-            observer = (
-                retained_key_lifetime_cpp
-                if name
-                in {
-                    "object_argument_siblings",
-                    "object_argument_siblings_named",
-                    "object_argument_siblings_global",
-                    "object_argument_siblings_global_chain",
-                }
-                else (
-                    parameter_object_lifetime_cpp
-                    if name == "parameter_object"
-                    else object_argument_lifetime_cpp
-                )
-            )
-            source.write_text(
-                observer(cpp, global_key=True)
-                if name == "object_argument_global"
-                else (
-                    observer(cpp, global_alias=True)
-                    if name == "object_argument_global_alias"
-                    else (
-                        observer(cpp, global_alias=True, global_chain=("copy",))
-                        if name == "object_argument_global_alias_chain"
-                        else (
-                            observer(cpp, 2, 0, global_alias=True)
-                            if name == "object_argument_siblings_global"
-                            else (
-                                observer(
-                                    cpp,
-                                    2,
-                                    0,
-                                    global_alias=True,
-                                    global_chain=("copy", "tail", "branch"),
-                                )
-                                if name == "object_argument_siblings_global_chain"
-                                else (
-                                    observer(cpp, 2, 0)
-                                    if name == "object_argument_siblings_named"
-                                    else observer(cpp)
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        if object_payload:
-            source = args.work / f"{name}.{mode}.identity.cpp"
-            source.write_text(object_payload_lifetime_cpp(cpp, name))
+            source.write_text(object_argument_lifetime_source(cpp, name))
         if name in primitive_absence_sources():
             source = args.work / f"{name}.{mode}.observed.cpp"
             source.write_text(primitive_absence_cpp(cpp))
@@ -318,20 +274,8 @@ def standalone(args, output, name, value, compilers, nm):
                     *LEAF_CLEAR_LIFETIMES,
                     *NUMERIC_ENTRY_LIFETIMES,
                     "field_string_lifetime",
-                    "zero_size_saved_lifetime",
-                    "size_one_saved_lifetime",
-                    "size_deleted_saved_lifetime",
-                    "joined_size_saved_lifetime",
-                    "joined_mutation_saved_lifetime",
-                    "object_argument_exact",
-                    "object_argument_global",
-                    "object_argument_global_alias",
-                    "object_argument_global_alias_chain",
-                    "object_argument_siblings_global_chain",
-                    "object_argument_siblings",
-                    "object_argument_siblings_named",
-                    "object_argument_siblings_global",
-                    "parameter_object",
+                    *SIZE_LIFETIMES,
+                    *OBJECT_ARGUMENT_LIFETIMES,
                 }
                 else 1
             )
@@ -378,23 +322,7 @@ def standalone(args, output, name, value, compilers, nm):
             numeric_entry_lifetime(args, cpp, name, mode, compilers[1])
         if name == "field_string_lifetime":
             string_field_lifetime(args, cpp, name, mode, compilers[1])
-        if name == "zero_size_saved_lifetime":
-            zero_size_lifetime(args, cpp, name, mode, compilers[1])
-        if name == "size_one_saved_lifetime":
-            one_size_lifetime(args, cpp, name, mode, compilers[1])
-        if name == "size_deleted_saved_lifetime":
-            delete_size_lifetime(args, cpp, name, mode, compilers[1])
-        if name in {"joined_size_saved_lifetime", "joined_mutation_saved_lifetime"}:
-            zero_size_lifetime(args, cpp, name, mode, compilers[1])
-        if object_payload or name in {
-            "object_argument_exact",
-            "object_argument_global",
-            "object_argument_global_alias",
-            "object_argument_global_alias_chain",
-            "object_argument_siblings_global_chain",
-            "object_argument_siblings",
-            "object_argument_siblings_named",
-            "object_argument_siblings_global",
-            "parameter_object",
-        }:
+        if name in SIZE_LIFETIMES:
+            SIZE_LIFETIMES[name][1](args, cpp, name, mode, compilers[1])
+        if object_payload or name in OBJECT_ARGUMENT_LIFETIMES:
             object_argument_lifetime(args, cpp, name, mode, compilers[1])
