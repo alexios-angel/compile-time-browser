@@ -47,10 +47,7 @@ bool admission::op(mlir::Operation * o) {
              domEntry->isDocumentElement(read) || domEntry->datasetValueElement(read))) {
             return true;
         }
-        if (auto closure = llvm::dyn_cast<CreateClosureOp>(o);
-            closure && domEntry->callback(closure)) {
-            return true;
-        }
+        if (domBookkeeping(*domEntry, o)) { return true; }
         if (auto object = llvm::dyn_cast<CreateObjectOp>(o);
             object && domEntry->jsonObject(object)) {
             return true;
@@ -67,20 +64,7 @@ bool admission::op(mlir::Operation * o) {
             carrierOf(typeOf(unary.getOperand())) == carrier::json) {
             return true;
         }
-        if (auto load = llvm::dyn_cast<LoadGlobalOp>(o);
-            load && (domEntry->isInitialIntrinsic(load) || domEntry->isCurrentDocument(load))) {
-            return true;
-        }
-        if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
-            read &&
-            (domEntry->method(read) || domEntry->isElementPrototype(read) ||
-             domEntry->isTokenList(read.getResult()) || domEntry->isDataset(read.getResult()))) {
-            return true;
-        }
-        if (auto call = llvm::dyn_cast<CallOp>(o);
-            call && (domEntry->call(call) || domEntry->isStringPrefixRegExp(call))) {
-            return true;
-        }
+        if (auto call = llvm::dyn_cast<CallOp>(o); call && domEntry->call(call)) { return true; }
         if (auto invoke = llvm::dyn_cast<InvokeOp>(o); invoke && domEntry->invocation(invoke)) {
             return true;
         }

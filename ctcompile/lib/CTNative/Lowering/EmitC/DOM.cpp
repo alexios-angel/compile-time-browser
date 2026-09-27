@@ -76,8 +76,8 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
         function.walk([&](ctjs::SetPropertyOp write) {
             if (entry.jsonSnapshotAssignment(write)) { domSnapshotAssignments.insert(write); }
         });
-        function.walk([&](ctjs::CreateClosureOp closure) {
-            if (entry.callback(closure)) { domReads.insert(closure); }
+        function.walk([&](mlir::Operation * o) {
+            if (domBookkeeping(entry, o)) { domReads.insert(o); }
         });
         function.walk([&](ctjs::ConstantOp constant) {
             if (llvm::isa<ctjs::NullAttr>(constant.getValue())) { domNulls.insert(constant); }
@@ -96,15 +96,6 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             if (auto element = entry.datasetValueElement(read)) {
                 domDatasetValues.try_emplace(read, element);
             }
-            if (entry.method(read) || entry.isElementPrototype(read) ||
-                entry.isTokenList(read.getResult()) || entry.isDataset(read.getResult())) {
-                domReads.insert(read);
-            }
-        });
-        function.walk([&](ctjs::LoadGlobalOp load) {
-            if (entry.isInitialIntrinsic(load) || entry.isCurrentDocument(load)) {
-                domReads.insert(load);
-            }
         });
         function.walk([&](ctjs::InvokeOp invocation) {
             if (!entry.invocation(invocation)) { return; }
@@ -115,7 +106,6 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             }
         });
         function.walk([&](ctjs::CallOp call) {
-            if (entry.isStringPrefixRegExp(call)) { domReads.insert(call); }
             if (const auto * edge = entry.call(call)) {
                 domCalls[call] = *edge;
                 if (edge->returnsNumber() || edge->kind == HostDOMMethod::decodeURIComponent) {

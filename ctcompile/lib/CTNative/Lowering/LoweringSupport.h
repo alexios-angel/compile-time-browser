@@ -40,6 +40,10 @@
 #include <string>
 #include <vector>
 
+namespace ctcompile::ctnative {
+class DOMEntryAnalysis;
+}
+
 namespace ctcompile::ctnative::lowering_detail {
 
 namespace ec = mlir::emitc;
@@ -164,6 +168,9 @@ bool isScriptEntry(ctjs::FuncOp fn);
 // $enclosing_this, which are operands and not attributes.
 inline constexpr unsigned kFirstCapture = 2;
 bool isUndefinedConstant(mlir::Value value);
+// What a DOM entry reads only to reach its proved host calls: a callback
+// closure, the initial intrinsics, a prefix RegExp and method-like reads.
+bool domBookkeeping(const DOMEntryAnalysis & entry, mlir::Operation * op);
 // All source stores to each emitted identity member, before any retyping.
 // A read's narrower result never selects storage shared by other allocations.
 llvm::StringMap<mlir::Type> identityFieldStoreTypes(mlir::DataFlowSolver & solver,

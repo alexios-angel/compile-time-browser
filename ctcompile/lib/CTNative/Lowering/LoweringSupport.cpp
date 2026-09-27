@@ -1,4 +1,5 @@
 #include "LoweringSupport.h"
+#include "ctcompile/CTNative/Analysis/HostContract.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -330,6 +331,19 @@ bool isScriptEntry(ctjs::FuncOp fn) {
 bool isUndefinedConstant(mlir::Value v) {
     auto k = v.getDefiningOp<ctjs::ConstantOp>();
     return k && llvm::isa<ctjs::UndefinedAttr>(k.getValue());
+}
+
+bool domBookkeeping(const DOMEntryAnalysis & entry, mlir::Operation * op) {
+    if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
+        return static_cast<bool>(entry.callback(closure));
+    }
+    if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
+        return entry.isInitialIntrinsic(load) || entry.isCurrentDocument(load);
+    }
+    if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) { return entry.isStringPrefixRegExp(call); }
+    auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+    return read && (entry.method(read) || entry.isElementPrototype(read) ||
+                    entry.isTokenList(read.getResult()) || entry.isDataset(read.getResult()));
 }
 
 // Every value that names the same object as `v`, `v` included. A literal
