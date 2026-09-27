@@ -94,6 +94,44 @@
     var driver = window.test_driver_internal;
     driver.in_automation = true;
 
+    // get_computed_role / get_computed_label: the element waits in a slot,
+    // ctdrive's `accessibility` step reads it through __ctdrive_asked and
+    // writes the answer back through __ctdrive_answer before the step's
+    // promise settles.
+    var asked = {};
+    var answers = {};
+    var slots = 1;
+    window.__ctdrive_asked = function (slot) {
+        return asked[slot];
+    };
+    window.__ctdrive_answer = function (slot, text) {
+        answers[slot] = text;
+    };
+
+    function accessibility(what, element) {
+        var slot = slots++;
+        asked[slot] = element;
+        return perform([{
+            cmd: "accessibility",
+            what: what,
+            slot: slot
+        }]).then(function () {
+            var answer = answers[slot];
+            delete asked[slot];
+            delete answers[slot];
+            return answer;
+        }, function (error) {
+            delete asked[slot];
+            throw error;
+        });
+    }
+    driver.get_computed_role = function (element) {
+        return accessibility("role", element);
+    };
+    driver.get_computed_label = function (element) {
+        return accessibility("label", element);
+    };
+
     driver.click = function (element, coords) {
         pointer = {
             x: coords.x,

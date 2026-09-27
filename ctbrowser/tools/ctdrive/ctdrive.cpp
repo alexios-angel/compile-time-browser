@@ -346,6 +346,23 @@ private:
             (void)page.touch(phase, x, y);
             return ok();
         }
+        // THE ACCESSIBILITY TREE'S ANSWER for testdriver's get_computed_role and
+        // get_computed_label: {"cmd":"accessibility","what":"role"|"label",
+        // "slot":N}. The element is what `__ctdrive_asked(N)` returns in the
+        // page, and the answer goes back through `__ctdrive_answer(N, text)` -
+        // a reply here only says whether the step ran, and the promise the
+        // test awaits is settled by the page (tools/wpt/testdriver-vendor.js).
+        if (cmd == "accessibility") {
+            const std::string what = text_of(o, "what");
+            const double slot = static_cast<double>(number(o, "slot"));
+            const std::optional<std::string> answer =
+                page.bindings().computed_accessibility("__ctdrive_asked", slot, what == "label");
+            if (!answer) { return fail("accessibility: no element in slot"); }
+            const bool ran = page.run_script("window.__ctdrive_answer(" +
+                                             std::to_string(static_cast<long long>(slot)) + ", " +
+                                             json::serialize(json::string{*answer}) + ")");
+            return ran ? ok() : fail(page.script_error());
+        }
         if (cmd == "resize") {
             (void)page.handle(ev::resized(static_cast<int>(x), static_cast<int>(y)));
             return ok();

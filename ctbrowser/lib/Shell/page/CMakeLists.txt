@@ -1,4 +1,5 @@
 target_sources(ctbrowser-shell PRIVATE
+  accessibility.cpp
   canvas.cpp
   canvas_path.cpp
   forms.cpp

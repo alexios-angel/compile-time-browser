@@ -72,6 +72,10 @@ public:
     bool dispatch_wheel(node_id target, const input_event & input);
     bool dispatch_touch(std::string_view phase, node_id target, float x, float y);
     bool wheel_scroll(node_id from, float dx, float dy); // events/input.cpp
+    // The computed role, or accessible name, of the element `getter(slot)` returns in
+    // the page - testdriver's get_computed_role/label (page/accessibility.cpp).
+    std::optional<std::string> computed_accessibility(std::string_view getter, double slot,
+                                                      bool label);
 
     bool dispatch_event(std::string_view type, node_id target, value event);
 
