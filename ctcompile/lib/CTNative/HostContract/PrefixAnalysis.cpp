@@ -3,6 +3,8 @@
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "mlir/IR/SymbolTable.h"
 
+#include <limits>
+
 namespace ctcompile::ctnative::host_detail {
 
 prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contract,
@@ -115,6 +117,27 @@ bool prefixAnalysis::spend(unsigned count) {
     }
     remaining -= count;
     return true;
+}
+
+bool prefixAnalysis::spendText(llvm::StringRef text) {
+    return text.size() <= std::numeric_limits<unsigned>::max() &&
+           spend(static_cast<unsigned>(text.size()));
+}
+
+const HostPrefixCapture * prefixAnalysis::capture(const HostPrefixFactory & factory,
+                                                  prefixValue closure, ctjs::FuncOp function,
+                                                  ctjs::LoadUpvalueOp load) {
+    if (load.getClosure() != function.getBody().front().getArgument(2) || load.getIndex() < 0) {
+        return nullptr;
+    }
+    for (const auto & capture : factory.captures) {
+        if (!step()) { return nullptr; }
+        if (capture.closure == closure.made &&
+            capture.index == static_cast<unsigned>(load.getIndex())) {
+            return &capture;
+        }
+    }
+    return nullptr;
 }
 
 prefixValue prefixAnalysis::stop(mlir::Operation * operation, llvm::StringRef reason) {

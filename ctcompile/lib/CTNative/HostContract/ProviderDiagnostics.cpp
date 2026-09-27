@@ -8,20 +8,12 @@
 #include <limits>
 
 namespace ctcompile::ctnative::host_detail {
-namespace {
-
-bool chargeText(prefixAnalysis & prefix, llvm::StringRef text) {
-    return text.size() <= std::numeric_limits<unsigned>::max() &&
-           prefix.spend(static_cast<unsigned>(text.size()));
-}
-
-} // namespace
 
 bool providerDiagnosticState::initialize() {
     // A copy includes object and closure identities for ordinary source
     // lookups. Only the separate callback proof may modify primitive slots.
     for (const auto & entry : prefix.globals) {
-        if (!prefix.step() || !chargeText(prefix, entry.first())) { return false; }
+        if (!prefix.step() || !prefix.spendText(entry.first())) { return false; }
         globals[entry.first()] = entry.second;
     }
     return true;
@@ -35,12 +27,13 @@ bool providerDiagnosticState::record(mlir::Operation * operation, unsigned id,
                                 {map->provenance.allocation, map->provenance.invocation, id},
                                 member.str(),
                                 result.literal,
-                                0});
+                                result.kind == prefixValue::Kind::resource ? result.object : 0,
+                                result.kind == prefixValue::Kind::object ? result.object + 1 : 0});
     return true;
 }
 
 prefixValue providerDiagnosticState::global(ctjs::LoadGlobalOp load) {
-    if (!chargeText(prefix, load.getName())) { return {}; }
+    if (!prefix.spendText(load.getName())) { return {}; }
     if (load.getName() == "Array" &&
         llvm::is_contained(prefix.contract.initialIntrinsics, "Array")) {
         // initialBindingProblem checks all live intrinsic uses and forbids
@@ -58,7 +51,7 @@ prefixValue providerDiagnosticState::property(ctjs::GetPropertyOp read,
     const auto key = values.lookup(read.getKey());
     if (key.kind != prefixValue::Kind::primitive) { return {}; }
     auto text = llvm::dyn_cast_if_present<ctjs::StringAttr>(key.literal);
-    if (text && !chargeText(prefix, text.getValue())) { return {}; }
+    if (text && !prefix.spendText(text.getValue())) { return {}; }
     const auto & heap = objects ? *objects : prefix.objects;
     if (owner.kind == prefixValue::Kind::object && owner.object < heap.size() && text &&
         ctjs::ordinaryKey(text.getValue())) {
@@ -190,7 +183,7 @@ prefixValue providerDiagnosticState::operation(mlir::Operation * operation,
     }
     const auto a = llvm::dyn_cast_if_present<ctjs::StringAttr>(left.literal);
     const auto b = llvm::dyn_cast_if_present<ctjs::StringAttr>(right.literal);
-    if (!a || !b || !chargeText(prefix, a.getValue()) || !chargeText(prefix, b.getValue())) {
+    if (!a || !b || !prefix.spendText(a.getValue()) || !prefix.spendText(b.getValue())) {
         return {};
     }
     std::string joined = (a.getValue() + b.getValue()).str();

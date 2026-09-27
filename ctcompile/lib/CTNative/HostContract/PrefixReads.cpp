@@ -19,31 +19,16 @@ struct emptyMapReader {
 
     prefixValue operation(mlir::Operation * operation, environment & values) {
         auto * context = prefix.module.getContext();
-        if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
-            return prefixValue::constant(constant.getValue());
-        }
-        if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(operation)) {
-            return prefixValue::constant(constant.getValue());
-        }
+        if (auto scalar = prefixScalar(operation, values, context)) { return *scalar; }
         if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
-            if (load.getClosure() != function.getBody().front().getArgument(2) ||
-                load.getIndex() < 0) {
-                return {};
-            }
-            for (auto capture : factory.captures) {
-                if (!prefix.step()) { return {}; }
-                if (capture.closure != closure.made ||
-                    capture.index != static_cast<unsigned>(load.getIndex())) {
-                    continue;
-                }
-                const auto resource = llvm::find(factory.resources, capture.resource);
-                if (resource == factory.resources.end()) { return {}; }
-                return {prefixValue::Kind::resource,
-                        {},
-                        {},
-                        static_cast<unsigned>(resource - factory.resources.begin())};
-            }
-            return {};
+            const auto * capture = prefix.capture(factory, closure, function, load);
+            const auto resource = capture ? llvm::find(factory.resources, capture->resource)
+                                          : factory.resources.end();
+            if (resource == factory.resources.end()) { return {}; }
+            return {prefixValue::Kind::resource,
+                    {},
+                    {},
+                    static_cast<unsigned>(resource - factory.resources.begin())};
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
             const auto owner = values.lookup(read.getObject());
@@ -91,16 +76,6 @@ struct emptyMapReader {
         if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
             return prefixCompare(compare.getKind(), values.lookup(compare.getLhs()),
                                  values.lookup(compare.getRhs()), context);
-        }
-        if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
-            auto bit = prefixTruth(values.lookup(truth.getValue()));
-            return bit ? prefixValue::constant(ctjs::BooleanAttr::get(context, *bit))
-                       : prefixValue{};
-        }
-        if (llvm::isa<mlir::arith::TruncIOp, mlir::arith::ExtUIOp>(operation)) {
-            auto bit = prefixTruth(values.lookup(operation->getOperand(0)));
-            return bit ? prefixValue::constant(ctjs::BooleanAttr::get(context, *bit))
-                       : prefixValue{};
         }
         // No writes, allocations, object reads, arbitrary calls, globals,
         // exceptions or resource escape are supported by this provider slice.
