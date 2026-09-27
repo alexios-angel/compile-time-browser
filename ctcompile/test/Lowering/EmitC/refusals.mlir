@@ -142,19 +142,21 @@ ctjs.func @matcher(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %re
 }
 
-// --- A BINARY KIND ITS FAMILY DOES NOT SERVE --------------------------------
+// --- A BITWISE ctjs.binary IS NO LONGER REFUSED -----------------------------
 //
-// The two families are disjoint apart from `add`. ct_aot_binary_op's switch has
-// no arm for a bitwise opcode, so compiling `ctjs.binary shl` would pass
-// op::halt - which is in range, so aot_bridge's bounds check passes - and the
-// helper would answer `undefined` with status ok. A shift that silently
-// evaluates to undefined is exactly the class of defect this project keeps
-// meeting, so the kind is checked rather than the opcode trusted.
+// THIS CASE WAS A REFUSAL: ct_aot_binary_op's switch had no arm for a bitwise
+// opcode, so `ctjs.binary shl` would have passed op::halt - in range, so
+// aot_bridge's bounds check passes - and answered `undefined` with status ok.
+// context::binary_op now runs the six as the interpreter does, ToNumeric of
+// both operands and then the static operator, so OpcodeMapping.hpp maps every
+// kind in the re-entering family and the shift reaches op::shl by name. The
+// kind check stays in Admission.cpp for the next kind a family does not serve.
 //
-// CHECK-LABEL: ctjs.func @wrong_family
-// CHECK-SAME: ctjs.not_lowered = "ctjs.binary was given a kind only the static family serves"
-ctjs.func @wrong_family(%receiver: !ctjs.value, %new_target: !ctjs.value,
-                        %callee: !ctjs.value, %x: !ctjs.value) -> !ctjs.value
+// CHECK-NOT: ctjs.func @bitwise_generic
+// CHECK: emitc.func @bitwise_generic
+// CHECK: ctbrowser::script::op::shl)
+ctjs.func @bitwise_generic(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                           %callee: !ctjs.value, %x: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
   %ctx = ctjs.frame_enter 1
   %shifted = ctjs.binary shl %x, %x

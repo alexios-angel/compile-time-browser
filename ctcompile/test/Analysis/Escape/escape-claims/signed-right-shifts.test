@@ -6,31 +6,31 @@
 // Signed right shifts preserve ToInt32 wrap, masked counts and read-time Numbers.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.binary sub
-// IMPORT: ctjs.binary_static shr
+// IMPORT: ctjs.binary shr
 // IMPORT: ctjs.set_property
 // IMPORT-LABEL: ctjs.func @snapshotReturned$
 // IMPORT: ctjs.binary sub
-// IMPORT: ctjs.binary_static shr
+// IMPORT: ctjs.binary shr
 // IMPORT: ctjs.set_property
 // IMPORT-LABEL: ctjs.func @positiveReleased$
-// IMPORT: ctjs.binary_static ushr
+// IMPORT: ctjs.binary ushr
 // IMPORT-LABEL: ctjs.func @positiveReturned$
-// IMPORT: ctjs.binary_static ushr
+// IMPORT: ctjs.binary ushr
 // IMPORT-LABEL: ctjs.func @zeroReleased$
-// IMPORT: ctjs.binary_static ushr
+// IMPORT: ctjs.binary ushr
 // IMPORT-LABEL: ctjs.func @zeroReturned$
-// IMPORT: ctjs.binary_static ushr
+// IMPORT: ctjs.binary ushr
 // IMPORT-LABEL: ctjs.func @coercibleInput$
-// IMPORT: ctjs.binary_static shr
+// IMPORT: ctjs.binary shr
 // IMPORT-LABEL: ctjs.func @unboundedInput$
-// IMPORT: ctjs.binary_static ushr
+// IMPORT: ctjs.binary ushr
 // IMPORT-LABEL: ctjs.func @stringReleased$
-// IMPORT: ctjs.binary_static ushr
+// IMPORT: ctjs.binary ushr
 // IMPORT-LABEL: ctjs.func @stringReturned$
-// IMPORT: ctjs.binary_static shr
+// IMPORT: ctjs.binary shr
 // IMPORT: ctjs.set_property
 // IMPORT-LABEL: ctjs.func @noncanonicalCount$
-// IMPORT: ctjs.binary_static ushr
+// IMPORT: ctjs.binary ushr
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined

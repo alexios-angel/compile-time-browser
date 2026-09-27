@@ -6,28 +6,28 @@
 // Signed Number bitwise snapshots preserve ToInt32 wrap without coercion facts.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.binary sub
-// IMPORT: ctjs.binary_static bitand
+// IMPORT: ctjs.binary bitand
 // IMPORT: ctjs.set_property
 // IMPORT-LABEL: ctjs.func @snapshotReturned$
 // IMPORT: ctjs.binary sub
-// IMPORT: ctjs.binary_static bitand
+// IMPORT: ctjs.binary bitand
 // IMPORT: ctjs.set_property
 // IMPORT-LABEL: ctjs.func @positiveReleased$
-// IMPORT: ctjs.binary_static bitxor
-// IMPORT: ctjs.binary_static shl
+// IMPORT: ctjs.binary bitxor
+// IMPORT: ctjs.binary shl
 // IMPORT-LABEL: ctjs.func @positiveReturned$
-// IMPORT: ctjs.binary_static bitxor
-// IMPORT: ctjs.binary_static shl
+// IMPORT: ctjs.binary bitxor
+// IMPORT: ctjs.binary shl
 // IMPORT-LABEL: ctjs.func @zeroReleased$
-// IMPORT: ctjs.binary_static bitor
+// IMPORT: ctjs.binary bitor
 // IMPORT: ctjs.binary add
 // IMPORT-LABEL: ctjs.func @zeroReturned$
-// IMPORT: ctjs.binary_static bitor
+// IMPORT: ctjs.binary bitor
 // IMPORT: ctjs.binary add
 // IMPORT-LABEL: ctjs.func @coercibleInput$
-// IMPORT: ctjs.binary_static bitand
+// IMPORT: ctjs.binary bitand
 // IMPORT-LABEL: ctjs.func @unboundedInput$
-// IMPORT: ctjs.binary_static bitor
+// IMPORT: ctjs.binary bitor
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined

@@ -22,6 +22,12 @@ namespace ctcompile::ctjs {
 // `ctjs.binary_static add` is op::add, which uses the static conversions and
 // cannot run user code at all; the runtime reaches it from `++` and three
 // internal counters. Folding them would make `x + y` and `x++` the same call.
+//
+// THE SIX BITWISE KINDS ARE IN BOTH, AND MEAN THE SAME OPCODE IN EACH. The
+// importer emits them as ctjs.binary, because the VM ToNumerics their operands
+// and context::binary_op does the same. ctjs.binary_static of one is still
+// valid IR, meaning "the operands are already numeric": binary_op_static
+// converts nothing, which is right only once something has proved that.
 [[nodiscard]] constexpr ctbrowser::script::op opcode_for_binary(BinaryKind kind) {
     using op = ctbrowser::script::op;
     switch (kind) {
@@ -32,16 +38,12 @@ namespace ctcompile::ctjs {
     case BinaryKind::Mod: return op::mod;
     case BinaryKind::Pow: return op::pow;
     case BinaryKind::Concat: return op::concat;
-    // THE SEVEN STATIC-ONLY KINDS ARE NOT VALID HERE. ct_aot_binary_op's switch
-    // has no arm for a bitwise opcode, so passing one would fall through to a
-    // default that returns undefined - an answer, silently wrong. The caller
-    // checks this rather than the callee guessing.
-    case BinaryKind::Shl:
-    case BinaryKind::Shr:
-    case BinaryKind::UShr:
-    case BinaryKind::BitAnd:
-    case BinaryKind::BitOr:
-    case BinaryKind::BitXor: break;
+    case BinaryKind::Shl: return op::shl;
+    case BinaryKind::Shr: return op::shr;
+    case BinaryKind::UShr: return op::ushr;
+    case BinaryKind::BitAnd: return op::bit_and;
+    case BinaryKind::BitOr: return op::bit_or;
+    case BinaryKind::BitXor: return op::bit_xor;
     }
     return op::halt; // never valid as a binary operator; see is_valid_binary
 }
@@ -56,7 +58,10 @@ namespace ctcompile::ctjs {
     case BinaryKind::BitAnd: return op::bit_and;
     case BinaryKind::BitOr: return op::bit_or;
     case BinaryKind::BitXor: return op::bit_xor;
-    // And the seven re-entering ones are not valid here, symmetrically.
+    // THE SIX RE-ENTERING-ONLY KINDS ARE NOT VALID HERE. binary_op_static's
+    // switch has no arm for them, so passing one would fall through to a
+    // default that returns undefined - an answer, silently wrong. The caller
+    // checks this rather than the callee guessing.
     case BinaryKind::Sub:
     case BinaryKind::Mul:
     case BinaryKind::Div:
@@ -85,8 +90,8 @@ namespace ctcompile::ctjs {
 // live in a file that links MLIR, because BinaryKind is generated from the ODS;
 // the assertions cost nothing and travel with the header.
 
-// THE ONE KIND BOTH FAMILIES ANSWER, AND THEY ANSWER DIFFERENTLY. This is the
-// pair that would be invisible in a table of integers.
+// THE ONE KIND THE TWO FAMILIES ANSWER DIFFERENTLY. This is the pair that would
+// be invisible in a table of integers.
 static_assert(opcode_for_binary(BinaryKind::Add) == ctbrowser::script::op::add_generic,
               "source `+` is add_generic - it runs ToPrimitive and can call a user valueOf");
 static_assert(opcode_for_binary_static(BinaryKind::Add) == ctbrowser::script::op::add,
@@ -111,10 +116,22 @@ static_assert(opcode_for_binary_static(BinaryKind::BitAnd) == ctbrowser::script:
 static_assert(opcode_for_binary_static(BinaryKind::BitOr) == ctbrowser::script::op::bit_or);
 static_assert(opcode_for_binary_static(BinaryKind::BitXor) == ctbrowser::script::op::bit_xor);
 
+// THE BITWISE SIX ARE THE SAME OPCODE IN BOTH FAMILIES - only the helper, and
+// so whether the operands are converted first, differs.
+static_assert(opcode_for_binary(BinaryKind::Shl) == opcode_for_binary_static(BinaryKind::Shl));
+static_assert(opcode_for_binary(BinaryKind::Shr) == opcode_for_binary_static(BinaryKind::Shr));
+static_assert(opcode_for_binary(BinaryKind::UShr) == opcode_for_binary_static(BinaryKind::UShr));
+static_assert(opcode_for_binary(BinaryKind::BitAnd) ==
+              opcode_for_binary_static(BinaryKind::BitAnd));
+static_assert(opcode_for_binary(BinaryKind::BitOr) == opcode_for_binary_static(BinaryKind::BitOr));
+static_assert(opcode_for_binary(BinaryKind::BitXor) ==
+              opcode_for_binary_static(BinaryKind::BitXor));
+
 // A KIND THE FAMILY DOES NOT SERVE IS REFUSED rather than guessed:
-// ct_aot_binary_op's switch has no arm for a bitwise opcode, so passing one
-// would return undefined - an answer, silently wrong.
-static_assert(!is_valid_binary(BinaryKind::BitAnd), "the bitwise kinds are static-only");
+// binary_op_static's switch has no arm for concat, so passing one would
+// return undefined - an answer, silently wrong.
+static_assert(is_valid_binary(BinaryKind::BitAnd),
+              "the bitwise kinds re-enter: context::binary_op ToNumerics them");
 static_assert(!is_valid_binary_static(BinaryKind::Concat),
               "and concat is re-entering only - it must never reach the BigInt arm");
 

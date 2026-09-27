@@ -10,7 +10,8 @@ def CTJS_BinaryOp : CTJS_RuntimeOp<"binary", "ct_aot_binary_op", CTJS_GenericEff
     runtime keeps the three `+` opcodes distinct, and for its reason - concat
     ToStrings both sides unconditionally and must never reach the BigInt arm.
   }];
-  // PHASE 55 (may_reenter 1: concat, add_generic, sub, mul, div, mod, pow).
+  // PHASE 55 (may_reenter 1: concat, add_generic, sub, mul, div, mod, pow,
+  // and the six bitwise opcodes, which ToNumeric both operands first).
   // Both SINK(converted): ToPrimitive runs valueOf/toString with the operand
   // as receiver (coerce.cpp:171-179). Those methods come from the shared
   // Object.prototype table, which a page can replace - so a confined object
@@ -38,6 +39,10 @@ def CTJS_BinaryStaticOp
     from source `+`. That is a deviation from the specification which
     aot_helpers.def records as one, and it is the reason `x++` on
     `{valueOf: () => 3}` is NaN here.
+
+    The importer emits the six bitwise kinds as ctjs.binary, because the VM
+    ToNumerics their operands. A bitwise ctjs.binary_static means the
+    operands are already numeric: the helper converts nothing.
   }];
   // PHASE 55: both NEITHER - the STATIC conversions. coerce.cpp:285-299 is
   // bigint_binary, then to_number (49-60, no user code) and to_int32; the

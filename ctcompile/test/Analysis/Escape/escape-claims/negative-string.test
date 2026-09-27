@@ -19,7 +19,7 @@
 // IMPORT-LABEL: ctjs.func @bitsReleased$
 // IMPORT: ctjs.unary bitnot
 // IMPORT-LABEL: ctjs.func @shiftReturned$
-// IMPORT: ctjs.binary_static ushr
+// IMPORT: ctjs.binary ushr
 // IMPORT-LABEL: ctjs.func @originalKey$
 // IMPORT: ctjs.get_property
 // IMPORT-LABEL: ctjs.func @stringAddition$
