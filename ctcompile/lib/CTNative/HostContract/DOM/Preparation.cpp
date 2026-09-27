@@ -167,10 +167,7 @@ static llvm::Error normalizeIntrinsicGlobals(mlir::ModuleOp module, llvm::String
         remaining -= static_cast<unsigned>(cost);
         return true;
     };
-    const auto undefined = [](mlir::Value value) {
-        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
-    };
+    const auto undefined = ctjs::isUndefinedConstant;
     llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
     ctjs::FuncOp wrapper;
     auto target = module.lookupSymbol<ctjs::FuncOp>(entry);
@@ -700,8 +697,7 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             }
             auto call = llvm::cast<ctjs::CallOp>(mapping.lookup(original.getOperation()));
             if (call.getArgs().size() != 2) { return; }
-            auto force = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-            if (!force || !llvm::isa<ctjs::UndefinedAttr>(force.getValue())) { return; }
+            if (!ctjs::isUndefinedConstant(call.getArgs()[1])) { return; }
             if (edge->kind == HostDOMMethod::toggleClass) {
                 call.getArgsMutable().erase(1);
             } else {

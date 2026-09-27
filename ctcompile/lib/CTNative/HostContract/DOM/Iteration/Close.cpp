@@ -296,15 +296,11 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
         }
     }
     auto callee = close.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-    const auto undefined = [](mlir::Value value) {
-        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
-    };
-    auto flag = close.getArgs().size() == 2 ? close.getArgs()[1].getDefiningOp<ctjs::ConstantOp>()
-                                            : ctjs::ConstantOp{};
-    auto boolean = flag ? llvm::dyn_cast<ctjs::BooleanAttr>(flag.getValue()) : ctjs::BooleanAttr{};
+    auto boolean = close.getArgs().size() == 2
+                       ? ctjs::constantAttr<ctjs::BooleanAttr>(close.getArgs()[1])
+                       : ctjs::BooleanAttr{};
     if (!callee || callee.getName() != "__ctbrowser_iter_close" ||
-        !undefined(close.getReceiver()) || !boolean || !boolean.getValue() ||
+        !ctjs::isUndefinedConstant(close.getReceiver()) || !boolean || !boolean.getValue() ||
         !dominance.dominates(close.getArgs()[0], push)) {
         return refuse("DOM iterator close requires its original abrupt helper invocation");
     }

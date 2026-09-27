@@ -1,5 +1,7 @@
 #include "Body.hpp"
 
+#include "mlir/IR/Matchers.h"
+
 #include <ctbrowser/dom/element.hpp>
 #include <ctbrowser/style/css/parser.hpp>
 
@@ -72,16 +74,12 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 return false;
             }
             values[argument] = values[initial];
-            auto constant = initial.getDefiningOp<ctjs::ConstantOp>();
-            auto zero = constant ? llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue())
-                                 : ctjs::NumberAttr{};
+            auto zero = ctjs::constantAttr<ctjs::NumberAttr>(initial);
             if (!zero || zero.getDouble() != 0) { continue; }
             const auto increments = [](mlir::Value next, mlir::Value previous) {
                 auto add = next.getDefiningOp<ctjs::BinaryStaticOp>();
-                auto rhs =
-                    add ? add.getRhs().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
                 auto one =
-                    rhs ? llvm::dyn_cast<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
+                    add ? ctjs::constantAttr<ctjs::NumberAttr>(add.getRhs()) : ctjs::NumberAttr{};
                 return add && add.getKind() == ctjs::BinaryKind::Add && add.getLhs() == previous &&
                        one && one.getDouble() == 1;
             };
@@ -123,10 +121,11 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                     }
                     return true;
                 }
-                auto constant = flag.getDefiningOp<mlir::arith::ConstantOp>();
-                auto bit = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                    : mlir::IntegerAttr{};
-                if (!bit || !bit.getType().isInteger(1)) { return false; }
+                mlir::IntegerAttr bit;
+                if (!mlir::matchPattern(flag, mlir::m_Constant(&bit)) ||
+                    !bit.getType().isInteger(1)) {
+                    return false;
+                }
                 if (!bit.getInt()) { return true; }
                 return increments(next, argument);
             };
@@ -203,10 +202,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             // selected cleanup arm without narrowing ordinary scalar joins.
             if (!spend()) { return false; }
             auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
-            auto constant =
-                truth ? truth.getValue().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-            auto boolean = constant ? llvm::dyn_cast<ctjs::BooleanAttr>(constant.getValue())
-                                    : ctjs::BooleanAttr{};
+            auto boolean = truth ? ctjs::constantAttr<ctjs::BooleanAttr>(truth.getValue())
+                                 : ctjs::BooleanAttr{};
             if (boolean) { selected = boolean.getValue(); }
         }
         for (mlir::Region & region : branch->getRegions()) {
@@ -446,9 +443,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                     return false;
                 }
             }
-            auto literal = call.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
-            auto name =
-                literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
+            auto name = ctjs::constantAttr<ctjs::StringAttr>(call.getArgs()[0]);
             if (!name) {
                 refusal = "DOM suppression requires a valid literal name or selector";
                 return false;

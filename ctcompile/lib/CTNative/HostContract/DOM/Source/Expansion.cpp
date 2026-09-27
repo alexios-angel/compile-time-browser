@@ -625,9 +625,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             }
             if (selectorFeedsWrite) { consumedSelectors.push_back(selectorLeaf); }
             for (ctjs::CallOp consumed : consumedSelectors) {
-                auto literal = consumed.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
-                auto selector = literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue())
-                                        : ctjs::StringAttr{};
+                auto selector = ctjs::constantAttr<ctjs::StringAttr>(consumed.getArgs()[0]);
                 if (!selector) { return false; }
                 for (std::size_t i = 0; i < selector.getValue().size(); ++i) {
                     if (!step()) { return false; }

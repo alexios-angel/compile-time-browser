@@ -59,8 +59,7 @@ std::optional<double> numericIndexLiteral(mlir::Value value) {
             return negative ? -number : number;
         }
     }
-    auto number =
-        literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
+    auto number = ctjs::constantAttr<ctjs::NumberAttr>(value);
     if (!number || std::isnan(number.getDouble())) { return std::nullopt; }
     return negative ? -number.getDouble() : number.getDouble();
 }
@@ -338,10 +337,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     auto test = capped.getCondition().getDefiningOp<ctjs::TruthyOp>();
                     auto less =
                         test ? test.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
-                    auto cap =
-                        less ? less.getRhs().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-                    auto number =
-                        cap ? llvm::dyn_cast<ctjs::NumberAttr>(cap.getValue()) : ctjs::NumberAttr{};
+                    auto number = less ? ctjs::constantAttr<ctjs::NumberAttr>(less.getRhs())
+                                       : ctjs::NumberAttr{};
                     auto yes =
                         llvm::dyn_cast<mlir::scf::YieldOp>(capped.getThenRegion().front().back());
                     auto no =
@@ -704,9 +701,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     pieces.emplace_back(add.getRhs(), depth + 1);
                     continue;
                 }
-                auto literal = piece.getDefiningOp<ctjs::ConstantOp>();
-                auto text = literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue())
-                                    : ctjs::StringAttr{};
+                auto text = ctjs::constantAttr<ctjs::StringAttr>(piece);
                 if (!text) {
                     refusal = "DOM startsWith requires ASCII literals with at most two "
                               "concatenation levels";
@@ -722,9 +717,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             }
             provedCalls.push_back({invoke, HostDOMMethod::startsWith, invoke.getReceiver()});
             values[invoke.getResult()] = Kind::boolean;
-            auto prefix = arguments[0].getDefiningOp<ctjs::ConstantOp>();
-            auto text =
-                prefix ? llvm::dyn_cast<ctjs::StringAttr>(prefix.getValue()) : ctjs::StringAttr{};
+            auto text = ctjs::constantAttr<ctjs::StringAttr>(arguments[0]);
             // Computed prefixes gain no dataset membership or key-transform authority.
             if (callbackBody && text &&
                 invoke.getReceiver() == block.getArgument(ctjs::implicit_arguments) &&

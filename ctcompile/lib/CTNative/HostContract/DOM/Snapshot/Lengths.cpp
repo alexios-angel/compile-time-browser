@@ -68,9 +68,7 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
         return true;
     };
     const auto numberIs = [](mlir::Value value, double expected) {
-        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        auto number =
-            constant ? llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue()) : ctjs::NumberAttr{};
+        auto number = ctjs::constantAttr<ctjs::NumberAttr>(value);
         return number && number.getDouble() == expected;
     };
     const auto erase = [](mlir::Operation * operation) {

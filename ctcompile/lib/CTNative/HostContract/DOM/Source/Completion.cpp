@@ -1,4 +1,5 @@
 #include "Proof.hpp"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/Verifier.h"
 
 namespace ctcompile::ctnative::dom_source_detail {
@@ -162,10 +163,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     if (!step()) { return {}; }
                     auto value = values.lookup(operand);
                     if (exiting && index == 0) {
-                        auto literal = value.getDefiningOp<mlir::arith::ConstantOp>();
-                        auto flag = literal ? llvm::dyn_cast<mlir::IntegerAttr>(literal.getValue())
-                                            : mlir::IntegerAttr{};
-                        if (!flag || !flag.getType().isInteger(1)) {
+                        mlir::IntegerAttr flag;
+                        if (!mlir::matchPattern(value, mlir::m_Constant(&flag)) ||
+                            !flag.getType().isInteger(1)) {
                             refuse("DOM helper protected exit requires an exact completion flag");
                             return {};
                         }
@@ -196,9 +196,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     return {};
                 }
                 auto predicate = values.lookup(condition.getCondition());
-                auto constant = predicate.getDefiningOp<mlir::arith::ConstantOp>();
-                auto integer = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                        : mlir::IntegerAttr{};
+                mlir::IntegerAttr integer;
+                (void)mlir::matchPattern(predicate, mlir::m_Constant(&integer));
                 if (predicate.getDefiningOp<mlir::ub::PoisonOp>()) {
                     refuse("DOM helper completion observes an inactive value");
                     return {};
@@ -215,10 +214,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         return {};
                     }
                     if (integer.getValue().isZero()) {
-                        auto selector = arguments[terminal.exit.selector];
-                        auto tag = selector.getDefiningOp<mlir::arith::ConstantOp>();
-                        auto key = tag ? llvm::dyn_cast<mlir::IntegerAttr>(tag.getValue())
-                                       : mlir::IntegerAttr{};
+                        mlir::IntegerAttr key;
+                        (void)mlir::matchPattern(arguments[terminal.exit.selector],
+                                                 mlir::m_Constant(&key));
                         if (!key || key.getValue().isNegative() ||
                             key.getValue().getActiveBits() > 63) {
                             refuse("DOM helper loop exit selector is not an exact constant");
@@ -240,10 +238,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             auto [facts, first] = terminal.exit.booleans.try_emplace(selected);
                             for (auto [index, value] : llvm::enumerate(arguments)) {
                                 if (!step()) { return {}; }
-                                auto literal = value.getDefiningOp<ctjs::ConstantOp>();
-                                auto boolean =
-                                    literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
-                                            : ctjs::BooleanAttr{};
+                                auto boolean = ctjs::constantAttr<ctjs::BooleanAttr>(value);
                                 if (first) {
                                     facts->second.push_back(boolean);
                                 } else if (facts->second[index] != boolean) {
@@ -797,10 +792,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
             }
             Continuation tail{&body, std::next(cursor), operation.getResults(), continuation};
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-                auto condition = values.lookupOrDefault(branch.getCondition());
-                auto constant = condition.getDefiningOp<mlir::arith::ConstantOp>();
-                auto integer = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                        : mlir::IntegerAttr{};
+                mlir::IntegerAttr integer;
+                (void)mlir::matchPattern(values.lookupOrDefault(branch.getCondition()),
+                                         mlir::m_Constant(&integer));
                 bool protectedValues =
                     terminal.kind == Terminal::tryExit || terminal.kind == Terminal::tryYield;
                 for (auto type : branch.getResultTypes()) {
@@ -915,11 +909,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 if (auto cast = selector.getDefiningOp<mlir::arith::IndexCastUIOp>()) {
                     selector = cast.getIn();
                 }
-                auto constant = selector.getDefiningOp<mlir::arith::ConstantOp>();
-                auto integer = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                        : mlir::IntegerAttr{};
-                if (!integer || integer.getValue().isNegative() ||
-                    integer.getValue().getActiveBits() > 63) {
+                mlir::IntegerAttr integer;
+                if (!mlir::matchPattern(selector, mlir::m_Constant(&integer)) ||
+                    integer.getValue().isNegative() || integer.getValue().getActiveBits() > 63) {
                     refuse("DOM helper completion selector is not an exact constant");
                     return {};
                 }
@@ -1128,10 +1120,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
             if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation);
                 truth &&
                 (terminal.kind == Terminal::tryExit || terminal.kind == Terminal::tryYield)) {
-                auto literal = values.lookup(truth.getValue()).getDefiningOp<ctjs::ConstantOp>();
-                auto flag = literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
-                                    : ctjs::BooleanAttr{};
-                if (flag) {
+                if (auto flag =
+                        ctjs::constantAttr<ctjs::BooleanAttr>(values.lookup(truth.getValue()))) {
                     auto bit = mlir::arith::ConstantIntOp::create(at, operation.getLoc(),
                                                                   flag.getValue(), 1);
                     values.map(truth.getResult(), bit.getResult());
@@ -1140,11 +1130,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 }
             }
             if (auto truncate = llvm::dyn_cast<mlir::arith::TruncIOp>(operation)) {
-                auto operand = values.lookup(truncate.getIn());
-                auto constant = operand.getDefiningOp<mlir::arith::ConstantOp>();
-                auto integer = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                        : mlir::IntegerAttr{};
-                if (integer && truncate.getType().isInteger(1)) {
+                mlir::IntegerAttr integer;
+                if (mlir::matchPattern(values.lookup(truncate.getIn()),
+                                       mlir::m_Constant(&integer)) &&
+                    truncate.getType().isInteger(1)) {
                     auto value = mlir::arith::ConstantIntOp::create(
                         at, truncate.getLoc(), integer.getValue()[0] ? 1 : 0, 1);
                     values.map(truncate.getResult(), value.getResult());

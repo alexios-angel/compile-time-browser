@@ -4,6 +4,7 @@
 #include "ctbrowser/core/symbol.hpp"
 #include "ctcompile/CTNative/Runtime/String.hpp"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/APFloat.h"
@@ -113,11 +114,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (!invocation->getParentOfType<ctjs::TryOp>()) {
                     return mlir::WalkResult::interrupt();
                 }
-                if (helper(call) == "__ctbrowser_iter_close") {
-                    auto flag = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-                    if (!flag || !llvm::isa<ctjs::BooleanAttr>(flag.getValue())) {
-                        return mlir::WalkResult::interrupt();
-                    }
+                if (helper(call) == "__ctbrowser_iter_close" &&
+                    !ctjs::constantAttr<ctjs::BooleanAttr>(call.getArgs()[1])) {
+                    return mlir::WalkResult::interrupt();
                 }
                 for (auto * region : {&invocation.getNormalBody(), &invocation.getUnwindBody()}) {
                     for (mlir::Operation & projection : region->front().without_terminator()) {
@@ -135,9 +134,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (helper(call) != "__ctbrowser_iter_close" || !exit.getState().empty()) {
                 return mlir::WalkResult::interrupt();
             }
-            auto flag = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-            auto boolean =
-                flag ? llvm::dyn_cast<ctjs::BooleanAttr>(flag.getValue()) : ctjs::BooleanAttr{};
+            auto boolean = ctjs::constantAttr<ctjs::BooleanAttr>(call.getArgs()[1]);
             if (!boolean || !boolean.getValue()) { return mlir::WalkResult::interrupt(); }
             for (auto * region : {&invocation.getNormalBody(), &invocation.getUnwindBody()}) {
                 if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -183,11 +180,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return error("DOM custom iterator holder lacks preceding local allocation");
     }
     const auto exactBoolean = [](mlir::Value condition) -> std::optional<bool> {
-        if (auto constant = condition.getDefiningOp<mlir::arith::ConstantOp>()) {
-            if (auto value = llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())) {
-                return !value.getValue().isZero();
-            }
-        } else if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
+        mlir::IntegerAttr value;
+        if (mlir::matchPattern(condition, mlir::m_Constant(&value))) {
+            return !value.getValue().isZero();
+        }
+        if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
             auto constant = truthy.getValue().getDefiningOp<ctjs::ConstantOp>();
             if (constant) {
                 auto value = PrimitiveAlternatives::literal(constant.getValue());
@@ -2107,9 +2104,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (helper(call) == "__ctbrowser_iter_next" && call.getArgs().size() == 1 && !next) {
             next = call;
         } else if (helper(call) == "__ctbrowser_iter_close" && call.getArgs().size() == 2) {
-            auto flag = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-            auto boolean =
-                flag ? llvm::dyn_cast<ctjs::BooleanAttr>(flag.getValue()) : ctjs::BooleanAttr{};
+            auto boolean = ctjs::constantAttr<ctjs::BooleanAttr>(call.getArgs()[1]);
             const bool protectedClose = protectedCloses.lookup(call->getParentOp()) == call;
             if (!boolean || boolean.getValue() != protectedClose) {
                 return error("DOM iterator abrupt close requires its exact suppression region");
@@ -2329,10 +2324,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto unwind =
                 llvm::cast<ctjs::InvokeYieldOp>(observedNext.getUnwindBody().front().back());
             const auto boolean = [&](ctjs::InvokeYieldOp yield) {
-                auto literal =
-                    yield.getValues()[flag.getResultNumber()].getDefiningOp<ctjs::ConstantOp>();
-                return literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
-                               : ctjs::BooleanAttr{};
+                return ctjs::constantAttr<ctjs::BooleanAttr>(
+                    yield.getValues()[flag.getResultNumber()]);
             };
             auto success = boolean(normal), failure = boolean(unwind);
             if (success && failure && success.getValue() != failure.getValue() &&
@@ -3011,22 +3004,18 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 continue;
             }
             if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
-                auto constant =
-                    values.lookup(truth.getValue()).template getDefiningOp<ctjs::ConstantOp>();
-                auto flag = constant ? llvm::dyn_cast<ctjs::BooleanAttr>(constant.getValue())
-                                     : ctjs::BooleanAttr{};
-                if (flag) {
+                if (auto flag =
+                        ctjs::constantAttr<ctjs::BooleanAttr>(values.lookup(truth.getValue()))) {
                     auto bit = mlir::arith::ConstantIntOp::create(at, where, flag.getValue(), 1);
                     values.map(truth.getResult(), bit.getResult());
                     continue;
                 }
             }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-                auto constant = values.lookup(branch.getCondition())
-                                    .template getDefiningOp<mlir::arith::ConstantOp>();
-                auto bit = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                    : mlir::IntegerAttr{};
-                if (bit && bit.getType().isInteger(1)) {
+                mlir::IntegerAttr bit;
+                if (mlir::matchPattern(values.lookup(branch.getCondition()),
+                                       mlir::m_Constant(&bit)) &&
+                    bit.getType().isInteger(1)) {
                     auto & region = bit.getInt() ? branch.getThenRegion() : branch.getElseRegion();
                     if (!region.hasOneBlock() ||
                         !self(self, region.front(), at, values, state, depth + 1, false)) {
@@ -3283,10 +3272,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto branch = llvm::dyn_cast<mlir::scf::IfOp>(call->getParentOp());
             auto truth =
                 branch ? branch.getCondition().getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
-            auto literal =
-                truth ? truth.getValue().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-            auto done = literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
-                                : ctjs::BooleanAttr{};
+            auto done = truth ? ctjs::constantAttr<ctjs::BooleanAttr>(truth.getValue())
+                              : ctjs::BooleanAttr{};
             // Completion may expose the constant only after selecting an
             // exit. The generated close guard's empty then arm proves that
             // exhaustion cannot call return or validate its ignored result.

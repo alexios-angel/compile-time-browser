@@ -3,6 +3,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Error.h"
@@ -64,10 +65,9 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
             compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
             const auto elementAndUndefined = [&](mlir::Value element, mlir::Value other) {
                 auto argument = llvm::dyn_cast<mlir::BlockArgument>(element);
-                auto constant = other.getDefiningOp<ctjs::ConstantOp>();
                 return argument && argument.getOwner() == &entry.getBody().front() &&
-                       argument.getArgNumber() >= ctjs::implicit_arguments && constant &&
-                       llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
+                       argument.getArgNumber() >= ctjs::implicit_arguments &&
+                       ctjs::isUndefinedConstant(other);
             };
             if (elementAndUndefined(compare.getLhs(), compare.getRhs()) ||
                 elementAndUndefined(compare.getRhs(), compare.getLhs())) {
@@ -75,11 +75,10 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
                 booleans.emplace_back(operation, false);
             } else {
                 const auto undefined = [](mlir::Value value) {
-                    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
                     auto global = value.getDefiningOp<ctjs::LoadGlobalOp>();
                     // The DOM provider fixes this initial binding. Complete
                     // entry reproof still rejects replacement and reentry.
-                    return (constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) ||
+                    return ctjs::isUndefinedConstant(value) ||
                            (global && global.getName() == "undefined");
                 };
                 // Omitted and explicit undefined select their original default arm.
@@ -187,10 +186,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
             return error("DOM iteration requires original Array iterator and helper identities");
         }
     }
-    const auto undefined = [](mlir::Value value) {
-        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
-    };
+    const auto undefined = ctjs::isUndefinedConstant;
     auto entry = candidate.lookupSymbol<ctjs::FuncOp>(contract.entry);
     if (!entry || !hasLoop || !entry.getBody().hasOneBlock()) {
         return error("DOM iteration requires a structured source entry");
@@ -301,10 +297,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                     }
                 }
                 if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
-                    auto constant = truth.getValue().getDefiningOp<ctjs::ConstantOp>();
-                    auto boolean = constant ? llvm::dyn_cast<ctjs::BooleanAttr>(constant.getValue())
-                                            : ctjs::BooleanAttr{};
-                    if (boolean) {
+                    if (auto boolean = ctjs::constantAttr<ctjs::BooleanAttr>(truth.getValue())) {
                         auto value = mlir::arith::ConstantIntOp::create(at, truth.getLoc(),
                                                                         boolean.getValue(), 1);
                         truth.getResult().replaceAllUsesWith(value.getResult());
@@ -314,10 +307,9 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                     }
                 }
                 if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-                    auto constant = branch.getCondition().getDefiningOp<mlir::arith::ConstantOp>();
-                    auto boolean = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                            : mlir::IntegerAttr{};
-                    if (boolean && boolean.getType().isInteger(1)) {
+                    mlir::IntegerAttr boolean;
+                    if (mlir::matchPattern(branch.getCondition(), mlir::m_Constant(&boolean)) &&
+                        boolean.getType().isInteger(1)) {
                         auto & selected =
                             boolean.getInt() ? branch.getThenRegion() : branch.getElseRegion();
                         if (!selected.hasOneBlock() || selected.front().getNumArguments()) {
@@ -388,10 +380,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                     if (load && load.getName() == "__ctbrowser_iter_close" &&
                         undefined(call.getReceiver()) && call.getArgs().size() == 2 &&
                         call.getArgs()[0] == empty.getResult()) {
-                        auto constant = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-                        auto abrupt = constant
-                                          ? llvm::dyn_cast<ctjs::BooleanAttr>(constant.getValue())
-                                          : ctjs::BooleanAttr{};
+                        auto abrupt = ctjs::constantAttr<ctjs::BooleanAttr>(call.getArgs()[1]);
                         if (!abrupt || abrupt.getValue()) {
                             return error("DOM iterator close requires normal completion");
                         }

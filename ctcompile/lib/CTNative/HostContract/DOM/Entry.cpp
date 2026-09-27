@@ -240,9 +240,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         llvm::is_contained(contract.initialIntrinsics, "RegExp") &&
         llvm::is_contained(contract.initialIntrinsics, "__ctbrowser_regexp");
     const auto emptyString = [](mlir::Value value) {
-        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        auto string =
-            constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue()) : ctjs::StringAttr{};
+        auto string = ctjs::constantAttr<ctjs::StringAttr>(value);
         return string && string.getValue().empty();
     };
     if (declaration) {

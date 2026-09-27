@@ -41,7 +41,7 @@ struct DOMSource {
     bool refuse(llvm::StringRef message);
     bool step();
     bool chargeCaptureQuery();
-    static bool undefined(mlir::Value value);
+    static bool undefined(mlir::Value value) { return ctjs::isUndefinedConstant(value); }
 
     bool precedesInStructuredBody(mlir::Operation * definition, mlir::Operation * use);
 

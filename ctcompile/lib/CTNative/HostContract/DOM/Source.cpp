@@ -83,8 +83,7 @@ bool host_detail::isLowercaseReplacement(ctjs::FuncOp function, llvm::function_r
                     concat.getKind() != ctjs::BinaryKind::Add)) {
         return false;
     }
-    auto prefix = concat.getLhs().getDefiningOp<ctjs::ConstantOp>();
-    auto text = prefix ? llvm::dyn_cast<ctjs::StringAttr>(prefix.getValue()) : ctjs::StringAttr{};
+    auto text = ctjs::constantAttr<ctjs::StringAttr>(concat.getLhs());
     auto call = concat.getRhs().getDefiningOp<ctjs::CallOp>();
     auto read =
         call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};

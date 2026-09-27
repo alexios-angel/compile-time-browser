@@ -24,11 +24,6 @@ bool DOMSource::chargeCaptureQuery() {
     return true;
 }
 
-bool DOMSource::undefined(mlir::Value value) {
-    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-    return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
-}
-
 bool DOMSource::precedesInStructuredBody(mlir::Operation * definition, mlir::Operation * use) {
     // Every selected arm follows the definition, including exception outcomes.
     // Only ordering is proved here; capture, lifetime and effect checks remain
@@ -164,9 +159,7 @@ bool DOMSource::bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncO
     for (mlir::ValueRange arguments : invocations) {
         for (auto [index, argument] : llvm::enumerate(arguments)) {
             if (!step()) { return false; }
-            auto constant = argument.getDefiningOp<ctjs::ConstantOp>();
-            auto string = constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
-                                   : ctjs::StringAttr{};
+            auto string = ctjs::constantAttr<ctjs::StringAttr>(argument);
             auto found = stringInputs.find(argument);
             const unsigned slot = static_cast<unsigned>(index) + ctjs::implicit_arguments;
             if (!string && found == stringInputs.end()) { complete[slot] = false; }
@@ -211,8 +204,7 @@ bool DOMSource::foldConstantReplacements(ctjs::FuncOp function) {
     for (ctjs::CallOp call : calls) {
         if (!step()) { return false; }
         auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-        auto text = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
-        auto string = text ? llvm::dyn_cast<ctjs::StringAttr>(text.getValue()) : ctjs::StringAttr{};
+        auto string = ctjs::constantAttr<ctjs::StringAttr>(call.getReceiver());
         auto found = stringInputs.find(call.getReceiver());
         if (!read || read.getObject() != call.getReceiver() ||
             (!string && found == stringInputs.end()) ||
@@ -226,13 +218,8 @@ bool DOMSource::foldConstantReplacements(ctjs::FuncOp function) {
             continue;
         }
         auto factory = regexp.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-        const auto stringArgument = [](mlir::Value value) {
-            auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-            return constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
-                            : ctjs::StringAttr{};
-        };
-        auto expression = stringArgument(regexp.getArgs()[0]);
-        auto flags = stringArgument(regexp.getArgs()[1]);
+        auto expression = ctjs::constantAttr<ctjs::StringAttr>(regexp.getArgs()[0]);
+        auto flags = ctjs::constantAttr<ctjs::StringAttr>(regexp.getArgs()[1]);
         if (!factory || factory.getName() != "__ctbrowser_regexp" || !expression || !flags) {
             continue;
         }

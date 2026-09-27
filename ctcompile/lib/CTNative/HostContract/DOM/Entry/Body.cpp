@@ -93,9 +93,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             continue;
         }
         if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-            auto constant = write.getKey().getDefiningOp<ctjs::ConstantOp>();
-            auto name = constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
-                                 : ctjs::StringAttr{};
+            auto name = ctjs::constantAttr<ctjs::StringAttr>(write.getKey());
             auto target = write.getObject().getDefiningOp<ctjs::CreateObjectOp>();
             if (!target || write.getObject() == write.getValue() ||
                 (!hasKind(write.getValue(), Kind::string) &&
