@@ -762,7 +762,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 }
             } else {
                 if (&operation == protectedLeaf) { at.setInsertionPoint(call); }
-                ctjs::InvokeOp trailingInvocation;
+                mlir::Operation * cloned;
                 // A consumed selector remains an ordered read at this guard.
                 // Its literal syntax was checked above; complete typed reproof
                 // must still exclude receiver failure, coercion and reentry.
@@ -774,27 +774,10 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     // Each write retains its own valid-name check; matches
                     // retains literal-selector validation before the final write.
                     if (!step() || !step() || !step() || !step()) { return false; }
-                    mlir::OperationState state(operation.getLoc(),
-                                               ctjs::InvokeOp::getOperationName());
-                    for (unsigned i = 0; i != 3; ++i) { state.addRegion(); }
-                    trailingInvocation = llvm::cast<ctjs::InvokeOp>(at.create(state));
-                    auto & called = trailingInvocation.getBody().emplaceBlock();
-                    at.setInsertionPointToEnd(&called);
+                    cloned = emitSuppressedCall(at, operation, mapping);
                     operationCount += 4;
-                }
-                auto * cloned = at.clone(operation, mapping);
-                if (trailingInvocation) {
-                    ctjs::InvokeExitOp::create(at, operation.getLoc(), cloned->getResult(0),
-                                               mlir::ValueRange{});
-                    for (auto * region : {&trailingInvocation.getNormalBody(),
-                                          &trailingInvocation.getUnwindBody()}) {
-                        auto & continuation = region->emplaceBlock();
-                        continuation.addArgument(ctjs::ValueType::get(call->getContext()),
-                                                 operation.getLoc());
-                        mlir::OpBuilder yield = mlir::OpBuilder::atBlockEnd(&continuation);
-                        ctjs::InvokeYieldOp::create(yield, operation.getLoc(), mlir::ValueRange{});
-                    }
-                    at.setInsertionPointAfter(trailingInvocation);
+                } else {
+                    cloned = at.clone(operation, mapping);
                 }
                 for (auto [from, to] : llvm::zip(operation.getResults(), cloned->getResults())) {
                     if (!step()) { return false; }

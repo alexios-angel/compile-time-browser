@@ -314,19 +314,7 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
     mlir::OpBuilder at(push);
     mlir::IRMapping mapping;
     for (auto * operation : setup) { at.clone(*operation, mapping); }
-    mlir::OperationState state(close.getLoc(), ctjs::InvokeOp::getOperationName());
-    for (unsigned index = 0; index != 3; ++index) { state.addRegion(); }
-    auto invocation = llvm::cast<ctjs::InvokeOp>(at.create(state));
-    auto & body = invocation.getBody().emplaceBlock();
-    mlir::OpBuilder inside = mlir::OpBuilder::atBlockEnd(&body);
-    auto call = llvm::cast<ctjs::CallOp>(inside.clone(*close, mapping));
-    ctjs::InvokeExitOp::create(inside, close.getLoc(), call.getResult(), mlir::ValueRange{});
-    for (auto * region : {&invocation.getNormalBody(), &invocation.getUnwindBody()}) {
-        auto & block = region->emplaceBlock();
-        block.addArgument(ctjs::ValueType::get(candidate.getContext()), close.getLoc());
-        mlir::OpBuilder continuation = mlir::OpBuilder::atBlockEnd(&block);
-        ctjs::InvokeYieldOp::create(continuation, close.getLoc(), mlir::ValueRange{});
-    }
+    emitSuppressedCall(at, *close, mapping);
     mlir::cf::BranchOp::create(at, push.getLoc(), joined);
     push.erase();
     normal.push_back(caught);

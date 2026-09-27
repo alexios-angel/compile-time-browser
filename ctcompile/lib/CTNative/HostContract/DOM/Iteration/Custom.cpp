@@ -92,14 +92,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 !invocation.getUnwindBody().hasOneBlock()) {
                 return mlir::WalkResult::interrupt();
             }
-            auto & body = invocation.getBody().front();
-            auto call = body.empty() ? ctjs::CallOp{} : llvm::dyn_cast<ctjs::CallOp>(body.front());
-            auto exit = body.empty() ? ctjs::InvokeExitOp{}
-                                     : llvm::dyn_cast<ctjs::InvokeExitOp>(body.back());
+            auto call = invokedCall(invocation);
             const auto arity = call ? host_detail::iteratorIntrinsicArity(helper(call)) : 0;
-            if (body.getNumArguments() || !call || !exit || call->getNextNode() != exit || !arity ||
-                !undefined(call.getReceiver()) || call.getArgs().size() != arity ||
-                exit.getNormalResult() != call.getResult() || !call.getResult().hasOneUse()) {
+            if (!call || !arity || !undefined(call.getReceiver()) ||
+                call.getArgs().size() != arity) {
                 return mlir::WalkResult::interrupt();
             }
             if (invocation.getNumResults()) {
@@ -126,7 +122,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 observedInvocations[invocation] = call;
                 return mlir::WalkResult::advance();
             }
-            if (helper(call) != "__ctbrowser_iter_close" || !exit.getState().empty()) {
+            if (helper(call) != "__ctbrowser_iter_close" ||
+                !llvm::cast<ctjs::InvokeExitOp>(call->getNextNode()).getState().empty()) {
                 return mlir::WalkResult::interrupt();
             }
             auto boolean = ctjs::constantAttr<ctjs::BooleanAttr>(call.getArgs()[1]);

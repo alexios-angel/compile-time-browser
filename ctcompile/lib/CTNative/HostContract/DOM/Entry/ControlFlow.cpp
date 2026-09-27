@@ -393,13 +393,9 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 return false;
             }
             auto & called = invocation.getBody().front();
-            auto call =
-                called.empty() ? ctjs::CallOp{} : llvm::dyn_cast<ctjs::CallOp>(called.front());
-            auto exit = called.empty() ? ctjs::InvokeExitOp{}
-                                       : llvm::dyn_cast<ctjs::InvokeExitOp>(called.back());
-            if (called.getNumArguments() || !call || !exit || call->getNextNode() != exit ||
-                exit.getNormalResult() != call.getResult() || !call.getResult().hasOneUse() ||
-                !exit.getState().empty() || !hasKind(call.getReceiver(), Kind::element)) {
+            auto call = invokedCall(invocation);
+            if (!call || !llvm::cast<ctjs::InvokeExitOp>(called.back()).getState().empty() ||
+                !hasKind(call.getReceiver(), Kind::element)) {
                 refusal = "DOM suppression requires one typed unused Element call";
                 return false;
             }
@@ -466,13 +462,9 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         auto & called = invocation.getBody().front();
         auto & normal = invocation.getNormalBody().front();
         auto & caught = invocation.getUnwindBody().front();
-        auto call = called.empty() ? ctjs::CallOp{} : llvm::dyn_cast<ctjs::CallOp>(called.front());
-        auto exit = called.empty() ? ctjs::InvokeExitOp{}
-                                   : llvm::dyn_cast<ctjs::InvokeExitOp>(called.back());
-        if (called.getNumArguments() || !call || !exit || call->getNextNode() != exit ||
-            exit.getNormalResult() != call.getResult() || !call.getResult().hasOneUse() ||
-            !exit.getState().empty() || normal.getNumArguments() != 1 ||
-            caught.getNumArguments() != 1 ||
+        auto call = invokedCall(invocation);
+        if (!call || !llvm::cast<ctjs::InvokeExitOp>(called.back()).getState().empty() ||
+            normal.getNumArguments() != 1 || caught.getNumArguments() != 1 ||
             !llvm::isa<ctjs::ValueType>(normal.getArgument(0).getType()) ||
             !llvm::isa<ctjs::ValueType>(caught.getArgument(0).getType()) ||
             !llvm::isa<ctjs::ValueType>(invocation.getResult(0).getType()) ||
