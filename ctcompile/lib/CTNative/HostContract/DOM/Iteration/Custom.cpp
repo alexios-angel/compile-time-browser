@@ -1160,42 +1160,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         return true;
     };
-    // Follow every incoming edge, including the zero-trip initializer and the
-    // backedge. A visited set closes transport cycles; only known leaves supply
-    // identities. Never cache a partial traversal of a cycle.
-    const auto transportInputs = [](mlir::Value value,
-                                    llvm::SmallVectorImpl<mlir::Value> & inputs) {
-        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
-            auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(argument.getOwner()->getParentOp());
-            if (!loop) { return false; }
-            auto index = argument.getArgNumber();
-            if (argument.getOwner() == &loop.getBefore().front()) {
-                inputs.push_back(loop.getInits()[index]);
-                inputs.push_back(loop.getAfter().front().getTerminator()->getOperand(index));
-            } else {
-                inputs.push_back(
-                    llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().getTerminator())
-                        .getArgs()[index]);
-            }
-            return true;
-        }
-        auto result = llvm::dyn_cast<mlir::OpResult>(value);
-        if (!result) { return false; }
-        if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner())) {
-            for (auto & region : branch->getRegions()) {
-                inputs.push_back(
-                    region.front().getTerminator()->getOperand(result.getResultNumber()));
-            }
-            return true;
-        }
-        if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(result.getOwner())) {
-            inputs.push_back(
-                llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().getTerminator())
-                    .getArgs()[result.getResultNumber()]);
-            return true;
-        }
-        return false;
-    };
+    // Follow every incoming transportInputs edge, including the zero-trip
+    // initializer and the backedge. A visited set closes transport cycles; only
+    // known leaves supply identities. Never cache a partial traversal of a cycle.
     // Snapshot return provenance before capture erasure. Calls retain their
     // callee and actual dependencies; formal callees are bound per invocation.
     // The graph owns indices only, so no erased SSA definition is consulted.

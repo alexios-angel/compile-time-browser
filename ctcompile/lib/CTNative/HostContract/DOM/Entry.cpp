@@ -299,44 +299,17 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             auto value = pending.pop_back_val();
             if (!visited.insert(value).second) { continue; }
             values.push_back(value);
-            if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
-                if (argument.getOwner() == &targetBlock &&
-                    argument.getArgNumber() >= ctjs::implicit_arguments) {
-                    roots.push_back(argument);
-                    continue;
-                }
-                auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(argument.getOwner()->getParentOp());
-                if (!loop) {
-                    complete = false;
-                    break;
-                }
-                const auto index = argument.getArgNumber();
-                if (argument.getOwner() == &loop.getBefore().front()) {
-                    auto yield =
-                        llvm::cast<mlir::scf::YieldOp>(loop.getAfter().front().getTerminator());
-                    if (!append(loop.getInits()[index]) || !append(yield.getOperand(index))) {
-                        return;
-                    }
-                } else {
-                    auto condition = llvm::cast<mlir::scf::ConditionOp>(
-                        loop.getBefore().front().getTerminator());
-                    if (!append(condition.getArgs()[index])) { return; }
-                }
+            if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+                argument && argument.getOwner() == &targetBlock &&
+                argument.getArgNumber() >= ctjs::implicit_arguments) {
+                roots.push_back(argument);
                 continue;
             }
-            if (auto branch = value.getDefiningOp<mlir::scf::IfOp>()) {
-                const auto index = llvm::cast<mlir::OpResult>(value).getResultNumber();
-                for (mlir::Region & region : branch->getRegions()) {
-                    auto yield = llvm::cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                    if (!append(yield.getOperand(index))) { return; }
+            llvm::SmallVector<mlir::Value, 2> inputs;
+            if (transportInputs(value, inputs)) {
+                for (mlir::Value input : inputs) {
+                    if (!append(input)) { return; }
                 }
-                continue;
-            }
-            if (auto loop = value.getDefiningOp<mlir::scf::WhileOp>()) {
-                auto condition =
-                    llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().getTerminator());
-                const auto index = llvm::cast<mlir::OpResult>(value).getResultNumber();
-                if (!append(condition.getArgs()[index])) { return; }
                 continue;
             }
             if (auto origin = selectorOrigins.lookup(value)) {
