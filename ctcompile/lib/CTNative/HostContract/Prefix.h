@@ -93,7 +93,7 @@ struct prefixAnalysis {
                    bool followProviderDiagnostics, bool followProviderCallbacks,
                    bool followProviderObjects);
     bool step();
-    bool spend(unsigned count);
+    bool spend(uint64_t count);
     // One step per character of a copied or compared name.
     bool spendText(llvm::StringRef text);
     prefixValue stop(mlir::Operation * operation, llvm::StringRef reason);

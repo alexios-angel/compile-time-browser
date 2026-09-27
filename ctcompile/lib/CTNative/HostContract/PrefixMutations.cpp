@@ -232,12 +232,11 @@ prefixValue prefixAnalysis::providerMutation(ctjs::CallOp call, ctjs::FuncOp fun
         return {};
     }
     const auto & owner = factories[closure.invocation - 1];
-    bool captured = false;
-    for (const auto & capture : owner.captures) {
-        if (!step()) { return {}; }
-        captured |= capture.closure == closure.made;
+    if (!spend(owner.captures.size()) || llvm::none_of(owner.captures, [&](const auto & capture) {
+            return capture.closure == closure.made;
+        })) {
+        return {};
     }
-    if (!captured) { return {}; }
     mapPathReader reader{*this,    owner, closure,
                          function, {},    {call, function, owner.operation, {}, {}, {}, {}}};
     const auto charge = [&](unsigned count) { return spend(count); };

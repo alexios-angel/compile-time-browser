@@ -869,12 +869,8 @@ bool classInitialization::ownFieldSnapshots(
                 llvm::all_of(key, [](char c) { return c >= '0' && c <= '9'; })) {
                 return refuse("class own-key snapshot requires fixed constructor fields");
             }
-            bool found = false;
-            for (auto field : ordered) {
-                if (!step()) { return false; }
-                found |= field == key;
-            }
-            if (!found) { ordered.push_back(key); }
+            if (!spend(ordered.size())) { return false; }
+            if (!llvm::is_contained(ordered, key)) { ordered.push_back(key); }
         }
         return true;
     };

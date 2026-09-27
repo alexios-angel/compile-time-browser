@@ -109,13 +109,13 @@ bool prefixAnalysis::step() {
     return spend(1);
 }
 
-bool prefixAnalysis::spend(unsigned count) {
+bool prefixAnalysis::spend(uint64_t count) {
     if (count > remaining) {
         exhausted = true;
         remaining = 0;
         return false;
     }
-    remaining -= count;
+    remaining -= static_cast<unsigned>(count);
     return true;
 }
 
