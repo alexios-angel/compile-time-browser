@@ -43,54 +43,44 @@ bool DOMSource::precedesInStructuredBody(mlir::Operation * definition, mlir::Ope
     return use->getBlock() == definition->getBlock() && definition->isBeforeInBlock(use);
 }
 
-bool DOMSource::confinedFilterCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
-    if (!target || !closure.getUpvalues().empty() || target.getUpvalueCount() != 0 ||
-        creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
-        target.getBody().front().getNumArguments() != ctjs::implicit_arguments + 1 ||
-        llvm::any_of(target.getBody().front().getArguments().take_front(ctjs::implicit_arguments),
-                     [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
-        return false;
-    }
-    bool invoked = false;
-    for (mlir::OpOperand & use : closure.getResult().getUses()) {
-        if (!step()) { return false; }
-        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-        auto read =
-            call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
-        if (!call || use.getOperandNumber() != 2 || call.getArgs().size() != 1 || !read ||
-            read.getObject() != call.getReceiver() ||
-            ctjs::constantKey(read.getKey()) != "filter" ||
-            call->getBlock() != closure->getBlock() || !closure->isBeforeInBlock(call)) {
-            return false;
-        }
-        invoked = true;
-    }
-    return invoked;
-}
-
-bool DOMSource::confinedReplacementCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
+bool DOMSource::confinedCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
     if (!target || !closure.getUpvalues().empty() ||
-        creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
-        !host_detail::isLowercaseReplacement(target, [&] { return step(); })) {
+        creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1) {
         return false;
     }
-    bool invoked = false;
-    for (mlir::OpOperand & use : closure.getResult().getUses()) {
-        if (!step()) { return false; }
-        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-        auto read =
-            call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
-        if (!call || use.getOperandNumber() != 3 || call.getArgs().size() != 2 || !read ||
-            read.getObject() != call.getReceiver() ||
-            ctjs::constantKey(read.getKey()) != "replace" ||
-            !precedesInStructuredBody(closure, call)) {
-            return false;
+    for (const bool replacement : {false, true}) {
+        auto & body = target.getBody();
+        if (replacement
+                ? !host_detail::isLowercaseReplacement(target, [&] { return step(); })
+                : target.getUpvalueCount() != 0 ||
+                      body.front().getNumArguments() != ctjs::implicit_arguments + 1 ||
+                      llvm::any_of(
+                          body.front().getArguments().take_front(ctjs::implicit_arguments),
+                          [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
+            continue;
         }
-        invoked = true;
+        bool invoked = false, confined = true;
+        for (mlir::OpOperand & use : closure.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+            auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                             : ctjs::GetPropertyOp{};
+            if (!call || use.getOperandNumber() != (replacement ? 3u : 2u) ||
+                call.getArgs().size() != (replacement ? 2u : 1u) || !read ||
+                read.getObject() != call.getReceiver() ||
+                ctjs::constantKey(read.getKey()) != (replacement ? "replace" : "filter") ||
+                (replacement ? !precedesInStructuredBody(closure, call)
+                             : call->getBlock() != closure->getBlock() ||
+                                   !closure->isBeforeInBlock(call))) {
+                confined = false;
+                break;
+            }
+            invoked = true;
+        }
+        if (confined && invoked) { return true; }
     }
-    return invoked;
+    return false;
 }
 
 bool DOMSource::bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {

@@ -46,9 +46,15 @@ struct DOMSource {
 
     bool precedesInStructuredBody(mlir::Operation * definition, mlir::Operation * use);
 
-    bool confinedFilterCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target);
+    ctjs::FuncOp closureTarget(ctjs::CreateClosureOp closure) {
+        return closure && closure.getFunction() >= 0
+                   ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
+                   : ctjs::FuncOp{};
+    }
 
-    bool confinedReplacementCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target);
+    // A capture-free filter predicate or uppercase replacement, invoked only as
+    // the callback of its own Array filter or String replace call.
+    bool confinedCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target);
 
     bool bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncOp target);
 

@@ -824,11 +824,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     if (inactiveFillers.contains(from)) { inactiveFillers.insert(to); }
                 }
                 if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
-                    closure &&
-                    (confinedFilterCallback(
-                         closure, functions.lookup(static_cast<unsigned>(closure.getFunction()))) ||
-                     confinedReplacementCallback(closure, functions.lookup(static_cast<unsigned>(
-                                                              closure.getFunction()))))) {
+                    closure && confinedCallback(closure, functions.lookup(static_cast<unsigned>(
+                                                             closure.getFunction())))) {
                     // The original enclosure and unused implicit arguments
                     // were proved before cloning. Preserve this callback in
                     // its source arm with the caller's inert enclosure.
@@ -1118,8 +1115,7 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
             if (held) { continue; }
             auto target = functions.lookup(static_cast<unsigned>(closure.getFunction()));
             if (!target) { return refuse("DOM helper closure target is missing"); }
-            if (confinedFilterCallback(closure, target) ||
-                confinedReplacementCallback(closure, target)) {
+            if (confinedCallback(closure, target)) {
                 if (!expand(target, depth + 1)) { return false; }
                 // Preserve both source identities. Complete DOM reproof must
                 // establish the intrinsic method, callback body and every use.

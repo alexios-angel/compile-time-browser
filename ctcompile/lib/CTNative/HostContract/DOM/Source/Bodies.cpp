@@ -171,24 +171,18 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
             auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation);
             if (depth) {
                 auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
-                auto target = closure && closure.getFunction() >= 0
-                                  ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
-                                  : ctjs::FuncOp{};
+                auto target = closureTarget(closure);
                 if ((closure && (!target || closure->getParentOfType<mlir::scf::WhileOp>() ||
-                                 (!confinedFilterCallback(closure, target) &&
-                                  !confinedReplacementCallback(closure, target)))) ||
+                                 !confinedCallback(closure, target))) ||
                     llvm::isa<ctjs::CreateCellOp>(operation) || (object && !dataObject(object))) {
                     return refuse("DOM helper branch contains an unproved local identity");
                 }
             }
             if (directReceiver && !beforeReplacement) {
                 auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
-                auto target = closure && closure.getFunction() >= 0
-                                  ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
-                                  : ctjs::FuncOp{};
+                auto target = closureTarget(closure);
                 if (llvm::isa<ctjs::LoadUpvalueOp>(operation) ||
-                    (closure && (!target || (!confinedFilterCallback(closure, target) &&
-                                             !confinedReplacementCallback(closure, target))))) {
+                    (closure && (!target || !confinedCallback(closure, target)))) {
                     return refuse("DOM direct helper contains an unproved closure or capture");
                 }
             }
