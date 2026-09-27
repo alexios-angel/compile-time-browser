@@ -160,7 +160,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             local.unboxCells(locals);
             candidate.walk([&](ctjs::CreateClosureOp closure) {
                 if (local.whyTargetIsNotLiftable(closure) ||
-                    isUndefinedConstant(closure.getEnclosingThis())) {
+                    ctjs::isUndefinedConstant(closure.getEnclosingThis())) {
                     return;
                 }
                 mlir::OpBuilder at(closure);

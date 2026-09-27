@@ -369,11 +369,6 @@ bool isScriptEntry(ctjs::FuncOp fn) {
     return fn.getSymName() == "_script_$0";
 }
 
-bool isUndefinedConstant(mlir::Value v) {
-    auto k = v.getDefiningOp<ctjs::ConstantOp>();
-    return k && llvm::isa<ctjs::UndefinedAttr>(k.getValue());
-}
-
 // Every value that names the same object as `v`, `v` included. A literal
 // nothing is lifted onto is a group of one, so callers need no special case.
 llvm::SmallVector<mlir::Value, 2> aliasesOf(const receiverGroups * groups, mlir::Value v) {
