@@ -23,7 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from CTNative.harness import FLAGS
+from CTNative.harness import FLAGS, run
 
 DEFINITION = re.compile(
     r"^[A-Za-z_][A-Za-z_0-9:<>]* [A-Za-z_][A-Za-z_0-9]*\(.*\) \{$"
@@ -47,12 +47,7 @@ def main():
 
     work = args.work / f"compile-clean-{args.name}"
     work.mkdir(parents=True, exist_ok=True)
-    emitted = subprocess.run(
-        [args.translate, "--mlir-to-cpp", args.module], capture_output=True, text=True
-    )
-    if emitted.returncode != 0:
-        fail(f"the emitter refused {args.module}:\n{emitted.stderr}")
-    text = emitted.stdout
+    text = run([args.translate, "--mlir-to-cpp", args.module]).stdout
     if args.mutate:
         mutated = re.sub(r"(int32_t main\(\) \{\n)", r"\1  double ctcompile_mutant = 1.0;\n", text)
         if mutated == text:
@@ -86,8 +81,7 @@ def main():
         )
     report = ""
     for i, cxx in enumerate(compilers):
-        version = subprocess.run([cxx, "--version"], capture_output=True, text=True).stdout
-        version = version.split("\n", 1)[0]
+        version = run([cxx, "--version"]).stdout.split("\n", 1)[0]
         result = subprocess.run(
             [cxx, *FLAGS, "-c", "-o", str(work / f"unit.{i}.o"), str(unit)],
             capture_output=True,
