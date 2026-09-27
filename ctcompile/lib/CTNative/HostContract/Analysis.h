@@ -139,6 +139,8 @@ struct analyzer {
     std::optional<HostScalarGlobalRead> scalarGlobalRead(ctjs::LoadGlobalOp read);
     bool scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family, HostCapturedMap & result);
     std::optional<HostObjectGlobalRead> objectGlobalRead(ctjs::LoadGlobalOp read);
+    // The fresh object a value names: its allocation or a proved global alias's.
+    ctjs::CreateObjectOp namedObject(mlir::Value value);
     std::optional<std::vector<HostObjectGlobalRead>> objectGlobalReads(ctjs::CreateObjectOp made);
     bool capturedMapBody(ctjs::FuncOp function, bool prepared, bool primitiveContents,
                          const HostMethodParameters & parameters, HostCapturedMap & result,

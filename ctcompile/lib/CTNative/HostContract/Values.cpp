@@ -303,12 +303,7 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
             if (llvm::is_contained(parameters->objectKeys, parameter) &&
                 !entryCategories(actual, capturedResults, operation).known) {
                 element = elementInput(actual);
-                made = actual.getDefiningOp<ctjs::CreateObjectOp>();
-                if (auto load = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
-                    const auto global = objectGlobalRead(load);
-                    if (!global) { return {}; }
-                    made = global->object;
-                }
+                made = namedObject(actual);
                 if (element) {
                     if (!llvm::is_contained(capture->outerKeyInputs, element) ||
                         !llvm::is_contained(capture->outerKeyParameters, parameter)) {

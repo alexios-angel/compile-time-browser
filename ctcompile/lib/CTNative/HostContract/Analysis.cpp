@@ -59,6 +59,14 @@ std::optional<HostObjectGlobalRead> analyzer::objectGlobalRead(ctjs::LoadGlobalO
     }
 }
 
+ctjs::CreateObjectOp analyzer::namedObject(mlir::Value value) {
+    if (auto load = value.getDefiningOp<ctjs::LoadGlobalOp>()) {
+        const auto global = objectGlobalRead(load);
+        return global ? global->object : ctjs::CreateObjectOp{};
+    }
+    return value.getDefiningOp<ctjs::CreateObjectOp>();
+}
+
 std::optional<std::vector<HostObjectGlobalRead>> analyzer::objectGlobalReads(
     ctjs::CreateObjectOp made) {
     if (!step()) { return std::nullopt; }
@@ -128,13 +136,7 @@ bool analyzer::capturedMapParameters(
     const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
     HostMethodParameters & result, HostCapturedMap * capture) {
     const auto checkLeaf = [&](mlir::Value actual, mlir::Operation * operation, bool scalarSource) {
-        auto made = actual.getDefiningOp<ctjs::CreateObjectOp>();
-        std::optional<HostObjectGlobalRead> global;
-        if (auto read = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
-            global = objectGlobalRead(read);
-            if (!global) { return false; }
-            made = global->object;
-        }
+        auto made = namedObject(actual);
         if (!made || made->getParentOp() != entry || operation->getParentOp() != entry ||
             !dominance.properlyDominates(made.getOperation(), operation) ||
             !dominance.dominates(actual, operation)) {
@@ -142,7 +144,7 @@ bool analyzer::capturedMapParameters(
         }
         llvm::SmallVector<mlir::Value> aliases{made.getResult()};
         llvm::DenseSet<mlir::Operation *> initializations;
-        if (global) {
+        if (actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
             const auto reads = objectGlobalReads(made);
             if (!reads) { return false; }
             for (const HostObjectGlobalRead & edge : *reads) {
@@ -376,11 +378,7 @@ bool analyzer::capturedMapOuterKeys(
                     if (onlyKeys && usedKey) { keyUses.insert(&use); }
                     continue;
                 }
-                auto made = use.get().getDefiningOp<ctjs::CreateObjectOp>();
-                if (auto read = use.get().getDefiningOp<ctjs::LoadGlobalOp>()) {
-                    const auto edge = objectGlobalRead(read);
-                    if (edge) { made = edge->object; }
-                }
+                auto made = namedObject(use.get());
                 if (!made) { continue; }
                 candidates.insert(made);
                 if (onlyKeys && usedKey) { keyUses.insert(&use); }
