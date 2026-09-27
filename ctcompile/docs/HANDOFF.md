@@ -102,6 +102,18 @@ broad corpora, WPT/test262 and sanitizers were skipped.
   `U.getOrCreateInstance` from a nested closure, `q(X, ...)`/`g(U)` receive
   the class value, and the census needs the real `P`/`H`/`s`/`b` helpers.
 
+**Next step (designed, not started):** a read-only review
+(`bootstrap-native-next/05-component-data-registration-design.md`) found the
+component fixture's arm never runs (`a(null)` is null). Smallest sound route:
+**R1a** fold constructor arms whose `ctjs.truthy` operand is a constructor
+formal with the same constant truthiness at every exact instance (leaf class,
+spliced right after `normalizeSuper` in `examine`, no new messages), then
+**R1b** evaluate an exact pure captured helper (`a`/`r`) on those constant
+actuals. The authentic component should then reach the same `Object.entries`
+frontier as `bootstrap-base-data`. Live-arm publication with element keys (static
+String key fold, element facts, leaf holder publication) comes after, only for
+real elements.
+
 ## Saved Number/null writes, UTF-16 order and Bootstrap B arms, 2026-09-27 UTC
 
 Claude compiler worker (`claude-ctcompile`), loop iterations 1-2. The browser
