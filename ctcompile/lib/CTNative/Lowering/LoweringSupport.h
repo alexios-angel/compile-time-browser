@@ -139,7 +139,6 @@ bool isScriptEntry(ctjs::FuncOp fn);
 // Where a `ctjs.create_closure`'s captures start: after $enclosing_closure and
 // $enclosing_this, which are operands and not attributes.
 inline constexpr unsigned kFirstCapture = 2;
-bool isUndefinedConstant(mlir::Value value);
 // All source stores to each emitted identity member, before any retyping.
 // A read's narrower result never selects storage shared by other allocations.
 llvm::StringMap<mlir::Type> identityFieldStoreTypes(mlir::DataFlowSolver & solver,

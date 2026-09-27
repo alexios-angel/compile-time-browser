@@ -70,7 +70,7 @@ void closureLifter::specializeCallbacks(liftReport & out) {
             continue;
         }
         if (llvm::any_of(callers, [&](ctjs::CallDirectOp call) {
-                return !isUndefinedConstant(call.getNewTarget());
+                return !ctjs::isUndefinedConstant(call.getNewTarget());
             })) {
             refuse("the wrapper call has a non-undefined new.target");
             continue;
@@ -118,8 +118,8 @@ void closureLifter::specializeCallbacks(liftReport & out) {
                 auto direct = llvm::dyn_cast_if_present<ctjs::CallDirectOp>(call.op);
                 if (!call || call.args.size() > arity ||
                     (call.args.size() < arity && callbackReadsArguments) ||
-                    (direct &&
-                     (call.args.size() != arity || !isUndefinedConstant(direct.getNewTarget())))) {
+                    (direct && (call.args.size() != arity ||
+                                !ctjs::isUndefinedConstant(direct.getNewTarget())))) {
                     callOnly = false;
                     continue;
                 }
