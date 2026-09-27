@@ -33,14 +33,7 @@ bool classInitialization::refuse(llvm::StringRef message) {
 }
 
 ctjs::FuncOp classInitialization::target(ctjs::CreateClosureOp closure) {
-    if (!closure || closure.getFunction() < 0) { return {}; }
-    // Numeric function indices belong to the enclosing source program.
-    auto scope = closure->getParentOfType<ctjs::FuncOp>();
-    if (!scope || scope.getBody().empty() || scope.getBody().front().getNumArguments() < 3 ||
-        closure.getEnclosingClosure() != scope.getBody().front().getArgument(ctjs::arg_callee)) {
-        return {};
-    }
-    return functions.lookup(static_cast<unsigned>(closure.getFunction()));
+    return closure ? host_detail::closureTarget(closure, functions) : ctjs::FuncOp{};
 }
 
 bool classInitialization::proveCells(ctjs::FuncOp entry) {

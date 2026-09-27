@@ -35,6 +35,32 @@ inline bool reservedCallbackBinding(llvm::StringRef name) {
     return name.size() <= 10 && names.contains(name);
 }
 
+// Arithmetic giving a Number category from Number/Boolean operand categories.
+inline bool arithmeticBinary(ctjs::BinaryKind kind) {
+    switch (kind) {
+    case ctjs::BinaryKind::Add:
+    case ctjs::BinaryKind::Sub:
+    case ctjs::BinaryKind::Mul:
+    case ctjs::BinaryKind::Div:
+    case ctjs::BinaryKind::Mod:
+    case ctjs::BinaryKind::Pow: return true;
+    default: return false;
+    }
+}
+
+// The source function a closure creates. Its numeric index names a function
+// only inside the enclosing source program, whose callee the closure carries.
+inline ctjs::FuncOp closureTarget(ctjs::CreateClosureOp closure,
+                                  const llvm::DenseMap<unsigned, ctjs::FuncOp> & functions) {
+    auto scope = closure->getParentOfType<ctjs::FuncOp>();
+    if (closure.getFunction() < 0 || !scope || scope.getBody().empty() ||
+        scope.getBody().front().getNumArguments() < 3 ||
+        closure.getEnclosingClosure() != scope.getBody().front().getArgument(ctjs::arg_callee)) {
+        return {};
+    }
+    return functions.lookup(static_cast<unsigned>(closure.getFunction()));
+}
+
 // Invocation shape only: identity does not prove heritage, receiver rebinding,
 // field initialization or super lookup, and never authorizes erasing a call.
 inline unsigned classIntrinsicArity(llvm::StringRef name) {

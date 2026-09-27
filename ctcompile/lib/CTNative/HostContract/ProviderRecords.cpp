@@ -294,15 +294,7 @@ std::string analyzer::localRecordProblem() {
                     PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>());
             }
         } else if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op)) {
-            switch (binary.getKind()) {
-            case ctjs::BinaryKind::Add:
-            case ctjs::BinaryKind::Sub:
-            case ctjs::BinaryKind::Mul:
-            case ctjs::BinaryKind::Div:
-            case ctjs::BinaryKind::Mod:
-            case ctjs::BinaryKind::Pow: break;
-            default: return mlir::WalkResult::advance();
-            }
+            if (!arithmeticBinary(binary.getKind())) { return mlir::WalkResult::advance(); }
             const auto numeric = [&](mlir::Value value) {
                 auto tag = category(value, op).tag();
                 return tag == mlir::TypeID::get<ctjs::NumberAttr>() ||

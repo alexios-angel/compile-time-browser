@@ -83,16 +83,9 @@ ctjs::FuncOp analyzer::target(mlir::Operation * operation) const {
 ctjs::FuncOp analyzer::callable(mlir::Value value, unsigned depth) {
     if (!value || depth > 64 || !step() || ambiguousFunctions) { return {}; }
     if (auto made = value.getDefiningOp<ctjs::CreateClosureOp>()) {
-        // A numeric index names a function only inside the enclosing closure's
-        // source program. The importer supplies this activation's callee;
-        // arbitrary values cannot establish that program identity.
-        auto scope = made->getParentOfType<ctjs::FuncOp>();
-        if (!scope || scope.getBody().empty() || scope.getBody().front().getNumArguments() < 3 ||
-            made.getEnclosingClosure() != scope.getBody().front().getArgument(2)) {
-            return {};
-        }
-        return made.getFunction() >= 0 ? functions.lookup(static_cast<unsigned>(made.getFunction()))
-                                       : ctjs::FuncOp{};
+        // The importer supplies this activation's callee; arbitrary values
+        // cannot establish that program identity.
+        return closureTarget(made, functions);
     }
     if (auto load = value.getDefiningOp<ctjs::LoadGlobalOp>()) {
         auto & stores = globals[load.getName()];
@@ -419,15 +412,7 @@ PrimitiveAlternatives analyzer::entryCategories(
         return entryCategories(write.getValue(), results, write, depth + 1, dependencies);
     }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition)) {
-        switch (binary.getKind()) {
-        case ctjs::BinaryKind::Add:
-        case ctjs::BinaryKind::Sub:
-        case ctjs::BinaryKind::Mul:
-        case ctjs::BinaryKind::Div:
-        case ctjs::BinaryKind::Mod:
-        case ctjs::BinaryKind::Pow: break;
-        default: return {};
-        }
+        if (!arithmeticBinary(binary.getKind())) { return {}; }
         const auto number = mlir::TypeID::get<ctjs::NumberAttr>();
         const auto numeric = [&](mlir::Value operand) {
             auto tag = entryCategories(operand, results, binary, depth + 1, dependencies).tag();
