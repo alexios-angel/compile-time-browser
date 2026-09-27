@@ -28,5 +28,9 @@ bool closedDeclaration(ctjs::StoreGlobalOp store, ctjs::FuncOp target, mlir::Mod
 // Every use of `load` is a ctjs.call_direct callee slot, or with `rooted` also a
 // ctjs.root: the loaded value reaches no source operation.
 bool calleeSlotOnly(ctjs::LoadGlobalOp load, bool rooted = false);
+// Whether `entry`'s receiver, new.target and callee reach only ctjs.root.
+bool implicitArgumentsRooted(mlir::Block & entry);
+// Whether `function` creates, reads or writes a closure or cell environment.
+bool usesEnvironment(ctjs::FuncOp function);
 std::string closedCallableProblem(ctjs::FuncOp function, mlir::ModuleOp module);
 } // namespace ctcompile::ctnative

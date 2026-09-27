@@ -207,12 +207,7 @@ bool directCalleeUse(mlir::OpOperand & use, ctjs::FuncOp target) {
     for (mlir::Operation * user : entry.getArgument(2).getUsers()) {
         if (!llvm::isa<ctjs::RootOp>(user)) { return false; }
     }
-    bool environment = false;
-    body.getBody().walk([&](mlir::Operation * op) {
-        environment |= llvm::isa<ctjs::CreateClosureOp, ctjs::CreateCellOp, ctjs::LoadUpvalueOp,
-                                 ctjs::StoreUpvalueOp, ctjs::CellGetOp, ctjs::CellSetOp>(op);
-    });
-    return !environment;
+    return !usesEnvironment(body);
 }
 
 bool calleeSlotOnly(ctjs::LoadGlobalOp load, bool rooted) {
@@ -221,6 +216,22 @@ bool calleeSlotOnly(ctjs::LoadGlobalOp load, bool rooted) {
                (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) &&
                 use.getOperandNumber() == ctjs::arg_callee);
     });
+}
+
+bool implicitArgumentsRooted(mlir::Block & entry) {
+    for (mlir::BlockArgument argument : entry.getArguments().take_front(ctjs::implicit_arguments)) {
+        if (!llvm::all_of(argument.getUsers(), llvm::IsaPred<ctjs::RootOp>)) { return false; }
+    }
+    return true;
+}
+
+bool usesEnvironment(ctjs::FuncOp function) {
+    bool found = false;
+    function.getBody().walk([&](mlir::Operation * op) {
+        found |= llvm::isa<ctjs::CreateClosureOp, ctjs::CreateCellOp, ctjs::LoadUpvalueOp,
+                           ctjs::StoreUpvalueOp, ctjs::CellGetOp, ctjs::CellSetOp>(op);
+    });
+    return found;
 }
 
 bool closedDeclaration(ctjs::StoreGlobalOp store, ctjs::FuncOp target, mlir::ModuleOp module) {

@@ -38,18 +38,10 @@ std::string refusal(ctjs::FuncOp function, mlir::ModuleOp module) {
         function.getUpvalueCount() != 0) {
         return "requires a capture-free function with a single entry";
     }
-    for (unsigned i = 0; i < 3; ++i) {
-        for (mlir::Operation * use : entry.getArgument(i).getUsers()) {
-            if (!llvm::isa<ctjs::RootOp>(use)) { return "function observes implicit call state"; }
-        }
+    if (!implicitArgumentsRooted(entry)) { return "function observes implicit call state"; }
+    if (usesEnvironment(function)) {
+        return "closure or cell environments need separate specialization";
     }
-    bool createsEnvironment = false;
-    function.getBody().walk([&](mlir::Operation * op) {
-        createsEnvironment |=
-            llvm::isa<ctjs::CreateClosureOp, ctjs::CreateCellOp, ctjs::LoadUpvalueOp,
-                      ctjs::StoreUpvalueOp, ctjs::CellGetOp, ctjs::CellSetOp>(op);
-    });
-    if (createsEnvironment) { return "closure or cell environments need separate specialization"; }
     if (recursive(function)) { return "recursive call graph remains generic"; }
     return closedCallableProblem(function, module);
 }

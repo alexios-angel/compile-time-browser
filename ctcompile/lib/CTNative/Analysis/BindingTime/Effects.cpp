@@ -76,12 +76,9 @@ effectSummary effectQueries::summarize(ctjs::FuncOp function, unsigned & steps) 
         return {};
     }
     auto & entry = function.getBody().front();
-    if (entry.getNumArguments() < 3 || !entry.hasNoPredecessors()) { return {}; }
-    for (unsigned i = 0; i < 3; ++i) {
-        if (llvm::any_of(entry.getArgument(i).getUsers(),
-                         [](mlir::Operation * use) { return !llvm::isa<ctjs::RootOp>(use); })) {
-            return {};
-        }
+    if (entry.getNumArguments() < 3 || !entry.hasNoPredecessors() ||
+        !implicitArgumentsRooted(entry)) {
+        return {};
     }
     effectSummary result{true, {}};
     llvm::DenseMap<mlir::Value, operand> values;
