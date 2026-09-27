@@ -474,13 +474,10 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
             auto branch =
                 result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
             if (!branch) { return false; }
-            for (mlir::Region & region : branch->getRegions()) {
-                if (!region.hasOneBlock()) { return false; }
-                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                if (!yield || result.getResultNumber() >= yield.getNumOperands() ||
-                    !self(self, yield.getOperand(result.getResultNumber()), depth + 1)) {
-                    return false;
-                }
+            const auto position = result.getResultNumber();
+            if (!self(self, branch.thenYield().getOperand(position), depth + 1) ||
+                !self(self, branch.elseYield().getOperand(position), depth + 1)) {
+                return false;
             }
             // This is only a candidate census. Presence independently checks
             // both reaching payload tags before a read can acquire a type.

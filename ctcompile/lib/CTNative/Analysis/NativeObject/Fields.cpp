@@ -227,23 +227,13 @@ struct fieldPresenceQuery {
             if (reached || result.exhausted) { return; }
             region(branch.getElseRegion(), other);
             if (reached || result.exhausted) { return; }
-            auto thenYield = branch.getThenRegion().hasOneBlock()
-                                 ? llvm::dyn_cast<mlir::scf::YieldOp>(
-                                       branch.getThenRegion().front().getTerminator())
-                                 : mlir::scf::YieldOp{};
-            auto elseYield = branch.getElseRegion().hasOneBlock()
-                                 ? llvm::dyn_cast<mlir::scf::YieldOp>(
-                                       branch.getElseRegion().front().getTerminator())
-                                 : mlir::scf::YieldOp{};
-            if (thenYield && elseYield && thenYield.getNumOperands() == branch.getNumResults() &&
-                elseYield.getNumOperands() == branch.getNumResults()) {
-                for (unsigned index = 0; index < branch.getNumResults(); ++index) {
-                    const auto left = origin(thenYield.getOperand(index), thenYield, state);
-                    const auto right = origin(elseYield.getOperand(index), elseYield, other);
-                    if (left && left == right) {
-                        state.origins[branch.getResult(index)] = left;
-                        other.origins[branch.getResult(index)] = left;
-                    }
+            for (unsigned index = 0; index < branch.getNumResults(); ++index) {
+                auto thenYield = branch.thenYield(), elseYield = branch.elseYield();
+                const auto left = origin(thenYield.getOperand(index), thenYield, state);
+                const auto right = origin(elseYield.getOperand(index), elseYield, other);
+                if (left && left == right) {
+                    state.origins[branch.getResult(index)] = left;
+                    other.origins[branch.getResult(index)] = left;
                 }
             }
             intersect(state, other);

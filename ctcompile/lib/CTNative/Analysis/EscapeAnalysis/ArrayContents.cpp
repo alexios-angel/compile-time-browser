@@ -159,23 +159,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 return refuse(ArrayContentsFailure::InvalidFrame, &op);
             }
             if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(&op)) {
-                if (!llvm::hasSingleElement(loop.getBefore()) ||
-                    !llvm::hasSingleElement(loop.getAfter()) || loop.getBefore().front().empty() ||
-                    loop.getAfter().front().empty()) {
-                    return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
-                }
-                auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(
-                    loop.getBefore().front().getTerminator());
-                auto yield =
-                    llvm::dyn_cast<mlir::scf::YieldOp>(loop.getAfter().front().getTerminator());
-                if (!condition || !yield || condition.getArgs().size() != loop.getNumResults()) {
-                    return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
-                }
+                auto condition = loop.getConditionOp();
                 auto failure = transport(state, loop.getBeforeArguments(), loop.getInits());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                failure = loopProof.countedLoop(&loop.getBefore().front(), &loop.getAfter().front(),
-                                                loop.getInits(), condition.getCondition(),
-                                                condition.getArgs(), yield.getOperands());
+                failure = loopProof.countedLoop(
+                    &loop.getBefore().front(), &loop.getAfter().front(), loop.getInits(),
+                    condition.getCondition(), condition.getArgs(), loop.getYieldOp().getOperands());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
                 state.current = &loop.getBefore().front().front();
                 continue;
@@ -206,18 +195,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // ponytail: single-block structured arms only; nested CFG
                 // needs its own lifetime/transport proof. The first choice runs
                 // both arms in separate states, including an implicit empty else.
-                for (mlir::Region & region : branch->getRegions()) {
-                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    if (region.empty() && &region == &branch.getElseRegion() &&
-                        branch.getNumResults() == 0) {
-                        continue;
-                    }
-                    if (!llvm::hasSingleElement(region) || region.front().empty() ||
-                        region.front().getNumArguments() != 0 ||
-                        !llvm::isa<mlir::scf::YieldOp>(region.front().getTerminator())) {
-                        return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
-                    }
-                }
+                // One charge per arm.
+                if (!spend(2)) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                 // The census admits every nested If only for one body visit.
                 // No-result branches retain full structural replay.
                 const bool correlated = state.loop && branch.getNumResults() != 0;

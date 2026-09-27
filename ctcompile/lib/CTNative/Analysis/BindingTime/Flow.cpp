@@ -36,14 +36,12 @@ flow merge(flow left, const flow & right, bool control) {
     }
     return left;
 }
+// An scf.if arm's yielded facts; none for an absent else.
 llvm::SmallVector<fact> yielded(mlir::Region & region, const flow & state) {
     llvm::SmallVector<fact> result;
     if (region.empty()) { return result; }
-    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.back().getTerminator());
-    if (yield) {
-        for (mlir::Value input : yield.getOperands()) {
-            result.push_back(state.values.lookup(input));
-        }
+    for (mlir::Value input : region.front().getTerminator()->getOperands()) {
+        result.push_back(state.values.lookup(input));
     }
     return result;
 }
@@ -74,9 +72,7 @@ bool BindingTimeAnalysis::Impl::region(mlir::Region & body, flow & state, bool c
                 auto noValues = yielded(branch.getElseRegion(), no);
                 state = merge(std::move(yes), no, known);
                 for (auto [i, output] : llvm::enumerate(op.getResults())) {
-                    fact result = i < yesValues.size() && i < noValues.size()
-                                      ? binding_time_detail::join(yesValues[i], noValues[i], known)
-                                      : fact{};
+                    fact result = binding_time_detail::join(yesValues[i], noValues[i], known);
                     state.values[output] = result;
                     facts[output] = result;
                 }

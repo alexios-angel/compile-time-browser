@@ -583,31 +583,19 @@ struct presenceAnalysis {
             // Retain independently proved truthy/falsy alternatives. A later
             // test can refine the exact selected SSA value, while all effects
             // in both structural arms are still visited.
-            auto thenYield = branch.getThenRegion().hasOneBlock()
-                                 ? llvm::dyn_cast<mlir::scf::YieldOp>(
-                                       branch.getThenRegion().front().getTerminator())
-                                 : mlir::scf::YieldOp{};
-            auto elseYield = branch.getElseRegion().hasOneBlock()
-                                 ? llvm::dyn_cast<mlir::scf::YieldOp>(
-                                       branch.getElseRegion().front().getTerminator())
-                                 : mlir::scf::YieldOp{};
-            if (thenYield && elseYield && thenYield.getNumOperands() == branch.getNumResults() &&
-                elseYield.getNumOperands() == branch.getNumResults()) {
-                for (unsigned index = 0; index < branch.getNumResults(); ++index) {
-                    const auto left = thenYield.getOperand(index),
-                               right = elseYield.getOperand(index);
-                    const auto exact = primitiveMapSize(left, thenState.keyEvidence(left));
-                    if (exact && exact == primitiveMapSize(right, elseState.keyEvidence(right))) {
-                        thenState.exactSizes[branch.getResult(index)] = *exact;
-                        elseState.exactSizes[branch.getResult(index)] = *exact;
-                    }
-                    const auto joined =
-                        thenState.alternatives(thenYield.getOperand(index))
-                            .joined(elseState.alternatives(elseYield.getOperand(index)));
-                    if (joined.known) {
-                        thenState.scalars[branch.getResult(index)] = joined;
-                        elseState.scalars[branch.getResult(index)] = joined;
-                    }
+            for (unsigned index = 0; index < branch.getNumResults(); ++index) {
+                const auto left = branch.thenYield().getOperand(index),
+                           right = branch.elseYield().getOperand(index);
+                const auto exact = primitiveMapSize(left, thenState.keyEvidence(left));
+                if (exact && exact == primitiveMapSize(right, elseState.keyEvidence(right))) {
+                    thenState.exactSizes[branch.getResult(index)] = *exact;
+                    elseState.exactSizes[branch.getResult(index)] = *exact;
+                }
+                const auto joined =
+                    thenState.alternatives(left).joined(elseState.alternatives(right));
+                if (joined.known) {
+                    thenState.scalars[branch.getResult(index)] = joined;
+                    elseState.scalars[branch.getResult(index)] = joined;
                 }
             }
             // Derive each arm's cardinality before merging key sets. The
@@ -625,12 +613,7 @@ struct presenceAnalysis {
             // local reads, including a while(has(...)) body's first lookup.
             state before;
             region(loop.getBefore(), before);
-            if (!loop.getBefore().empty()) {
-                if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(
-                        loop.getBefore().front().getTerminator())) {
-                    learn(condition.getCondition(), true, before);
-                }
-            }
+            learn(loop.getConditionOp().getCondition(), true, before);
             region(loop.getAfter(), before);
             current = {};
             return;

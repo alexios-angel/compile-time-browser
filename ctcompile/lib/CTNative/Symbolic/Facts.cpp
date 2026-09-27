@@ -73,11 +73,6 @@ llvm::StringRef typeName(unsigned domains) {
     default: return {};
     }
 }
-Fact yielded(mlir::Region & region, unsigned index, const Analysis & analysis) {
-    if (!llvm::hasSingleElement(region)) { return {}; }
-    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-    return yield && index < yield.getNumOperands() ? analysis.get(yield.getOperand(index)) : Fact{};
-}
 } // namespace
 
 Fact Analysis::operation(mlir::Operation * op) {
@@ -190,13 +185,10 @@ bool Analysis::region(mlir::Region & body) {
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
                 const auto take = condition(get(branch.getCondition()));
                 for (auto [index, result] : llvm::enumerate(op.getResults())) {
-                    facts[result] =
-                        take ? yielded(*take ? branch.getThenRegion() : branch.getElseRegion(),
-                                       static_cast<unsigned>(index), *this)
-                             : join(yielded(branch.getThenRegion(), static_cast<unsigned>(index),
-                                            *this),
-                                    yielded(branch.getElseRegion(), static_cast<unsigned>(index),
-                                            *this));
+                    const auto position = static_cast<unsigned>(index);
+                    const Fact yes = get(branch.thenYield().getOperand(position));
+                    const Fact no = get(branch.elseYield().getOperand(position));
+                    facts[result] = take ? (*take ? yes : no) : join(yes, no);
                 }
             } else {
                 const Fact result = operation(&op);

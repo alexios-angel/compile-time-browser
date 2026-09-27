@@ -49,15 +49,10 @@ struct Precompute : mlir::OpRewritePattern<Root> {
 bool select(mlir::scf::IfOp branch, bool take) {
     auto & selected = take ? branch.getThenRegion() : branch.getElseRegion();
     if (selected.empty()) {
-        if (branch.getNumResults() != 0) { return false; }
         branch.erase();
         return true;
     }
-    if (!llvm::hasSingleElement(selected) || selected.front().getNumArguments() != 0) {
-        return false;
-    }
-    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(selected.front().getTerminator());
-    if (!yield || yield.getNumOperands() != branch.getNumResults()) { return false; }
+    auto yield = take ? branch.thenYield() : branch.elseYield();
     for (auto [result, value] : llvm::zip(branch.getResults(), yield.getOperands())) {
         result.replaceAllUsesWith(value);
     }
