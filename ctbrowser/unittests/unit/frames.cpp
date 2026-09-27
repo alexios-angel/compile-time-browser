@@ -610,7 +610,25 @@ void test_a_frame_inside_a_frame_document_loads() {
        "window.nested", "inner");
 }
 
+// THE ANIMATION FRAME CALLBACKS DOCUMENT BY DOCUMENT: the page's, then its
+// frames' in tree order, whatever order they were asked for in
+// (child-document-raf-order.html) - and a removed frame's never.
+void test_animation_frames_run_in_document_order() {
+    is("<iframe id=f1 src=inner.html></iframe><iframe id=f2 src=inner.html></iframe>"
+       "<iframe id=f3 src=inner.html></iframe><script>var order = [];"
+       " addEventListener('load', function () {"
+       " var w = function (id) { return document.getElementById(id).contentWindow; };"
+       " var gone = w('f3'); document.getElementById('f3').remove();"
+       " gone.requestAnimationFrame(function () { order.push('removed'); });"
+       " w('f2').requestAnimationFrame(function () { order.push('second');"
+       " setTimeout(function () { console.log(order.join()); }, 0); });"
+       " w('f1').requestAnimationFrame(function () { order.push('first'); });"
+       " requestAnimationFrame(function () { order.push('page'); }); });</script>",
+       "'unused'", "page,first,second");
+}
+
 int main() {
+    test_animation_frames_run_in_document_order();
     test_a_frame_inside_a_frame_document_loads();
     test_a_frame_document_is_laid_out_at_the_size_of_its_box();
     test_the_frames_are_indexed_on_the_window();

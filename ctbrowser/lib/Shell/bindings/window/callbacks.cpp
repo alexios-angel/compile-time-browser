@@ -228,6 +228,32 @@ std::size_t dom_bindings::run_due_callbacks() {
     // (callback-exception.html).
     std::vector<animation_frame_callback> frame_callbacks;
     frame_callbacks.swap(animation_callbacks_);
+    // DOCUMENT BY DOCUMENT, "for each fully active Document in docs" (HTML
+    // 8.1.7.3 "update the rendering" step 14): the page, then each frame's
+    // document after the document it is in, sibling frames in tree order
+    // (child-document-raf-order.html) - and a document that is no longer
+    // fully active, a removed frame's, runs none.
+    {
+        std::vector<const dom_bindings *> docs;
+        const auto walk = [&docs](const auto & self, const dom_bindings & at) -> void {
+            docs.push_back(&at);
+            // A frame removed since the last reconcile is still listed: its
+            // <iframe> is what says the document is gone.
+            for (const frame_entry & entry : at.frames_) {
+                if (entry.bindings != nullptr && at.is_connected(entry.element)) {
+                    self(self, *entry.bindings);
+                }
+            }
+        };
+        walk(walk, primary());
+        const auto rank = [&docs](const animation_frame_callback & frame) {
+            return static_cast<std::size_t>(std::ranges::find(docs, frame.document) - docs.begin());
+        };
+        std::erase_if(frame_callbacks, [&](const animation_frame_callback & frame) {
+            return rank(frame) == docs.size();
+        });
+        std::ranges::stable_sort(frame_callbacks, {}, rank);
+    }
     const auto keep_frames = root_all(
         frame_callbacks, [](const animation_frame_callback & frame, std::vector<value> & held) {
             held.push_back(frame.callback);
@@ -429,7 +455,12 @@ void dom_bindings::install_timers(context & cx) {
             c.throw_error("TypeError", "requestAnimationFrame: the callback is not a function");
             return value::undefined();
         }
-        animation_callbacks_.push_back(animation_frame_callback{++next_timer_id_, callback});
+        // WHOSE: the natives are shared, so the window is `this`, else the
+        // realm's - a frame's callbacks run in the frame's turn, and none is
+        // there for a window whose document is gone (null).
+        const dom_bindings * owner =
+            find_bindings_of(c.current_this().is_heap() ? c.current_this() : c.global_this());
+        animation_callbacks_.push_back(animation_frame_callback{++next_timer_id_, callback, owner});
         return value::number(next_timer_id_);
     });
     // `cancelAnimationFrame(handle)`: the entry leaves the map. A handle
