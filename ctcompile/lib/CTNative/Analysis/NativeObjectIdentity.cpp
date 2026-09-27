@@ -60,20 +60,6 @@ bool comparisonObservation(mlir::OpOperand & use) {
     return false;
 }
 
-bool liveMapCall(ctjs::CallOp call) {
-    auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-    const auto action = nativeMapAction(call);
-    if (!get || get.getObject() != call.getReceiver() || nativeMapGroup(call.getReceiver()) < 0 ||
-        ctjs::constantKey(get.getKey()) != action) {
-        return false;
-    }
-    if (action == "set") { return call.getArgs().size() == 2; }
-    if (action == "get" || action == "has" || action == "delete") {
-        return call.getArgs().size() == 1;
-    }
-    return action == "clear" && call.getArgs().empty();
-}
-
 // Unlike the original Map families, a comparison family need not have any
 // upstream Map proof. Its scalar fields therefore need their own closed
 // property environment. Only live source edges (and already checked standard
@@ -90,14 +76,12 @@ bool comparisonFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * 
         }
         bool safe = false;
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
-            safe = liveMapCall(call);
+            safe = !liveNativeMapAction(call).empty();
         } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
             safe = closedValueFlow::exactCall(call, call.getTarget());
         } else if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
-            auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            safe = made->hasAttr(kNativeMapSite) && made.getArgs().empty() &&
-                   made.getNewTarget() == made.getCallee() && load && load.getName() == "Map" &&
-                   load->hasAttr(kNativeMapConstructor);
+            safe = made->hasAttr(kNativeMapSite) && plainMapConstruction(made) &&
+                   made.getCallee().getDefiningOp()->hasAttr(kNativeMapConstructor);
         } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
             safe = (globals && globals->proved() && globals->lookup(load)) ||
                    (load.getName() == "Map" && load->hasAttr(kNativeMapConstructor)) ||
@@ -112,7 +96,8 @@ bool comparisonFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * 
                        (get->hasAttr(kNativeMapMethod) && !get.getResult().use_empty() &&
                         llvm::all_of(get.getResult().getUses(), [](mlir::OpOperand & use) {
                             auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                            return call && use.getOperandNumber() == 0 && liveMapCall(call);
+                            return call && use.getOperandNumber() == 0 &&
+                                   !liveNativeMapAction(call).empty();
                         }));
             }
         } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
@@ -205,7 +190,7 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                     return false;
                 }
             } else if (auto call = member.getDefiningOp<ctjs::CallOp>()) {
-                if (nativeMapAction(call) != "get" || !liveMapCall(call)) { return false; }
+                if (liveNativeMapAction(call) != "get") { return false; }
             } else if (!reads.contains(member.getDefiningOp()) &&
                        !llvm::isa_and_nonnull<mlir::scf::IfOp>(member.getDefiningOp())) {
                 return false;

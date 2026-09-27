@@ -16,11 +16,6 @@
 namespace ctcompile::ctnative::map_detail {
 namespace {
 
-llvm::StringRef actionOf(ctjs::CallOp call) {
-    auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-    return get ? ctjs::constantKey(get.getKey()) : llvm::StringRef{};
-}
-
 // This analysis also runs from CTJS-only binding-time and partial-evaluation
 // callers. Keep semantic tags independent of native dialect type storage.
 enum class payloadKind {
@@ -715,7 +710,7 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
     if (calls.empty()) { return {}; }
     presenceAnalysis analysis(familyOf, snapshotCopies);
     for (ctjs::GetPropertyOp size : sizes) { analysis.sizes.insert(size); }
-    for (ctjs::CallOp call : calls) { analysis.actions[call] = actionOf(call); }
+    for (ctjs::CallOp call : calls) { analysis.actions[call] = mapMethodName(call); }
     analysis.buildSummaries(module);
     analysis.collectPublications(globals);
     const auto run = [&] {

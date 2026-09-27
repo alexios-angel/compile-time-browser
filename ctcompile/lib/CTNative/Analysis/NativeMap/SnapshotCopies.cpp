@@ -76,11 +76,9 @@ std::string collectSnapshotCopies(mlir::Operation * scope,
                     return mlir::WalkResult::interrupt();
                 }
                 auto snapshot = call.getArgs().front().getDefiningOp<ctjs::CallOp>();
-                auto read = snapshot ? snapshot.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
-                                     : ctjs::GetPropertyOp{};
-                if (!snapshot || !mapCalls.contains(snapshot) || !read ||
-                    (ctjs::constantKey(read.getKey()) != "keys" &&
-                     ctjs::constantKey(read.getKey()) != "values")) {
+                const auto name = snapshot ? mapMethodName(snapshot) : llvm::StringRef{};
+                if (!snapshot || !mapCalls.contains(snapshot) ||
+                    (name != "keys" && name != "values")) {
                     reason = "native Array.from requires a proved Map keys or values snapshot";
                     return mlir::WalkResult::interrupt();
                 }
@@ -105,9 +103,7 @@ std::string collectSnapshotCopies(mlir::Operation * scope,
     for (mlir::Operation * op : mapCalls) {
         if (!step()) { return reason; }
         auto call = llvm::cast<ctjs::CallOp>(op);
-        auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-        if (method && (ctjs::constantKey(method.getKey()) == "keys" ||
-                       ctjs::constantKey(method.getKey()) == "values")) {
+        if (const auto name = mapMethodName(call); name == "keys" || name == "values") {
             reason = proveImmediateConsumption(call, out, spend);
             if (!reason.empty()) { return reason; }
         }

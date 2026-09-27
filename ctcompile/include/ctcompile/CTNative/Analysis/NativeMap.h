@@ -56,6 +56,17 @@ inline std::optional<unsigned> mapMethodArity(llvm::StringRef name) {
         .Default(std::nullopt);
 }
 
+/// The constant method name a call reads from its callee property, or empty.
+inline llvm::StringRef mapMethodName(ctjs::CallOp call) {
+    auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+    return get ? ctjs::constantKey(get.getKey()) : llvm::StringRef{};
+}
+
+/// The proved action of a call that still reads that method from its own
+/// receiver, a Map family member, with the method's exact argument count;
+/// empty otherwise. Rechecks the source edges a stale annotation could skip.
+llvm::StringRef liveNativeMapAction(ctjs::CallOp call);
+
 /// A zero-argument `new Map` whose new.target is its own callee. Lexical only:
 /// whether global `Map` is the standard constructor is the caller's proof.
 inline bool plainMapConstruction(ctjs::ConstructOp made) {

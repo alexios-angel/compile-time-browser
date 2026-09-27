@@ -1,5 +1,6 @@
 #include "OwnedGlobalRoots.h"
 
+#include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/SymbolTable.h"
@@ -235,9 +236,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         for (mlir::Value child : capture->returnedChildMaps) {
             if (!spend()) { return; }
             auto call = child.getDefiningOp<ctjs::CallOp>();
-            auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
-                             : ctjs::GetPropertyOp{};
-            if (!read || ctjs::constantKey(read.getKey()) != "get" ||
+            if (!call || mapMethodName(call) != "get" ||
                 !llvm::is_contained(capture->calls, call) ||
                 !returnedChildren.insert(child).second) {
                 reject("owned returned child Map lacks its distinct checked get call");
@@ -421,8 +420,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             llvm::DenseMap<mlir::Value, ctjs::CallOp> seeds;
             for (ctjs::CallOp call : capture->calls) {
                 if (!spend()) { return; }
-                const auto action = ctjs::constantKey(
-                    call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
+                const auto action = mapMethodName(call);
                 if (children.contains(call.getReceiver())) {
                     if (action == "delete" || action == "clear") {
                         reject("owned child mutation can remove its required entry");
@@ -466,13 +464,11 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 auto call = llvm::dyn_cast<ctjs::CallOp>(user);
                 const bool property =
                     read && use.getOperandNumber() == 0 && llvm::is_contained(capture->reads, read);
-                auto method = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
-                                   : ctjs::GetPropertyOp{};
                 const bool invocation =
                     call && llvm::is_contained(capture->calls, call) &&
                     (use.getOperandNumber() == 1 ||
                      (use.getOperandNumber() == 3 && outers.contains(call.getReceiver()) &&
-                      method && ctjs::constantKey(method.getKey()) == "set"));
+                      mapMethodName(call) == "set"));
                 if (!dominance.dominates(child, user) ||
                     (!llvm::isa<ctjs::RootOp>(user) && !property && !invocation)) {
                     reject("owned child Map has another alias, key or publication use");

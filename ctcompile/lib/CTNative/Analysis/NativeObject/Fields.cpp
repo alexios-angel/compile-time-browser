@@ -122,34 +122,10 @@ struct fieldPresenceQuery {
         return state.origins.lookup(value);
     }
 
-    // Recognition proves the standard method, not membership or payload. Read
-    // the actual callee, receiver, key and arity again so a changed source edge
-    // cannot reuse a stale action or presence annotation.
-    llvm::StringRef action(ctjs::CallOp call) const {
-        const auto name = nativeMapAction(call);
-        auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-        if (!get || get.getObject() != call.getReceiver() ||
-            nativeMapGroup(call.getReceiver()) < 0) {
-            return {};
-        }
-        auto constant = get.getKey().getDefiningOp<ctjs::ConstantOp>();
-        auto text =
-            constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue()) : ctjs::StringAttr{};
-        if (!text || text.getValue() != name) { return {}; }
-        static const llvm::StringMap<unsigned> arities{{"set", 2}, {"clear", 0}};
-        const auto method = name.size() <= 5 ? arities.find(name) : arities.end();
-        const unsigned arity = method != arities.end() ? method->second : 1U;
-        if (call.getArgs().size() != arity || (name != "set" && name != "get" && name != "has" &&
-                                               name != "delete" && name != "clear")) {
-            return {};
-        }
-        return name;
-    }
-
     mlir::Value mapInstance(mlir::Value map) {
         while (auto call = map.getDefiningOp<ctjs::CallOp>()) {
             if (!spend()) { return {}; }
-            if (action(call) != "set") { break; }
+            if (liveNativeMapAction(call) != "set") { break; }
             map = call.getReceiver();
         }
         return map;
@@ -262,7 +238,7 @@ struct fieldPresenceQuery {
             return;
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
-            const auto name = action(call);
+            const auto name = liveNativeMapAction(call);
             const auto map = name.empty() ? mlir::Value{} : mapInstance(call.getReceiver());
             if (!map) {
                 state.invalidate();
@@ -301,25 +277,20 @@ struct fieldPresenceQuery {
             if (object && name && state.assigned.contains({object, name})) { return; }
             if (nativeMapGroup(get.getObject()) >= 0) {
                 const auto text = llvm::dyn_cast_if_present<ctjs::StringAttr>(name);
-                if (text &&
-                    ((get->hasAttr(kNativeMapMethod) &&
-                      llvm::StringSwitch<bool>(text.getValue())
-                          .Cases({"set", "get", "has", "delete", "clear", "keys", "values"}, true)
-                          .Default(false)) ||
-                     (text.getValue() == "size" && nativeMapAction(get) == "size"))) {
+                const auto method = text ? text.getValue() : llvm::StringRef{};
+                if ((get->hasAttr(kNativeMapMethod) &&
+                     (mapMethodArity(method) || method == "keys" || method == "values")) ||
+                    (method == "size" && nativeMapAction(get) == "size")) {
                     return;
                 }
             }
             state.invalidate();
             return;
         }
-        if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
-            auto constructor = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            if (made->hasAttr(kNativeMapSite) && made.getArgs().empty() &&
-                made.getNewTarget() == made.getCallee() && constructor &&
-                constructor.getName() == "Map" && constructor->hasAttr(kNativeMapConstructor)) {
-                return;
-            }
+        if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op);
+            made && made->hasAttr(kNativeMapSite) && plainMapConstruction(made) &&
+            made.getCallee().getDefiningOp()->hasAttr(kNativeMapConstructor)) {
+            return;
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
             if (load.getName() == "Map" && load->hasAttr(kNativeMapConstructor)) { return; }
