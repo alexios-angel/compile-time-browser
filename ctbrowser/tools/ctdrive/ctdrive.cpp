@@ -239,9 +239,7 @@ private:
         }
     }
 
-    [[nodiscard]] static json::value ok() {
-        return json::value{{"ok", true}};
-    }
+    [[nodiscard]] static json::value ok() { return json::value{{"ok", true}}; }
     [[nodiscard]] static json::value fail(std::string_view why) {
         return json::value{{"ok", false}, {"error", std::string{why}}};
     }
@@ -332,8 +330,20 @@ private:
             // AT a point scrolls what is under it; with no point it is the
             // page's own scroll. Two different verbs, and the engine tells
             // them apart by whether a position came with the event.
-            (void)page.handle(o.if_contains("x") != nullptr ? ev::wheel_at(x, y, notches)
-                                                            : ev::wheel_by(notches));
+            ev wheel =
+                o.if_contains("x") != nullptr ? ev::wheel_at(x, y, notches) : ev::wheel_by(notches);
+            // Sideways notches, positive to the right.
+            wheel.wheel_x = number(o, "notches_x");
+            (void)page.handle(wheel);
+            return ok();
+        }
+        // A FINGER: {"cmd":"touch","phase":"start"|"move"|"end","x":..,"y":..}.
+        if (cmd == "touch") {
+            const std::string phase = text_of(o, "phase");
+            if (phase != "start" && phase != "move" && phase != "end") {
+                return fail("touch needs a phase of start, move or end");
+            }
+            (void)page.touch(phase, x, y);
             return ok();
         }
         if (cmd == "resize") {
@@ -451,7 +461,8 @@ int main(int argc, char ** argv) {
                     "  {\"cmd\":\"click\",\"x\":120,\"y\":200}   move/down/up/click\n"
                     "  {\"cmd\":\"key\",\"code\":\"Tab\"}        + shift, ctrl\n"
                     "  {\"cmd\":\"type\",\"text\":\"hello\"}\n"
-                    "  {\"cmd\":\"wheel\",\"notches\":-3}        + x,y to aim it\n"
+                    "  {\"cmd\":\"wheel\",\"notches\":-3}        + x,y to aim it, notches_x\n"
+                    "  {\"cmd\":\"touch\",\"phase\":\"start\"}   + x,y; move, end\n"
                     "  {\"cmd\":\"shot\",\"path\":\"out.ppm\"}      or out.png\n"
                     "  {\"cmd\":\"eval\",\"script\":\"...\"}     info, resize, quit\n");
         return 2;

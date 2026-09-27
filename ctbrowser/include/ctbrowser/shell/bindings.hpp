@@ -70,6 +70,8 @@ public:
 
     bool dispatch_mouse(std::string_view type, node_id target, const input_event & input);
     bool dispatch_wheel(node_id target, const input_event & input);
+    bool dispatch_touch(std::string_view phase, node_id target, float x, float y);
+    bool wheel_scroll(node_id from, float dx, float dy); // events/input.cpp
 
     bool dispatch_event(std::string_view type, node_id target, value event);
 
@@ -1026,6 +1028,7 @@ public:
 
     void set_viewport_scroll_hooks(std::function<point()> get, std::function<void(point)> set);
     void queue_scroll_event(node_id target);
+    void fire_scrollend(context & cx, std::span<const node_id> scrolled);
     void report_media_query_changes();
 
     void flush_layout();

@@ -65,6 +65,7 @@ void dom_bindings::queue_scroll_event(node_id target) {
                                        object->set("cancelable", value::boolean(false));
                                        (void)dispatch_event("scroll", at, event);
                                    }
+                                   fire_scrollend(c, due); // events/input.cpp
                                    return value::undefined();
                                }),
                         0, false);

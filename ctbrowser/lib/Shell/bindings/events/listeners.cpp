@@ -427,6 +427,12 @@ bool dom_bindings::invoke_listener(context & cx, value callback, value receiver,
     if (type == "animationiteration") { return "webkitAnimationIteration"; }
     if (type == "animationstart") { return "webkitAnimationStart"; }
     if (type == "transitionend") { return "webkitTransitionEnd"; }
+    // ...and the one the table does not list but every engine that has the
+    // prefixed four also has: a trusted `wheel` reaches `mousewheel`, the
+    // pre-standard name, under the same rule. The DOM's own default passive
+    // value names `mousewheel` beside `wheel`, and non-cancelable-when-passive/
+    // has ten files that listen for nothing else.
+    if (type == "wheel") { return "mousewheel"; }
     return {};
 }
 
@@ -608,8 +614,16 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
                 const value target = object_of_step(*cx_, step);
                 const value handler = cx_->lookup_property(target, "on" + ascii_lower_copy(type));
                 const context::rooted keep_handler{*cx_, handler};
+                // In the passive listener flag like any listener: a passive
+                // `onwheel` returning false does not cancel.
+                auto * carrier = static_cast<script::object_object *>(event.as_heap());
+                const bool passive = entry->passive;
+                if (passive) { carrier->set(std::string{passive_property}, value::boolean(true)); }
                 invoking(handler, [&] {
                     const bool threw = fire_handler_property(target, type, event, &thrown);
+                    if (passive) {
+                        carrier->set(std::string{passive_property}, value::boolean(false));
+                    }
                     report_fault(threw, thrown, handler);
                 });
                 continue;

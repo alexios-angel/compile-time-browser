@@ -10,9 +10,19 @@ namespace {
 // textarea - lines rather than pixels, because a field scrolls by whole lines.
 constexpr float wheel_step = 53.0f;
 constexpr std::ptrdiff_t wheel_lines = 3;
+// How long a resting wheel keeps its transaction's target. UI Events leaves it
+// to the user agent; half a second is inside what the engines use.
+constexpr double wheel_transaction_ms = 500;
 } // namespace
 
 bool browser::handle(const input_event & event) {
+    // A pointer that MOVED ends a wheel transaction (see the wheel below) -
+    // by a mouse move, or by a notch that arrives somewhere else.
+    if ((event.kind == input_kind::mouse_move ||
+         (event.kind == input_kind::wheel && event.has_pointer)) &&
+        (event.x != pointer_.x || event.y != pointer_.y)) {
+        wheel_target_ = node_id{};
+    }
     // Remembered for anything that has to keep aiming at the pointer after the
     // events stop - the drag auto-scroll, which runs off tick() and is handed
     // no coordinates of its own.
@@ -30,13 +40,34 @@ bool browser::handle(const input_event & event) {
         // it, and what every 3D library on the web relies on. Nothing was
         // dispatched at all before this: the notch went straight to the
         // scroller, so a scene could be orbited and not zoomed.
-        const node_id under = event.has_pointer ? hit_test(event.x, event.y) : body_node();
-        if (bindings_->dispatch_wheel(under ? under : body_node(), event)) { return true; }
+        //
+        // A WHEEL EVENT TRANSACTION (UI Events 3.6.x): the notches of one
+        // gesture all go to the element the FIRST one was aimed at, however the
+        // page moves under the pointer meanwhile - until the pointer moves, the
+        // wheel rests past the timeout, or that element stops being rendered.
+        const double now = bindings_->now_ms();
+        bindings_->flush_layout();
+        if (wheel_target_ &&
+            (now - wheel_last_ms_ > wheel_transaction_ms ||
+             !bindings_->is_connected(wheel_target_) || viewport_box_of(wheel_target_).empty())) {
+            wheel_target_ = node_id{};
+        }
+        if (!wheel_target_) {
+            wheel_target_ = event.has_pointer ? element_at(event.x, event.y) : body_node();
+        }
+        wheel_last_ms_ = now;
+        const node_id target = wheel_target_;
+        if (bindings_->dispatch_wheel(target, event)) { return true; }
         // The field under the pointer takes the notch next, and only what it
         // cannot use falls through to the page - which is what makes a textarea
         // at its last line stop swallowing the wheel.
-        if (scroll_field_under(event)) { return true; }
-        scroll_by(-event.wheel_y * wheel_step);
+        if (event.wheel_x == 0 && scroll_field_under(event)) { return true; }
+        // Then the nearest scroll container that can move that way, and the
+        // viewport when none can.
+        const float dx = event.wheel_x * wheel_step;
+        const float dy = -event.wheel_y * wheel_step;
+        if (bindings_->wheel_scroll(target, dx, dy)) { return true; }
+        scroll_to(scroll_x_ + dx, scroll_y_ + dy);
         return true;
     }
     case input_kind::mouse_move: {
@@ -206,6 +237,46 @@ bool browser::handle(const input_event & event) {
         return true;
     }
     return false;
+}
+
+node_id browser::element_at(float x, float y) {
+    node_id hit = hit_test(x, y);
+    if (hit) {
+        const auto txn = doc_->read();
+        if (txn.kind(hit).value_or(node_kind::element) == node_kind::text) {
+            hit = txn.parent(hit);
+        }
+    }
+    return hit ? hit : body_node();
+}
+
+bool browser::touch(std::string_view phase, float x, float y) {
+    if (!bindings_) { return false; }
+    const point at{x, y};
+    if (phase == "start") {
+        touch_target_ = element_at(x, y);
+        touch_at_ = at;
+        (void)bindings_->dispatch_touch(phase, touch_target_, x, y);
+        return true;
+    }
+    if (!touch_target_) { return false; } // a move or a lift with no finger down
+    const node_id target = touch_target_;
+    if (phase == "end") {
+        touch_target_ = node_id{};
+        (void)bindings_->dispatch_touch(phase, target, x, y);
+        return true;
+    }
+    // A DRAG PANS: the content follows the finger, so it scrolls the other way
+    // - the nearest scroll container that can, then the viewport - unless a
+    // listener cancelled the touchmove.
+    const bool cancelled = bindings_->dispatch_touch(phase, target, x, y);
+    const float dx = touch_at_.x - x;
+    const float dy = touch_at_.y - y;
+    touch_at_ = at;
+    if (!cancelled && !bindings_->wheel_scroll(target, dx, dy)) {
+        scroll_to(scroll_x_ + dx, scroll_y_ + dy);
+    }
+    return true;
 }
 
 node_id browser::hit_test(float x, float y) const {

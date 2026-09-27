@@ -294,6 +294,11 @@ public:
     // reason a scroll does not invalidate them.
     [[nodiscard]] node_id hit_test(float x, float y) const;
 
+    // A FINGER, from a driver - there is no touchscreen in the app layer yet:
+    // `phase` is "start", "move" or "end". Touch Events and the touch pointer's
+    // Pointer Events, and a drag nobody cancelled scrolls (browser/input.cpp).
+    bool touch(std::string_view phase, float x, float y);
+
     // --- frames ----------------------------------------------------------
 
     // Run whatever this frame needs and composite. Cheap when nothing is dirty,
@@ -703,6 +708,15 @@ private:
     // that has to keep aiming at the pointer needs it remembered.
     point pointer_;
     bool have_pointer_ = false;
+    // The wheel event transaction's target and when its last notch came.
+    node_id wheel_target_;
+    double wheel_last_ms_ = 0;
+    // The element the finger went down on, and where it is now.
+    node_id touch_target_;
+    point touch_at_;
+    // The ELEMENT under a viewport point - a text run's hit is its parent's -
+    // or the body over nothing: what a wheel or a finger is aimed at.
+    [[nodiscard]] node_id element_at(float x, float y);
     // When the next auto-scroll step falls due, on caret_clock_ms_'s scale.
     double autoscroll_due_ms_ = 0;
     std::function<void(const std::string &)> alert_hook_;
