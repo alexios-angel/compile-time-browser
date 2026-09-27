@@ -90,11 +90,7 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operatio
             eligible = true;
             return {kind::constructor, BindingTime::Static, {}, {}};
         }
-        if (llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
-                return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-                       (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) &&
-                        use.getOperandNumber() == 2);
-            })) {
+        if (calleeSlotOnly(load, true)) {
             eligible = true;
             return {kind::bookkeeping, BindingTime::Static, {}, {}};
         }

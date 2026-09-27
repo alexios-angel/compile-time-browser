@@ -111,13 +111,7 @@ effectSummary effectQueries::summarize(ctjs::FuncOp function, unsigned & steps) 
         } else if (llvm::isa<mlir::arith::ConstantOp>(op)) {
             output.tag = operand::kind::primitive;
         } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
-            if (!llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
-                    return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-                           (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) &&
-                            use.getOperandNumber() == 2);
-                })) {
-                return {};
-            }
+            if (!calleeSlotOnly(load, true)) { return {}; }
         } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
             auto receiver = values.lookup(read.getObject());
             auto key = propertyKey(read.getKey());

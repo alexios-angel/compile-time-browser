@@ -215,6 +215,14 @@ bool directCalleeUse(mlir::OpOperand & use, ctjs::FuncOp target) {
     return !environment;
 }
 
+bool calleeSlotOnly(ctjs::LoadGlobalOp load, bool rooted) {
+    return llvm::all_of(load.getResult().getUses(), [&](mlir::OpOperand & use) {
+        return (rooted && llvm::isa<ctjs::RootOp>(use.getOwner())) ||
+               (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) &&
+                use.getOperandNumber() == ctjs::arg_callee);
+    });
+}
+
 bool closedDeclaration(ctjs::StoreGlobalOp store, ctjs::FuncOp target, mlir::ModuleOp module) {
     auto parent = store->getParentOfType<ctjs::FuncOp>();
     if (!parent || functionIndex(parent) != 0 || parent.getBody().empty() ||

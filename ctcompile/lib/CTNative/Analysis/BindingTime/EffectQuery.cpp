@@ -65,11 +65,7 @@ bool closedEffectEnvironment(mlir::ModuleOp module) {
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
             if (load->hasAttr(kNativeMapConstructor)) { return; }
-            safe = llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
-                return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-                       (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) &&
-                        use.getOperandNumber() == 2);
-            });
+            safe = calleeSlotOnly(load, true);
             return;
         }
         if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {

@@ -15,6 +15,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 
+#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include <functional>
 #include <string>
 
@@ -614,11 +615,8 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
                     return;
                 }
             }
-            for (mlir::OpOperand & use : load.getResult().getUses()) {
-                if (!llvm::isa<ctjs::CallDirectOp>(use.getOwner()) || use.getOperandNumber() != 2) {
-                    reason = "standard Map identity is unproved with other host/global value reads";
-                    break;
-                }
+            if (!calleeSlotOnly(load)) {
+                reason = "standard Map identity is unproved with other host/global value reads";
             }
         } else if (llvm::isa<ctjs::CallOp>(op) && !calls.contains(op) &&
                    !copies.calls.contains(op)) {

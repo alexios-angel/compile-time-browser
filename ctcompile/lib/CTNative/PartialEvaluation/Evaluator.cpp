@@ -1,5 +1,6 @@
 #include "Heap.h"
 
+#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -204,9 +205,7 @@ value evaluator::operation(mlir::Operation * op, environment & env, unsigned dep
         if (load->hasAttr(kNativeMapConstructor)) {
             return {value::kind::mapConstructor, {}, 0, {}};
         }
-        if (llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
-                return llvm::isa<ctjs::CallDirectOp>(use.getOwner()) && use.getOperandNumber() == 2;
-            })) {
+        if (calleeSlotOnly(load)) {
             return {};
         } // Direct-call evaluation separately proves the loaded callee identity.
         return fail("host or mutable global read");

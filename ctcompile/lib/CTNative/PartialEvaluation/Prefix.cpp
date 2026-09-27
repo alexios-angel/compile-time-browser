@@ -1,5 +1,6 @@
 #include "Heap.h"
 
+#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -11,10 +12,7 @@ bool retainedPrefixScaffolding(mlir::Operation * op) {
         return true;
     }
     auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
-    return load && !load->hasAttr(kNativeMapConstructor) &&
-           llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
-               return llvm::isa<ctjs::CallDirectOp>(use.getOwner()) && use.getOperandNumber() == 2;
-           });
+    return load && !load->hasAttr(kNativeMapConstructor) && calleeSlotOnly(load);
 }
 
 std::optional<snapshot> evaluator::runPrefix(ctjs::FuncOp function, llvm::ArrayRef<value> args,

@@ -53,11 +53,7 @@ std::string environmentProblem(mlir::ModuleOp module,
             if (load->hasAttr(kNativeMapConstructor) || load->hasAttr(kNativeMapSnapshotBuiltin)) {
                 return;
             }
-            for (mlir::OpOperand & use : load.getResult().getUses()) {
-                if (!llvm::isa<ctjs::CallDirectOp>(use.getOwner()) || use.getOperandNumber() != 2) {
-                    reason = "module has host or mutable global reads";
-                }
-            }
+            if (!calleeSlotOnly(load)) { reason = "module has host or mutable global reads"; }
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(op);
             call && nativeMapAction(call).empty() && !call->hasAttr(kNativeMapSnapshotCopy) &&

@@ -2,6 +2,7 @@
 #include "ClosedValueFlow.h"
 #include "NativeObject/Fields.h"
 #include "NativeObject/ValueFlow.h"
+#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -99,13 +100,8 @@ bool comparisonFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * 
                    load->hasAttr(kNativeMapConstructor);
         } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
             safe = (globals && globals->proved() && globals->lookup(load)) ||
-                   (load.getName() == "Map" && load->hasAttr(kNativeMapConstructor));
-            if (!safe) {
-                safe = llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
-                    return llvm::isa<ctjs::CallDirectOp>(use.getOwner()) &&
-                           use.getOperandNumber() == 2;
-                });
-            }
+                   (load.getName() == "Map" && load->hasAttr(kNativeMapConstructor)) ||
+                   calleeSlotOnly(load);
         } else if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
             safe = ordinaryObject(get.getObject()) ||
                    (globals && globals->proved() &&

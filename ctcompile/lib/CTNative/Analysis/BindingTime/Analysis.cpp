@@ -5,12 +5,6 @@
 
 namespace ctcompile::ctnative {
 namespace {
-bool bookkeeping(ctjs::LoadGlobalOp load) {
-    return llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
-        return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-               (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) && use.getOperandNumber() == 2);
-    });
-}
 bool hasAlternateCalleeCalls(ctjs::FuncOp function, mlir::ModuleOp module) {
     const auto index = functionIndex(function);
     if (!index) { return false; }
@@ -128,7 +122,7 @@ void BindingTimeAnalysis::Impl::seedArguments() {
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
             load && !load->hasAttr(kNativeMapConstructor) &&
-            !load->hasAttr(kNativeMapSnapshotBuiltin) && !bookkeeping(load)) {
+            !load->hasAttr(kNativeMapSnapshotBuiltin) && !calleeSlotOnly(load, true)) {
             opaque = true;
         }
         if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op);
