@@ -22,6 +22,71 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Bootstrap B static rungs and the measured W/B ladder, 2026-09-27 UTC
+
+Claude compiler worker (`claude-ctcompile`), resumed after a WSL crash. Linux
+and Windows process checks showed no browser worker, so the broad authorization
+applied; no browser file changed. The user restated the test policy: focused
+checks only. The big class harness lit case (`class-initialization.mlir`, every
+fixture, 30+ min) is now run as a SUBSET: import
+`CTNative.Lowering.Objects.class_initialization`, narrow `OBSERVATIONS` to the
+affected names and call `main()` with the lit RUN-line arguments (pattern:
+`class_terminal_publication.py`).
+
+Landed:
+
+- **61fdf6f23 / acd155363** (resumed iteration-2 work): a constructor arm that
+  reads `this.constructor.K`, where K's getter on the exact class always
+  throws, ends there; the own-key snapshot join ignores that arm.
+  Subset of 22 fixtures (throwing arms, bootstrap-base/-data, 15 own-key
+  branch joins) PASS 52.9 s: 56 native executions, 44 unprepared and 16
+  preparation refusals.
+- **c8ffaca45**: a derived class's own static getters join the inherited
+  getter environment when none shadows an inherited key (B's
+  DATA_KEY/EVENT_KEY/VERSION beside W's Default/DefaultType/NAME). Shadowing
+  still refuses with `derived class requires receiver-preserving super
+  normalization`.
+- **656a9a582**: inside a static method, `this.m(args)` for an own static
+  method m is the same direct call as `C.m(args)`. `new this` still refuses.
+- Both with nine sources in `class-initialization/53.mlir`; subset of 35
+  fixtures (new ones, throwing arms, every `static-call-*`, static getter
+  chains, plain inherited controls, bootstrap-base/-data) PASS 81.7 s: 96
+  native executions, 70 unprepared and 47 preparation refusals.
+
+**Measured W/B ladder** (variants of the authentic fixtures run through
+`--ctnative-specialize-class-initialization` with the current `ctjs-opt`;
+each step removes the previous blocker from the source):
+
+1. `declared intrinsic identity escapes, is reflected or is mutated` - W's
+   `_typeCheckConfig` calls `Object.entries(e)` (Contract.cpp admits only
+   `Object.getOwnPropertyNames`). The module census would then also see the
+   `Object` load, `RegExp`, `TypeError`, `s(e)` and `H` in method bodies.
+2. `static method receiver requires an exact own getter read` - B's
+   `getOrCreateInstance` now fails only on `new this(...)`. A read-only design
+   review found `new this` needs, first, constructs inside `scf.if` arms of the
+   helper block (census 701-709, instanceof, publication, closure lifting
+   Constructors.cpp:128); after that, inlining exact static factories at each
+   `C.m(args)` before the class-use census is the small step.
+3. bootstrap-base: `class receiver escapes or observes a prototype/descriptor`
+   (`this` passed to `e.set` for the unknown global `e`). bootstrap-base-data
+   (real Data holder): `class method capture is not its constructor or an
+   inert sibling helper` - the holder's methods capture the Map `t`, which is
+   not a proved class Map because B's keys are an element object and
+   `this.constructor.DATA_KEY`, not literal strings.
+4. Real components (Alert, Button, ...) are leaves of B that SHADOW W's
+   `NAME`/`Default`/`DefaultType`. They need (a) per-leaf clones of inherited
+   static getters whose bodies read a shadowed key (B's DATA_KEY reads
+   `this.NAME`) - the throwing-arm `staticGetter` must resolve to the clone,
+   since the base DATA_KEY is in `throwingGetters`; and (b) per-leaf bodies
+   for inherited instance methods that read a shadowed getter through
+   `this.constructor` (W's `_typeCheckConfig`, `_mergeConfigObj`), because
+   today one shared read is resolved once and Rewrite keeps the first
+   resolution.
+
+In flight: branch `claude-ctcompile-bitwise` (rebased onto 5cbf64882 as
+f7c9ae1ef, 186474396) is being finished and focused-gated by a subagent in
+`.claude/worktrees/agent-a8b0625305d773ab5`, devbox dir `projects/ct-ctc-tests`.
+
 ## Saved Number/null writes, UTF-16 order and Bootstrap B arms, 2026-09-27 UTC
 
 Claude compiler worker (`claude-ctcompile`), loop iterations 1-2. The browser
