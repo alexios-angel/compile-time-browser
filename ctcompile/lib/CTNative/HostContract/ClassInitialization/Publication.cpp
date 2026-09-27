@@ -10,19 +10,11 @@ namespace {
 // A value stops normalization: retain the body on an observer/unknown census,
 // or propagate budget failure. No value means the census found no observer.
 std::optional<bool> publicationSymbolObserver(classInitialization & proof, ctjs::FuncOp function) {
-    auto module = proof.module;
-    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-        if (!uses) { return true; }
-        for (const auto & use : *uses) {
-            if (!proof.step()) { return false; }
-            if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                    use.getUser(), use.getSymbolRef()) == function) {
-                return true;
-            }
-        }
-    }
-    return std::nullopt;
+    return host_detail::forEachSymbolUse(
+        proof.module, true, [&] { return proof.step(); },
+        [&](const mlir::SymbolTable::SymbolUse &, ctjs::FuncOp target) {
+            return target == function ? std::optional(true) : std::nullopt;
+        });
 }
 
 // The same convention for the users of `op`: true at a user other than a root
@@ -488,21 +480,16 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
         llvm::scope_exit restoreReport([&] {
             if (report) { module->setAttr("ctjs.globals", report); }
         });
-        for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                                  mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-            if (!uses) { return true; }
-            for (const auto & use : *uses) {
-                if (!step()) { return false; }
-                if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                        use.getUser(), use.getSymbolRef()) != scope) {
-                    continue;
-                }
-                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
-                if (!call || !callers.contains(call) ||
-                    use.getSymbolRef() != call.getCalleeAttr()) {
-                    return true;
-                }
-            }
+        if (auto stop = host_detail::forEachSymbolUse(
+                module, true, [&] { return step(); },
+                [&](const mlir::SymbolTable::SymbolUse & use, ctjs::FuncOp target) {
+                    auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+                    return target == scope && (!call || !callers.contains(call) ||
+                                               use.getSymbolRef() != call.getCalleeAttr())
+                               ? std::optional(true)
+                               : std::nullopt;
+                })) {
+            return *stop;
         }
     }
     llvm::SmallVector<ctjs::LoadUpvalueOp> keys, mapReads;
@@ -745,17 +732,7 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
             if (!llvm::isa<ctjs::RootOp>(user)) { return true; }
         }
     }
-    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-        if (!uses) { return true; }
-        for (const auto & use : *uses) {
-            if (!step()) { return false; }
-            if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                    use.getUser(), use.getSymbolRef()) == targetFunction) {
-                return true;
-            }
-        }
-    }
+    if (auto stop = publicationSymbolObserver(*this, targetFunction)) { return *stop; }
     if (!reason.empty()) { return false; }
     // Count operations, operands and results before allocation. A forwarded
     // key keeps its original evaluation; the publication proof checks its type.

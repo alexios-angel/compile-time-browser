@@ -528,20 +528,18 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     }
     // Closure references and calls are covered above. Symbol attributes
     // must not retain a getter definition after all its reads are expanded.
-    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-        if (!uses) { return refuse("static getter symbol uses could not be enumerated"); }
-        for (const auto & use : *uses) {
-            if (!step()) { return false; }
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                use.getUser(), use.getSymbolRef());
-            if (!target) {
-                return refuse("class initialization has an unresolved symbol reference");
-            }
-            if (getters.contains(target)) {
-                return refuse("static getter has a remaining symbol reference");
-            }
-        }
+    if (auto stop = host_detail::forEachSymbolUse(
+            module, true, [&] { return step(); },
+            [&](const mlir::SymbolTable::SymbolUse &, ctjs::FuncOp target) -> std::optional<bool> {
+                if (!target) {
+                    return refuse("class initialization has an unresolved symbol reference");
+                }
+                if (getters.contains(target)) {
+                    return refuse("static getter has a remaining symbol reference");
+                }
+                return std::nullopt;
+            })) {
+        return *stop ? refuse("static getter symbol uses could not be enumerated") : false;
     }
     // Reject before normalization can replace a method's body and
     // invalidate a nested construction or definition recorded above.

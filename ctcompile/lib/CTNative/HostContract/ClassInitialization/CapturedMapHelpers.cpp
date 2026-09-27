@@ -1032,17 +1032,14 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
             invocations.push_back(call);
         }
         if (invocations.empty()) { return true; }
-        for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                                  mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-            if (!uses) { return true; }
-            for (const auto & use : *uses) {
-                if (!step()) { return false; }
-                if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                        use.getUser(), use.getSymbolRef()) == function &&
-                    !llvm::is_contained(invocations, use.getUser())) {
-                    return true;
-                }
-            }
+        if (auto stop = host_detail::forEachSymbolUse(
+                module, true, [&] { return step(); },
+                [&](const mlir::SymbolTable::SymbolUse & use, ctjs::FuncOp target) {
+                    return target == function && !llvm::is_contained(invocations, use.getUser())
+                               ? std::optional(true)
+                               : std::nullopt;
+                })) {
+            return *stop;
         }
         // Precharge expansion and cleanup before the first mutation. The
         // enclosing pass owns a disposable module if a later proof refuses.

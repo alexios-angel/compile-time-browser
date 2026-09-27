@@ -2,6 +2,7 @@
 
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -161,6 +162,27 @@ struct analyzer {
 
 bool isInertEntryDeclaration(ctjs::FuncOp wrapper, ctjs::FuncOp target,
                              llvm::function_ref<bool()> spend);
+
+// Visit each symbol use in `module`'s attributes and body with the function it
+// names (null if none), one `step` each. A value stops the census: `unenumerable`
+// when a use list cannot be built, false when a step fails, else what `visit` returned.
+inline std::optional<bool> forEachSymbolUse(
+    mlir::ModuleOp module, bool unenumerable, llvm::function_ref<bool()> step,
+    llvm::function_ref<std::optional<bool>(const mlir::SymbolTable::SymbolUse &, ctjs::FuncOp)>
+        visit) {
+    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
+                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
+        if (!uses) { return unenumerable; }
+        for (const auto & use : *uses) {
+            if (!step()) { return false; }
+            if (auto stop = visit(use, mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                                           use.getUser(), use.getSymbolRef()))) {
+                return stop;
+            }
+        }
+    }
+    return std::nullopt;
+}
 
 std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & contract);
 

@@ -92,22 +92,22 @@ bool classInitialization::transportHelperMaps() {
     // A changed signature must cover every caller and cannot remain externally
     // observable. Check both symbol-attribute locations as well as value aliases.
     llvm::DenseSet<mlir::Operation *> referencedCalls;
-    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-        if (!uses) { return refuse("class Map helper symbol uses could not be enumerated"); }
-        for (const auto & use : *uses) {
-            if (!step()) { return false; }
-            auto function = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                use.getUser(), use.getSymbolRef());
-            if (helpers.contains(function) && needed.contains(function)) {
+    if (auto stop = host_detail::forEachSymbolUse(
+            module, true, [&] { return step(); },
+            [&](const mlir::SymbolTable::SymbolUse & use,
+                ctjs::FuncOp function) -> std::optional<bool> {
+                if (!helpers.contains(function) || !needed.contains(function)) {
+                    return std::nullopt;
+                }
                 auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
                 if (!direct || direct.getTarget() != function || edges.lookup(direct) != function ||
                     use.getSymbolRef() != direct.getCalleeAttr() ||
                     !referencedCalls.insert(direct).second) {
                     return refuse("class Map helper has an unproved symbol reference");
                 }
-            }
-        }
+                return std::nullopt;
+            })) {
+        return *stop ? refuse("class Map helper symbol uses could not be enumerated") : false;
     }
     for (const auto & [operation, values] : needed) {
         (void)values;
