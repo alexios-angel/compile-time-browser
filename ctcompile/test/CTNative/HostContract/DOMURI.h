@@ -295,9 +295,11 @@ module {
         transported = replaced(transported, "%set(%element, %name, %value)",
                                "%set(%element, %name, %joined)");
         numericQuery(transported, true);
+        // A Number/null join converts without user code. Suppression still
+        // requires one exact scalar kind.
         numericQuery(replaced(transported, "%zero = ctjs.constant #ctjs.number<0>",
                               "%zero = ctjs.constant #ctjs.null"),
-                     false);
+                     operation == write);
         for (llvm::StringRef argument : {"%element", "%undefined"}) {
             numericQuery(replaced(base, "%set(%element, %name, %value)",
                                   ("%set(%element, %name, " + argument + ")").str()),

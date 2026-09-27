@@ -5013,12 +5013,23 @@ static void testSelectedAttributeStrings(mlir::MLIRContext & context) {
     }
 }
 
-static void testSavedAttributePredicates(mlir::MLIRContext & context, bool nullable) {
+enum class SavedSelection {
+    boolean,
+    nullableBoolean,
+    nullableNumber
+};
+
+static void testSavedAttributePredicates(mlir::MLIRContext & context, SavedSelection mode) {
     using namespace ctcompile::ctnative;
+    const bool nullable = mode != SavedSelection::boolean;
+    const bool number = mode == SavedSelection::nullableNumber;
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 30; ++control) {
+        for (unsigned control = 0; control < (number ? 36u : 30u); ++control) {
             if (nullable && (control == 1 || control == 4)) { continue; }
+            // Number mode replaces the data-number producer with 42; 9, 18 and 19
+            // already replaced it, so they would repeat the null mode's sources.
+            if (number && (control == 9 || control == 18 || control == 19)) { continue; }
             std::string source = R"js(function guarded(anchor) {
                 const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : false;
                 try {
@@ -5082,6 +5093,19 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context, bool nulla
                     source.replace(offset, 5, "null");
                 }
             }
+            if (number) {
+                replace("anchor.hasAttribute('data-number')", "42");
+                if (control == 30) { replace("? 42", "? (40 + 2)"); }
+                if (control == 31) {
+                    replace(": null", ": (anchor.hasAttribute('inner') ? null : -7)");
+                }
+                if (control == 32) {
+                    replace("'data-written', saved", "'data-written', saved.toString()");
+                }
+                if (control == 33) { replace("? 42", "? -anchor"); }
+                if (control == 34) { replace(": null", ": 'text'"); }
+                if (control == 35) { replace(": null", ": undefined"); }
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }
             auto function = guarded(*candidate);
@@ -5105,6 +5129,8 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context, bool nulla
             request.provider = provider;
             request.entry = function.getSymName().str();
             if (control != 24) { request.elementParameters = {0}; }
+            // With the initial Number.prototype.toString, only the null arm refuses.
+            if (control == 32) { request.initialIntrinsics = {"Number"}; }
             request.moduleSha256 = hostContractFingerprint(*candidate);
             if (control == 25) { request.moduleSha256 = "stale"; }
             const auto originalContract = request;
@@ -5113,7 +5139,7 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context, bool nulla
                                          control == 26   ? 0
                                          : control == 27 ? 500
                                                          : 100000);
-            if (control >= 9) {
+            if (control >= 9 && control != 30 && control != 31) {
                 check(static_cast<bool>(error) && printed(*candidate) == original &&
                           request.moduleSha256 == originalContract.moduleSha256 &&
                           request.initialIntrinsics == originalContract.initialIntrinsics &&
@@ -5126,7 +5152,8 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context, bool nulla
             }
             if (!check(!error, "saved Boolean predicate completes its protected write")) {
                 llvm::errs() << "saved predicate control " << control << " nullable=" << nullable
-                             << ": " << llvm::toString(std::move(error)) << '\n';
+                             << " number=" << number << ": " << llvm::toString(std::move(error))
+                             << '\n';
                 continue;
             }
             DOMEntryAnalysis proof(*candidate, request);
@@ -5142,10 +5169,12 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context, bool nulla
                 if (method->kind == HostDOMMethod::setAttribute) { writes.push_back(call); }
             });
             const bool mutation = control >= 5 && control <= 7;
-            if (!check(predicates.size() == (control == 1                   ? 1u
-                                             : control == 3 || control == 4 ? 3u
-                                                                            : 2u) &&
-                           writes.size() == (mutation ? 2u : 1u),
+            // Number mode's 42 stands where the data-number predicate was.
+            const unsigned expected = (control == 1                                    ? 1u
+                                       : control == 3 || control == 4 || control == 31 ? 3u
+                                                                                       : 2u) -
+                                      (number ? 1u : 0u);
+            if (!check(predicates.size() == expected && writes.size() == (mutation ? 2u : 1u),
                        "each predicate and ordered write occurs exactly once")) {
                 continue;
             }
@@ -5163,8 +5192,9 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context, bool nulla
 }
 
 void testDOMURITransaction(mlir::MLIRContext & context) {
-    testSavedAttributePredicates(context, false);
-    testSavedAttributePredicates(context, true);
+    testSavedAttributePredicates(context, SavedSelection::boolean);
+    testSavedAttributePredicates(context, SavedSelection::nullableBoolean);
+    testSavedAttributePredicates(context, SavedSelection::nullableNumber);
     testSelectedAttributeStrings(context);
     testSavedAttributeStrings(context);
     testProtectedNumberStrings(context);

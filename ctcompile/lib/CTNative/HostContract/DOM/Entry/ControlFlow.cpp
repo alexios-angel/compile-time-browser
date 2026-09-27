@@ -272,9 +272,9 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 }
                 const Kind kind = found->second;
                 if (kind != Kind::boolean && kind != Kind::optionalBoolean &&
-                    kind != Kind::number && kind != Kind::string && kind != Kind::null &&
-                    kind != Kind::optionalString && kind != Kind::undefined && kind != Kind::json &&
-                    kind != Kind::jsonAggregate && kind != Kind::symbol &&
+                    kind != Kind::number && kind != Kind::optionalNumber && kind != Kind::string &&
+                    kind != Kind::null && kind != Kind::optionalString && kind != Kind::undefined &&
+                    kind != Kind::json && kind != Kind::jsonAggregate && kind != Kind::symbol &&
                     kind != Kind::undefinedString && kind != Kind::element) {
                     refusal = "DOM entry branch cannot carry a borrowed or callable value";
                     return false;
@@ -292,6 +292,13 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 };
                 if (booleanOrNull(joined[index]) && booleanOrNull(kind)) {
                     joined[index] = Kind::optionalBoolean;
+                    continue;
+                }
+                const auto numberOrNull = [](Kind k) {
+                    return k == Kind::number || k == Kind::null || k == Kind::optionalNumber;
+                };
+                if (numberOrNull(joined[index]) && numberOrNull(kind)) {
+                    joined[index] = Kind::optionalNumber;
                     continue;
                 }
                 const auto json = [](Kind k) {

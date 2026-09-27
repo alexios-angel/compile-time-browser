@@ -563,6 +563,27 @@ struct DOMAttributeProof {
         }
         return true;
     }
+    // Attribute conversion of a Number/null selection cannot invoke user code.
+    // Null stays out of numberValue: that proof also authorizes Number methods.
+    bool nullableNumberValue(mlir::Value value, unsigned depth = 0) {
+        if (!remaining || depth == 64) { return false; }
+        --remaining;
+        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+        if (constant && llvm::isa<ctjs::NullAttr>(constant.getValue())) { return true; }
+        auto result = llvm::dyn_cast<mlir::OpResult>(value);
+        auto branch =
+            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+        if (!branch) { return numberValue(value, depth + 1); }
+        for (auto & region : branch->getRegions()) {
+            if (!region.hasOneBlock()) { return false; }
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+            if (!yield || yield.getNumOperands() != branch.getNumResults() ||
+                !nullableNumberValue(yield.getOperand(result.getResultNumber()), depth + 1)) {
+                return false;
+            }
+        }
+        return true;
+    }
     static bool attributeRead(ctjs::CallOp call) {
         auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
         return method && ctjs::constantKey(method.getKey()) == "hasAttribute";
@@ -587,7 +608,7 @@ struct DOMAttributeProof {
         if (!name) { return false; }
         if (!writes) { return true; }
         if (!stringValue(call.getArgs()[1]) && !booleanValue(call.getArgs()[1]) &&
-            !numberValue(call.getArgs()[1])) {
+            !nullableNumberValue(call.getArgs()[1])) {
             return false;
         }
         if (name.getValue().size() > remaining) { return false; }
