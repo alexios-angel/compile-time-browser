@@ -145,59 +145,12 @@ bool isPrimitiveCarrier(carrier value) {
     return isScalarCarrier(value) || isStringCarrier(value) || isStringUnionCarrier(value);
 }
 
-bool isNullableCarrier(mlir::Type type) {
-    if (!type) { return false; }
-    if (auto value = llvm::dyn_cast<ec::LValueType>(type)) { type = value.getValueType(); }
-    auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kNullableType;
-}
-
-bool isNumberCarrier(mlir::Type type) {
+llvm::StringRef opaqueSpelling(mlir::Type type) {
     if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
         type = value.getValueType();
     }
     auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kNumberType;
-}
-
-bool isBooleanCarrier(mlir::Type type) {
-    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
-        type = value.getValueType();
-    }
-    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kBooleanType;
-}
-
-bool isBooleanStringCarrier(mlir::Type type) {
-    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
-        type = value.getValueType();
-    }
-    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kBooleanStringType;
-}
-
-bool isNumberStringCarrier(mlir::Type type) {
-    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
-        type = value.getValueType();
-    }
-    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kNumberStringType;
-}
-
-bool isNullableBooleanStringCarrier(mlir::Type type) {
-    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
-        type = value.getValueType();
-    }
-    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kNullableBooleanStringType;
-}
-
-bool isNullableNumberStringCarrier(mlir::Type type) {
-    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
-        type = value.getValueType();
-    }
-    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kNullableNumberStringType;
+    return opaque ? opaque.getValue() : llvm::StringRef{};
 }
 
 // The one C++ type a dense array lowers to. Spelled once: the emitted

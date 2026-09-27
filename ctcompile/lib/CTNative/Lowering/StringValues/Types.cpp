@@ -2,13 +2,6 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
-bool isNullableStringCarrier(mlir::Type type) {
-    if (!type) { return false; }
-    if (auto lvalue = llvm::dyn_cast<ec::LValueType>(type)) { type = lvalue.getValueType(); }
-    auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kNullableStringType;
-}
-
 bool isStringCarrier(carrier value) {
     return value == carrier::string || value == carrier::nullableString;
 }

@@ -92,26 +92,48 @@ bool isScalarCarrier(carrier value);
 bool isStringUnionCarrier(carrier value);
 bool isPrimitiveCarrier(carrier value);
 mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternatives alternatives);
-bool isNullableCarrier(mlir::Type type);
-bool isNumberCarrier(mlir::Type type);
-bool isBooleanCarrier(mlir::Type type);
-bool isNullableStringCarrier(mlir::Type type);
-bool isBooleanStringCarrier(mlir::Type type);
-bool isNullableBooleanStringCarrier(mlir::Type type);
-bool isNumberStringCarrier(mlir::Type type);
-bool isNullableNumberStringCarrier(mlir::Type type);
+// An emitc opaque type's spelling, through an lvalue; empty for anything else.
+llvm::StringRef opaqueSpelling(mlir::Type type);
+inline bool isNullableCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kNullableType;
+}
+inline bool isNumberCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kNumberType;
+}
+inline bool isBooleanCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kBooleanType;
+}
+inline bool isNullableStringCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kNullableStringType;
+}
+inline bool isBooleanStringCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kBooleanStringType;
+}
+inline bool isNullableBooleanStringCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kNullableBooleanStringType;
+}
+inline bool isNumberStringCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kNumberStringType;
+}
+inline bool isNullableNumberStringCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kNullableNumberStringType;
+}
 bool isStringCarrier(carrier value);
 bool isVectorCarrier(carrier value);
 bool stringConcatenation(mlir::Type left, mlir::Type right);
 bool stringEquality(mlir::Type left, mlir::Type right);
 bool isObjectCarrier(carrier value);
-bool isObjectValueCarrier(mlir::Type type);
-bool isIdentityCarrier(mlir::Type type);
+inline constexpr llvm::StringLiteral kObjectIdentityType =
+    "std::shared_ptr<ctnative::identity_object>";
+inline bool isObjectValueCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kObjectValueType;
+}
+inline bool isIdentityCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kObjectIdentityType;
+}
 bool isObjectValueType(mlir::Type type);
 bool identityOrAbsent(mlir::Type type);
 bool onlyAbsent(mlir::Type type);
-inline constexpr llvm::StringLiteral kObjectIdentityType =
-    "std::shared_ptr<ctnative::identity_object>";
 carrier carrierOf(mlir::Type type);
 mlir::Type vectorCarrierType(mlir::MLIRContext * context, bool strings = false);
 llvm::StringRef mixedMapSpelling(mlir::Type type);

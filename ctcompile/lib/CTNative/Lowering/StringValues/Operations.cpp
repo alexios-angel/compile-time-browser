@@ -56,10 +56,7 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
             {kNullableBooleanStringType, "ctnative::nullable_boolean_string_typeof"},
             {kNumberStringType, "ctnative::number_string_typeof"},
             {kNullableNumberStringType, "ctnative::nullable_number_string_typeof"}};
-        mlir::Type type = unary.getOperand().getType();
-        if (auto lvalue = llvm::dyn_cast<ec::LValueType>(type)) { type = lvalue.getValueType(); }
-        auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
-        if (auto helper = opaque ? helpers.find(opaque.getValue()) : helpers.end();
+        if (auto helper = helpers.find(opaqueSpelling(unary.getOperand().getType()));
             helper != helpers.end()) {
             auto result =
                 callWithConstValueOperands(
@@ -74,12 +71,10 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
     llvm::SmallVector<mlir::Value> operands;
     mlir::Type result;
     const auto hasStringAlternative = [](mlir::Type type) {
-        if (auto lvalue = llvm::dyn_cast<ec::LValueType>(type)) { type = lvalue.getValueType(); }
-        const auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
         static const llvm::StringSet<> carriers{kStringType,        kNullableStringType,
                                                 kBooleanStringType, kNullableBooleanStringType,
                                                 kNumberStringType,  kNullableNumberStringType};
-        return opaque && carriers.contains(opaque.getValue());
+        return carriers.contains(opaqueSpelling(type));
     };
     if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);
         compare &&
