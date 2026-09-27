@@ -77,6 +77,23 @@ struct DOMSource {
     bool initializeEntry(ctjs::FuncOp wrapper, ctjs::FuncOp target);
 
     bool normalizeCompletion(ctjs::FuncOp function);
+    // Erase the unused inert arithmetic under `root`, users before operands.
+    template <typename Root> bool eraseUnusedArithmetic(Root & root) {
+        llvm::SmallVector<mlir::Operation *> arithmetic;
+        const auto scanned = root.walk([&](mlir::Operation * operation) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (llvm::isa<mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp>(operation)) {
+                arithmetic.push_back(operation);
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (scanned.wasInterrupted()) { return false; }
+        for (mlir::Operation * operation : llvm::reverse(arithmetic)) {
+            if (!step()) { return false; }
+            if (operation->use_empty()) { operation->erase(); }
+        }
+        return true;
+    }
     bool repairInactiveCompletion(ctjs::FuncOp function);
 
     bool checkBody(ctjs::FuncOp function, bool entry, bool directReceiver = false,

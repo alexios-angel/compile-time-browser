@@ -3127,31 +3127,19 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     }
     for (mlir::Operation * operation : tuples) {
         auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(operation);
-        llvm::SmallVector<unsigned> dropped;
-        llvm::SmallVector<mlir::Type> kept;
+        llvm::SmallVector<unsigned> dropped, kept;
         for (auto [index, result] : llvm::enumerate(operation->getResults())) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-            if (result.use_empty() && (!loop || loop.getAfterArguments()[index].use_empty())) {
-                dropped.push_back(static_cast<unsigned>(index));
-            } else {
-                kept.push_back(result.getType());
-            }
+            const bool unused =
+                result.use_empty() && (!loop || loop.getAfterArguments()[index].use_empty());
+            (unused ? dropped : kept).push_back(static_cast<unsigned>(index));
         }
         if (dropped.empty()) { continue; }
         if (!work.step(uint64_t(operation->getNumOperands()) + operation->getNumResults() +
                        operation->getNumRegions() + dropped.size())) {
             return error("DOM custom iterator budget exhausted");
         }
-        mlir::OperationState built(operation->getLoc(), operation->getName());
-        built.addOperands(operation->getOperands());
-        built.addTypes(kept);
-        built.addAttributes(operation->getAttrs());
-        for (auto & region : operation->getRegions()) {
-            auto * target = built.addRegion();
-            target->takeBody(region);
-        }
-        mlir::OpBuilder at(operation);
-        auto * copied = at.create(built);
+        auto * copied = keepResults(operation, kept);
         for (unsigned index : llvm::reverse(dropped)) {
             if (loop) {
                 copied->getRegion(0).front().getTerminator()->eraseOperand(index + 1);
@@ -3162,32 +3150,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
             }
         }
-        unsigned target = 0, removed = 0;
-        for (auto [index, result] : llvm::enumerate(operation->getResults())) {
-            if (removed < dropped.size() && dropped[removed] == index) {
-                ++removed;
-            } else {
-                result.replaceAllUsesWith(copied->getResult(target++));
-            }
-        }
-        operation->erase();
     }
-    llvm::SmallVector<mlir::Operation *> arithmetic;
     for (auto function : completed) {
-        const auto arithmeticScan = function.walk([&](mlir::Operation * operation) {
-            if (!spend()) { return mlir::WalkResult::interrupt(); }
-            if (llvm::isa<mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp>(operation)) {
-                arithmetic.push_back(operation);
-            }
-            return mlir::WalkResult::advance();
-        });
-        if (arithmeticScan.wasInterrupted()) {
+        if (!work.eraseUnusedArithmetic(function)) {
             return error("DOM custom iterator budget exhausted");
         }
-    }
-    for (mlir::Operation * operation : llvm::reverse(arithmetic)) {
-        if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-        if (operation->use_empty()) { operation->erase(); }
     }
     emittedNext = {};
     emittedDone = {};

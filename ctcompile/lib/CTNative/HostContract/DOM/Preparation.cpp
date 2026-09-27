@@ -108,23 +108,11 @@ static llvm::Error forwardRecoveredCaptures(ctjs::FuncOp function, unsigned rema
                 return mlir::WalkResult::advance();
             }
             llvm::SmallVector<unsigned> kept;
-            llvm::SmallVector<mlir::Type> types;
             for (auto [i, result] : llvm::enumerate(operation->getResults())) {
-                if (!result.use_empty()) {
-                    kept.push_back(static_cast<unsigned>(i));
-                    types.push_back(result.getType());
-                }
+                if (!result.use_empty()) { kept.push_back(static_cast<unsigned>(i)); }
             }
             if (kept.size() != operation->getNumResults()) {
-                mlir::OperationState state(operation->getLoc(), operation->getName());
-                state.addOperands(operation->getOperands());
-                state.addTypes(types);
-                state.addAttributes(operation->getAttrs());
-                for (auto & region : operation->getRegions()) {
-                    state.addRegion()->takeBody(region);
-                }
-                mlir::OpBuilder at(operation);
-                auto * replacement = at.create(state);
+                auto * replacement = keepResults(operation, kept);
                 for (auto & region : replacement->getRegions()) {
                     if (invocation && &region == &replacement->getRegion(0)) { continue; }
                     auto * yield = region.front().getTerminator();
@@ -132,10 +120,6 @@ static llvm::Error forwardRecoveredCaptures(ctjs::FuncOp function, unsigned rema
                     for (unsigned i : kept) { values.push_back(yield->getOperand(i)); }
                     yield->setOperands(values);
                 }
-                for (auto [i, result] : llvm::enumerate(replacement->getResults())) {
-                    operation->getResult(kept[i]).replaceAllUsesWith(result);
-                }
-                operation->erase();
                 invocation = llvm::dyn_cast<ctjs::InvokeOp>(replacement);
                 changed = true;
             }

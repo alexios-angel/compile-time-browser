@@ -1185,19 +1185,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
     }
     // Only inert completion arithmetic is removed. Source effects remain
     // for the unchanged complete DOM/frame proof below.
-    llvm::SmallVector<mlir::Operation *> arithmetic;
-    const auto cleanup = normalized.walk([&](mlir::Operation * operation) {
-        if (!step()) { return mlir::WalkResult::interrupt(); }
-        if (llvm::isa<mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp>(operation)) {
-            arithmetic.push_back(operation);
-        }
-        return mlir::WalkResult::advance();
-    });
-    if (cleanup.wasInterrupted()) { return false; }
-    for (mlir::Operation * operation : llvm::reverse(arithmetic)) {
-        if (!step()) { return false; }
-        if (operation->use_empty()) { operation->erase(); }
-    }
+    if (!eraseUnusedArithmetic(normalized)) { return false; }
     for (mlir::BlockArgument argument : body.getArguments()) {
         if (!step()) { return false; }
         auto found = stringInputs.find(argument);
