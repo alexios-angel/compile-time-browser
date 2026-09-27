@@ -8,7 +8,7 @@ import re
 import subprocess
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers, node_globals, run
+from CTNative.harness import find_compilers, node_globals, run, threshold
 from CTNative.HostContract import contract as host
 from CTNative.Ownership.native_owned_global_maps.driver_umd import (
     observe_umd,
@@ -326,24 +326,18 @@ def main():
         if "ctnative.host_owner_proved = true" not in native.read_text():
             raise RuntimeError("normalized Bootstrap lacks complete owner proof")
         if not optimize:
-            low, high = 0, 1000000
-            while high - low > 1:
-                middle = (low + high) // 2
-                checked = subprocess.run(
-                    [
-                        args.opt,
-                        str(subject),
-                        f"--ctnative-lower-to-emitc=host-manifest={config} host-max-steps={middle} optimize=false",
-                        "-o",
-                        "/dev/null",
-                    ],
-                    text=True,
-                    capture_output=True,
-                )
-                if checked.returncode == 0:
-                    high = middle
-                else:
-                    low = middle
+
+            def lowers(limit):
+                command = [
+                    args.opt,
+                    str(subject),
+                    f"--ctnative-lower-to-emitc=host-manifest={config} host-max-steps={limit} optimize=false",
+                    "-o",
+                    "/dev/null",
+                ]
+                return subprocess.run(command, text=True, capture_output=True).returncode == 0
+
+            high = threshold(lowers, high=1000000)
             refuse(subject, contract, "final-cutoff", budget=high - 1)
             print(
                 f"Bootstrap DOM native proof: minimum work budget {high}; preceding cutoff refuses"

@@ -9,7 +9,7 @@ import subprocess
 
 from CTNative.Exports.boundary import FUNCTION, NATIVE, REFUSAL
 from CTNative.HostContract import contract as host
-from CTNative.harness import CLEANUP, FLAGS, find_compilers, run
+from CTNative.harness import CLEANUP, FLAGS, find_compilers, run, threshold
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_mutable_helper, check_native
 
 # The implementation hook and function metadata retain separate Node/VM
@@ -1424,9 +1424,7 @@ def check_proof_inputs(args, source, manifest, prepared, name):
 def check_proof_budget(args, source, manifest, prepared, name):
     # Find and pin the exact first complete census. Each unsuccessful limit
     # must withhold the entire rewrite; successful limits produce identical IR.
-    low, high = 0, 100000
-    while high - low > 1:
-        limit = (low + high) // 2
+    def complete(limit):
         output = args.work / f"cutoff-{limit}.mlir"
         result = subprocess.run(
             [
@@ -1443,16 +1441,17 @@ def check_proof_budget(args, source, manifest, prepared, name):
         if result.returncode == 0:
             if output.read_text() != prepared.read_text():
                 raise RuntimeError("work limit changed successful class initialization IR")
-            high = limit
-        else:
-            if (
-                result.returncode != 1
-                or "class initialization work budget exhausted" not in result.stderr
-                or (output.exists() and output.read_text())
-            ):
-                raise RuntimeError(f"work limit {limit} crashed or published partial proof")
-            low = limit
-    prepare(args, "last-cutoff", source, manifest, success=False, options=f"max-steps={low}")
+            return True
+        if (
+            result.returncode != 1
+            or "class initialization work budget exhausted" not in result.stderr
+            or (output.exists() and output.read_text())
+        ):
+            raise RuntimeError(f"work limit {limit} crashed or published partial proof")
+        return False
+
+    high = threshold(complete)
+    prepare(args, "last-cutoff", source, manifest, success=False, options=f"max-steps={high - 1}")
     output = prepare(
         args, "first-complete", source, manifest, success=True, options=f"max-steps={high}"
     )

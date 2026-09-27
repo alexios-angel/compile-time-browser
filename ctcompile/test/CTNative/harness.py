@@ -78,6 +78,18 @@ def run(command, *, success=True, environment=None, input_text=None):
     return result
 
 
+def threshold(passes, low=0, high=100000):
+    """The least work limit in (low, high] that `passes`, by bisection: `passes`
+    is monotone, false at `low` and true at `high`."""
+    while high - low > 1:
+        middle = (low + high) // 2
+        if passes(middle):
+            high = middle
+        else:
+            low = middle
+    return high
+
+
 def prepare_js(args, js, raw, ir, *options, complete=False):
     """Import `js` into `raw`, then resolve globals and lift structure into `ir`,
     both tools given `options`; `complete` refuses an import that skipped a
