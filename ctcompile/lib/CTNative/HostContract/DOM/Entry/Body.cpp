@@ -45,7 +45,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             if (auto found = activeRefinements.find(operand);
                 found != activeRefinements.end() && !llvm::isa<ctjs::RootOp>(operation)) {
                 if (!spend()) { return false; }
-                provedRefinements[found->second].uses.push_back(
+                proved.refinements[found->second].uses.push_back(
                     {&operation, use.getOperandNumber()});
             }
         }
@@ -77,7 +77,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
         }
         if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
             values[object.getResult()] = Kind::jsonAggregate;
-            provedJSONObjects.push_back(object);
+            proved.jsonObjects.push_back(object);
             continue;
         }
         if (auto copy = llvm::dyn_cast<ctjs::CopyPropsOp>(operation)) {
@@ -89,7 +89,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                           "object-tagged JSON source";
                 return false;
             }
-            provedJSONCopies.push_back(copy);
+            proved.jsonCopies.push_back(copy);
             continue;
         }
         if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
@@ -147,9 +147,9 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                         return false;
                     }
                 }
-                provedSnapshotAssignments.push_back(write);
+                proved.snapshotAssignments.push_back(write);
             }
-            provedJSONAssignments.push_back(write);
+            proved.jsonAssignments.push_back(write);
             continue;
         }
         if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
@@ -206,7 +206,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             }
             returned = true;
             if (!callbackBody) {
-                provedUndefinedReturn = hasKind(result.getValue(), Kind::undefined);
+                proved.undefinedReturn = hasKind(result.getValue(), Kind::undefined);
             }
             continue;
         }
@@ -214,8 +214,8 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             auto callback = indexedCallbacks.lookup(static_cast<unsigned>(closure.getFunction()));
             const bool replacement = replacementCallbacks.contains(callback);
             if (closure.getFunctionAttr().getInt() < 0 ||
-                (replacement ? !suppliedRegExp : !suppliedArray) || !suppliedString || !callback ||
-                !closure.getUpvalues().empty() ||
+                (replacement ? !suppliedRegExp() : !supplied("Array")) || !supplied("String") ||
+                !callback || !closure.getUpvalues().empty() ||
                 closure.getEnclosingClosure() != block.getArgument(ctjs::arg_callee) ||
                 (closure.getEnclosingThis() != block.getArgument(ctjs::arg_receiver) &&
                  !hasKind(closure.getEnclosingThis(), Kind::undefined))) {
@@ -241,7 +241,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                 return false;
             }
             values[closure.getResult()] = replacement ? Kind::replacementCallback : Kind::callback;
-            provedClosures.emplace_back(closure, callback);
+            proved.closures.emplace_back(closure, callback);
             usedCallbacks.insert(callback);
             continue;
         }
@@ -351,7 +351,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                     if (!spend()) { return false; }
                     values[compare.getResult()] = Kind::boolean;
                     constantBooleans[compare.getResult()] = false;
-                    provedBooleans.emplace_back(compare.getResult(), false);
+                    proved.booleans.emplace_back(compare.getResult(), false);
                     continue;
                 }
             }
@@ -368,7 +368,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                                        hasKind(compare.getRhs(), Kind::undefined);
                     values[compare.getResult()] = Kind::boolean;
                     constantBooleans[compare.getResult()] = equal;
-                    provedBooleans.emplace_back(compare.getResult(), equal);
+                    proved.booleans.emplace_back(compare.getResult(), equal);
                     continue;
                 }
             }
@@ -415,7 +415,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                 found != constantBooleans.end()) {
                 const bool value = found->second;
                 constantBooleans[truth.getResult()] = value;
-                provedBooleans.emplace_back(truth.getResult(), value);
+                proved.booleans.emplace_back(truth.getResult(), value);
             }
             if (auto found = predicates.find(truth.getValue()); found != predicates.end()) {
                 const Predicate predicate = found->second;

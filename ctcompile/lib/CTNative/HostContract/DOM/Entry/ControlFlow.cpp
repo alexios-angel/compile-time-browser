@@ -45,7 +45,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             refusal = "DOM saved throw requires a preceding owning primitive";
             return false;
         }
-        provedThrows.push_back(thrown);
+        proved.throws.push_back(thrown);
         nonReturning.insert(&body);
         return true;
     }
@@ -147,14 +147,14 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             }
             values[argument] = values[result] = values[value];
             if (values[value] == Kind::string) {
-                provedStrings.push_back(argument);
-                provedStrings.push_back(result);
+                proved.strings.push_back(argument);
+                proved.strings.push_back(result);
             }
         }
         if (!visit(after, depth + 1, frame)) { return false; }
         // Supported attribute/class writes cannot reclaim nodes or change a
         // querySelectorAll snapshot. Dataset aliases still need a backedge proof.
-        if (mutationEpoch != loopEpoch && !provedDatasetElements.empty()) {
+        if (mutationEpoch != loopEpoch && !proved.datasetElements.empty()) {
             refusal = "DOM loop mutation needs a backedge dataset-alias proof";
             return false;
         }
@@ -232,7 +232,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 previous = values[refined];
                 const bool present = first == predicate->second.stringOnTrue;
                 if (present && previous == Kind::nullableElement &&
-                    provedDocumentRoots.contains(refined.getDefiningOp<ctjs::GetPropertyOp>())) {
+                    proved.documentRoots.contains(refined.getDefiningOp<ctjs::GetPropertyOp>())) {
                     // Every admitted effect preserves the document root:
                     // structural mutation and reentry fail the complete proof.
                     documentRootPresent = true;
@@ -247,8 +247,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                                                         : (present ? Kind::string : Kind::null);
                 if (present &&
                     (previous == Kind::optionalString || previous == Kind::undefinedString)) {
-                    activeRefinements[refined] = provedRefinements.size();
-                    provedRefinements.push_back({&region.front(), refined, {}});
+                    activeRefinements[refined] = proved.refinements.size();
+                    proved.refinements.push_back({&region.front(), refined, {}});
                 }
             }
             auto & armFrame = first ? thenFrame : elseFrame;
@@ -369,14 +369,14 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                     return false;
                 }
             }
-            provedThrowYields.push_back(std::move(padding));
+            proved.throwYields.push_back(std::move(padding));
         }
         for (auto [value, kind] : llvm::zip(branch.getResults(), joined)) {
             values[value] = kind;
             if (kind == Kind::optionalString || kind == Kind::null) {
-                provedOptionalStrings.push_back(value);
+                proved.optionalStrings.push_back(value);
             } else if (kind == Kind::string) {
-                provedStrings.push_back(value);
+                proved.strings.push_back(value);
             }
         }
         if (callbackBody && branch.getNumResults()) {
@@ -466,12 +466,12 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 return false;
             }
             if (!visit(called, depth + 1, frame)) { return false; }
-            provedInvocations.push_back(invocation);
+            proved.invocations.push_back(invocation);
             return true;
         }
         // A nested invoke may only continue the enclosing success.
         auto parent = invocation->getParentOfType<ctjs::InvokeOp>();
-        if ((parent && (!llvm::is_contained(provedInvocations, parent) ||
+        if ((parent && (!llvm::is_contained(proved.invocations, parent) ||
                         invocation->getParentRegion() != &parent.getNormalBody())) ||
             invocation.getNumResults() != 1 || !invocation.getBody().hasOneBlock() ||
             !invocation.getNormalBody().hasOneBlock() ||
@@ -501,7 +501,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         }
         const bool parses = hasKind(call.getCallee(), Kind::jsonParse);
         // Reserve before nested invokes look this parent up.
-        provedInvocations.push_back(invocation);
+        proved.invocations.push_back(invocation);
         if (!visit(called, depth + 1, frame)) { return false; }
         values[normal.getArgument(0)] = parses ? Kind::json : Kind::string;
         Kind result = Kind::string;
@@ -519,7 +519,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             if (tree) { result = Kind::json; }
         }
         values[invocation.getResult(0)] = result;
-        if (result == Kind::string) { provedStrings.push_back(invocation.getResult(0)); }
+        if (result == Kind::string) { proved.strings.push_back(invocation.getResult(0)); }
         return true;
     }
     if (llvm::isa<ctjs::InvokeExitOp, ctjs::InvokeYieldOp>(operation)) {
