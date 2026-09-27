@@ -639,8 +639,7 @@ void checkCapturedParameters(mlir::MLIRContext & context, const std::string & sh
         auto module = parsed(context, prepared ? prepare(program) : program,
                              "two-parameter source and prepared host fixture parses");
         if (!module) { return; }
-        auto requested = contractFor(*module);
-        requested.initialIntrinsics = {"Map"};
+        auto requested = mapContractFor(*module);
         HostContractAnalysis result(*module, requested);
         check(result.proved() == expected && !result.exhausted(), message);
         check(hostContractFingerprint(*module) == requested.moduleSha256,
@@ -739,8 +738,7 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
                            unsigned visibleCalls = 1) {
         auto module = parsed(context, program, "captured host getter fixture parses");
         if (!module) { return; }
-        auto contract = contractFor(*module);
-        contract.initialIntrinsics = {"Map"};
+        auto contract = mapContractFor(*module);
         HostContractAnalysis result(*module, contract);
         check(result.proved() == expected && !result.exhausted(),
               "captured getter host proof follows the complete current source environment");
@@ -816,8 +814,7 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
     auto sharedModule = mlir::parseSourceString<mlir::ModuleOp>(shared, &context);
     check(static_cast<bool>(sharedModule), "shared captured Map host fixture parses");
     if (sharedModule) {
-        auto requested = contractFor(*sharedModule);
-        requested.initialIntrinsics = {"Map"};
+        auto requested = mapContractFor(*sharedModule);
         HostContractAnalysis complete(*sharedModule, requested);
         check(complete.proved(), "shared host census completes before work-budget controls");
         if (complete.proved()) {
@@ -922,8 +919,7 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
 
     auto module = parsed(context, mutated, "live Map effect mutation fixture parses");
     if (!module) { return; }
-    auto contract = contractFor(*module);
-    contract.initialIntrinsics = {"Map"};
+    auto contract = mapContractFor(*module);
     HostContractAnalysis original(*module, contract);
     check(original.proved() && original.callables().size() == 1,
           "live effect mutation starts with a complete captured source proof");

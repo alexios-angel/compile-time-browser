@@ -427,8 +427,7 @@ void checkCapturedSnapshots(mlir::MLIRContext & context, const std::string & sou
 
 void checkScalarCallbacks(mlir::MLIRContext & context, const std::string & source, bool prepared) {
     const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
+        auto contract = mapContractFor(module);
         contract.observations = {"trace", "traceErrorCount", "traceErrorMessage", "savedCount",
                                  "savedMessage"};
         return contract;

@@ -30,8 +30,7 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
                       "    %combined = ctjs.binary add %sum, %thirdResult\n"
                       "    ctjs.store_global \"trace\", %combined");
     const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
+        auto contract = mapContractFor(module);
         module.walk([&](ctjs::StoreGlobalOp store) {
             if (store.getName() == "savedSum") { contract.observations.push_back("savedSum"); }
         });

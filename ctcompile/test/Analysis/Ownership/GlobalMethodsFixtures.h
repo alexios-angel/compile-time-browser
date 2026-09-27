@@ -26,6 +26,9 @@ using ctcompile::ctnative::HostContract;
 using ctcompile::ctnative::HostContractAnalysis;
 using ctcompile::ctnative::hostContractFingerprint;
 using ctcompile::ctnative::OwnedGlobalRoots;
+using host_contract::choiceMapSource;
+using host_contract::contractFor;
+using host_contract::mapContractFor;
 using host_contract::parsed;
 using host_contract::replaced;
 
@@ -172,15 +175,6 @@ module {
   }
 }
 )MLIR";
-
-inline HostContract contractFor(mlir::ModuleOp module) {
-    HostContract contract;
-    contract.moduleSha256 = hostContractFingerprint(module);
-    contract.entry = "script$0";
-    contract.roots = {{"host", {"slot"}}};
-    contract.observations = {"trace"};
-    return contract;
-}
 
 inline bool empty(mlir::ModuleOp module, const OwnedGlobalRoots & query) {
     bool result = query.roots().empty();

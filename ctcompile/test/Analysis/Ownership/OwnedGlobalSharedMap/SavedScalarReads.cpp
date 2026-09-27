@@ -6,8 +6,7 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
     using Dependencies = std::vector<std::vector<unsigned>>;
     const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
+        auto contract = mapContractFor(module);
         module.walk([&](ctjs::StoreGlobalOp store) {
             const auto name = store.getName().str();
             if (name != "host" && name != "trace" &&

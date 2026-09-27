@@ -30,22 +30,11 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
                       "    %combined = ctjs.binary add %sum, %thirdResult\n"
                       "    ctjs.store_global \"trace\", %combined");
     const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
+        auto contract = mapContractFor(module);
         module.walk([&](ctjs::StoreGlobalOp store) {
             if (store.getName() == "savedSum") { contract.observations.push_back("savedSum"); }
         });
         return contract;
-    };
-    const auto withheld = [](mlir::ModuleOp module, const HostContractAnalysis & query) {
-        bool none = query.callables().empty();
-        module.walk([&](mlir::Operation * operation) {
-            none &= !query.callable(operation);
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-                none &= !query.property(read);
-            }
-        });
-        return none;
     };
     for (const bool prepared : {false, true}) {
         auto program = source;
