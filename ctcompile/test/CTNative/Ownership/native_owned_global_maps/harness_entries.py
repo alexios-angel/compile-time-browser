@@ -1,4 +1,3 @@
-from .harness_map_results import run_sanitized_lifetime
 from .harness_objects import (
     instrument_leaf_objects,
 )
@@ -124,16 +123,10 @@ int main() {
 
 
 def leaf_absence_lifetime(args, cpp, name, mode, compiler):
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
     build = leaf_clear_lifetime_cpp if name in LEAF_CLEAR_LIFETIMES else leaf_absence_lifetime_cpp
-    source.write_text(build(cpp, name))
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    result = run_sanitized_lifetime(source, binary, compiler)
-    if result.returncode or result.stdout != "trace=1\n" * 2:
-        raise RuntimeError(
-            f"{name}/{mode}: absence lifetime failure (exit {result.returncode})\n"
-            f"{result.stdout}{result.stderr}"
-        )
+    owned.check_lifetime(
+        args, name, mode, compiler, build(cpp, name), "trace=1\n", "absence lifetime"
+    )
 
 
 def check_leaf_absence_calls(cpp, name, mode):
@@ -768,12 +761,12 @@ int main() {
 
 
 def numeric_entry_lifetime(args, cpp, name, mode, compiler):
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(numeric_entry_lifetime_cpp(cpp, name))
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    result = run_sanitized_lifetime(source, binary, compiler)
-    if result.returncode or result.stdout != scalar_global_output(name, 14) * 2:
-        raise RuntimeError(
-            f"{name}/{mode}: saved numeric lifetime failure (exit {result.returncode})\n"
-            f"{result.stdout}{result.stderr}"
-        )
+    owned.check_lifetime(
+        args,
+        name,
+        mode,
+        compiler,
+        numeric_entry_lifetime_cpp(cpp, name),
+        scalar_global_output(name, 14),
+        "saved numeric lifetime",
+    )

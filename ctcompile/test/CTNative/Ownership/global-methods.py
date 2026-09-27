@@ -2,11 +2,9 @@
 """Check live exported getter ownership through standalone native execution."""
 
 import argparse
-import os
 from pathlib import Path
 import re
 import struct
-import subprocess
 from urllib.parse import unquote_to_bytes
 
 from CTNative.Ownership import globals as owned
@@ -157,36 +155,7 @@ int main() {
     return 0;
 }
 """
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(changed)
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
-    if result.returncode or result.stdout != expected * 2:
-        raise RuntimeError(f"{name}/{mode}: lifetime failure\n{result.stdout}{result.stderr}")
+    owned.check_lifetime(args, name, mode, compiler, changed, expected)
 
 
 def standalone(args, output, name, expected, compilers, nm, *, result_type="ctnative::js_num"):

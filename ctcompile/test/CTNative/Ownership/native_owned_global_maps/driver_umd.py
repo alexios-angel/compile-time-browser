@@ -3,7 +3,6 @@
 import hashlib
 import importlib.util
 import json
-import os
 from pathlib import Path
 import re
 
@@ -22,6 +21,7 @@ from .driver_common import (
     owned,
 )
 from .driver_recorder import recorder_future_source, recorder_lifetime_cpp
+from .harness_map_results import run_sanitized_lifetime
 
 
 def umd_source():
@@ -215,31 +215,10 @@ def execute_umd(args, output, name, expected, values, compilers, nm):
             + observer.replace("g_host", "g_globalThis").replace("->slot", "->bootstrap")
         )
         binary = lifetime.with_suffix(".sanitized").resolve()
-        host.run(
-            [
-                compilers[1],
-                *owned.FLAGS,
-                "-O1",
-                "-g",
-                "-fno-omit-frame-pointer",
-                "-fsanitize=address,undefined",
-                "-fsanitize-address-use-after-scope",
-                str(lifetime),
-                "-o",
-                str(binary),
-            ]
-        )
+        result = run_sanitized_lifetime(lifetime, binary, compilers[1])
         if owned.VM.search(host.run([nm, "-C", str(binary)]).stdout):
             raise RuntimeError(f"{name}/{mode}: linked VM symbols in UMD lifetime")
-        result = host.run(
-            [str(binary)],
-            environment=dict(
-                os.environ,
-                ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-            ),
-        )
-        if result.stdout != expected * 2 or result.stderr:
+        if result.returncode or result.stdout != expected * 2 or result.stderr:
             raise RuntimeError(f"{name}/{mode}: UMD future/reentry/final-owner lifetime failed")
 
 

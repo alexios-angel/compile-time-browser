@@ -515,14 +515,9 @@ int main() {
     changed = changed.replace("SAVED_FIRST", "2" if growing else str(value))
     changed = changed.replace("SAVED_NEXT", "index + 3" if growing else str(value))
     changed = changed.replace("FRESH_NEXT", "index + 2" if growing else str(value))
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(changed)
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    result = run_sanitized_lifetime(source, binary, compiler)
-    if result.returncode or result.stdout != f"trace={value}\n" * 2:
-        raise RuntimeError(
-            f"{name}/{mode}: captured Map lifetime failure\n{result.stdout}{result.stderr}"
-        )
+    owned.check_lifetime(
+        args, name, mode, compiler, changed, f"trace={value}\n", "captured Map lifetime"
+    )
 
 
 def shared_lifetime(args, cpp, name, mode, compiler):
@@ -609,11 +604,4 @@ int main() {
         changed = changed.replace("SAVED_FIRST", "setter().value()")
         changed = changed.replace("SAVED_NEXT", "setter().value()")
         changed = changed.replace("FRESH_NEXT", "g_host->slot->m_set().value()")
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(changed)
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    result = run_sanitized_lifetime(source, binary, compiler)
-    if result.returncode or result.stdout != "trace=1\n" * 2:
-        raise RuntimeError(
-            f"{name}/{mode}: shared Map lifetime failure\n" f"{result.stdout}{result.stderr}"
-        )
+    owned.check_lifetime(args, name, mode, compiler, changed, "trace=1\n", "shared Map lifetime")

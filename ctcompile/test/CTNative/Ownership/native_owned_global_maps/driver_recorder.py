@@ -1,5 +1,6 @@
 """driver recorder: continued from sources_recorders."""
 
+from .harness_map_results import run_sanitized_lifetime
 from .sources_recorders import *
 
 
@@ -339,31 +340,8 @@ def template_lifetime(
             raise RuntimeError(f"{name}/{mode}: linked VM symbols in template lifetime")
         if host.run([str(binary)]).stdout != expected * 2:
             raise RuntimeError(f"{name}/{mode}: future template lifetime mismatch")
-    binary = source.with_suffix(".sanitized").resolve()
-    host.run(
-        [
-            compilers[1],
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
+    result = run_sanitized_lifetime(
+        source, source.with_suffix(".sanitized").resolve(), compilers[1]
     )
     if result.returncode or result.stdout != expected * 2 or result.stderr:
         raise RuntimeError(
