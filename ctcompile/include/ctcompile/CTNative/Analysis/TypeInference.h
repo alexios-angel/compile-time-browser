@@ -311,6 +311,9 @@ private:
     /// value's lattice subscribes it and a store that widens later re-visits
     /// the read.
     mlir::Type elementTypeOf(mlir::Operation * op, mlir::Value array);
+    /// `seed` met with the type of every value after `op`, subscribing `op` to
+    /// each. A value not visited yet contributes nothing now and revisits `op`.
+    mlir::Type joinLattices(mlir::Operation * op, mlir::ValueRange values, mlir::Type seed);
 
     /// PHASE 59 SLICE 2 STEP 2: what a shared binding holds. The closure lift
     /// turns a `ctjs.create_cell` it can make a frame-local variable into
