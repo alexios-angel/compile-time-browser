@@ -1,4 +1,5 @@
 #include "../../../lib/CTNative/Analysis/OwnedGlobalRoots.h"
+#include "../../CTNative/HostContract/HostContractFixtures.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -18,6 +19,7 @@ using ctcompile::ctnative::HostContract;
 using ctcompile::ctnative::HostContractAnalysis;
 using ctcompile::ctnative::hostContractFingerprint;
 using ctcompile::ctnative::OwnedGlobalRoots;
+using ctcompile::test::host_contract::replaced;
 
 constexpr const char * fixture = R"MLIR(
 module {
@@ -74,13 +76,6 @@ bool complete(mlir::ModuleOp module, const OwnedGlobalRoots & query) {
         if (store.getName() != "host") { unrelated &= !query.lookup(store); }
     });
     return unrelated;
-}
-
-std::string replaced(std::string source, llvm::StringRef from, llvm::StringRef to) {
-    const auto offset = source.find(from.str());
-    if (offset == std::string::npos) { return {}; }
-    source.replace(offset, from.size(), to.str());
-    return source;
 }
 } // namespace
 

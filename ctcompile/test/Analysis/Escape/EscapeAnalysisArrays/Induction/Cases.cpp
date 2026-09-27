@@ -2,14 +2,6 @@
 
 namespace ctcompile::test::escape::arrays::induction_detail {
 
-std::string InductionCases::replace(std::string source, const std::string & before,
-                                    const std::string & after) {
-    const std::size_t position = source.find(before);
-    assert(position != std::string::npos);
-    source.replace(position, before.size(), after);
-    return source;
-}
-
 void InductionCases::run(const contents_row & expected, const char * discharged) {
     auto module = mlir::parseSourceString<mlir::ModuleOp>(
         std::string{kPrologue} + expected.body + "}\n", &context);

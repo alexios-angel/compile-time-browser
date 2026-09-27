@@ -5,6 +5,7 @@
 // executables can include it.
 
 #include "../../../lib/CTNative/Analysis/OwnedGlobalRoots.h"
+#include "../../CTNative/HostContract/HostContractFixtures.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/MLIRContext.h"
@@ -25,6 +26,7 @@ using ctcompile::ctnative::HostContract;
 using ctcompile::ctnative::HostContractAnalysis;
 using ctcompile::ctnative::hostContractFingerprint;
 using ctcompile::ctnative::OwnedGlobalRoots;
+using host_contract::replaced;
 
 inline constexpr const char * fixture = R"MLIR(
 module {
@@ -183,13 +185,6 @@ inline bool empty(mlir::ModuleOp module, const OwnedGlobalRoots & query) {
     bool result = query.roots().empty();
     module.walk([&](mlir::Operation * operation) { result &= !query.lookup(operation); });
     return result;
-}
-
-inline std::string replaced(std::string source, llvm::StringRef from, llvm::StringRef to) {
-    const auto offset = source.find(from.str());
-    if (offset == std::string::npos) { return {}; }
-    source.replace(offset, from.size(), to.str());
-    return source;
 }
 
 } // namespace ctcompile::test::owned_global_methods

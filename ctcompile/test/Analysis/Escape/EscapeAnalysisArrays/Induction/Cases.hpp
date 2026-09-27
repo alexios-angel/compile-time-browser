@@ -41,8 +41,6 @@ struct InductionCases {
     std::string savedSub{};
     unsigned liveStates{};
 
-    static std::string replace(std::string source, const std::string & before,
-                               const std::string & after);
     void run(const contents_row & expected, const char * discharged = "");
     void reject(const char * what, std::string body,
                 ArrayContentsFailure failure = ArrayContentsFailure::UnsupportedControlFlow);

@@ -6,6 +6,7 @@
 // used to construct the shared two-method Map fixture inline in
 // checkCapturedCallables, lifted so the seeded-result executable can build the
 // same string. `inline` in a named namespace only so both can include this.
+// The Analysis/Ownership tests take their string helpers from here too.
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"

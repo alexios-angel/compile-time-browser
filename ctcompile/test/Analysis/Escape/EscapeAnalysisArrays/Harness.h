@@ -3,6 +3,8 @@
 #include "../Harness.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
+#include <cassert>
+
 namespace ctcompile::test::escape::arrays {
 
 struct contents_row {
@@ -29,6 +31,15 @@ struct retention_row {
     const char * confinedReceivers = nullptr;
     const char * confinedNested = "";
 };
+
+// `source` with its first `before` replaced by `after`, which must be there.
+inline std::string replace(std::string source, const std::string & before,
+                           const std::string & after) {
+    const std::size_t position = source.find(before);
+    assert(position != std::string::npos);
+    source.replace(position, before.size(), after);
+    return source;
+}
 
 void checkArrayContents(mlir::ModuleOp module, const contents_row & expected);
 void checkArrayContents(mlir::MLIRContext & context);
