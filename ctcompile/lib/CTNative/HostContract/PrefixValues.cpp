@@ -217,11 +217,8 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
     if (auto invoked = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
         auto closure = values.lookup(invoked.getCalleeValue());
         auto callee = target(closure);
-        auto lexical = closure.made
-                           ? closure.made.getEnclosingThis().getDefiningOp<ctjs::ConstantOp>()
-                           : ctjs::ConstantOp{};
-        if (!callee || callee.getSymName() != invoked.getCallee() || !lexical ||
-            !llvm::isa<ctjs::UndefinedAttr>(lexical.getValue()) ||
+        if (!callee || callee.getSymName() != invoked.getCallee() || !closure.made ||
+            !ctjs::isUndefinedConstant(closure.made.getEnclosingThis()) ||
             !uniqueContext(callee, invoked, closure.made)) {
             return stop(operation, "call lacks one closed source invocation context");
         }
@@ -240,14 +237,11 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
     if (auto invoked = llvm::dyn_cast<ctjs::CallOp>(operation)) {
         auto closure = values.lookup(invoked.getCallee());
         auto callee = target(closure);
-        auto lexical = closure.made
-                           ? closure.made.getEnclosingThis().getDefiningOp<ctjs::ConstantOp>()
-                           : ctjs::ConstantOp{};
+        const bool lexical =
+            closure.made && ctjs::isUndefinedConstant(closure.made.getEnclosingThis());
         const bool summarizedClosure =
             followPublication && closure.made && factoryClosures.contains(closure.made);
-        if (!callee || callee.getBody().empty() ||
-            ((!lexical || !llvm::isa<ctjs::UndefinedAttr>(lexical.getValue())) &&
-             !summarizedClosure) ||
+        if (!callee || callee.getBody().empty() || (!lexical && !summarizedClosure) ||
             callee.getBody().front().getNumArguments() != invoked.getArgs().size() + 3 ||
             pendingNewTarget.contains(invoked->getParentOfType<ctjs::FuncOp>())) {
             return stop(operation, "indirect call lacks exact source target/argument state");

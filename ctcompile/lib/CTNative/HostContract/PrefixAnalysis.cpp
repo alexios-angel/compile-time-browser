@@ -57,18 +57,9 @@ prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contr
                                                              "Object"};
             reflective |= load.getName().size() <= 8 && reflectiveGlobals.contains(load.getName());
         }
-        mlir::Value propertyKey;
-        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-            propertyKey = read.getKey();
-        }
-        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-            propertyKey = write.getKey();
-        }
-        if (propertyKey) {
-            auto literal = propertyKey.getDefiningOp<ctjs::ConstantOp>();
-            auto text =
-                literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
-            const bool number = literal && llvm::isa<ctjs::NumberAttr>(literal.getValue());
+        if (auto key = ctjs::propertyKey(operation)) {
+            auto text = ctjs::constantAttr<ctjs::StringAttr>(key);
+            const bool number = static_cast<bool>(ctjs::constantAttr<ctjs::NumberAttr>(key));
             static const llvm::StringSet<> reflectiveProperties{"caller",
                                                                 "callee",
                                                                 "arguments",

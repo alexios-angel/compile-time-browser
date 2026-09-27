@@ -127,7 +127,7 @@ struct classInitialization {
     // Precharges every operation `root` walks, keeping what was spent before a misfit.
     bool spendWalk(mlir::Operation * root, llvm::function_ref<uint64_t(mlir::Operation *)> cost);
     bool refuse(llvm::StringRef message);
-    static bool undefined(mlir::Value value);
+    static bool undefined(mlir::Value value) { return ctjs::isUndefinedConstant(value); }
     ctjs::FuncOp target(ctjs::CreateClosureOp closure);
     bool proveCells(ctjs::FuncOp entry);
     bool proveMaps();

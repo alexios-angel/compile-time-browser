@@ -368,9 +368,7 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
                         read.getResult(),
                         PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>()));
                 } else {
-                    auto literal = read.getKey().getDefiningOp<ctjs::ConstantOp>();
-                    auto number = literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue())
-                                          : ctjs::NumberAttr{};
+                    auto number = ctjs::constantAttr<ctjs::NumberAttr>(read.getKey());
                     if (!number || !std::isfinite(number.getDouble()) || number.getDouble() < 0 ||
                         number.getDouble() >= 4294967295.0 ||
                         std::floor(number.getDouble()) != number.getDouble()) {

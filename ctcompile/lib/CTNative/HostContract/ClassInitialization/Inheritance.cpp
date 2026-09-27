@@ -119,9 +119,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
     ctjs::CreateCellOp guard;
     for (auto cell : original.getOps<ctjs::CreateCellOp>()) {
         if (!step() || guard) { return refuse("super requires one private Boolean guard"); }
-        auto value = cell.getInitial().getDefiningOp<ctjs::ConstantOp>();
-        auto bit =
-            value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue()) : ctjs::BooleanAttr{};
+        auto bit = ctjs::constantAttr<ctjs::BooleanAttr>(cell.getInitial());
         if (!bit || bit.getValue()) { return refuse("super guard must begin false"); }
         guard = cell;
     }
@@ -352,9 +350,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                 continue;
             }
             if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(op)) {
-                auto value = write.getValue().getDefiningOp<ctjs::ConstantOp>();
-                auto bit = value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue())
-                                 : ctjs::BooleanAttr{};
+                auto bit = ctjs::constantAttr<ctjs::BooleanAttr>(write.getValue());
                 if (phase != 1 || write.getCell() != guard.getResult() || !bit || !bit.getValue()) {
                     return refuse("super guard requires one true write after the base call");
                 }
@@ -363,10 +359,8 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                 continue;
             }
             if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(op)) {
-                auto value =
-                    mapping.lookupOrDefault(truth.getValue()).getDefiningOp<ctjs::ConstantOp>();
-                auto bit = value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue())
-                                 : ctjs::BooleanAttr{};
+                auto bit = ctjs::constantAttr<ctjs::BooleanAttr>(
+                    mapping.lookupOrDefault(truth.getValue()));
                 if (!bit) {
                     if (phase != 4) { return refuse("super condition is not a proved Boolean"); }
                     if (!clone(op, mapping)) { return false; }

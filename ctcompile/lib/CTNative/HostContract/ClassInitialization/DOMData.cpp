@@ -76,9 +76,7 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
                         call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey()) == "set") {
                     continue;
                 }
-                mlir::Value key;
-                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) { key = read.getKey(); }
-                if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
+                const auto key = ctjs::propertyKey(op);
                 safe &= use->getOperandNumber() == 0 && key && ctjs::ordinaryKey(key);
             }
         }

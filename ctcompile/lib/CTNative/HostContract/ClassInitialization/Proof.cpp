@@ -464,10 +464,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             accepted = constructors.contains(
                 target(sourceValue(made.getCallee()).getDefiningOp<ctjs::CreateClosureOp>()));
         }
-        mlir::Value key;
-        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) { key = read.getKey(); }
-        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
-        if (key) {
+        if (auto key = ctjs::propertyKey(op)) {
             auto constant = key.getDefiningOp<ctjs::ConstantOp>();
             // Literal Number keys cannot name a prototype hook or invoke
             // user coercion. Native field/index representation is separate.

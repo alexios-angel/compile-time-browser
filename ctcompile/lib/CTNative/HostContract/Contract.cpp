@@ -487,11 +487,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
             // This narrow contract provides no descriptor/prototype mutation
             // model. Refuse possible changes anywhere, including a suffix or
             // alias not reached by prefix interpretation.
-            mlir::Value key;
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) { key = read.getKey(); }
-            if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-                key = write.getKey();
-            }
+            const auto key = ctjs::propertyKey(operation);
             const auto name = key ? ctjs::constantKey(key) : llvm::StringRef{};
             static const llvm::StringSet<> descriptorMutations{
                 "__proto__",      "prototype",        "defineProperty",  "defineProperties",
@@ -537,10 +533,8 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                                                   ? classIntrinsicArity(load.getName())
                                                   : iteratorIntrinsicArity(load.getName())) {
                 auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                auto receiver = call ? call.getReceiver().getDefiningOp<ctjs::ConstantOp>()
-                                     : ctjs::ConstantOp{};
                 if (call && use.getOperandNumber() == 0 && call.getArgs().size() == arity &&
-                    receiver && llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) &&
+                    ctjs::isUndefinedConstant(call.getReceiver()) &&
                     (load.getName() != classDefinedIntrinsic ||
                      call.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>())) {
                     continue;

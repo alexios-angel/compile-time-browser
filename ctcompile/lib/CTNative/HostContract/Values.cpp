@@ -233,8 +233,7 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
         (direct && target(direct) != function)) {
         return {};
     }
-    auto enclosingThis = closure.getEnclosingThis().getDefiningOp<ctjs::ConstantOp>();
-    if (!enclosingThis || !llvm::isa<ctjs::UndefinedAttr>(enclosingThis.getValue())) { return {}; }
+    if (!ctjs::isUndefinedConstant(closure.getEnclosingThis())) { return {}; }
     const auto owner = object(read.getObject());
     if (!owner || object(receiver) != owner) { return {}; }
     std::optional<HostCapturedMap> capture;

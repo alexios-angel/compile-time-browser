@@ -52,9 +52,8 @@ bool diagnosticArm(mlir::Block & block, llvm::function_ref<bool(mlir::Value)> ma
             return self(self, concat.getLhs(), depth + 1) && self(self, concat.getRhs(), depth + 1);
         }
         auto first = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        auto index = first ? first.getKey().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
         auto number =
-            index ? llvm::dyn_cast<ctjs::NumberAttr>(index.getValue()) : ctjs::NumberAttr{};
+            first ? ctjs::constantAttr<ctjs::NumberAttr>(first.getKey()) : ctjs::NumberAttr{};
         auto copy = first ? first.getObject().getDefiningOp<ctjs::CallOp>() : ctjs::CallOp{};
         if (!number || number.getDouble() != 0 || !copy || copy->getBlock() != &block ||
             copy.getArgs().size() != 1 || ++snapshots != 1) {
@@ -543,9 +542,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                     continue;
                 }
                 auto origin = resolved(call.getArgs()[0]);
-                auto key = origin.getDefiningOp<ctjs::ConstantOp>();
-                auto text =
-                    key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
+                auto text = ctjs::constantAttr<ctjs::StringAttr>(origin);
                 std::pair<mlir::Attribute, mlir::Value> identity{text, {}};
                 if (!text) {
                     auto fresh = origin.getDefiningOp<ctjs::CreateObjectOp>();

@@ -324,9 +324,7 @@ bool classInitialization::sinkCapturedPublication(
                 if (index >= made.getArgs().size()) { return true; }
                 argument = sourceValue(made.getArgs()[index]);
             }
-            auto literal = argument.getDefiningOp<ctjs::ConstantOp>();
-            auto text =
-                literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
+            auto text = ctjs::constantAttr<ctjs::StringAttr>(argument);
             if (!text) {
                 // Only the outer key can carry identity. Keep the original
                 // allocation/input, and let nested routing prove every use.
@@ -427,9 +425,7 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
         return true;
     }
     auto key = sourceValue(cells.lookup(keyCell));
-    auto literal = key.getDefiningOp<ctjs::ConstantOp>();
-    auto value =
-        literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
+    auto value = ctjs::constantAttr<ctjs::StringAttr>(key);
     auto parameter = llvm::dyn_cast<mlir::BlockArgument>(key);
     if (!value) {
         if (!parameter || parameter.getOwner() != &scope.getBody().front() ||
@@ -472,12 +468,10 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
             if (!step()) { return mlir::WalkResult::interrupt(); }
             if (call.getTarget() != scope) { return mlir::WalkResult::advance(); }
             auto loaded = call.getCalleeValue().getDefiningOp<ctjs::LoadGlobalOp>();
-            auto actual =
-                call->getNumOperands() == scope.getBody().front().getNumArguments()
-                    ? call->getOperand(parameter.getArgNumber()).getDefiningOp<ctjs::ConstantOp>()
-                    : ctjs::ConstantOp{};
-            auto text =
-                actual ? llvm::dyn_cast<ctjs::StringAttr>(actual.getValue()) : ctjs::StringAttr{};
+            auto text = call->getNumOperands() == scope.getBody().front().getNumArguments()
+                            ? ctjs::constantAttr<ctjs::StringAttr>(
+                                  call->getOperand(parameter.getArgNumber()))
+                            : ctjs::StringAttr{};
             exact &= (call.getCalleeValue() == source.getResult() ||
                       (loaded && declaration && loaded.getName() == declaration.getName())) &&
                      text && (!value || value == text);

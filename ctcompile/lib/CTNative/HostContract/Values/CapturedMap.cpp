@@ -109,8 +109,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             return {};
         }
         if (result.initialization) {
-            auto initial = result.cell.getInitial().getDefiningOp<ctjs::ConstantOp>();
-            if (!initial || !llvm::isa<ctjs::UndefinedAttr>(initial.getValue()) ||
+            if (!ctjs::isUndefinedConstant(result.cell.getInitial()) ||
                 result.initialization.getValue() != resource ||
                 result.initialization->getBlock() != closure->getBlock() ||
                 !result.cell->isBeforeInBlock(result.initialization) ||
@@ -158,13 +157,12 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         auto made = llvm::cast<ctjs::CreateClosureOp>(operation);
         auto member = callable(made.getResult());
         const auto indices = made.getEnclosingIndicesAttr();
-        auto enclosingThis = made.getEnclosingThis().getDefiningOp<ctjs::ConstantOp>();
         if (!member || member == entry || member == factory ||
             !familyFunctions.insert(member).second || !llvm::hasSingleElement(member.getBody()) ||
             member.getUpvalueCount() != (prepared ? 0u : 1u) ||
             member.getBody().front().getNumArguments() < (prepared ? 4u : 3u) ||
-            (indices && (indices.size() != 1 || indices[0] >= 0)) || !enclosingThis ||
-            !llvm::isa<ctjs::UndefinedAttr>(enclosingThis.getValue()) ||
+            (indices && (indices.size() != 1 || indices[0] >= 0)) ||
+            !ctjs::isUndefinedConstant(made.getEnclosingThis()) ||
             !result.allocation->isBeforeInBlock(made) ||
             (result.cell && !result.cell->isBeforeInBlock(made)) ||
             (result.initialization && !result.initialization->isBeforeInBlock(made))) {

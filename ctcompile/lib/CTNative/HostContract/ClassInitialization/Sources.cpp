@@ -32,11 +32,6 @@ bool classInitialization::refuse(llvm::StringRef message) {
     return false;
 }
 
-bool classInitialization::undefined(mlir::Value value) {
-    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-    return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
-}
-
 ctjs::FuncOp classInitialization::target(ctjs::CreateClosureOp closure) {
     if (!closure || closure.getFunction() < 0) { return {}; }
     // Numeric function indices belong to the enclosing source program.
@@ -695,9 +690,8 @@ bool classInitialization::ownFieldSnapshots(
                 }
                 continue;
             }
-            mlir::Value key;
+            const auto key = ctjs::propertyKey(op);
             if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-                key = read.getKey();
                 // The fresh prototype's constructor backedge exists before
                 // any own field. fieldsOnly/staticGetters still prove every
                 // use and exact target; inherited target changes remain refused.
@@ -712,7 +706,6 @@ bool classInitialization::ownFieldSnapshots(
                     }
                 }
             }
-            if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
             if (use->getOperandNumber() != 0 || !key ||
                 !hasField(ordered, ctjs::constantKey(key))) {
                 return refuse("class construction method requires an existing own field");
@@ -909,9 +902,7 @@ bool classInitialization::ownFieldSnapshots(
                     module.getContext(),
                     std::bit_cast<uint64_t>(static_cast<double>(fields.size())));
             } else {
-                auto key = read.getKey().getDefiningOp<ctjs::ConstantOp>();
-                auto number =
-                    key ? llvm::dyn_cast<ctjs::NumberAttr>(key.getValue()) : ctjs::NumberAttr{};
+                auto number = ctjs::constantAttr<ctjs::NumberAttr>(read.getKey());
                 const auto index = number ? number.getDouble() : -1.0;
                 if (!std::isfinite(index) || index < 0 || std::floor(index) != index ||
                     index >= static_cast<double>(fields.size())) {
@@ -1033,8 +1024,7 @@ bool classInitialization::retainedMapAliases(mlir::OpOperand & use,
             entries.clear();
             continue;
         }
-        auto key = sourceValue(operation.getArgs().front()).getDefiningOp<ctjs::ConstantOp>();
-        auto text = key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
+        auto text = ctjs::constantAttr<ctjs::StringAttr>(sourceValue(operation.getArgs().front()));
         if (!text) { return refuse("class retained Map requires literal string keys"); }
         if (action == "set") {
             auto record = sourceValue(operation.getArgs()[1]).getDefiningOp<ctjs::ConstructOp>();
@@ -1068,14 +1058,8 @@ bool classInitialization::retainedMapReads(
     for (mlir::Value read : reads) {
         for (mlir::OpOperand * selected : sourceUses(read)) {
             if (!step()) { return false; }
-            mlir::Value key;
-            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(selected->getOwner())) {
-                key = get.getKey();
-            }
-            if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(selected->getOwner())) {
-                key = set.getKey();
-            }
-            if (key && ctjs::constantKey(key) == "constructor") {
+            if (auto key = ctjs::propertyKey(selected->getOwner());
+                key && ctjs::constantKey(key) == "constructor") {
                 return refuse("class retained Map alias requires data field reads");
             }
         }
@@ -1140,9 +1124,7 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
                 continue;
             }
         }
-        mlir::Value key;
-        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) { key = read.getKey(); }
-        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
+        const auto key = ctjs::propertyKey(op);
         if (use.getOperandNumber() != 0 || !key || !ctjs::ordinaryKey(key)) {
             return refuse("class receiver escapes or observes a prototype/descriptor");
         }
