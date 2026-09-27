@@ -297,22 +297,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             for (mlir::Operation * parent = read->getParentOp(); parent != function;
                  parent = parent->getParentOp()) {
                 if (!spend()) { return false; }
-                mlir::Value flag, index = read.getKey();
-                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(parent);
-                    branch && branch.getThenRegion().isAncestor(read->getParentRegion())) {
-                    flag = branch.getCondition();
-                } else if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(parent);
-                           loop && loop.getAfter().isAncestor(read->getParentRegion())) {
-                    auto argument = llvm::dyn_cast<mlir::BlockArgument>(index);
-                    if (!argument || argument.getOwner() != &loop.getAfter().front()) { continue; }
-                    auto condition =
-                        llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().back());
-                    flag = condition.getCondition();
-                    index = condition.getArgs()[argument.getArgNumber()];
-                }
-                auto truth = flag ? flag.getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
-                auto compare =
-                    truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
+                auto [compare, index] = indexGuard(parent, read);
                 mlir::Value bound = compare ? compare.getRhs() : mlir::Value{};
                 if (auto capped =
                         bound ? bound.getDefiningOp<mlir::scf::IfOp>() : mlir::scf::IfOp{};
@@ -321,9 +306,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     capped.getThenRegion().front().getOperations().size() == 1 &&
                     capped.getElseRegion().front().getOperations().size() == 1) {
                     if (!spend()) { return false; }
-                    auto test = capped.getCondition().getDefiningOp<ctjs::TruthyOp>();
-                    auto less =
-                        test ? test.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
+                    auto less = truthyComparison(capped.getCondition());
                     auto number = less ? ctjs::constantAttr<ctjs::NumberAttr>(less.getRhs())
                                        : ctjs::NumberAttr{};
                     auto yes =
