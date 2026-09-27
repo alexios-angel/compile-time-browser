@@ -32,6 +32,8 @@ const std::string window_slot = std::string{script::private_key_prefix} + "histo
 const std::string entries_slot = std::string{script::private_key_prefix} + "history:entries";
 const std::string index_slot = std::string{script::private_key_prefix} + "history:index";
 const std::string state_slot = std::string{script::private_key_prefix} + "history:state";
+// The realm's structuredClone as it was before any page script could replace it.
+const std::string clone_slot = std::string{script::private_key_prefix} + "history:clone";
 // History.prototype, on the page's window, for the frames' History objects.
 const std::string prototype_slot = std::string{script::private_key_prefix} + "History";
 
@@ -46,12 +48,16 @@ enum entry_field : std::size_t {
 }
 
 // StructuredSerializeForStorage and StructuredDeserialize in one: the
-// realm's structured clone, which throws the DataCloneError itself.
-[[nodiscard]] value structured_clone(context & c, value data) {
-    const value clone = c.global("structuredClone");
-    if (!clone.is_callable()) { return data; }
+// realm's structured clone, which throws the DataCloneError itself - the one
+// `history` was made with, not whatever the page's global now names.
+[[nodiscard]] value structured_clone(context & c, script::object_object & history, value data) {
+    const value * clone = history.find(clone_slot);
+    if (clone == nullptr || !clone->is_callable()) {
+        c.throw_error("TypeError", "History: no structured clone in this realm");
+        return value::undefined();
+    }
     value one[1] = {data};
-    return c.call(clone, one);
+    return c.call(*clone, one);
 }
 
 // HTML 7.4.1.3 "can have its URL rewritten": the same origin parts, and for a
@@ -84,6 +90,7 @@ void dom_bindings::install_history(context & cx, script::object_object & window)
     }
     auto * history = cx.allocate<script::object_object>();
     history->define(window_slot, window_view_, script::attr_none);
+    history->define(clone_slot, cx.global("structuredClone"), script::attr_none);
     const value made_history = value::object(history);
     window.set("history", made_history);
     cx.define_global("history", made_history);
@@ -227,7 +234,7 @@ void dom_bindings::install_history(context & cx, script::object_object & window)
                 self->define(index_slot, value::number(static_cast<double>(to)), script::attr_none);
                 set_address(t, *owner, new_url);
                 // "Restore the history object state", then `popstate` with it.
-                const value state = structured_clone(t, target[entry_state]);
+                const value state = structured_clone(t, *self, target[entry_state]);
                 if (t.throw_pending()) { return value::undefined(); }
                 self->define(state_slot, state, script::attr_none);
                 value event = owner->make_event(t, "popstate", node_id{});
@@ -302,7 +309,7 @@ void dom_bindings::install_history(context & cx, script::object_object & window)
         const owned at = own(c, member);
         if (at.history == nullptr) { return; }
         dom_bindings & owner = *at.owner;
-        const value serialized = structured_clone(c, data);
+        const value serialized = structured_clone(c, *at.history, data);
         if (c.throw_pending()) { return; }
         const context::rooted keep_serialized{c, serialized};
         std::string new_url = owner.location_href_;
@@ -343,7 +350,7 @@ void dom_bindings::install_history(context & cx, script::object_object & window)
         } else {
             entries[index] = entry;
         }
-        const value state = structured_clone(c, serialized);
+        const value state = structured_clone(c, *at.history, serialized);
         if (c.throw_pending()) { return; }
         at.history->define(state_slot, state, script::attr_none);
         set_address(c, owner, new_url);

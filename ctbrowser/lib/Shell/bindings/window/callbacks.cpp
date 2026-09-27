@@ -457,9 +457,20 @@ void dom_bindings::install_timers(context & cx) {
         }
         // WHOSE: the natives are shared, so the window is `this`, else the
         // realm's - a frame's callbacks run in the frame's turn, and none is
-        // there for a window whose document is gone (null).
-        const dom_bindings * owner =
-            find_bindings_of(c.current_this().is_heap() ? c.current_this() : c.global_this());
+        // there for a window whose document is gone (null). A `this` that is
+        // no window at all (`requestAnimationFrame.call(obj, cb)`, a sandbox
+        // global) is the realm's, as setTimeout takes it.
+        const value self = c.current_this();
+        const dom_bindings * owner = self.is_heap() ? find_bindings_of(self) : nullptr;
+        const auto was_window = [&] {
+            return std::ranges::any_of(primary().secondary_documents_, [&](const auto & made) {
+                return made->window_view_.is_heap() &&
+                       made->window_view_.as_heap() == self.as_heap();
+            });
+        };
+        if (owner == nullptr && (!self.is_heap() || !was_window())) {
+            owner = find_bindings_of(c.global_this());
+        }
         animation_callbacks_.push_back(animation_frame_callback{++next_timer_id_, callback, owner});
         return value::number(next_timer_id_);
     });
