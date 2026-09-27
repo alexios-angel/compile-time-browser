@@ -3,8 +3,7 @@
 namespace ctcompile::test::escape::arrays::induction_detail {
 
 void InductionCases::run(const contents_row & expected, const char * discharged) {
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(
-        std::string{kPrologue} + expected.body + "}\n", &context);
+    auto module = parseContents(context, expected);
     if (!module) {
         fail(row{.what = expected.what, .body = expected.body, .expected = ""},
              "the induction fixture did not parse");

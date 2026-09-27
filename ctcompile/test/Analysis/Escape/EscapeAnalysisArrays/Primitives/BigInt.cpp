@@ -15,22 +15,11 @@ void checkLiteralBigIntIndices(mlir::MLIRContext & context) {
     std::size_t budgets = 0;
     const auto check = [&](mlir::ModuleOp module, const contents_row & expected,
                            const char * discharged) {
-        checkArrayContents(module, expected);
-        const bool complete = expected.failure == ArrayContentsFailure::None;
-        budgets += checkArrayRetention(module, {.what = expected.what,
-                                                .body = expected.body,
-                                                .discharged = complete ? discharged : "",
-                                                .complete = complete});
+        budgets += checkDischarge(module, expected, discharged);
     };
     const auto run = [&](const contents_row & expected, const char * discharged = "x") {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(
-            std::string{kPrologue} + expected.body + "}\n", &context);
-        if (module) {
-            check(*module, expected, discharged);
-        } else {
-            fail(row{.what = expected.what, .body = expected.body, .expected = ""},
-                 "the literal BigInt index fixture did not parse");
-        }
+        budgets += runDischarge(context, expected, discharged,
+                                "the literal BigInt index fixture did not parse");
         ++rowCount;
     };
     contents_row original{.what = "a decimal BigInt zero replaces only its exact dense child",

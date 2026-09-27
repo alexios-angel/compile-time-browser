@@ -205,6 +205,32 @@ void checkArrayContents(mlir::ModuleOp module, const contents_row & expected) {
     });
 }
 
+mlir::OwningOpRef<mlir::ModuleOp> parseContents(mlir::MLIRContext & context,
+                                                const contents_row & expected) {
+    return mlir::parseSourceString<mlir::ModuleOp>(std::string{kPrologue} + expected.body + "}\n",
+                                                   &context);
+}
+
+std::size_t checkDischarge(mlir::ModuleOp module, const contents_row & expected,
+                           const char * discharged) {
+    checkArrayContents(module, expected);
+    const bool complete = expected.failure == ArrayContentsFailure::None;
+    return checkArrayRetention(module, {.what = expected.what,
+                                        .body = expected.body,
+                                        .discharged = complete ? discharged : "",
+                                        .complete = complete});
+}
+
+std::size_t runDischarge(mlir::MLIRContext & context, const contents_row & expected,
+                         const char * discharged, const char * label) {
+    auto module = parseContents(context, expected);
+    if (!module) {
+        fail(row{.what = expected.what, .body = expected.body, .expected = ""}, label);
+        return 0;
+    }
+    return checkDischarge(*module, expected, discharged);
+}
+
 std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & expected) {
     const row r{.what = expected.what, .body = expected.body, .expected = expected.discharged};
     ctjs::FuncOp function = *module.getOps<ctjs::FuncOp>().begin();

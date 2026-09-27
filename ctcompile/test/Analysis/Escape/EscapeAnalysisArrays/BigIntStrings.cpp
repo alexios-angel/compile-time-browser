@@ -14,10 +14,6 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
     const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
     const std::string branch =
         "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
-    struct string_row {
-        contents_row contents;
-        const char * discharged = "x";
-    };
     for (const auto kind : {ctjs::BinaryKind::Add, ctjs::BinaryKind::Concat}) {
         const bool concat = kind == ctjs::BinaryKind::Concat;
         const std::string spelling = ctjs::stringifyBinaryKind(kind).str();
@@ -26,7 +22,7 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
                    " {storage_test_id = \"produced\"}\n";
         };
         const std::string produce = binary("%text", "%big");
-        const std::vector<string_row> rows = {
+        const std::vector<discharge_row> rows = {
             {.contents = {.what = "String BigInt conversion cannot select a structural arm",
                           .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
                           .arrays = "a:[zero] | a:[zero]",
@@ -70,28 +66,15 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
         unsigned rowCount = 0;
         unsigned liveStates = 0;
         std::size_t budgets = 0;
-        const auto parse = [&](const string_row & expected) {
-            return mlir::parseSourceString<mlir::ModuleOp>(
-                std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        const auto parse = [&](const discharge_row & expected) {
+            return parseContents(context, expected.contents);
         };
-        const auto check = [&](mlir::ModuleOp module, const string_row & expected) {
-            checkArrayContents(module, expected.contents);
-            const bool complete = expected.contents.failure == ArrayContentsFailure::None;
-            budgets +=
-                checkArrayRetention(module, {.what = expected.contents.what,
-                                             .body = expected.contents.body,
-                                             .discharged = complete ? expected.discharged : "",
-                                             .complete = complete});
+        const auto check = [&](mlir::ModuleOp module, const discharge_row & expected) {
+            budgets += checkDischarge(module, expected.contents, expected.discharged);
         };
-        const auto run = [&](const string_row & expected) {
-            if (auto module = parse(expected)) {
-                check(*module, expected);
-            } else {
-                fail(row{.what = expected.contents.what,
-                         .body = expected.contents.body,
-                         .expected = ""},
-                     "the String BigInt fixture did not parse");
-            }
+        const auto run = [&](const discharge_row & expected) {
+            budgets += runDischarge(context, expected.contents, expected.discharged,
+                                    "the String BigInt fixture did not parse");
             ++rowCount;
         };
         for (const auto & expected : rows) { run(expected); }
@@ -205,7 +188,7 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
                                   produce + "  ctjs.pop_handler\n" + overwrite +
                                   "^pad:\n  %id, %exception = ctjs.catch_land\n  ctjs.return %a\n",
                           .failure = ArrayContentsFailure::UnsupportedControlFlow}});
-        string_row wide = rows.front();
+        discharge_row wide = rows.front();
         std::string extras;
         for (unsigned i = 0; i < 32; ++i) {
             extras +=
@@ -231,7 +214,7 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
                      .expected = ""},
                  "the wide String BigInt fixture did not parse");
         }
-        string_row mutation = rows.front();
+        discharge_row mutation = rows.front();
         mutation.contents.what = "live String categories and concrete indices remain independent";
         mutation.contents.body = values + binary("%text", "%zero") +
                                  "  %next = ctjs.binary add %produced, %big\n" + branch +
@@ -343,11 +326,7 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
     const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
     const std::string branch =
         "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
-    struct bigint_row {
-        contents_row contents;
-        const char * discharged = "x";
-    };
-    const std::vector<bigint_row> rows = {
+    const std::vector<discharge_row> rows = {
         {.contents = {.what = "BigInt comparison cannot prune either structural overwrite arm",
                       .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
                       .arrays = "a:[zero] | a:[zero]",
@@ -394,26 +373,15 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
     };
     unsigned rowCount = 0;
     std::size_t budgets = 0;
-    const auto check = [&](mlir::ModuleOp module, const bigint_row & expected) {
-        checkArrayContents(module, expected.contents);
-        const bool complete = expected.contents.failure == ArrayContentsFailure::None;
-        budgets += checkArrayRetention(module, {.what = expected.contents.what,
-                                                .body = expected.contents.body,
-                                                .discharged = complete ? expected.discharged : "",
-                                                .complete = complete});
+    const auto check = [&](mlir::ModuleOp module, const discharge_row & expected) {
+        budgets += checkDischarge(module, expected.contents, expected.discharged);
     };
-    const auto parse = [&](const bigint_row & expected) {
-        return mlir::parseSourceString<mlir::ModuleOp>(
-            std::string{kPrologue} + expected.contents.body + "}\n", &context);
+    const auto parse = [&](const discharge_row & expected) {
+        return parseContents(context, expected.contents);
     };
-    const auto run = [&](const bigint_row & expected) {
-        if (auto module = parse(expected)) {
-            check(*module, expected);
-        } else {
-            fail(
-                row{.what = expected.contents.what, .body = expected.contents.body, .expected = ""},
-                "the BigInt comparison fixture did not parse");
-        }
+    const auto run = [&](const discharge_row & expected) {
+        budgets += runDischarge(context, expected.contents, expected.discharged,
+                                "the BigInt comparison fixture did not parse");
         ++rowCount;
     };
     for (const auto & expected : rows) { run(expected); }
@@ -613,7 +581,7 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                               "  ctjs.pop_handler\n" + overwrite +
                               "^pad:\n  %id, %exception = ctjs.catch_land\n  ctjs.return %a\n",
                       .failure = ArrayContentsFailure::UnsupportedControlFlow}});
-    bigint_row wide = rows.front();
+    discharge_row wide = rows.front();
     std::string extras;
     for (unsigned i = 0; i < 32; ++i) {
         extras += "  %extra_" + std::to_string(i) + " = ctjs.compare " + spelling + " %lhs, %rhs\n";
@@ -637,7 +605,7 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                  .expected = ""},
              "the wide BigInt comparison fixture did not parse");
     }
-    bigint_row mutation = rows.front();
+    discharge_row mutation = rows.front();
     mutation.contents.what = "live BigInt comparison origins defeat forged completion";
     unsigned liveStates = 0;
     if (auto module = parse(mutation)) {

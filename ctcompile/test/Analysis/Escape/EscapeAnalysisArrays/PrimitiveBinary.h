@@ -52,11 +52,7 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
     const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
     const std::string branch =
         "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
-    struct comparison_row {
-        contents_row contents;
-        const char * discharged = "x";
-    };
-    const std::vector<comparison_row> rows = {
+    const std::vector<discharge_row> rows = {
         {.contents = {.what = "primitive comparison cannot prune either structural overwrite arm",
                       .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
                       .arrays = "a:[zero] | a:[zero]",
@@ -117,26 +113,15 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
     };
     std::size_t budgets = 0;
     unsigned rowCount = 0;
-    const auto check = [&](mlir::ModuleOp module, const comparison_row & expected) {
-        checkArrayContents(module, expected.contents);
-        const bool complete = expected.contents.failure == ArrayContentsFailure::None;
-        budgets += checkArrayRetention(module, {.what = expected.contents.what,
-                                                .body = expected.contents.body,
-                                                .discharged = complete ? expected.discharged : "",
-                                                .complete = complete});
+    const auto check = [&](mlir::ModuleOp module, const discharge_row & expected) {
+        budgets += checkDischarge(module, expected.contents, expected.discharged);
     };
-    const auto parse = [&](const comparison_row & expected) {
-        return mlir::parseSourceString<mlir::ModuleOp>(
-            std::string{kPrologue} + expected.contents.body + "}\n", &context);
+    const auto parse = [&](const discharge_row & expected) {
+        return parseContents(context, expected.contents);
     };
-    const auto run = [&](const comparison_row & expected) {
-        if (auto module = parse(expected)) {
-            check(*module, expected);
-        } else {
-            fail(
-                row{.what = expected.contents.what, .body = expected.contents.body, .expected = ""},
-                "the primitive comparison fixture did not parse");
-        }
+    const auto run = [&](const discharge_row & expected) {
+        budgets += runDischarge(context, expected.contents, expected.discharged,
+                                "the primitive comparison fixture did not parse");
         ++rowCount;
     };
     for (const auto & expected : rows) { run(expected); }
@@ -275,7 +260,7 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                           .arrays = "a:[x]",
                           .exit = "produced -> {}"}});
     }
-    comparison_row wide = rows.front();
+    discharge_row wide = rows.front();
     std::string extras;
     for (unsigned i = 0; i < 32; ++i) {
         extras += "  %extra_" + std::to_string(i) + " = " + mnemonic + " " + spelling +
@@ -306,7 +291,7 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
         fail(row{.what = "wide comparison snapshot", .body = wide.contents.body, .expected = ""},
              "the comparison snapshot fixture did not parse");
     }
-    comparison_row mutation = rows.front();
+    discharge_row mutation = rows.front();
     mutation.contents.what = "live comparison inputs and kinds defeat forged completion";
     unsigned liveStates = 0;
     if (auto module = parse(mutation)) {

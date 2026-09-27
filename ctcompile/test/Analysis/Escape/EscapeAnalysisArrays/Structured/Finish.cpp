@@ -5,8 +5,7 @@ namespace ctcompile::test::escape::arrays::structured_detail {
 void StructuredCases::finish() {
     budgets = 0;
     for (const auto & expected : rows) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(
-            std::string{kPrologue} + expected.body + "}\n", &context);
+        auto module = parseContents(context, expected);
         if (!module) {
             fail(row{.what = expected.what, .body = expected.body, .expected = ""},
                  "the structured contents fixture did not parse");
