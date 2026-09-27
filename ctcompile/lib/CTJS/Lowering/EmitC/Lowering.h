@@ -17,6 +17,7 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace ctcompile::ctjs::emitc_detail {
 namespace ec = mlir::emitc;
@@ -119,6 +120,10 @@ std::string opcode_spelling(ctbrowser::script::op which);
 std::string callee(llvm::StringRef helper);
 mlir::Value literal(mlir::OpBuilder & build, mlir::Location where, mlir::Type type,
                     llvm::StringRef text);
+std::pair<mlir::Value, mlir::Value> bytes_and_length(mlir::OpBuilder & build, mlir::Location where,
+                                                     llvm::StringRef text);
+mlir::Value intern(mlir::OpBuilder & build, mlir::Location where, llvm::StringRef name);
+mlir::Value nonzero(mlir::OpBuilder & build, mlir::Location where, mlir::Value u32);
 std::string c_identifier(llvm::StringRef symbol);
 bool runtime_defines(llvm::StringRef helper);
 void refuse(FuncOp function, llvm::StringRef because);
@@ -154,6 +159,8 @@ struct lowering {
                                 mlir::Value written);
     mlir::Value window_pointer(compiled_entry & scope, mlir::OpBuilder & build,
                                mlir::Location where, unsigned base);
+    unsigned park_window(compiled_entry & scope, mlir::OpBuilder & build, mlir::Location where,
+                         mlir::IRMapping & mapping, mlir::Operation & op, mlir::ValueRange values);
     mlir::Value box(mlir::OpBuilder & build, mlir::Location where, mlir::Type value,
                     llvm::StringRef shim, mlir::Value machine);
     mlir::Value undefined(mlir::OpBuilder & build, mlir::Location where, mlir::Type value);

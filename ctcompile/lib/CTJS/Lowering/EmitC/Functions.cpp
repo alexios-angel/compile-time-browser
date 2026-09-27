@@ -190,37 +190,28 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
         for (const mlir::Value result : inner->getResults()) {
             if (mlir::isa<ValueType>(result.getType())) { scope_slots[result] = parked++; }
         }
+        const auto reserve = [&](std::size_t count) {
+            windows[inner] = parked;
+            parked += static_cast<unsigned>(count);
+        };
         // A CONTIGUOUS RUN PER CALL SITE, reserved here so the register
         // window can be sized to include it before ct_aot_enter is emitted.
-        if (auto call = mlir::dyn_cast<CallOp>(inner)) {
-            windows[inner] = parked;
-            parked += static_cast<unsigned>(call.getArgs().size());
-        }
-        if (auto direct = mlir::dyn_cast<CallDirectOp>(inner)) {
-            windows[inner] = parked;
-            parked += static_cast<unsigned>(direct.getArgs().size());
-        }
+        if (auto call = mlir::dyn_cast<CallOp>(inner)) { reserve(call.getArgs().size()); }
+        if (auto direct = mlir::dyn_cast<CallDirectOp>(inner)) { reserve(direct.getArgs().size()); }
         // A CLOSURE'S UPVALUE ARRAY IS AN ARGV BY ANOTHER NAME: a
         // contiguous run the helper reads, and one that must live in the
         // frame rather than in C++ locals, because ct_aot_make_closure
         // allocates and is therefore a safepoint.
         if (auto made = mlir::dyn_cast<CreateClosureOp>(inner)) {
-            windows[inner] = parked;
-            parked += static_cast<unsigned>(made.getUpvalues().size());
+            reserve(made.getUpvalues().size());
         }
-        if (auto built = mlir::dyn_cast<ConstructOp>(inner)) {
-            windows[inner] = parked;
-            parked += static_cast<unsigned>(built.getArgs().size());
-        }
+        if (auto built = mlir::dyn_cast<ConstructOp>(inner)) { reserve(built.getArgs().size()); }
         // ONE SLOT PER PROTECTED REGION, which is where the unwinder puts
         // the thrown value: context::unwind_to_handler writes
         // registers_[base + slot] and ct_aot_catch_land reads it back. It
         // has to be inside the run ct_aot_enter reserves, so it is assigned
         // here with everything else rather than invented at the call.
-        if (mlir::isa<PushHandlerOp>(inner)) {
-            windows[inner] = parked;
-            parked += 1;
-        }
+        if (mlir::isa<PushHandlerOp>(inner)) { reserve(1); }
         if (auto constant = mlir::dyn_cast<ConstantOp>(inner)) {
             // A BIGINT LITERAL MEMOISES THE SAME WAY AND SHARES THE
             // NUMBERING. Both helpers key on (site, slot) and this backend

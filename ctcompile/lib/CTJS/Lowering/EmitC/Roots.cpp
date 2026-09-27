@@ -3,6 +3,20 @@
 
 namespace ctcompile::ctjs::emitc_detail {
 
+// FRAME SLOT `index`, as an lvalue through a freshly fetched span.
+static mlir::Value frame_slot(compiled_entry & scope, mlir::OpBuilder & build, mlir::Location where,
+                              unsigned index) {
+    auto span =
+        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{ec::PointerType::get(scope.value)},
+                                 callee("ct_aot_slots"), mlir::ValueRange{scope.frame});
+    return ec::SubscriptOp::create(build, where, ec::LValueType::get(scope.value),
+                                   span.getResult(0),
+                                   mlir::ValueRange{literal(
+                                       build, where, mlir::IntegerType::get(build.getContext(), 32),
+                                       std::to_string(index))})
+        .getResult();
+}
+
 // ROOT ONE VALUE IN THE FRAME.
 //
 // THE SPAN IS RE-FETCHED EVERY TIME, and that is not laziness. The row is
@@ -18,14 +32,7 @@ namespace ctcompile::ctjs::emitc_detail {
 // collector every use would have to reload instead.
 void lowering::park(compiled_entry & scope, mlir::OpBuilder & build, mlir::Location where,
                     mlir::Value rooted, unsigned slot) {
-    auto span =
-        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{ec::PointerType::get(scope.value)},
-                                 callee("ct_aot_slots"), mlir::ValueRange{scope.frame});
-    auto cell = ec::SubscriptOp::create(
-        build, where, ec::LValueType::get(scope.value), span.getResult(0),
-        mlir::ValueRange{literal(build, where, mlir::IntegerType::get(build.getContext(), 32),
-                                 std::to_string(slot))});
-    ec::AssignOp::create(build, where, cell.getResult(), rooted);
+    ec::AssignOp::create(build, where, frame_slot(scope, build, where, slot), rooted);
 }
 
 // Park it if it is a JavaScript value this function tracks.
@@ -64,16 +71,20 @@ mlir::Value lowering::cell_of_upvalue(compiled_entry & scope, mlir::OpBuilder & 
 // because both are safepoints that can collect before they read it.
 mlir::Value lowering::window_pointer(compiled_entry & scope, mlir::OpBuilder & build,
                                      mlir::Location where, unsigned base) {
-    auto span =
-        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{ec::PointerType::get(scope.value)},
-                                 callee("ct_aot_slots"), mlir::ValueRange{scope.frame});
-    auto first = ec::SubscriptOp::create(
-        build, where, ec::LValueType::get(scope.value), span.getResult(0),
-        mlir::ValueRange{literal(build, where, mlir::IntegerType::get(build.getContext(), 32),
-                                 std::to_string(base))});
     return ec::AddressOfOp::create(build, where, ec::PointerType::get(scope.value),
-                                   first.getResult())
+                                   frame_slot(scope, build, where, base))
         .getResult();
+}
+
+// PARK A RUN OF VALUES in the window reserved for `op`; answers its base.
+unsigned lowering::park_window(compiled_entry & scope, mlir::OpBuilder & build,
+                               mlir::Location where, mlir::IRMapping & mapping,
+                               mlir::Operation & op, mlir::ValueRange values) {
+    const unsigned base = scope.argument_windows.lookup(&op);
+    for (auto [index, each] : llvm::enumerate(values)) {
+        park(scope, build, where, mapping.lookup(each), base + static_cast<unsigned>(index));
+    }
+    return base;
 }
 
 } // namespace ctcompile::ctjs::emitc_detail
