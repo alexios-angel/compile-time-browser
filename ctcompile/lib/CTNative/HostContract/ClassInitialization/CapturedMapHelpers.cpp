@@ -547,13 +547,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                 if (!text) {
                     auto fresh = origin.getDefiningOp<ctjs::CreateObjectOp>();
                     auto input = llvm::dyn_cast<mlir::BlockArgument>(origin);
-                    const bool element =
-                        contract.provider == HostContract::Provider::ctbrowserDOMDataSession &&
-                        scope.getSymName() == contract.entry && input &&
-                        input.getOwner() == &entry &&
-                        input.getArgNumber() >= ctjs::implicit_arguments &&
-                        llvm::is_contained(contract.elementParameters,
-                                           input.getArgNumber() - ctjs::implicit_arguments);
+                    const bool element = declaredElementInput(contract, scope, input);
                     if ((!fresh || fresh->getBlock() != &entry) && !element) {
                         return refuse("class nested Map requires literal String, fresh object "
                                       "or exact DOM input keys");

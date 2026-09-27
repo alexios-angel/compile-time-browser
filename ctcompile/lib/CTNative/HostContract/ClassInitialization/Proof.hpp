@@ -29,6 +29,27 @@ inline uint64_t cloneCost(mlir::Operation * op) {
     return uint64_t(1) + op->getNumOperands() + op->getNumResults();
 }
 
+// The closed-source contract that proves only the class helper and Error bindings.
+inline HostContract classBindingContract(HostContract binding) {
+    binding.provider = HostContract::Provider::closedSource;
+    binding.elementParameters.clear();
+    binding.currentDocumentParameter.reset();
+    llvm::erase_if(binding.initialIntrinsics, [](const auto & name) {
+        return !host_detail::classIntrinsicArity(name) && name != "Error";
+    });
+    return binding;
+}
+
+// An explicit DOM Data entry input that the contract declares an element.
+inline bool declaredElementInput(const HostContract & contract, ctjs::FuncOp scope,
+                                 mlir::BlockArgument input) {
+    return contract.provider == HostContract::Provider::ctbrowserDOMDataSession && input &&
+           scope.getSymName() == contract.entry && input.getOwner() == &scope.getBody().front() &&
+           input.getArgNumber() >= ctjs::implicit_arguments &&
+           llvm::is_contained(contract.elementParameters,
+                              input.getArgNumber() - ctjs::implicit_arguments);
+}
+
 // A nonnegative enclosing index captures a slot of an outer activation.
 inline bool hasOuterCapture(ctjs::CreateClosureOp closure) {
     auto indices = closure.getEnclosingIndicesAttr();

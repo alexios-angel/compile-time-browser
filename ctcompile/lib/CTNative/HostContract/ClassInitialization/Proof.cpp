@@ -217,14 +217,9 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         }
     }
     if (!heritage.empty()) {
-        HostContract binding = contract;
-        binding.provider = HostContract::Provider::closedSource;
-        binding.elementParameters.clear();
-        binding.currentDocumentParameter.reset();
-        llvm::erase_if(binding.initialIntrinsics, [](const auto & name) {
-            return !host_detail::classIntrinsicArity(name) && name != "Error";
-        });
-        if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
+        if (auto problem =
+                host_detail::initialBindingProblem(module, classBindingContract(contract));
+            !problem.empty()) {
             return refuse(problem);
         }
     }

@@ -105,14 +105,9 @@ llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, 
     // contract proves helper and optional Error identity; DOM declarations and
     // parameters are proved later. Referenced throwing getters retain their
     // original bodies and must pass the final typed DOM proof after rewriting.
-    HostContract binding = contract;
-    binding.provider = HostContract::Provider::closedSource;
-    binding.elementParameters.clear();
-    binding.currentDocumentParameter.reset();
-    llvm::erase_if(binding.initialIntrinsics, [](const auto & name) {
-        return !host_detail::classIntrinsicArity(name) && name != "Error";
-    });
-    if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
+    if (auto problem = host_detail::initialBindingProblem(
+            module, class_detail::classBindingContract(contract));
+        !problem.empty()) {
         return refuse(problem);
     }
     if (!proof.normalizeMethods()) { return refuse(proof.reason); }

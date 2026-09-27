@@ -334,13 +334,7 @@ bool classInitialization::sinkCapturedPublication(
                 auto scope = made->getParentOfType<ctjs::FuncOp>();
                 const bool fresh = object && object->getBlock() == made->getBlock() &&
                                    object->isBeforeInBlock(made);
-                const bool element =
-                    domData && input && scope.getSymName() == contract.entry &&
-                    input.getOwner() == &scope.getBody().front() &&
-                    input.getArgNumber() >= ctjs::implicit_arguments &&
-                    llvm::is_contained(contract.elementParameters,
-                                       input.getArgNumber() - ctjs::implicit_arguments);
-                if (!fresh && !element) { return true; }
+                if (!fresh && !declaredElementInput(contract, scope, input)) { return true; }
                 for (mlir::OpOperand & use : parameter.getUses()) {
                     if (!step()) { return false; }
                     if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
