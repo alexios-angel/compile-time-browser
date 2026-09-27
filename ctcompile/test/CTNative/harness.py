@@ -1,5 +1,7 @@
-"""What the CTNative python drivers share: a checked subprocess run and the two
-compilers (the same pair Target/Cpp/harness.py finds).
+"""What the CTNative python drivers share: a checked subprocess run, the two
+compilers (the same pair Target/Cpp/harness.py finds) and their flags, the
+usual command line, the JS import and lift, native build-and-run, work-limit
+bisection and the Node observer of named globals.
 
 lit puts ctcompile/test on PYTHONPATH (lit.cfg.py), which is also what lets a
 driver import a sibling from another directory as, say,
