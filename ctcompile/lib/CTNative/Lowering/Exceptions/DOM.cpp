@@ -9,6 +9,7 @@
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/ADT/DenseSet.h"
 
@@ -691,9 +692,8 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
     const auto alwaysThrows = [&](auto && self, mlir::Value flag, unsigned depth) -> bool {
         if (!remaining || depth == 64) { return false; }
         --remaining;
-        if (auto constant = flag.getDefiningOp<mlir::arith::ConstantOp>()) {
-            auto literal = llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue());
-            return flag.getType().isInteger(1) && literal && literal.getValue().isOne();
+        if (flag.getDefiningOp<mlir::arith::ConstantOp>()) {
+            return flag.getType().isInteger(1) && mlir::matchPattern(flag, mlir::m_One());
         }
         auto result = llvm::dyn_cast<mlir::OpResult>(flag);
         auto branch =
@@ -836,14 +836,13 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 }
                 auto yes = llvm::cast<mlir::scf::YieldOp>(branch.getThenRegion().front().back());
                 auto no = llvm::cast<mlir::scf::YieldOp>(branch.getElseRegion().front().back());
-                auto condition = branch.getCondition().getDefiningOp<mlir::arith::ConstantOp>();
-                auto literal = condition ? llvm::dyn_cast<mlir::IntegerAttr>(condition.getValue())
-                                         : mlir::IntegerAttr{};
-                if (literal && branch.getCondition().getType().isInteger(1)) {
+                llvm::APInt literal;
+                if (branch.getCondition().getType().isInteger(1) &&
+                    mlir::matchPattern(branch.getCondition(), mlir::m_ConstantInt(&literal))) {
                     // Both arms passed effects. Move the selected definitions
                     // before forwarding their values, preserving dominance and
                     // order without treating inactive poison as an origin.
-                    auto selected = literal.getValue().isZero() ? no : yes;
+                    auto selected = literal.isZero() ? no : yes;
                     for (auto & next :
                          llvm::make_early_inc_range(selected->getBlock()->without_terminator())) {
                         if (!remaining) { return false; }
@@ -928,12 +927,13 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 if (!spend(uint64_t(1) + next->getNumOperands())) { return {}; }
                 if (auto returned = llvm::dyn_cast<ctjs::TryExitOp>(next)) {
                     if (!pending.empty() || returned != exit) { return {}; }
-                    auto flag = mapping.lookupOrDefault(returned.getIsThrow())
-                                    .getDefiningOp<mlir::arith::ConstantOp>();
-                    auto literal = flag ? llvm::dyn_cast<mlir::IntegerAttr>(flag.getValue())
-                                        : mlir::IntegerAttr{};
-                    if (!literal || !flag.getType().isInteger(1)) { return {}; }
-                    if (literal.getValue().isZero()) {
+                    const auto flag = mapping.lookupOrDefault(returned.getIsThrow());
+                    llvm::APInt literal;
+                    if (!flag.getType().isInteger(1) ||
+                        !mlir::matchPattern(flag, mlir::m_ConstantInt(&literal))) {
+                        return {};
+                    }
+                    if (literal.isZero()) {
                         return mapping.lookupOrDefault(returned.getNormalResult());
                     }
                     for (auto [argument, value] :
@@ -962,12 +962,11 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(next)) {
                     auto condition = mapping.lookupOrDefault(branch.getCondition());
                     pending.push_back(branch);
-                    auto constant = condition.getDefiningOp<mlir::arith::ConstantOp>();
-                    auto literal = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                            : mlir::IntegerAttr{};
-                    if (literal && condition.getType().isInteger(1)) {
-                        auto & selected = literal.getValue().isZero() ? branch.getElseRegion()
-                                                                      : branch.getThenRegion();
+                    llvm::APInt literal;
+                    if (condition.getType().isInteger(1) &&
+                        mlir::matchPattern(condition, mlir::m_ConstantInt(&literal))) {
+                        auto & selected =
+                            literal.isZero() ? branch.getElseRegion() : branch.getThenRegion();
                         return self(self, &selected.front().front(), mapping, at,
                                     std::move(pending), depth + 1);
                     }
