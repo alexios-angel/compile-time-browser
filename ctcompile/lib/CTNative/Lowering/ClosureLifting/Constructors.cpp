@@ -230,7 +230,7 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
     // rather than refuse. (An arrow is not a constructor in the VM either -
     // `ensure_prototype` returns undefined for one.)
     if (const std::optional<std::string> why = whyTargetIsNotLiftable(c)) { return why; }
-    if (!isUndefinedConstant(c.getEnclosingThis())) {
+    if (!ctjs::isUndefinedConstant(c.getEnclosingThis())) {
         return "it is an arrow function, which cannot be constructed even without lexical this "
                "reads";
     }
