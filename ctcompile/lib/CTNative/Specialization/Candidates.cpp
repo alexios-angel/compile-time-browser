@@ -24,11 +24,8 @@ bool recursive(ctjs::FuncOp function) {
 }
 
 bool primitive(mlir::Attribute attr) {
-    if (auto text = llvm::dyn_cast<ctjs::StringAttr>(attr)) {
-        return text.getValue().size() <= 65536;
-    }
-    return llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::UndefinedAttr, ctjs::NullAttr>(
-        attr);
+    auto text = llvm::dyn_cast<ctjs::StringAttr>(attr);
+    return text ? text.getValue().size() <= 65536 : ctjs::isPrimitiveAttr(attr);
 }
 } // namespace
 

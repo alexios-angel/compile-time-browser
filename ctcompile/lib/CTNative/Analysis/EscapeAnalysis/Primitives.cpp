@@ -249,15 +249,7 @@ void boundedNumberComplement(const ContentsValue & input, ContentsValue & result
 
 void boundedNumberBitwise(const ContentsValue & left, const ContentsValue & right,
                           ctjs::BinaryKind kind, ContentsValue & result) {
-    switch (kind) {
-    case ctjs::BinaryKind::BitAnd:
-    case ctjs::BinaryKind::BitOr:
-    case ctjs::BinaryKind::BitXor:
-    case ctjs::BinaryKind::Shl:
-    case ctjs::BinaryKind::Shr:
-    case ctjs::BinaryKind::UShr: break;
-    default: return;
-    }
+    if (!ctjs::isBitwise(kind)) { return; }
     const auto a = boundedConvertedBits(left);
     const auto b = boundedConvertedBits(right);
     // Bounded primitive operands use Core's ToUint32 conversion. Mask counts;

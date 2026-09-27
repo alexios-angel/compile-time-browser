@@ -505,16 +505,6 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             }
             if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(&op);
                 binary && !ctjs::isBitwise(binary.getKind())) {
-                switch (binary.getKind()) {
-                case ctjs::BinaryKind::Sub:
-                case ctjs::BinaryKind::Mul:
-                case ctjs::BinaryKind::Div:
-                case ctjs::BinaryKind::Mod:
-                case ctjs::BinaryKind::Pow:
-                case ctjs::BinaryKind::Add:
-                case ctjs::BinaryKind::Concat: break;
-                default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                }
                 const ContentsValue left = held(binary.getLhs());
                 const ContentsValue right = held(binary.getRhs());
                 const mlir::Value lhs = left.origin();
@@ -539,12 +529,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     continue;
                 }
                 if (lhs && rhs && left.bigInt() && right.bigInt() &&
-                    (binary.getKind() == ctjs::BinaryKind::Add ||
-                     binary.getKind() == ctjs::BinaryKind::Sub ||
-                     binary.getKind() == ctjs::BinaryKind::Mul ||
-                     binary.getKind() == ctjs::BinaryKind::Div ||
-                     binary.getKind() == ctjs::BinaryKind::Mod ||
-                     binary.getKind() == ctjs::BinaryKind::Pow)) {
+                    ctjs::isArithmetic(binary.getKind())) {
                     // bigint_binary combines digits into a fresh independent
                     // BigInt. Add first enters to_primitive's depth guard;
                     // Div/Mod raise an independent RangeError for zero divisors,
@@ -562,13 +547,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     state.values[binary.getResult()] = {binary.getResult(), ContentsKind::BigInt};
                     continue;
                 }
-                if ((binary.getKind() == ctjs::BinaryKind::Add ||
-                     binary.getKind() == ctjs::BinaryKind::Sub ||
-                     binary.getKind() == ctjs::BinaryKind::Mul ||
-                     binary.getKind() == ctjs::BinaryKind::Div ||
-                     binary.getKind() == ctjs::BinaryKind::Mod ||
-                     binary.getKind() == ctjs::BinaryKind::Pow) &&
-                    lhs && rhs &&
+                if (ctjs::isArithmetic(binary.getKind()) && lhs && rhs &&
                     ((left.bigInt() && right.nonBigInt()) ||
                      (left.nonBigInt() && right.bigInt()))) {
                     // Mixed original primitives cannot retain local objects:
@@ -657,15 +636,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                                                   ? llvm::cast<ctjs::BinaryOp>(&op).getKind()
                                                   : llvm::cast<ctjs::BinaryStaticOp>(&op).getKind();
                 const mlir::Value produced = op.getResult(0);
-                switch (kind) {
-                case ctjs::BinaryKind::Add:
-                case ctjs::BinaryKind::BitAnd:
-                case ctjs::BinaryKind::BitOr:
-                case ctjs::BinaryKind::BitXor:
-                case ctjs::BinaryKind::Shl:
-                case ctjs::BinaryKind::Shr:
-                case ctjs::BinaryKind::UShr: break;
-                default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                if (kind != ctjs::BinaryKind::Add && !ctjs::isBitwise(kind)) {
+                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
                 const ContentsValue left = held(op.getOperand(0));
                 const ContentsValue right = held(op.getOperand(1));

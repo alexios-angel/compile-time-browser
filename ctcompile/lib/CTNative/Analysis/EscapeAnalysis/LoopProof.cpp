@@ -244,13 +244,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 boundedNumberUnary(*input, unary.getKind() == ctjs::UnaryKind::Neg, result);
             }
         } else if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition);
-                   binary && (binary.getKind() == ctjs::BinaryKind::Add ||
-                              binary.getKind() == ctjs::BinaryKind::Sub ||
-                              binary.getKind() == ctjs::BinaryKind::Mul ||
-                              binary.getKind() == ctjs::BinaryKind::Div ||
-                              binary.getKind() == ctjs::BinaryKind::Mod ||
-                              binary.getKind() == ctjs::BinaryKind::Pow ||
-                              ctjs::isBitwise(binary.getKind()))) {
+                   binary && binary.getKind() != ctjs::BinaryKind::Concat) {
             const auto left = self(self, binary.getLhs(), depth + 1);
             const auto right = self(self, binary.getRhs(), depth + 1);
             if (!left || !right) { return std::nullopt; }

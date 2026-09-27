@@ -97,27 +97,16 @@ Fact Analysis::operation(mlir::Operation * op) {
             return {String, {}};
         }
         if (!left.domains || !right.domains) { return {}; }
-        switch (binary.getKind()) {
-        case ctjs::BinaryKind::Add:
+        if (binary.getKind() == ctjs::BinaryKind::Add) {
             if (left.domains == String || right.domains == String) {
                 return {String, {}};
             }
             return {(left.domains | right.domains) & String ? Number | String : Number, {}};
-        case ctjs::BinaryKind::Sub:
-        case ctjs::BinaryKind::Mul:
-        case ctjs::BinaryKind::Div:
-        case ctjs::BinaryKind::Mod:
-        case ctjs::BinaryKind::Pow:
-        // Known primitive domains exclude BigInt, so the bitwise six are Numbers
-        // here exactly as ctjs.binary_static's are below.
-        case ctjs::BinaryKind::Shl:
-        case ctjs::BinaryKind::Shr:
-        case ctjs::BinaryKind::UShr:
-        case ctjs::BinaryKind::BitAnd:
-        case ctjs::BinaryKind::BitOr:
-        case ctjs::BinaryKind::BitXor: return {Number, {}};
-        default: return {};
         }
+        // Known primitive domains exclude BigInt, so every other kind, the
+        // bitwise six included, is a Number here exactly as ctjs.binary_static's
+        // are below.
+        return {Number, {}};
     }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(op)) {
         const Fact left = get(binary.getLhs()), right = get(binary.getRhs());
