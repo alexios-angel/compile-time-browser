@@ -495,7 +495,8 @@ void dom_bindings::install_dynamic_markup(context & cx, script::object_object & 
                 return value::undefined();
             }
             const value three[3] = {args[0], args[1], args[2]};
-            return c.call(open, three, window_view_.is_object() ? window_view_ : value::object(window));
+            return c.call(open, three,
+                          window_view_.is_object() ? window_view_ : value::object(window));
         }
         document_open(c);
         return c.failed() ? value::undefined() : document_;

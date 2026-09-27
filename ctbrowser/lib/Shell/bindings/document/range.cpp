@@ -736,7 +736,8 @@ void dom_bindings::install_range(context & cx) {
                 !reference.none() && std::any_of(at, kids.end(), [&](node_id id) {
                     return kind_at(id) == type_doctype;
                 });
-            const bool reference_is_doctype = !reference.none() && type_of(reference) == type_doctype;
+            const bool reference_is_doctype =
+                !reference.none() && type_of(reference) == type_doctype;
             if (what == type_fragment) {
                 std::size_t elements = 0;
                 for (const node_id id : children_of(node)) {
