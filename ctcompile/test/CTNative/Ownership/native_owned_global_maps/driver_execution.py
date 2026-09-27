@@ -11,8 +11,6 @@ from .driver_nested_maps import check_nested_maps
 from .driver_recorder import check_recorders
 from .driver_umd import check_umd
 
-from CTNative.harness import find_compilers
-
 
 def check_positive(args, node, reference, compilers, nm, name, spec):
     """One native program: its source chain and call boundaries, the Node and
@@ -193,22 +191,7 @@ def setup():
     test (global-maps*.test), so a failure in one no longer hides the rest
     and lit -j parallelises across them; within a group the programs run one
     after another, which is what lit's own pool is for."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
-    compilers = find_compilers()
-    nm = shutil.which("nm") or shutil.which("llvm-nm")
-    if (
-        not all(compilers)
-        or not nm
-        or not owned.VM.search(host.run([nm, "-C", str(args.reference)]).stdout)
-    ):
-        raise RuntimeError("need both host compilers and a working VM-symbol control")
+    args, compilers, nm = owned.setup(argparse.ArgumentParser(description=__doc__))
     return args, args.node, args.reference, compilers, nm
 
 

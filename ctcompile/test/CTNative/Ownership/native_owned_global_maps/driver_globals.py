@@ -1,3 +1,5 @@
+from CTNative.harness import find_compilers
+
 from .driver_common import (
     CONSTANT_GLOBAL_CARRIERS,
     CONSTANT_GLOBAL_NODE,
@@ -731,16 +733,12 @@ def check_constant_global_refusals(args, positives, node, reference):
                         f"{label}: constant-global refusal changed its independent owner boundary"
                     )
                 if promoted:
-                    compilers = [
-                        shutil.which("g++-13") or shutil.which("g++"),
-                        shutil.which("clang++-18") or shutil.which("clang++"),
-                    ]
                     owned.standalone(
                         args,
                         failed,
                         label,
                         scalar_global_output(name, row["expected_trace"]),
-                        compilers,
+                        find_compilers(),
                         shutil.which("nm"),
                     )
                     return failed

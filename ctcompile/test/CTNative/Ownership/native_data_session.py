@@ -6,10 +6,8 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import sys
 
-from CTNative.harness import find_compilers
 from CTNative.Ownership.native_owned_global_maps.driver_common import (
     comparable_provenance,
     forge_leaf_evidence,
@@ -34,17 +32,7 @@ def configure(args, ir, name, values):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
-    compilers, nm = find_compilers(), shutil.which("nm") or shutil.which("llvm-nm")
-    if not all(compilers) or not nm:
-        raise RuntimeError("need GCC, Clang and nm")
-    if not owned.VM.search(host.run([nm, "-C", args.reference]).stdout):
-        raise RuntimeError("VM symbol control is ineffective")
+    args, compilers, nm = owned.setup(argparse.ArgumentParser(description=__doc__))
     js, _, subject, values = prepare_umd(args)
     expected = observe_umd(args, js, values)
     source, _, _ = umd_source()

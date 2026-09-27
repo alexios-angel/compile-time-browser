@@ -5,12 +5,10 @@ import argparse
 import os
 from pathlib import Path
 import re
-import shutil
 import struct
 import subprocess
 from urllib.parse import unquote_to_bytes
 
-from CTNative.harness import find_compilers
 from CTNative.Ownership import globals as owned
 
 boundary = owned.boundary
@@ -349,23 +347,8 @@ def forge_reports(text):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args, compilers, nm = owned.setup(argparse.ArgumentParser(description=__doc__))
     node, reference = args.node, args.reference
-    compilers = find_compilers()
-    nm = shutil.which("nm") or shutil.which("llvm-nm")
-    if (
-        not all(compilers)
-        or not nm
-        or not owned.VM.search(host.run([nm, "-C", str(reference)]).stdout)
-    ):
-        raise RuntimeError("need both compilers and a working VM-symbol positive control")
 
     saved = {}
     for name, (source, binding, expected) in POSITIVES.items():

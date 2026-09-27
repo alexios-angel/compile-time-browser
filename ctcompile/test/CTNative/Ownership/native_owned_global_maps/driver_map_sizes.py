@@ -1,3 +1,5 @@
+from CTNative.harness import find_compilers
+
 from .driver_common import (
     CONSTANT_GLOBAL_NODE,
     boundary,
@@ -145,16 +147,12 @@ def check_exact_size_refusals(args, positives, cases, census):
                     text = methods.census(failed, 5, current, admitted=5)
                     if "ctnative.host_owner_proved = true" not in text:
                         raise RuntimeError(f"{current}: optional field output lost ownership")
-                    compilers = [
-                        shutil.which("g++-13") or shutil.which("g++"),
-                        shutil.which("clang++-18") or shutil.which("clang++"),
-                    ]
                     owned.standalone(
                         args,
                         failed,
                         current,
                         f'trace={row["expected_trace"]}\n',
-                        compilers,
+                        find_compilers(),
                         shutil.which("nm"),
                     )
                     return failed

@@ -132,20 +132,23 @@ int main() {
                 )
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", required=True)
+def setup(parser):
+    """Every Ownership driver's command line, both compilers, and nm with its VM control."""
+    for name in ("translate", "opt", "node", "reference"):
+        parser.add_argument("--" + name, required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    node, reference = args.node, args.reference
     compilers = find_compilers()
-    nm = shutil.which("nm")
-    if not all(compilers) or not nm or not VM.search(host.run([nm, "-C", str(reference)]).stdout):
-        raise RuntimeError("need both compilers and a working VM-symbol positive control")
+    nm = shutil.which("nm") or shutil.which("llvm-nm")
+    if not nm or not VM.search(host.run([nm, "-C", str(args.reference)]).stdout):
+        raise RuntimeError("need nm and a working VM-symbol positive control")
+    return args, compilers, nm
+
+
+def main():
+    args, compilers, nm = setup(argparse.ArgumentParser(description=__doc__))
+    node, reference = args.node, args.reference
     positives = {
         "ordinary": ("var host = {}; host.slot = 42; var trace = host.slot;", "host", 42),
         "legacy_store_marker": (
