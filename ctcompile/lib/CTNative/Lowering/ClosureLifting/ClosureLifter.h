@@ -700,8 +700,6 @@ struct closureLifter {
 
     liftReport run();
 
-    static bool admissionIsDeclaration(ctjs::CreateClosureOp c);
-
     void lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosureOp> made, liftReport & out,
               bool preserveReceiver = false);
 
@@ -710,6 +708,8 @@ struct closureLifter {
     std::optional<std::string> whyCarriedCellStaysABox(ctjs::CreateCellOp cell);
 
     void unboxCells(liftReport & out, bool localObjectsOnly = false);
+    // Erases every unboxed cell nothing reads any more.
+    void eraseUnusedUnboxedCells();
 };
 
 } // namespace ctcompile::ctnative::lowering_detail

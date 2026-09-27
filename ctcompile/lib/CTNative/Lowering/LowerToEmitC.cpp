@@ -163,13 +163,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                     at, closure.getLoc(), ctjs::ValueType::get(candidate.getContext()),
                     ctjs::UndefinedAttr::get(candidate.getContext())));
             });
-            llvm::SmallVector<ctjs::CreateCellOp> dead;
-            candidate.walk([&](ctjs::CreateCellOp cell) {
-                if (cell->hasAttr("ctnative.unboxed") && cell.getResult().use_empty()) {
-                    dead.push_back(cell);
-                }
-            });
-            for (ctjs::CreateCellOp cell : dead) { cell.erase(); }
+            local.eraseUnusedUnboxedCells();
             return locals;
         };
         const bool domData = hostContract && hostContract->provider ==

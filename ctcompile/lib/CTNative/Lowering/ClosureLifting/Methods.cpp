@@ -367,7 +367,7 @@ mlir::Operation * closureLifter::objectArgumentCallee(mlir::Operation * call) {
 void closureLifter::argumentCensus() {
     for (ctjs::CreateClosureOp c : closures) {
         auto target = targetOf(c);
-        if (!target || target.getUpvalueCount() != 0 || !admissionIsDeclaration(c) ||
+        if (!target || target.getUpvalueCount() != 0 || !isDeclarationClosure(c) ||
             uniqueClosureByTarget.lookup(target) != c) {
             continue;
         }

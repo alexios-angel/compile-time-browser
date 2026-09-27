@@ -167,6 +167,12 @@ bool isScriptEntry(ctjs::FuncOp fn);
 // Where a `ctjs.create_closure`'s captures start: after $enclosing_closure and
 // $enclosing_this, which are operands and not attributes.
 inline constexpr unsigned kFirstCapture = 2;
+// A FUNCTION DECLARATION IS A BINDING, NOT A VALUE. `function f() {}` at
+// any level is `create_closure` whose only use is `store_global "f"`; in
+// the closed world the function exists as an emitc.func and calls of it
+// are direct, so the pair lowers to nothing. A closure used as a VALUE -
+// passed, returned, stored anywhere else - is not native yet (Phase 59).
+bool isDeclarationClosure(mlir::Operation * o);
 // A get/set_property of a constant key on the object `use` supplies.
 inline bool isConstantKeyAccess(mlir::OpOperand & use) {
     const auto key = ctjs::propertyKey(use.getOwner());

@@ -86,8 +86,6 @@ void closureLifter::census() {
         auto holder = o->getParentOfType<ctjs::FuncOp>();
         if (llvm::isa<ctjs::StoreUpvalueOp>(o)) {
             if (holder) { mutatesUpvalue.insert(holder.getOperation()); }
-        } else if (llvm::isa<ctjs::PassNewTargetOp>(o)) {
-            if (holder) { passesNewTarget.insert(holder.getOperation()); }
         } else if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(o)) {
             closures.push_back(made);
         } else if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(o)) {

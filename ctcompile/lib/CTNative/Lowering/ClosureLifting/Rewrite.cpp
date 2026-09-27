@@ -126,7 +126,7 @@ liftReport closureLifter::run() {
         for (ctjs::CreateClosureOp c : closures) {
             // A DECLARATION IS A BINDING, NOT A VALUE, and lowers to
             // nothing already. Leave it to admission::isDeclarationClosure.
-            if (admissionIsDeclaration(c)) { continue; }
+            if (isDeclarationClosure(c)) { continue; }
             if (lifted.contains(c.getOperation())) { continue; }
             ctjs::FuncOp target = targetOf(c);
             // A METHOD FIELD IS A DIFFERENT ADMISSION, NOT A SPECIAL CASE
@@ -237,7 +237,7 @@ liftReport closureLifter::run() {
                     llvm::Twine("ctnative lowering: `") + enclosing.getSymName() +
                     "` was lifted after the closure inside it was last judged - the "
                     "classify-then-lift fixpoint stopped before it settled");
-            } else if (admissionIsDeclaration(maker->second)) {
+            } else if (isDeclarationClosure(maker->second)) {
                 why += ": `" + enclosing.getSymName().str() +
                        "` is bound to a global by a declaration, which is not lifted";
             } else {
@@ -260,14 +260,6 @@ liftReport closureLifter::run() {
     }
     unboxCells(out);
     return out;
-}
-
-// isDeclarationClosure, spelled here because admission is declared below
-// and this rewrite runs before it. Kept to one line so the two cannot
-// drift into disagreeing about what a declaration is.
-bool closureLifter::admissionIsDeclaration(ctjs::CreateClosureOp c) {
-    return c.getResult().hasOneUse() &&
-           llvm::isa<ctjs::StoreGlobalOp>(*c.getResult().getUsers().begin());
 }
 
 void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosureOp> made,

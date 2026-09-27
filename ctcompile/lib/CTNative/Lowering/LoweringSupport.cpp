@@ -328,6 +328,12 @@ bool isScriptEntry(ctjs::FuncOp fn) {
     return fn.getSymName() == "_script_$0";
 }
 
+bool isDeclarationClosure(mlir::Operation * o) {
+    auto closure = llvm::dyn_cast_or_null<ctjs::CreateClosureOp>(o);
+    if (!closure || !closure.getResult().hasOneUse()) { return false; }
+    return llvm::isa<ctjs::StoreGlobalOp>(*closure.getResult().getUsers().begin());
+}
+
 bool domBookkeeping(const DOMEntryAnalysis & entry, mlir::Operation * op) {
     if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
         return static_cast<bool>(entry.callback(closure));

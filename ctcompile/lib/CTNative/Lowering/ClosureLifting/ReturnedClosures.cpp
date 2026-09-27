@@ -18,7 +18,7 @@ void closureLifter::returnedClosureCensus() {
     for (ctjs::CreateClosureOp c : closures) { ++creations[targetOf(c)]; }
     for (ctjs::CreateClosureOp c : closures) {
         if (c->hasAttr("ctnative.lifted") || !environmentTarget(c).empty() ||
-            admissionIsDeclaration(c)) {
+            isDeclarationClosure(c)) {
             continue;
         }
         const auto root = flow.find(c.getResult());
