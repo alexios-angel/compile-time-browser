@@ -206,7 +206,7 @@ var a = inherited_own_fields_iterate_helper_holder_receiver();
 
 // Structured selection cannot hide a receiver passed to another function.
 //--- inherited-own-fields-iterate-helper-selected-receiver.js
-function inherited_own_fields_iterate_helper_selected_receiver() {
+function inherited_own_fields_iterate_helper_selected_receiver(u = 1) {
     const read = receiver => receiver.first;
     class Shape {
         constructor(n) {
@@ -220,6 +220,6 @@ function inherited_own_fields_iterate_helper_selected_receiver() {
             return before * 100 + (this.first === null) * 10 + (this.second === null);
         }
     }
-    return new Shape(1).dispose();
+    return new Shape(u).dispose();
 }
 var a = inherited_own_fields_iterate_helper_selected_receiver();

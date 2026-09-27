@@ -18,7 +18,7 @@ var a = inherited_static_getters();
 // Bootstrap B's shape: an own getter whose inherited dependency always throws
 // ends the constructor arm that reads it.
 //--- inherited-own-fields-iterate-throwing-arm-own-getter.js
-function inherited_own_fields_iterate_throwing_arm_own_getter() {
+function inherited_own_fields_iterate_throwing_arm_own_getter(u) {
     class Base {
         constructor() { this.n = 3; }
         static get NAME() { throw new Error("NAME required"); }
@@ -30,7 +30,7 @@ function inherited_own_fields_iterate_throwing_arm_own_getter() {
         constructor(t) { super(), t && (this.x = t, this.y = this.constructor.DATA_KEY) }
         static get DATA_KEY() { return `bs.${this.NAME}` }
     }
-    const leaf = new Leaf(null);
+    const leaf = new Leaf(u);
     leaf.dispose();
     return (leaf.n === null) * 7;
 }

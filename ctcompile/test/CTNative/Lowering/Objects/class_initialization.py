@@ -111,6 +111,16 @@ OBSERVATIONS.update(
         "static-call-this-new-this": (7, 7),
     }
 )
+# Constructor arms decided by the same-truthiness constant actual at every `new`.
+OBSERVATIONS.update(
+    {
+        "own-fields-branch-decided-falsy": (7, 7),
+        "own-fields-branch-decided-truthy": (14, 14),
+        "own-fields-branch-decided-mixed": (7, 7),
+        "inherited-own-fields-branch-decided-extended": (7, 7),
+    }
+)
+POSITIVES.update({"own-fields-branch-decided-falsy", "own-fields-branch-decided-truthy"})
 # B's own method keeps W's throwing NAME; only the prepared copy is pinned.
 PREPARED_ONLY.add("inherited-static-getters-component-method")
 POSITIVES.update(
@@ -610,6 +620,8 @@ def main():
             "inherited-own-fields-iterate-throwing-arm-returning": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-iterate-throwing-arm-escape-before": "class own-key snapshot constructor observes its receiver",
             "inherited-static-getters-shadow-extended": "derived class requires receiver-preserving super normalization",
+            "own-fields-branch-decided-mixed": "class own-key snapshot branches change ordered fields",
+            "inherited-own-fields-branch-decided-extended": "class own-key snapshot branches change ordered fields",
             "inherited-static-getters-shadow-throwing": "derived class requires receiver-preserving super normalization",
             "inherited-static-getters-base-reads-leaf": "static getter receiver lacks an exact local getter dependency",
             "static-call-this-detached": "static method escapes its exact local call",

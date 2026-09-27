@@ -1,3 +1,4 @@
+#include "../../PartialEvaluation/Heap.h"
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::class_detail {
@@ -636,6 +637,93 @@ bool classInitialization::normalizeSuperMethods(
     return true;
 }
 
+bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
+                                          llvm::ArrayRef<ctjs::ConstructOp> instances) {
+    // Nothing extends this class, so these exact `new`s are every construction.
+    // A top-level arm on a formal that every actual makes equally truthy runs
+    // the same way each time: keep that arm alone. Arms whose dropped side holds
+    // constructions, closures, cells, global writes or setup keep today's proofs.
+    // ponytail: formals only; a helper applied to the formal needs evaluation.
+    if (instances.empty() || baseClasses.contains(constructor.getResult())) { return true; }
+    auto function = target(constructor);
+    if (!function || function.getBody().empty()) { return true; }
+    auto & entry = function.getBody().front();
+    auto * context = module.getContext();
+    for (mlir::Operation & op : llvm::make_early_inc_range(entry)) {
+        if (!step()) { return false; }
+        auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op);
+        auto truth =
+            branch ? branch.getCondition().getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
+        auto formal = truth ? llvm::dyn_cast<mlir::BlockArgument>(sourceValue(truth.getValue()))
+                            : mlir::BlockArgument{};
+        if (!formal || formal.getOwner() != &entry ||
+            formal.getArgNumber() < ctjs::implicit_arguments) {
+            continue;
+        }
+        const auto index = formal.getArgNumber() - ctjs::implicit_arguments;
+        std::optional<bool> decided;
+        bool undecided = false;
+        for (ctjs::ConstructOp made : instances) {
+            if (!step()) { return false; }
+            mlir::Attribute literal = ctjs::UndefinedAttr::get(context);
+            if (index < made.getArgs().size()) {
+                auto constant = made.getArgs()[index].getDefiningOp<ctjs::ConstantOp>();
+                if (!constant) {
+                    undecided = true;
+                    break;
+                }
+                literal = constant.getValue();
+            }
+            const auto truthy = partial_eval::truthy(partial_eval::value::primitive(literal));
+            if (!truthy || (decided && *decided != *truthy)) {
+                undecided = true;
+                break;
+            }
+            decided = truthy;
+        }
+        if (undecided || !decided) { continue; }
+        auto & kept = *decided ? branch.getThenRegion() : branch.getElseRegion();
+        auto & dropped = *decided ? branch.getElseRegion() : branch.getThenRegion();
+        const auto risky = dropped.walk([&](mlir::Operation * nested) {
+            if (!step() ||
+                llvm::isa<ctjs::ConstructOp, ctjs::CreateClosureOp, ctjs::CreateCellOp,
+                          ctjs::CellSetOp, ctjs::StoreGlobalOp, ctjs::DefineAccessorOp>(nested) ||
+                setup.contains(nested) || retainedSetup.contains(nested) ||
+                errorOperations.contains(nested) || cellOperations.contains(nested) ||
+                domDataOperations.contains(nested) || methodCalls.contains(nested) ||
+                instanceOfResults.contains(nested) || deferredPublications.contains(nested)) {
+                return mlir::WalkResult::interrupt();
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (!reason.empty()) { return false; }
+        if (risky.wasInterrupted()) { continue; }
+        // The dropped arm loses its records, as a replaced super body does.
+        dropped.walk([&](mlir::Operation * nested) {
+            helperCalls.erase(nested);
+            mapOperations.erase(nested);
+            if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(nested)) {
+                mapCaptures.erase(read.getResult());
+                holderCaptures.erase(read.getResult());
+                callableCaptures.erase(read);
+                llvm::erase(captureReads, read);
+            }
+        });
+        if (kept.empty()) {
+            if (branch->getNumResults()) { continue; }
+            branch.erase();
+            continue;
+        }
+        auto & block = kept.front();
+        auto yield = llvm::cast<mlir::scf::YieldOp>(block.getTerminator());
+        branch.getResults().replaceAllUsesWith(yield.getOperands());
+        entry.getOperations().splice(branch->getIterator(), block.getOperations(), block.begin(),
+                                     yield->getIterator());
+        branch.erase();
+    }
+    return true;
+}
+
 bool classInitialization::examine(ctjs::CallOp call, const HostContract & contract, bool domEntry) {
     if (!step() || call.getArgs().size() != 1 || !undefined(call.getReceiver()) ||
         !call.getResult().use_empty()) {
@@ -817,7 +905,10 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     }
     // Publication and own-key snapshots both need the complete leaf body,
     // including all effects and field writes from its proved super chain.
-    if (!sinkConstructorPublication(closure, instances, contract)) { return false; }
+    if (!foldDecidedArms(closure, instances) ||
+        !sinkConstructorPublication(closure, instances, contract)) {
+        return false;
+    }
     if (!ownFieldSnapshots(closure, instances, definitions, methodKeys, staticDefinitions,
                            staticMethods, contract)) {
         return false;

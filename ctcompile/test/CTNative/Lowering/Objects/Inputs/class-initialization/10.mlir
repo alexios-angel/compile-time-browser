@@ -89,14 +89,15 @@ function own_fields_loop() {
 }
 var a = own_fields_loop();
 
-// The observed constructor argument cannot establish an unconditional shape.
+// An argument known only at run time cannot establish an unconditional shape;
+// constant actuals decide the arm instead (own-fields-branch-decided-*).
 //--- own-fields-conditional.js
-function own_fields_conditional() {
+function own_fields_conditional(u = 1) {
     class Shape {
         constructor(n) { if (n) this.first = 7; }
         count() { return Object.getOwnPropertyNames(this).length; }
     }
-    var instance = new Shape(1);
+    var instance = new Shape(u);
     return instance.count();
 }
 var a = own_fields_conditional();
