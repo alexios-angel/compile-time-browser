@@ -75,12 +75,9 @@ struct CTNativeHostContractPass : impl::CTNativeHostContractBase<CTNativeHostCon
         llvm::DenseSet<mlir::Value> outerKeyInputs;
         for (const auto & edge : analysis.callables()) {
             if (!edge.capturedMap) { continue; }
-            for (ctjs::CreateObjectOp object : edge.capturedMap->outerKeyObjects) {
-                outerKeyObjects.insert(object);
-            }
-            for (mlir::BlockArgument input : edge.capturedMap->outerKeyInputs) {
-                outerKeyInputs.insert(input);
-            }
+            const auto & capture = *edge.capturedMap;
+            outerKeyObjects.insert(capture.outerKeyObjects.begin(), capture.outerKeyObjects.end());
+            outerKeyInputs.insert(capture.outerKeyInputs.begin(), capture.outerKeyInputs.end());
         }
         const auto outerKeyCount = static_cast<std::int64_t>(outerKeyObjects.size());
         module->setAttr("ctnative.host_outer_key_objects",

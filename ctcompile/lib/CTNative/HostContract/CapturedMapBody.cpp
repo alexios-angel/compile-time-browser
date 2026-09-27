@@ -36,19 +36,15 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     llvm::DenseSet<mlir::Operation *> concatenations;
     llvm::DenseSet<mlir::Operation *> snapshotReads;
     llvm::DenseSet<mlir::Operation *> callbackReads, callbackCalls;
+    uint64_t callbackOperations = 0;
     for (const auto & callback : result.scalarCallbacks) {
-        for (ctjs::LoadGlobalOp load : callback.loads) {
-            if (!step()) { return false; }
-            callbackReads.insert(load);
-        }
-        for (ctjs::GetPropertyOp read : callback.reads) {
-            if (!step()) { return false; }
-            callbackReads.insert(read);
-        }
-        for (mlir::Operation * call : callback.calls) {
-            if (!step()) { return false; }
-            callbackCalls.insert(call);
-        }
+        callbackOperations += callback.loads.size() + callback.reads.size() + callback.calls.size();
+    }
+    if (!spend(callbackOperations)) { return false; }
+    for (const auto & callback : result.scalarCallbacks) {
+        callbackReads.insert(callback.loads.begin(), callback.loads.end());
+        callbackReads.insert(callback.reads.begin(), callback.reads.end());
+        callbackCalls.insert(callback.calls.begin(), callback.calls.end());
     }
     std::optional<map_detail::snapshotCopies> copies;
     const auto prepareSnapshots = [&] {

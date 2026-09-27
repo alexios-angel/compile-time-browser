@@ -472,46 +472,38 @@ std::string analyzer::environmentProblem() {
                   capture.argument.getOperation()}) {
                 if (allowed) { capturedOperations.insert(allowed); }
             }
-            for (ctjs::LoadUpvalueOp load : capture.upvalues) {
-                if (step()) { capturedOperations.insert(load); }
-            }
-            for (ctjs::GetPropertyOp read : capture.reads) {
-                if (step()) { capturedOperations.insert(read); }
-            }
-            for (ctjs::CallOp call : capture.calls) {
-                if (step()) { capturedOperations.insert(call); }
-            }
-            for (ctjs::SetPropertyOp write : capture.leafWrites) {
-                if (step()) { capturedOperations.insert(write); }
-            }
-            for (ctjs::GetPropertyOp read : capture.leafReads) {
-                if (step()) { capturedOperations.insert(read); }
-            }
-            for (mlir::Operation * snapshot : capture.snapshotOperations) {
-                if (step()) { capturedOperations.insert(snapshot); }
-            }
+            // One step per admitted operation. An exhausted budget refuses the
+            // whole analysis, so a partial census is never observed.
+            uint64_t count = capture.upvalues.size() + capture.reads.size() + capture.calls.size() +
+                             capture.leafWrites.size() + capture.leafReads.size() +
+                             capture.snapshotOperations.size() + 2 * capture.childMaps.size();
             for (const auto & callback : capture.scalarCallbacks) {
-                for (mlir::Operation * allowed : callback.operations) {
-                    if (step()) { capturedOperations.insert(allowed); }
-                }
-                for (ctjs::LoadGlobalOp load : callback.loads) {
-                    if (step()) { capturedOperations.insert(load); }
-                }
-                for (ctjs::GetPropertyOp read : callback.reads) {
-                    if (step()) { capturedOperations.insert(read); }
-                }
-                for (mlir::Operation * call : callback.calls) {
-                    if (step()) { capturedOperations.insert(call); }
-                }
+                count += callback.operations.size() + callback.loads.size() +
+                         callback.reads.size() + callback.calls.size();
+                for (const auto & global : callback.globals) { count += global.reads.size(); }
+            }
+            if (!spend(count)) { return; }
+            const auto admit = [&](const auto & range) {
+                capturedOperations.insert(range.begin(), range.end());
+            };
+            admit(capture.upvalues);
+            admit(capture.reads);
+            admit(capture.calls);
+            admit(capture.leafWrites);
+            admit(capture.leafReads);
+            admit(capture.snapshotOperations);
+            for (const auto & callback : capture.scalarCallbacks) {
+                admit(callback.operations);
+                admit(callback.loads);
+                admit(callback.reads);
+                admit(callback.calls);
                 for (const auto & global : callback.globals) {
-                    for (ctjs::LoadGlobalOp read : global.reads) {
-                        if (step()) { mutableScalarReads.insert(read); }
-                    }
+                    mutableScalarReads.insert(global.reads.begin(), global.reads.end());
                 }
             }
             for (ctjs::ConstructOp child : capture.childMaps) {
-                if (step()) { capturedOperations.insert(child); }
-                if (step()) { capturedOperations.insert(child.getCallee().getDefiningOp()); }
+                capturedOperations.insert(child);
+                capturedOperations.insert(child.getCallee().getDefiningOp());
             }
         });
     }
