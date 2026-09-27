@@ -79,6 +79,13 @@ element_facts engine::facts_of(const read_txn & txn, node_id id) const {
             }
         }
     }
+    // `:valid` / `:invalid`, as the form store answers (set_validity).
+    if (validity_) {
+        if (const std::optional<bool> valid = validity_(id)) {
+            f.is_valid = *valid;
+            f.is_invalid = !*valid;
+        }
+    }
     // `:empty` - no element children and no text. WHITESPACE COUNTS as content per
     // the spec, so `<p> </p>` is not empty; a comment does not.
     f.is_empty = true;

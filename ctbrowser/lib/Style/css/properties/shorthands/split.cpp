@@ -16,6 +16,9 @@ split split_positional(const expansion & e, std::span<const std::string_view> pa
     if (parts.empty() || parts.size() > n) { return split::invalid; }
     std::vector<std::string> given;
     for (std::size_t i = 0; i < parts.size(); ++i) {
+        // A CSS-wide keyword is a whole value, never one component of one
+        // (CSS Cascade 5 §7.3): `inset-block: inherit inherit` is invalid.
+        if (parts.size() > 1 && is_wide_keyword(parts[i])) { return split::invalid; }
         bool valid = false;
         given.push_back(canonical(e.longhands[i], parts[i], valid));
         if (!valid) { return split::invalid; }

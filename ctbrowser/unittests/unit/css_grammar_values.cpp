@@ -148,7 +148,9 @@ void test_grid() {
     ok("grid-template-areas", "\"a  b\" \"c d\"", "\"a b\" \"c d\"");
     bad("grid-template-areas", "\"a a\" \"a b\"");
     bad("grid-template-areas", "\"a b\" \"c\"");
-    ok("grid-auto-flow", "dense", "row dense");
+    // `row` is the default and the shortest form leaves it out.
+    ok("grid-auto-flow", "row dense", "dense");
+    ok("grid-auto-flow", "dense column", "column dense");
     bad("grid-auto-flow", "row row");
     length_context lengths;
     color_context ctx;

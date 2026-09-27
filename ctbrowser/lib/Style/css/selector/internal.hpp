@@ -132,7 +132,8 @@ private:
             std::string_view body = text(v);
             const bool wildcard = !single && t.type == token_type::delim && body == "*";
             if (t.type == token_type::string) {
-                if (!want_argument) { return false; } // two arguments with no comma
+                // `:lang()` takes a string; `:dir()` an <ident> and nothing else.
+                if (single || !want_argument) { return false; }
                 if (body.size() < 2) { return false; }
                 body = body.substr(1, body.size() - 2);
             } else if (t.type != token_type::ident && !wildcard) {
@@ -953,7 +954,8 @@ private:
                     // The CSSOM serialiser has no name for `structural_defined`, so
                     // a selector holding it serialises from the author's bytes -
                     // exactly `dropped`'s job - rather than losing the `:defined`.
-                    if (bit == structural_defined || bit == structural_placeholder_shown) {
+                    if (bit == structural_defined || bit == structural_placeholder_shown ||
+                        bit == structural_valid || bit == structural_invalid) {
                         b.part.dropped = true;
                     }
                     continue;

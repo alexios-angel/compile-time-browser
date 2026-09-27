@@ -372,7 +372,27 @@ void test_placeholder_shown() {
     expect_value(f, f.find_id("d"), "color", "#010101", "an empty textarea shows it");
 }
 
+// `:valid` and `:invalid` are the validity hook's answer, and neither matches
+// an element it says nothing about - nor anything at all without a hook.
+void test_valid_invalid() {
+    fixture f;
+    f.load("<input id=a><input id=b><div id=c></div>",
+           ":valid { color: #020202 } :invalid { color: #030303 }");
+    CHECK(f.value_of(f.find_id("a"), "color").empty());
+    const node_id a = f.find_id("a"), b = f.find_id("b");
+    f.styles.set_validity([a, b](node_id id) -> std::optional<bool> {
+        if (id == a) { return true; }
+        if (id == b) { return false; }
+        return std::nullopt;
+    });
+    f.resolved = f.styles.resolve_all(f.doc.read());
+    expect_value(f, a, "color", "#020202", "a control that satisfies its constraints");
+    expect_value(f, b, "color", "#030303", "a control that does not");
+    CHECK(f.value_of(f.find_id("c"), "color").empty());
+}
+
 int main() {
+    test_valid_invalid();
     test_placeholder_shown();
     test_dir_auto_reads_a_controls_value();
     test_structural_pseudos();

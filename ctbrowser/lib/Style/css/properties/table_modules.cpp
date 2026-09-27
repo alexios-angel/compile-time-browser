@@ -26,6 +26,11 @@ constexpr property_syntax modules[] = {
     {"animation-range-start", k::freeform, "", "normal", false, false},
     {"animation-range-end", k::freeform, "", "normal", false, false},
     {"transition-behavior", k::keyword_only, "normal allow-discrete", "normal", false, false},
+    // --- CSS Viewport 1 ------------------------------------------------------
+    // ponytail: zoom parses, computes and animates, and layout does not yet
+    // scale by it; multiply a box's lengths by the effective zoom when a
+    // page needs the picture to change.
+    {"zoom", k::number_percentage, "normal", "1", false, true},
     // --- CSS Transforms 2 ----------------------------------------------------
     {"backface-visibility", k::keyword_only, "visible hidden", "visible", false, false},
     {"perspective", k::length, "none", "none", false, true},
@@ -187,7 +192,7 @@ constexpr property_syntax modules[] = {
     {"scrollbar-width", k::keyword_only, "auto thin none", "auto", false, false},
     {"scrollbar-color", k::freeform, "", "auto", true, false},
     {"scroll-behavior", k::keyword_only, "auto smooth", "auto", false, false},
-    {"scroll-marker-group", k::keyword_only, "none before after", "none", false, false},
+    {"scroll-marker-group", k::freeform, "", "none", false, false}, // declaration.cpp
     {"scroll-target-group", k::keyword_only, "none auto", "none", false, false},
     // --- CSS Scroll Snap --------------------------------------------------------
     {"scroll-snap-type", k::freeform, "", "none", false, false},
@@ -344,7 +349,7 @@ constexpr property_syntax modules[] = {
     {"ruby-align", k::keyword_only, "start center space-between space-around", "space-around", true,
      false},
     {"ruby-merge", k::keyword_only, "separate merge auto", "separate", true, false},
-    {"ruby-overhang", k::keyword_only, "auto none", "auto", true, false},
+    {"ruby-overhang", k::freeform, "", "auto", true, false}, // declaration.cpp
     {"ruby-position", k::freeform, "", "alternate", true, false},
     {"quotes", k::freeform, "", "auto", true, false},
     // --- CSS Lists, Generated Content -------------------------------------------------

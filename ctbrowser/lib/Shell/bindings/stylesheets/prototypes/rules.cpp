@@ -14,13 +14,19 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
         const char * name;
         std::uint32_t value;
     };
-    static constexpr rule_constant rule_constants[] = {
-        {"STYLE_RULE", style_rule},         {"CHARSET_RULE", 2},
-        {"IMPORT_RULE", import_rule},       {"MEDIA_RULE", media_rule},
-        {"FONT_FACE_RULE", font_face_rule}, {"PAGE_RULE", page_rule},
-        {"KEYFRAMES_RULE", keyframes_rule}, {"KEYFRAME_RULE", 8},
-        {"NAMESPACE_RULE", namespace_rule}, {"COUNTER_STYLE_RULE", counter_style_rule},
-        {"SUPPORTS_RULE", supports_rule},   {"FONT_FEATURE_VALUES_RULE", 14}};
+    static constexpr rule_constant rule_constants[] = {{"STYLE_RULE", style_rule},
+                                                       {"CHARSET_RULE", 2},
+                                                       {"IMPORT_RULE", import_rule},
+                                                       {"MEDIA_RULE", media_rule},
+                                                       {"FONT_FACE_RULE", font_face_rule},
+                                                       {"PAGE_RULE", page_rule},
+                                                       {"KEYFRAMES_RULE", keyframes_rule},
+                                                       {"KEYFRAME_RULE", 8},
+                                                       {"MARGIN_RULE", 9},
+                                                       {"NAMESPACE_RULE", namespace_rule},
+                                                       {"COUNTER_STYLE_RULE", counter_style_rule},
+                                                       {"SUPPORTS_RULE", supports_rule},
+                                                       {"FONT_FEATURE_VALUES_RULE", 14}};
     for (const rule_constant & each : rule_constants) {
         const value held = value::number(static_cast<double>(each.value));
         rule_proto->define(each.name, held, script::attr_enumerable);

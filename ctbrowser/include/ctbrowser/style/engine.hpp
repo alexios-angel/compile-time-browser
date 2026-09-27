@@ -86,6 +86,10 @@ struct element_facts {
     bool is_link = false;
     // `:placeholder-shown` - see structural_placeholder_shown.
     bool is_placeholder_shown = false;
+    // `:valid` / `:invalid` - see structural_valid. Both false for an element
+    // that is not a candidate for constraint validation.
+    bool is_valid = false;
+    bool is_invalid = false;
 };
 
 // One element the traversal has already reached, kept so that matching can ask
@@ -268,6 +272,12 @@ public:
     // no hook, and the `value` attribute - a <textarea>'s text - is the value.
     using control_value_query = std::function<std::optional<std::string>(node_id)>;
     void set_control_value(control_value_query query) { control_value_ = std::move(query); }
+    // DOES AN ELEMENT SATISFY ITS CONSTRAINTS (HTML §4.16.3, `:valid` and
+    // `:invalid`)? The shell's form store answers: true or false for a
+    // candidate for constraint validation - and for a <form> or <fieldset>,
+    // false when an element it covers fails - and nullopt for everything else.
+    using validity_query = std::function<std::optional<bool>(node_id)>;
+    void set_validity(validity_query query) { validity_ = std::move(query); }
     // DID A LAYOUT MOVE A CONTAINER a query was asked of? Every size the last
     // cascade asked for is asked again - of the layout that has run since -
     // and any answer that differs means the cascade read a stale box and has
@@ -910,6 +920,7 @@ private:
     std::vector<css::container_condition> containers_{css::container_condition{}};
     container_size_query container_size_;
     control_value_query control_value_;
+    validity_query validity_;
     // What the hook answered for each container since the last resolve_all -
     // asked once per container per cascade, and what container_sizes_changed
     // holds the next layout to.
