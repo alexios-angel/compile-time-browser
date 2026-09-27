@@ -185,10 +185,7 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                     return false;
                 }
             } else if (auto call = member.getDefiningOp<ctjs::CallDirectOp>()) {
-                auto fn = call.getTarget();
-                if (!closedValueFlow::exactCall(call, fn) || flow.returns[fn].empty()) {
-                    return false;
-                }
+                if (!flow.closedResult(call)) { return false; }
             } else if (auto call = member.getDefiningOp<ctjs::CallOp>()) {
                 if (liveNativeMapAction(call) != "get") { return false; }
             } else if (!reads.contains(member.getDefiningOp()) &&
@@ -235,24 +232,16 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
             if (value.getDefiningOp<ctjs::CreateObjectOp>()) {
                 // Fresh allocation, even when another allocation has the same schema.
             } else if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(value)) {
-                auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
                 if (llvm::isa<mlir::scf::WhileOp, mlir::scf::ForOp>(
                         arg.getOwner()->getParentOp())) {
                     // Every initial/backedge value was connected above.
-                } else if (!closedValueFlow::closed(fn) ||
-                           arg.getOwner() != &fn.getBody().front() || arg.getArgNumber() < 3 ||
-                           flow.callers[fn].empty()) {
+                } else if (!flow.closedParameter(arg)) {
                     reject("parameter requires a closed function with visible callers");
-                } else {
-                    for (ctjs::CallDirectOp call : flow.callers[fn]) {
-                        if (!closedValueFlow::exactCall(call, fn)) {
-                            reject("parameter has a missing or surplus argument");
-                        }
-                    }
+                } else if (!flow.exactCallers(arg)) {
+                    reject("parameter has a missing or surplus argument");
                 }
             } else if (auto call = value.getDefiningOp<ctjs::CallDirectOp>()) {
-                auto fn = call.getTarget();
-                if (!closedValueFlow::exactCall(call, fn) || flow.returns[fn].empty()) {
+                if (!flow.closedResult(call)) {
                     reject("result requires a closed function with visible returns");
                 }
             } else if (reads.contains(value.getDefiningOp())) {
@@ -293,11 +282,7 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                                     : object_detail::valueObservation(use.getOwner()))) {
                     continue;
                 }
-                if (erasedCapture(use)) { continue; }
-                if (llvm::isa<ctjs::CreateClosureOp>(use.getOwner()) &&
-                    use.getOperandNumber() >= 2 && !environmentTarget(use.getOwner()).empty()) {
-                    continue;
-                }
+                if (closedValueFlow::captured(use)) { continue; }
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                     call && use.getOperandNumber() >= 3 &&
                     closedValueFlow::exactCall(call, call.getTarget())) {

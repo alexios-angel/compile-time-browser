@@ -291,20 +291,14 @@ std::string collect(plan & out, closedValueFlow & graph,
     }
     for (mlir::Value object : out.members) {
         if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(object)) {
-            auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
-            if (!closedValueFlow::closed(fn) || arg.getOwner() != &fn.getBody().front() ||
-                arg.getArgNumber() < 3 || graph.callers[fn].empty()) {
+            if (!graph.closedParameter(arg)) {
                 return "native Map parameter requires a closed function with visible callers";
             }
-            for (ctjs::CallDirectOp call : graph.callers[fn]) {
-                if (!closedValueFlow::exactCall(call, fn)) {
-                    return "native Map call requires matching argument and parameter counts";
-                }
+            if (!graph.exactCallers(arg)) {
+                return "native Map call requires matching argument and parameter counts";
             }
         } else if (auto call = object.getDefiningOp<ctjs::CallDirectOp>()) {
-            auto fn = call.getTarget();
-            if (!closedValueFlow::closed(fn) || !closedValueFlow::exactCall(call, fn) ||
-                graph.returns[fn].empty()) {
+            if (!graph.closedResult(call)) {
                 return "native Map result requires a closed function with visible returns";
             }
         } else if (auto call = object.getDefiningOp<ctjs::CallOp>()) {
@@ -321,11 +315,7 @@ std::string collect(plan & out, closedValueFlow & graph,
                 .str();
         }
         for (mlir::OpOperand & use : object.getUses()) {
-            if (erasedCapture(use)) { continue; }
-            if (llvm::isa<ctjs::CreateClosureOp>(use.getOwner()) && use.getOperandNumber() >= 2 &&
-                !environmentTarget(use.getOwner()).empty()) {
-                continue;
-            }
+            if (closedValueFlow::captured(use)) { continue; }
             if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                 call && use.getOperandNumber() >= 3) {
                 auto fn = call.getTarget();
