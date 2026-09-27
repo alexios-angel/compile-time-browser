@@ -323,14 +323,23 @@ bool browser::text_input(std::string_view text) {
         }
     }
     if (printable.empty()) { return false; }
+    // `beforeinput` first, and a listener that cancels it keeps the text out.
+    // ASKED AGAIN after it: a listener may have moved focus, removed the
+    // field, or grown the control map under the pointer held above.
+    if (before_edit("insertText", printable)) { return true; }
+    control = editable_focus();
+    if (control == nullptr) { return true; }
     forms_.insert_text(*control, printable);
     // Typing past the last visible row of a textarea scrolls it, or the caret
     // walks off a box that cannot grow to follow it.
     reveal_caret(focused_, *control, kind_of(doc_->read(), focused_));
-    restart_caret_blink(); // a caret that blinks out under what you typed looks broken
-    bindings_->dispatch("input", focused_);
-    mark(dirty::paint);
-    return true;
+    return edited(true, "insertText", printable);
+}
+
+bool browser::before_edit(std::string_view input_type, std::optional<std::string_view> data) {
+    const node_id field = focused_;
+    if (bindings_->dispatch_input("beforeinput", field, input_type, data)) { return true; }
+    return focused_ != field || editable_focus() == nullptr;
 }
 
 const control_state * browser::control_state_of(node_id id) {
@@ -380,11 +389,15 @@ bool browser::handle_key(const input_event & event) {
         if (edit_key(*control, event)) {
             // One place rather than an arm-by-arm sprinkle: every editing key
             // either moves the caret or changes the value, and both can put it
-            // outside a textarea's visible rows.
-            reveal_caret(focused_, *control, kind_of(doc_->read(), focused_));
+            // outside a textarea's visible rows. Asked for again, because an
+            // edit's listeners may have moved focus or grown the control map.
+            if (control_state * live = editable_focus(); live != nullptr) {
+                reveal_caret(focused_, *live, kind_of(doc_->read(), focused_));
+            }
             return true;
         }
     }
+    if (select_key(event)) { return true; }
     const float page = static_cast<float>(options_.height) * 0.9f;
     if (event.key == "ArrowDown") {
         scroll_by(wheel_step);
@@ -476,8 +489,20 @@ bool browser::edit_key(control_state & control, const input_event & event) {
     const std::string & key = event.key;
     const control_kind kind = kind_of(doc_->read(), focused_);
     const bool multiline = kind == control_kind::textarea;
-    if (key == "Backspace") { return edited(forms_.backspace(control)); }
-    if (key == "Delete") { return edited(forms_.delete_forward(control)); }
+    // A DELETION WITH NOTHING TO DELETE is no edit, and tells the page
+    // nothing; one that has something asks first (before_edit).
+    if (key == "Backspace" || key == "Delete") {
+        const bool back = key == "Backspace";
+        const bool nothing = control.selection == control.caret &&
+                             (back ? control.caret == 0 : control.caret >= control.value.size());
+        if (nothing) { return true; }
+        const std::string_view type = back ? "deleteContentBackward" : "deleteContentForward";
+        if (before_edit(type, std::nullopt)) { return true; }
+        control_state * live = editable_focus();
+        if (live == nullptr) { return true; }
+        return edited(back ? forms_.backspace(*live) : forms_.delete_forward(*live), type,
+                      std::nullopt);
+    }
     if (key == "ArrowLeft") { return moved(forms_.move_caret(control, -1, event.shift)); }
     if (key == "ArrowRight") { return moved(forms_.move_caret(control, 1, event.shift)); }
     // UP and DOWN are visual LINES, and Home/End are the ends of one. In a
@@ -535,8 +560,11 @@ bool browser::edit_key(control_state & control, const input_event & event) {
         // the form, which is the implicit-submission rule every login page
         // depends on.
         if (multiline) {
-            forms_.insert_text(control, "\n");
-            return edited(true);
+            if (before_edit("insertLineBreak", std::nullopt)) { return true; }
+            control_state * live = editable_focus();
+            if (live == nullptr) { return true; }
+            forms_.insert_text(*live, "\n");
+            return edited(true, "insertLineBreak", std::nullopt);
         }
         submit(form_store::owning_form(doc_->read(), atoms_, focused_));
         return true;
@@ -545,9 +573,17 @@ bool browser::edit_key(control_state & control, const input_event & event) {
 }
 
 bool browser::edited(bool changed) {
+    return edited(changed, "", std::nullopt);
+}
+
+// The `input` after an edit (Input Events: an InputEvent, not cancelable,
+// naming what the edit was) - and the note that `change` is owed on blur.
+bool browser::edited(bool changed, std::string_view input_type,
+                     std::optional<std::string_view> data) {
     if (!changed) { return false; }
     restart_caret_blink();
-    bindings_->dispatch("input", focused_);
+    edited_since_focus_ = true;
+    bindings_->dispatch_input("input", focused_, input_type, data);
     mark(dirty::paint);
     return true;
 }

@@ -103,8 +103,17 @@ bool browser::focus(node_id id) {
     if (id == focused_) { return false; }
     if (focused_) {
         // `change` fires on BLUR, not on every keystroke - that is the
-        // difference between it and `input`, and pages rely on it.
-        bindings_->dispatch("change", focused_);
+        // difference between it and `input`, and pages rely on it. And only
+        // for a text field the USER edited to a different value since it took
+        // focus (HTML 4.10.5.5, "the user commits the change"): a button, a
+        // checkbox (whose change fires on activation) or an untouched field
+        // has nothing to commit. Bubbling, and neither cancelable nor composed.
+        if (edited_since_focus_) {
+            const control_state * state = control_state_of(focused_);
+            if (state != nullptr && state->value != value_at_focus_) {
+                (void)bindings_->dispatch_input("change", focused_, std::nullopt, std::nullopt);
+            }
+        }
         (void)set_state(focused_, state_focus, false);
         // HTML's focus update steps: `blur` then `focusout` at what loses
         // focus, each naming what gains it. `blur` never fired at all before.
@@ -124,6 +133,11 @@ bool browser::focus(node_id id) {
     }
     const node_id was = focused_;
     focused_ = id;
+    edited_since_focus_ = false;
+    {
+        const control_state * state = control_state_of(focused_);
+        value_at_focus_ = state != nullptr ? state->value : std::string{};
+    }
     // Told to the bindings BEFORE the event fires, so a `focus` listener asking
     // document.activeElement gets the element it was just handed rather than
     // the one that had focus a moment ago.

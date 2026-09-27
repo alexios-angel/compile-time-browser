@@ -408,6 +408,38 @@ bool dom_bindings::dispatch_touch(std::string_view phase, node_id target, float 
     return dispatch_event(touch_type, target, event);
 }
 
+// A USER'S EDIT, told to the page (Input Events 2, HTML 4.10.5.5):
+//   * `beforeinput` before the value changes - an InputEvent, composed and
+//     CANCELABLE, and cancelling it keeps the edit out;
+//   * `input` after it - the same InputEvent, not cancelable;
+//   * a control's `input` with no inputType (a <select>'s) - a plain Event,
+//     bubbling and composed;
+//   * `change` once the edit is committed - a plain Event that bubbles and
+//     neither cancels nor composes.
+// `data` is the text inserted, null for a deletion. Answers whether a listener
+// cancelled it.
+bool dom_bindings::dispatch_input(std::string_view type, node_id target,
+                                  std::optional<std::string_view> input_type,
+                                  std::optional<std::string_view> data) {
+    if (cx_ == nullptr || !target) { return false; }
+    context & cx = *cx_;
+    value event = make_event(cx, type, target);
+    const context::rooted keep{cx, event};
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    object->set("cancelable", value::boolean(type == "beforeinput"));
+    object->set("composed", value::boolean(type != "change"));
+    if (input_type && type != "change") {
+        adopt_interface(cx, *object, "InputEvent");
+        object->set("detail", value::number(0));
+        object->set("view", window_view_.is_heap() ? window_view_ : window_);
+        object->set("inputType", cx.string(std::string{*input_type}));
+        object->set("data", data ? cx.string(std::string{*data}) : value::null());
+        object->set("isComposing", value::boolean(false));
+        object->set("dataTransfer", value::null());
+    }
+    return dispatch_event(type, target, event);
+}
+
 // Where a wheel notch or a touch drag goes once no listener kept it: the
 // nearest SCROLL CONTAINER on the flat-tree path from the target that can still
 // move that way - which is scroll chaining, CSSOM View's "scroll an element" on

@@ -645,6 +645,17 @@ private:
     bool edit_key(control_state & control, const input_event & event);
 
     bool edited(bool changed);
+    // The same, telling the page WHAT the edit was (Input Events' inputType
+    // and data) - the `beforeinput` before it is before_edit's.
+    bool edited(bool changed, std::string_view input_type, std::optional<std::string_view> data);
+    // `beforeinput` for an edit about to happen: true when a listener
+    // cancelled it, or when the field it was aimed at is no longer focused.
+    bool before_edit(std::string_view input_type, std::optional<std::string_view> data);
+    // A focused <select>'s arrow keys (browser/chrome.cpp).
+    bool select_key(const input_event & event);
+    // `change` on blur is owed only for a value the user edited since focus.
+    bool edited_since_focus_ = false;
+    std::string value_at_focus_;
     bool moved(bool changed);
 
     // What clicking a control does once no listener has cancelled it.
