@@ -328,7 +328,8 @@ def main():
         )
         return boundary.NATIVE.search(candidate.read_text())
 
-    low = threshold(admitted) - 1
+    high = threshold(admitted)
+    low = high - 1
     rollback = refused(
         args, ir, "fixed-undefined-rollback", config, options=f"host-max-steps={low}"
     )
