@@ -185,13 +185,24 @@ def check_object_keys(args, node, reference, compilers, nm):
     print(f"object keys: {len(positives)} native programs and their controls")
 
 
+# The groups a global-maps-<group>.test runs alone (--group); global-maps.test runs the rest.
+GROUPS = {
+    "nested-maps": check_nested_maps,
+    "object-keys": check_object_keys,
+    "recorder": check_recorders,
+    "umd": check_umd,
+}
+
+
 def setup():
     """The command line every group shares, and the two oracles plus the two
     compilers and the nm control they all need. Each group is its own lit
     test (global-maps*.test), so a failure in one no longer hides the rest
     and lit -j parallelises across them; within a group the programs run one
     after another, which is what lit's own pool is for."""
-    args, compilers, nm = owned.setup(argparse.ArgumentParser(description=__doc__))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--group", choices=GROUPS)
+    args, compilers, nm = owned.setup(parser)
     return args, args.node, args.reference, compilers, nm
 
 

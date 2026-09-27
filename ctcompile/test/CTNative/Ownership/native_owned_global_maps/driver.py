@@ -4,10 +4,10 @@ from .driver_execution import *
 from .harness_map_results import check_result_calls
 
 
-def main(group=None):
+def main():
     args, node, reference, compilers, nm = setup()
-    if group is not None:
-        group(args, node, reference, compilers, nm)
+    if args.group:
+        GROUPS[args.group](args, node, reference, compilers, nm)
         return
     positives = positive_cases()
     check_source_observations(args, node, reference, positives)
@@ -915,3 +915,7 @@ def main(group=None):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     report(positives, shared_refusals, rollback)
+
+
+if __name__ == "__main__":
+    main()
