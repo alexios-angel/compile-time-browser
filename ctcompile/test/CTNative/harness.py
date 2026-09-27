@@ -9,6 +9,7 @@ RUN line passes `--node %node --reference %native_reference`, both configured
 by CMake (lit.site.cfg.py.in).
 """
 
+import json
 import os
 from pathlib import Path
 import re
@@ -75,6 +76,36 @@ def run(command, *, success=True, environment=None, input_text=None):
             f"unexpected tool status {result.returncode}: {command!r}\n{result.stdout}{result.stderr}"
         )
     return result
+
+
+# Node's side of the output convention (CTNative/Checks/compilation-unit.py) for
+# the globals named by argv[2], a JSON list, in that order.
+CONSTANT_GLOBAL_NODE = r"""const fs = require('node:fs');
+const vm = require('node:vm');
+const context = vm.createContext({});
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+for (const name of JSON.parse(process.argv[2])) {
+    const value = vm.runInContext(name, context);
+    let text;
+    if (typeof value === 'number') {
+        text = Number.isNaN(value) ? 'nan' : Object.is(value, -0) ? '-0' :
+            value === -Infinity ? '-inf' : String(value);
+    } else if (typeof value === 'string') {
+        text = '"' + encodeURIComponent(value).replace(/[!'()*]/g,
+            c => '%' + c.charCodeAt(0).toString(16).toUpperCase()) + '"';
+    } else if (typeof value === 'boolean' || value === undefined || value === null) {
+        text = String(value);
+    } else {
+        throw new Error(name + ': unexpected scalar tag');
+    }
+    process.stdout.write(name + '=' + text + '\n');
+}
+"""
+
+
+def node_globals(node, js, names):
+    """Node's `<name>=<value>` lines for the named globals of `js`, checked to run."""
+    return run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(list(names))])
 
 
 # The lifetime gate: AddressSanitizer + UBSan, leaks and use-after-return on.

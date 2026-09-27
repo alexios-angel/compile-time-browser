@@ -14,8 +14,7 @@ from pathlib import Path
 import re
 
 from CTNative.Exports import boundary
-from CTNative.harness import run
-from CTNative.Ownership.native_owned_global_maps.driver_common import CONSTANT_GLOBAL_NODE
+from CTNative.harness import node_globals, run
 
 ROOT = Path(__file__).resolve().parents[4]
 VENDOR_SHA256 = "5b29f1692a632853edc37b45bc1deedd595a777c9b234e8262ccd74ebfcf3d65"
@@ -178,7 +177,7 @@ def source():
 def observe(args, name, program, expected):
     js = args.work / f"{name}.js"
     js.write_text(program)
-    node = run([args.node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(expected))])
+    node = node_globals(args.node, js, sorted(expected))
     reference = run([args.reference, str(js)])
     for engine, result, values in (
         ("node", node, expected),

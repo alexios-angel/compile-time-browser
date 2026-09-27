@@ -7,17 +7,8 @@ from pathlib import Path
 import re
 import shutil
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers, run
+from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers, node_globals, run
 from CTNative.Exports import boundary
-
-NODE_GLOBALS = r"""const fs = require('node:fs');
-const vm = require('node:vm');
-const context = vm.createContext({});
-vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
-for (const name of Object.keys(context).sort()) {
-    if (typeof context[name] === 'number') console.log(name + '=' + context[name]);
-}
-"""
 
 
 def check_zero_keys(cpp):
@@ -95,7 +86,7 @@ def main():
     for fixture, deforest, expected in cases:
         name = fixture + ("-deforested" if deforest else "")
         js = args.fixtures / (fixture + ".js")
-        assert run([node, "-e", NODE_GLOBALS, str(js)]).stdout == expected
+        assert node_globals(node, js, re.findall(r"^\w+(?==)", expected, re.M)).stdout == expected
         assert run([str(reference), str(js)]).stdout == expected
         module = args.work / (name + ".mlir")
         run(

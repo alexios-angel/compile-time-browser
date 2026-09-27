@@ -8,9 +8,8 @@ import re
 import subprocess
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers, run
+from CTNative.harness import find_compilers, node_globals, run
 from CTNative.HostContract import contract as host
-from CTNative.Ownership.native_owned_global_maps.driver_common import CONSTANT_GLOBAL_NODE
 from CTNative.Ownership.native_owned_global_maps.driver_umd import (
     observe_umd,
     prepare_umd,
@@ -239,9 +238,7 @@ def main():
         if source.count(ALLOCATIONS) != 1:
             raise RuntimeError("original probe key allocations changed")
         observed.write_text(source.replace(ALLOCATIONS, bindings))
-        node = run(
-            [args.node, "-e", CONSTANT_GLOBAL_NODE, str(observed), json.dumps(sorted(values))]
-        )
+        node = node_globals(args.node, observed, sorted(values))
         reference = run([args.reference, str(observed)])
         if reference.stdout != node.stdout:
             raise RuntimeError(f"alias partition {indices}: Node and interpreter disagree")

@@ -3,19 +3,13 @@
 
 import argparse
 import hashlib
-import json
 from pathlib import Path
 import re
 
-from CTNative.harness import CLEANUP, FLAGS, find_compilers, run
+from CTNative.harness import CLEANUP, FLAGS, find_compilers, node_globals, run
 from Target.Cpp.harness import function_body
 
 ORIGINAL_SHA256 = "ac17441800c02afebc9c0f2ca529984c3fd21653ba676eff991ade6028daf490"
-NODE = """const fs = require('fs'), vm = require('vm');
-const scope = {};
-vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), scope);
-for (const name of JSON.parse(process.argv[2])) console.log(name + '=' + scope[name]);
-"""
 
 
 def main():
@@ -66,7 +60,7 @@ def main():
     mutations = 0
     for name, (source, function, observations) in positives.items():
         expected = "".join(f"{key}={value}\n" for key, value in sorted(observations.items()))
-        node = run([args.node, "-e", NODE, str(source), json.dumps(sorted(observations))])
+        node = node_globals(args.node, source, sorted(observations))
         reference = run([args.reference, str(source)])
         if node.stdout != expected or node.stderr or reference.stdout != expected:
             raise RuntimeError(f"{name}: Node/interpreter source observations changed")
