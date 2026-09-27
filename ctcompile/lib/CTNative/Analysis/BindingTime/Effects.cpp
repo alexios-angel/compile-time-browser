@@ -34,8 +34,7 @@ mlir::StringAttr propertyKey(mlir::Value value) {
 }
 } // namespace
 
-effectQueries::effectQueries(mlir::ModuleOp input) : module(input) {
-    closedEnvironment = closedEffectEnvironment(module);
+bool solveCallerFixpoint(mlir::ModuleOp module, llvm::function_ref<bool(ctjs::FuncOp)> visit) {
     llvm::SmallVector<ctjs::FuncOp> functions, pending;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::FuncOp>> dependents;
     module.walk([&](ctjs::FuncOp function) { functions.push_back(function); });
@@ -51,22 +50,32 @@ effectQueries::effectQueries(mlir::ModuleOp input) : module(input) {
         if (queued.insert(function).second) { pending.push_back(function); }
     };
     for (ctjs::FuncOp function : llvm::reverse(functions)) { enqueue(function); }
-    unsigned steps = 0;
     const uint64_t count = static_cast<uint64_t>(functions.size());
     const uint64_t limit = count * (count + 1);
-    uint64_t visits = 0;
-    while (!pending.empty() && visits++ < limit && steps < maxSteps) {
+    for (uint64_t visits = 0; !pending.empty() && visits < limit; ++visits) {
         auto function = pending.pop_back_val();
         queued.erase(function);
-        auto result = summarize(function, steps);
-        if (!(result == summaries.lookup(function))) {
-            summaries[function] = std::move(result);
+        if (visit(function)) {
             for (ctjs::FuncOp caller : dependents[function]) { enqueue(caller); }
         }
     }
+    return pending.empty();
+}
+
+effectQueries::effectQueries(mlir::ModuleOp input) : module(input) {
+    closedEnvironment = closedEffectEnvironment(module);
+    unsigned steps = 0;
+    const bool solved = solveCallerFixpoint(module, [&](ctjs::FuncOp function) {
+        // Past the step budget the rest of the queue drains unvisited.
+        if (steps >= maxSteps) { return false; }
+        auto result = summarize(function, steps);
+        if (result == summaries.lookup(function)) { return false; }
+        summaries[function] = std::move(result);
+        return true;
+    });
     // Unknown callees never bootstrap a recursive SCC. Exhaustion invalidates
     // the entire attempt instead of exposing a partially solved query graph.
-    if (!pending.empty() || steps >= maxSteps) { summaries.clear(); }
+    if (!solved || steps >= maxSteps) { summaries.clear(); }
 }
 
 effectSummary effectQueries::summarize(ctjs::FuncOp function, unsigned & steps) const {

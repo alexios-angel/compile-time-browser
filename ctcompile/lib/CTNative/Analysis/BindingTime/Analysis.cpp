@@ -35,52 +35,27 @@ BindingTimeAnalysis::Impl::Impl(mlir::ModuleOp input,
 }
 
 void BindingTimeAnalysis::Impl::solveSummaries() {
-    llvm::SmallVector<ctjs::FuncOp> functions;
-    module.walk([&](ctjs::FuncOp fn) { functions.push_back(fn); });
-    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::FuncOp>> dependents;
-    module.walk([&](ctjs::CallDirectOp call) {
-        auto caller = call->getParentOfType<ctjs::FuncOp>();
-        auto target = call.getTarget();
-        if (caller && target && !llvm::is_contained(dependents[target], caller)) {
-            dependents[target].push_back(caller);
-        }
-    });
-    llvm::SmallVector<ctjs::FuncOp> pending;
-    llvm::SmallPtrSet<mlir::Operation *, 32> queued;
-    const auto enqueue = [&](ctjs::FuncOp fn) {
-        if (queued.insert(fn).second) { pending.push_back(fn); }
-    };
-    for (ctjs::FuncOp fn : llvm::reverse(functions)) { enqueue(fn); }
-    // Keep the former N+1 whole-module sweeps as a conservative work bound.
     // Summaries start incomplete; a recursive cycle cannot bootstrap a static
     // call merely because the return expression happens to be a literal.
-    const uint64_t count = static_cast<uint64_t>(functions.size());
-    const uint64_t limit = count * (count + 1);
-    uint64_t visits = 0;
-    while (!pending.empty() && visits < limit) {
-        ctjs::FuncOp fn = pending.pop_back_val();
-        queued.erase(fn);
+    const bool solved = binding_time_detail::solveCallerFixpoint(module, [&](ctjs::FuncOp fn) {
         const bool beforeComplete = complete.lookup(fn);
         const fact beforeResult = returns.lookup(fn);
         analyze(fn);
-        ++visits;
-        if (beforeComplete != complete.lookup(fn) || !sameFact(beforeResult, returns.lookup(fn))) {
-            for (ctjs::FuncOp caller : dependents[fn]) { enqueue(caller); }
-        }
-    }
-    if (pending.empty()) { return; }
+        return beforeComplete != complete.lookup(fn) || !sameFact(beforeResult, returns.lookup(fn));
+    });
+    if (solved) { return; }
     // An unfinished fixed point is not a proof. Re-derive local facts while
     // making every direct call dynamic; no stale summary survives exhaustion.
     returns.clear();
     complete.clear();
     facts.clear();
     decisions.clear();
-    for (ctjs::FuncOp fn : functions) {
+    module.walk([&](ctjs::FuncOp fn) {
         analyze(fn);
         returns[fn] = {};
         complete[fn] = false;
         decisions[fn] = {false, "function summary analysis budget exhausted"};
-    }
+    });
 }
 
 void BindingTimeAnalysis::Impl::seedArguments() {

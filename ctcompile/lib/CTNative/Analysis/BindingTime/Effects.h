@@ -53,6 +53,10 @@ private:
     llvm::DenseMap<mlir::Operation *, effectSummary> summaries;
     effectSummary summarize(ctjs::FuncOp function, unsigned & steps) const;
 };
+// Visits functions callees first, revisiting a function's callers whenever
+// `visit` reports a changed summary, until nothing is pending or the former
+// N+1 whole-module sweeps' N*(N+1) visits are spent. Whether nothing was left.
+bool solveCallerFixpoint(mlir::ModuleOp module, llvm::function_ref<bool(ctjs::FuncOp)> visit);
 bool closedEffectEnvironment(mlir::ModuleOp module);
 bool safeEffectKey(llvm::StringRef name);
 bool effectCalleeMatches(ctjs::CallDirectOp call, mlir::ModuleOp module);
