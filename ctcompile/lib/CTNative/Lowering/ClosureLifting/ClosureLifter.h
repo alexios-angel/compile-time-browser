@@ -568,6 +568,13 @@ struct closureLifter {
     mlir::Value capturedValue(ctjs::CreateClosureOp c, unsigned i);
 
     mlir::Value liftedCapture(ctjs::CreateClosureOp c, unsigned i);
+    llvm::SmallVector<mlir::Value> liftedCaptures(ctjs::CreateClosureOp c);
+    // A ctjs.call_direct of `target` at `at`: `prefix` then `args`, padded
+    // with `undefined` to `width`; its new.target is `undefined` too.
+    ctjs::CallDirectOp directCall(mlir::OpBuilder & at, mlir::Location where, ctjs::FuncOp target,
+                                  mlir::Value receiver, mlir::Value callee, mlir::Value undefined,
+                                  llvm::ArrayRef<mlir::Value> prefix, mlir::ValueRange args,
+                                  size_t width);
 
     std::optional<std::string> whyCapturesDoNotReach(ctjs::CreateClosureOp c, mlir::Operation * at);
 

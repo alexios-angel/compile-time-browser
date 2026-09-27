@@ -151,6 +151,28 @@ mlir::Value closureLifter::liftedCapture(ctjs::CreateClosureOp c, unsigned i) {
         "admission and the call-site rewrite have drifted apart");
 }
 
+llvm::SmallVector<mlir::Value> closureLifter::liftedCaptures(ctjs::CreateClosureOp c) {
+    llvm::SmallVector<mlir::Value> values;
+    for (unsigned i = 0; i < static_cast<unsigned>(c.getUpvalues().size()); ++i) {
+        values.push_back(liftedCapture(c, i));
+    }
+    return values;
+}
+
+ctjs::CallDirectOp closureLifter::directCall(mlir::OpBuilder & at, mlir::Location where,
+                                             ctjs::FuncOp target, mlir::Value receiver,
+                                             mlir::Value callee, mlir::Value undefined,
+                                             llvm::ArrayRef<mlir::Value> prefix,
+                                             mlir::ValueRange args, size_t width) {
+    llvm::SmallVector<mlir::Value> arguments(prefix);
+    llvm::append_range(arguments, args);
+    while (arguments.size() < width) { arguments.push_back(undefined); }
+    return ctjs::CallDirectOp::create(at, where, ctjs::ValueType::get(context),
+                                      mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
+                                      receiver, undefined, callee, arguments,
+                                      /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+}
+
 // CONDITION 3 OF THE SINGLE-WRITE RULE, AND THE AVAILABILITY OF EVERY OTHER
 // CAPTURE, ASKED AT ONE CALL SITE.
 //

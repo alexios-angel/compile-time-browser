@@ -297,6 +297,8 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             cellArgs.push_back(static_cast<int32_t>(captureArgument(i)));
         }
     }
+    const auto cellSlots = mlir::Builder(context).getDenseI32ArrayAttr(cellArgs);
+    const auto objectSlots = mlir::Builder(context).getDenseI32ArrayAttr(objectArgs);
     const auto carriedSlot = [&](unsigned k) {
         return llvm::is_contained(cellArgs, static_cast<int32_t>(captureArgument(k)));
     };
@@ -316,8 +318,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     // off this function to decide whether its own slot is a pointer -
     // slice 1b, one indirection out.
     if (!cellArgs.empty()) {
-        target->setAttr("ctnative.cell_args",
-                        mlir::Builder(context).getDenseI32ArrayAttr(cellArgs));
+        target->setAttr("ctnative.cell_args", cellSlots);
         out.carried += static_cast<unsigned>(cellArgs.size());
     }
 
@@ -371,15 +372,13 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     target->setAttr("ctnative.captures",
                     mlir::Builder(context).getI32IntegerAttr(static_cast<int>(captures)));
     if (!objectArgs.empty()) {
-        target->setAttr("ctnative.object_args",
-                        mlir::Builder(context).getDenseI32ArrayAttr(objectArgs));
+        target->setAttr("ctnative.object_args", objectSlots);
         // Calls made by bindLocalFunctions have no closure-value use for the
         // ordinary rewrite below to visit. Their targets have no captures.
         if (captures == 0) {
             module.walk([&](ctjs::CallDirectOp call) {
                 if (call.getTarget() == target) {
-                    call->setAttr("ctnative.object_args",
-                                  mlir::Builder(context).getDenseI32ArrayAttr(objectArgs));
+                    call->setAttr("ctnative.object_args", objectSlots);
                 }
             });
         }
@@ -452,12 +451,9 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             ++out.closures;
             out.captures += captures;
         }
-        llvm::SmallVector<mlir::Value> captured;
         ctjs::CreateClosureOp only = made.front();
         auto prototype = immutablePrototype(only);
-        for (unsigned i = 0; i < static_cast<unsigned>(only.getUpvalues().size()); ++i) {
-            captured.push_back(liftedCapture(only, i));
-        }
+        const auto captured = liftedCaptures(only);
         for (ctjs::ConstructOp built : constructsOfTarget[target.getOperation()]) {
             mlir::OpBuilder at(built);
             const mlir::Value undefined = ctjs::ConstantOp::create(
@@ -475,15 +471,10 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
                                                 field.getKey(), field.getValue());
                 }
             }
-            llvm::SmallVector<mlir::Value> arguments(captured);
-            arguments.append(built.getArgs().begin(), built.getArgs().end());
-            while (arguments.size() < captures + parameters) { arguments.push_back(undefined); }
-            auto direct = ctjs::CallDirectOp::create(
-                at, built.getLoc(), valueType,
-                mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
-                carriesReceiver ? instance.getResult() : undefined, undefined,
-                preserveReceiver ? built.getCallee() : undefined, arguments,
-                /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+            auto direct = directCall(at, built.getLoc(), target,
+                                     carriesReceiver ? instance.getResult() : undefined,
+                                     preserveReceiver ? built.getCallee() : undefined, undefined,
+                                     captured, built.getArgs(), captures + parameters);
             if (carriesReceiver) {
                 direct->setAttr("ctnative.receiver", mlir::UnitAttr::get(context));
             }
@@ -491,10 +482,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // well as the callee, for the reason the receiver mark is on
             // both: `replace()` reads it once per operand and a symbol
             // lookup there would be a lookup per argument per call.
-            if (!cellArgs.empty()) {
-                direct->setAttr("ctnative.cell_args",
-                                mlir::Builder(context).getDenseI32ArrayAttr(cellArgs));
-            }
+            if (!cellArgs.empty()) { direct->setAttr("ctnative.cell_args", cellSlots); }
             // AND `new` EVALUATES TO THE INSTANCE, NOT TO THE CALL. That is
             // the whole of context::construct's last line for a body this
             // rule admits: `produced.is_object_like() ? produced : self`,
@@ -529,11 +517,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             ++out.methods;
             out.captures += captures;
         }
-        ctjs::CreateClosureOp only = made.front();
-        llvm::SmallVector<mlir::Value> captured;
-        for (unsigned i = 0; i < static_cast<unsigned>(only.getUpvalues().size()); ++i) {
-            captured.push_back(liftedCapture(only, i));
-        }
+        const auto captured = liftedCaptures(made.front());
         for (methodCall at : callsOfTarget[target.getOperation()]) {
             mlir::OpBuilder builder(at.call);
             // Constructor lifting may already have replaced and erased the
@@ -541,9 +525,6 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             at.receiver = at.call.getReceiver();
             const mlir::Value undefined = ctjs::ConstantOp::create(
                 builder, at.call.getLoc(), valueType, ctjs::UndefinedAttr::get(context));
-            llvm::SmallVector<mlir::Value> arguments(captured);
-            arguments.append(at.call.getArgs().begin(), at.call.getArgs().end());
-            while (arguments.size() < captures + parameters) { arguments.push_back(undefined); }
             // THE RECEIVER IS OPERAND 0 AND ALWAYS WAS. ctjs.call_direct's
             // operands ARE the callee's entry block in order, so passing
             // the object here is the whole of "the receiver is a
@@ -557,11 +538,9 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // function for no consumer: the native call arm drops operand
             // 2, and this rewrite runs inside --ctnative-lower-to-emitc so
             // the boxed tier never sees the op. The load is erased below.
-            auto direct = ctjs::CallDirectOp::create(
-                builder, at.call.getLoc(), valueType,
-                mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
-                carriesReceiver ? at.receiver : undefined, undefined, undefined, arguments,
-                /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+            auto direct = directCall(builder, at.call.getLoc(), target,
+                                     carriesReceiver ? at.receiver : undefined, undefined,
+                                     undefined, captured, at.call.getArgs(), captures + parameters);
             if (carriesReceiver) {
                 direct->setAttr("ctnative.receiver", mlir::UnitAttr::get(context));
             }
@@ -569,10 +548,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // well as the callee, for the reason the receiver mark is on
             // both: `replace()` reads it once per operand and a symbol
             // lookup there would be a lookup per argument per call.
-            if (!cellArgs.empty()) {
-                direct->setAttr("ctnative.cell_args",
-                                mlir::Builder(context).getDenseI32ArrayAttr(cellArgs));
-            }
+            if (!cellArgs.empty()) { direct->setAttr("ctnative.cell_args", cellSlots); }
             at.call.getResult().replaceAllUsesWith(direct.getResult());
             at.call.erase();
             // AND THE METHOD LOAD GOES WITH IT. Leaving it would keep a
@@ -612,13 +588,9 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
                 }
                 arguments.append(site.call.getArgs().begin(), site.call.getArgs().end());
                 site.call.getArgsMutable().assign(arguments);
-                if (!cellArgs.empty()) {
-                    site.call->setAttr("ctnative.cell_args",
-                                       mlir::Builder(context).getDenseI32ArrayAttr(cellArgs));
-                }
+                if (!cellArgs.empty()) { site.call->setAttr("ctnative.cell_args", cellSlots); }
                 if (!objectArgs.empty()) {
-                    site.call->setAttr("ctnative.object_args",
-                                       mlir::Builder(context).getDenseI32ArrayAttr(objectArgs));
+                    site.call->setAttr("ctnative.object_args", objectSlots);
                 }
             }
         }
@@ -630,10 +602,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
         // as it is - it already holds the value (slice 1b). The slot's
         // INDEX is what selects between them, because a slot the enclosing
         // closure fills carries a placeholder operand and nothing else.
-        llvm::SmallVector<mlir::Value> captured;
-        for (unsigned i = 0; i < static_cast<unsigned>(c.getUpvalues().size()); ++i) {
-            captured.push_back(liftedCapture(c, i));
-        }
+        const auto captured = liftedCaptures(c);
         // BOTH SHAPES OF CALL SITE, because --ctjs-resolve-globals may have
         // named this one already. `whyNotLiftable` admits a ctjs.call at
         // operand 0 and a ctjs.call_direct at operand 2; the difference
@@ -673,30 +642,18 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             mlir::OpBuilder at(user);
             const mlir::Value undefined = ctjs::ConstantOp::create(
                 at, user->getLoc(), valueType, ctjs::UndefinedAttr::get(context));
-            llvm::SmallVector<mlir::Value> arguments(captured);
-            const mlir::ValueRange supplied = call ? call.getArgs() : named.getArgs();
-            arguments.append(supplied.begin(), supplied.end());
             // The resolver's own padding rule: op::call fills a missing
             // parameter with undefined, so a short call becomes a full one.
-            while (arguments.size() < captures + parameters) { arguments.push_back(undefined); }
-            auto direct =
-                ctjs::CallDirectOp::create(at, user->getLoc(), valueType,
-                                           mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
-                                           call ? call.getReceiver() : named.getReceiver(),
-                                           undefined, c.getResult(), arguments,
-                                           /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+            auto direct = directCall(at, user->getLoc(), target,
+                                     call ? call.getReceiver() : named.getReceiver(), c.getResult(),
+                                     undefined, captured, call ? call.getArgs() : named.getArgs(),
+                                     captures + parameters);
             // ON THE CALL AS WELL AS THE CALLEE, for the reason the
             // receiver mark is: `TypeInference::hasClosedShape` is asked
             // once per property access per solver visit, and a symbol
             // lookup there would be quadratic in the module.
-            if (!objectArgs.empty()) {
-                direct->setAttr("ctnative.object_args",
-                                mlir::Builder(context).getDenseI32ArrayAttr(objectArgs));
-            }
-            if (!cellArgs.empty()) {
-                direct->setAttr("ctnative.cell_args",
-                                mlir::Builder(context).getDenseI32ArrayAttr(cellArgs));
-            }
+            if (!objectArgs.empty()) { direct->setAttr("ctnative.object_args", objectSlots); }
+            if (!cellArgs.empty()) { direct->setAttr("ctnative.cell_args", cellSlots); }
             user->getResult(0).replaceAllUsesWith(direct.getResult());
             user->erase();
             ++out.calls;

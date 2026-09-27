@@ -275,12 +275,8 @@ void closureLifter::makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target,
     const auto valueType = ctjs::ValueType::get(context);
     const mlir::Value undefined =
         ctjs::ConstantOp::create(at, call.getLoc(), valueType, ctjs::UndefinedAttr::get(context));
-    llvm::SmallVector<mlir::Value> arguments(call.getArgs());
-    while (arguments.size() < parameters) { arguments.push_back(undefined); }
-    auto direct = ctjs::CallDirectOp::create(at, call.getLoc(), valueType,
-                                             mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
-                                             call.getReceiver(), undefined, undefined, arguments,
-                                             /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+    auto direct = directCall(at, call.getLoc(), target, call.getReceiver(), undefined, undefined,
+                             {}, call.getArgs(), parameters);
     boundCaptureCalls[target.getOperation()].push_back({direct, holder});
     call.getResult().replaceAllUsesWith(direct.getResult());
     call.erase();
