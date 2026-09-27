@@ -699,6 +699,7 @@ private:
     // ...or null when `window` is no window of this page any more: a removed
     // frame's - frames.cpp.
     [[nodiscard]] dom_bindings * find_bindings_of(value window);
+    [[nodiscard]] std::vector<node_id> child_navigables(); // frames.cpp
     // The bindings that made the node wrapper `wrapper` - the page's or a
     // frame's, at any depth - or null for anything else. A member installed on
     // a SHARED interface prototype captures the bindings that installed it

@@ -704,7 +704,7 @@ void dom_bindings::install_window(context & cx) {
                                 "length",
                                 [this](context &, std::span<value>) {
                                     return value::number(
-                                        static_cast<double>(all_html_elements("iframe").size()));
+                                        static_cast<double>(child_navigables().size()));
                                 })),
                             value::undefined());
     // `self.origin` (HTML 7.2.2.1 WindowOrWorkerGlobalScope): the document's
@@ -851,7 +851,7 @@ value dom_bindings::make_window_view(context & cx, value target, script::realm_r
             name.find_first_not_of("0123456789") != std::string_view::npos) {
             return value::undefined();
         }
-        const std::vector<node_id> frames = all_html_elements("iframe");
+        const std::vector<node_id> frames = child_navigables();
         const std::size_t index = static_cast<std::size_t>(std::stoul(std::string{name}));
         if (index >= frames.size()) { return value::undefined(); }
         return c.lookup_property(wrap(c, frames[index]), "contentWindow");

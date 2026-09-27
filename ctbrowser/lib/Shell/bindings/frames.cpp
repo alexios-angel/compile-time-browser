@@ -1055,14 +1055,14 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
                                       })),
                                   value::undefined());
     // `length` counts THIS document's child frames, as the page's does.
-    frame_window->define_accessor(
-        "length",
-        value::object(cx.allocate<script::native_object>(
-            "length",
-            [this](context &, std::span<value>) {
-                return value::number(static_cast<double>(all_html_elements("iframe").size()));
-            })),
-        value::undefined());
+    frame_window->define_accessor("length",
+                                  value::object(cx.allocate<script::native_object>(
+                                      "length",
+                                      [this](context &, std::span<value>) {
+                                          return value::number(
+                                              static_cast<double>(child_navigables().size()));
+                                      })),
+                                  value::undefined());
     if (auto * doc = document_object()) {
         define_location_property(cx, *doc);
         // AND THE DOCUMENT KNOWS ITS WINDOW. install_document set
@@ -1154,6 +1154,25 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
 dom_bindings & dom_bindings::bindings_of(value window) {
     dom_bindings * found = find_bindings_of(window);
     return found != nullptr ? *found : primary();
+}
+
+// THE DOCUMENT-TREE CHILD NAVIGABLES in tree order (HTML 7.3.1.1) - what
+// `window.length` counts and `window[i]` indexes: each connected <iframe>
+// whose navigable exists. Reconciled first, so an <iframe src> inserted this
+// turn has one; a later <iframe> of the same insertion, whose insertion steps
+// have not run while an earlier one's `load` does, has none yet
+// (insertion-removing-steps-iframe.window.js).
+std::vector<node_id> dom_bindings::child_navigables() {
+    reconcile_frames();
+    std::vector<node_id> out;
+    for (const node_id id : all_html_elements("iframe")) {
+        if (std::ranges::any_of(frames_, [id](const frame_entry & entry) {
+                return entry.element == id && entry.bindings != nullptr;
+            })) {
+            out.push_back(id);
+        }
+    }
+    return out;
 }
 
 dom_bindings * dom_bindings::find_bindings_of(value window) {
