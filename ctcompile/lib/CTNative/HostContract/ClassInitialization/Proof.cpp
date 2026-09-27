@@ -727,45 +727,30 @@ bool classInitialization::normalizeMethods() {
         }
         // Exit normalization moves branch bodies without replacing their
         // property reads. Expansion must follow the private copy too.
-        for (auto & [read, target] : getterReads) {
-            if (!step()) { return false; }
-            if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                read = llvm::cast<ctjs::GetPropertyOp>(mapped);
-            }
+        uint64_t cost = getterReads.size() + constructorReads.size() + staticMethodReads.size() +
+                        cellReads.size() + cells.size() + inertReceiverClosures.size() +
+                        captureReads.size();
+        for (auto & item : globalHolders) {
+            cost += item.second.reads.size() + item.second.loads.size();
         }
-        for (ctjs::GetPropertyOp & read : constructorReads) {
-            if (!step()) { return false; }
-            if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                read = llvm::cast<ctjs::GetPropertyOp>(mapped);
+        for (auto & item : localHolders) { cost += item.second.reads.size(); }
+        if (!spend(cost)) { return false; }
+        const auto remap = [&](auto & op) {
+            if (auto * mapped = mapping.lookupOrNull(op.getOperation())) {
+                op = llvm::cast<std::remove_reference_t<decltype(op)>>(mapped);
             }
-        }
-        for (auto & [read, target] : staticMethodReads) {
-            (void)target;
-            if (!step()) { return false; }
-            if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                read = llvm::cast<ctjs::GetPropertyOp>(mapped);
-            }
-        }
-        for (ctjs::CellGetOp & read : cellReads) {
-            if (!step()) { return false; }
-            if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                read = llvm::cast<ctjs::CellGetOp>(mapped);
-            }
-        }
+        };
+        for (auto & item : getterReads) { remap(item.first); }
+        for (auto & read : constructorReads) { remap(read); }
+        for (auto & item : staticMethodReads) { remap(item.first); }
+        for (auto & read : cellReads) { remap(read); }
         llvm::MapVector<mlir::Value, mlir::Value> mappedCells;
         for (auto [cell, value] : cells) {
-            if (!step()) { return false; }
             mappedCells[mapping.lookupOrDefault(cell)] = mapping.lookupOrDefault(value);
         }
         cells.swap(mappedCells);
-        for (ctjs::CreateClosureOp & closure : inertReceiverClosures) {
-            if (!step()) { return false; }
-            if (auto * mapped = mapping.lookupOrNull(closure.getOperation())) {
-                closure = llvm::cast<ctjs::CreateClosureOp>(mapped);
-            }
-        }
+        for (auto & closure : inertReceiverClosures) { remap(closure); }
         for (ctjs::LoadUpvalueOp & read : captureReads) {
-            if (!step()) { return false; }
             if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
                 if (auto helper = callableCaptures.lookup(read)) {
                     callableCaptures.erase(read);
@@ -778,31 +763,12 @@ bool classInitialization::normalizeMethods() {
                 read = llvm::cast<ctjs::LoadUpvalueOp>(mapped);
             }
         }
-        for (auto & [publication, holder] : globalHolders) {
-            (void)publication;
-            for (auto & [read, closure] : holder.reads) {
-                (void)closure;
-                if (!step()) { return false; }
-                if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                    read = llvm::cast<ctjs::GetPropertyOp>(mapped);
-                }
-            }
-            for (ctjs::LoadGlobalOp & load : holder.loads) {
-                if (!step()) { return false; }
-                if (auto * mapped = mapping.lookupOrNull(load.getOperation())) {
-                    load = llvm::cast<ctjs::LoadGlobalOp>(mapped);
-                }
-            }
+        for (auto & item : globalHolders) {
+            for (auto & read : item.second.reads) { remap(read.first); }
+            for (auto & load : item.second.loads) { remap(load); }
         }
-        for (auto & [object, holder] : localHolders) {
-            (void)object;
-            for (auto & [read, closure] : holder.reads) {
-                (void)closure;
-                if (!step()) { return false; }
-                if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                    read = llvm::cast<ctjs::GetPropertyOp>(mapped);
-                }
-            }
+        for (auto & item : localHolders) {
+            for (auto & read : item.second.reads) { remap(read.first); }
         }
         normalizedMethods.emplace_back(function, std::move(copy));
     }
