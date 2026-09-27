@@ -101,6 +101,9 @@ OBSERVATIONS.update(
         "inherited-static-getters-shadow-method": (7, 7),
         "inherited-static-getters-shadow-extended": (7, 7),
         "inherited-static-getters-shadow-throwing": (7, 7),
+        "inherited-static-getters-shadow-method-both": (7, 7),
+        "inherited-static-getters-shadow-method-chain": (7, 7),
+        "inherited-static-getters-component-method": (7, 7),
         "static-call-this-method": (7, 7),
         "static-call-this-getter-chain": (6, 6),
         "static-call-this-detached": (7, 7),
@@ -108,12 +111,17 @@ OBSERVATIONS.update(
         "static-call-this-new-this": (7, 7),
     }
 )
+# B's own method keeps W's throwing NAME; only the prepared copy is pinned.
+PREPARED_ONLY.add("inherited-static-getters-component-method")
 POSITIVES.update(
     {
         "inherited-static-getters",
         "inherited-static-getters-shadow",
         "inherited-static-getters-component",
         "inherited-static-getters-shadow-both",
+        "inherited-static-getters-shadow-method",
+        "inherited-static-getters-shadow-method-both",
+        "inherited-static-getters-shadow-method-chain",
         "static-call-this-method",
         "static-call-this-getter-chain",
     }
@@ -547,6 +555,7 @@ def main():
                 "static-error-",
                 "inherited-own-fields-iterate-throwing-arm",
                 "inherited-static-getters-component",
+                "inherited-static-getters-component-method",
                 "inherited-static-getters-shadow-throwing",
             )
         ) or name in (
@@ -600,7 +609,6 @@ def main():
             "inherited-own-fields-iterate-throwing-arm-static-shadow": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-iterate-throwing-arm-returning": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-iterate-throwing-arm-escape-before": "class own-key snapshot constructor observes its receiver",
-            "inherited-static-getters-shadow-method": "derived class requires receiver-preserving super normalization",
             "inherited-static-getters-shadow-extended": "derived class requires receiver-preserving super normalization",
             "inherited-static-getters-shadow-throwing": "derived class requires receiver-preserving super normalization",
             "inherited-static-getters-base-reads-leaf": "static getter receiver lacks an exact local getter dependency",
@@ -973,6 +981,16 @@ def main():
                     or 'ctjs.load_global "Object"' in after
                 ):
                     raise RuntimeError(f"{name}: dead arm or folded snapshot changed")
+            elif name == "inherited-static-getters-component-method":
+                # Super normalization drops the guard throws. W's NAME keeps its
+                # throw for B's own method; Alert's copy selects "alert".
+                operations = ()
+                if (
+                    after.count("ctjs.throw") != 1
+                    or '#ctjs.string<"NAME required">' not in after
+                    or '#ctjs.string<"alert">' not in after
+                ):
+                    raise RuntimeError(f"{name}: receiver copy or base throw changed")
             elif name == "class-map-inherited-base-string":
                 operations = ()
                 if after.count("ctjs.construct") != 2 or "ctjs.load_upvalue" in after:
@@ -1184,7 +1202,20 @@ def main():
                         str(native),
                     ]
                 )
-                if name in PREPARED_ONLY and not (name == "bootstrap-r" and optimize):
+                if name == "inherited-static-getters-component-method":
+                    # Alert and its copy lower; only B's own method and W's
+                    # throwing NAME, which no B instance reaches, stay refused.
+                    native_text = native.read_text()
+                    refused = re.findall(r"ctjs.func (?:private )?@(\w+)\$", native_text)
+                    # Private reachability pruning may drop both when optimizing.
+                    if (
+                        sorted(refused) not in (["fn", "fn"], [] if optimize else None)
+                        or len(REFUSAL.findall(native_text)) != len(refused)
+                        or "emitc.func @main(" not in native_text
+                        or not re.search(r"emitc.func @keyed_\d+\(", native_text)
+                    ):
+                        raise RuntimeError(f"{name}: receiver copy lost its native boundary")
+                elif name in PREPARED_ONLY and not (name == "bootstrap-r" and optimize):
                     native_text = native.read_text()
                     check_refusal(name, native_text, len(FUNCTION.findall(prepared.read_text())))
                     key_type = (

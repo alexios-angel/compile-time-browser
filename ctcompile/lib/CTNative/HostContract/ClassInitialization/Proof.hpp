@@ -139,6 +139,11 @@ struct classInitialization {
     bool retainedMapReads(mlir::OpOperand & use, const llvm::StringSet<> & methodKeys,
                           llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads);
 
+    bool freshFunctionIndex(unsigned & next);
+    bool cloneReceiverMethods(ctjs::CreateClosureOp leaf, ctjs::CreateObjectOp prototype,
+                              ctjs::CallOp helper, const llvm::StringSet<> & shadowed,
+                              llvm::SmallVectorImpl<ctjs::SetPropertyOp> & selected,
+                              llvm::SmallVectorImpl<ctjs::SetPropertyOp> & definitions);
     bool cloneReceiverGetters(mlir::Value leaf,
                               const llvm::StringMap<ctjs::DefineAccessorOp> & environment,
                               const llvm::StringSet<> & shadowed);

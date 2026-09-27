@@ -1186,6 +1186,74 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
     return reason.empty();
 }
 
+bool classInitialization::freshFunctionIndex(unsigned & next) {
+    next = 0;
+    for (auto function : module.getOps<ctjs::FuncOp>()) {
+        if (!step()) { return false; }
+        if (auto index = functionIndex(function)) { next = std::max(next, *index + 1); }
+    }
+    return true;
+}
+
+bool classInitialization::cloneReceiverMethods(
+    ctjs::CreateClosureOp leaf, ctjs::CreateObjectOp prototype, ctjs::CallOp helper,
+    const llvm::StringSet<> & shadowed, llvm::SmallVectorImpl<ctjs::SetPropertyOp> & selected,
+    llvm::SmallVectorImpl<ctjs::SetPropertyOp> & definitions) {
+    // An inherited method reading an overridden or copied getter through
+    // this.constructor selects other getters for this class's instances. Put a
+    // copy on this class's prototype, as if the source overrode it with the
+    // same body: the own-method proof checks it in this class's environment,
+    // and base instances keep the original.
+    const auto copies = receiverGetters.lookup(leaf.getResult());
+    llvm::SmallVector<ctjs::SetPropertyOp> kept;
+    for (ctjs::SetPropertyOp definition : selected) {
+        if (!step()) { return false; }
+        auto closure = definition.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        auto fn = target(closure);
+        bool reads = false;
+        if (fn) {
+            const auto receiver = fn.getBody().front().getArgument(ctjs::arg_receiver);
+            for (mlir::Operation * user : receiver.getUsers()) {
+                if (!step()) { return false; }
+                auto constructor = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                if (!constructor || constructor.getObject() != receiver ||
+                    ctjs::constantKey(constructor.getKey()) != "constructor") {
+                    continue;
+                }
+                for (mlir::Operation * selector : constructor.getResult().getUsers()) {
+                    if (!step()) { return false; }
+                    auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(selector);
+                    const auto key = read ? ctjs::constantKey(read.getKey()) : llvm::StringRef{};
+                    reads |= read && (shadowed.contains(key) || copies.contains(key));
+                }
+            }
+        }
+        if (!reads) {
+            kept.push_back(definition);
+            continue;
+        }
+        unsigned index = 0;
+        if (!freshFunctionIndex(index)) { return false; }
+        auto copy = llvm::cast<ctjs::FuncOp>(fn->clone());
+        copy.setSymName((fn.getSymName().rsplit('$').first + "$" + llvm::Twine(index)).str());
+        module.getBody()->push_back(copy);
+        functions[index] = copy;
+        mlir::OpBuilder at(helper);
+        auto made = ctjs::CreateClosureOp::create(
+            at, closure.getLoc(), closure.getType(), closure.getEnclosingClosure(),
+            closure.getEnclosingThis(), at.getI32IntegerAttr(static_cast<int32_t>(index)),
+            closure.getUpvalues(), closure.getEnclosingIndicesAttr());
+        definitions.push_back(ctjs::SetPropertyOp::create(
+            at, definition.getLoc(), prototype.getResult(), definition.getKey(), made.getResult()));
+        auto home = ctjs::ConstantOp::create(at, definition.getLoc(),
+                                             ctjs::StringAttr::get(module.getContext(), "__home"));
+        ctjs::SetPropertyOp::create(at, definition.getLoc(), made.getResult(), home.getResult(),
+                                    prototype.getResult());
+    }
+    selected.assign(kept.begin(), kept.end());
+    return true;
+}
+
 bool classInitialization::cloneReceiverGetters(
     mlir::Value leaf, const llvm::StringMap<ctjs::DefineAccessorOp> & environment,
     const llvm::StringSet<> & shadowed) {
@@ -1218,10 +1286,7 @@ bool classInitialization::cloneReceiverGetters(
         return reaches[fn] = result;
     };
     unsigned next = 0;
-    for (auto function : module.getOps<ctjs::FuncOp>()) {
-        if (!step()) { return false; }
-        if (auto index = functionIndex(function)) { next = std::max(next, *index + 1); }
-    }
+    if (!freshFunctionIndex(next)) { return false; }
     for (const auto & item : environment) {
         const auto key = item.first();
         auto source = inherited(key);
@@ -1230,8 +1295,9 @@ bool classInitialization::cloneReceiverGetters(
         if (!reason.empty()) { return false; }
         if (!reached) { continue; }
         auto copy = llvm::cast<ctjs::FuncOp>(source->clone());
-        copy.setSymName((source.getSymName().rsplit('$').first + "$" + llvm::Twine(next++)).str());
+        copy.setSymName((source.getSymName().rsplit('$').first + "$" + llvm::Twine(next)).str());
         module.getBody()->push_back(copy);
+        functions[next++] = copy;
         clones[key] = copy;
     }
     return true;

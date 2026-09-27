@@ -799,7 +799,9 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             }
         }
         if (!shadowedGetters.empty() &&
-            !cloneReceiverGetters(closure.getResult(), staticDefinitions, shadowedGetters)) {
+            (!cloneReceiverGetters(closure.getResult(), staticDefinitions, shadowedGetters) ||
+             !cloneReceiverMethods(closure, prototype, call, shadowedGetters,
+                                   selectedBaseDefinitions, definitions))) {
             return false;
         }
     }
@@ -959,15 +961,21 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
                 return false;
             }
             // A shared inherited body resolves each read once, for every class.
-            // ponytail: overridden or copied getters need per-class method bodies.
+            // This class's instances reach only its nearest non-overridden
+            // bodies - copies replaced the others - and ancestors only through
+            // super calls, which were expanded and are rechecked on this receiver.
+            bool conflicting = false;
             for (ctjs::GetPropertyOp read : receiverReads) {
                 if (!step()) { return false; }
                 const auto key = ctjs::constantKey(read.getKey());
-                if (shadowedGetters.contains(key) || (copied && copies->second.contains(key))) {
-                    return refuse("derived class requires receiver-preserving super normalization");
-                }
+                conflicting |=
+                    shadowedGetters.contains(key) || (copied && copies->second.contains(key));
             }
-            staticReads.append(receiverReads);
+            if (!conflicting) {
+                staticReads.append(receiverReads);
+            } else if (llvm::is_contained(selectedBaseDefinitions, definition)) {
+                return refuse("derived class requires receiver-preserving super normalization");
+            }
         }
         setup.insert(inherited);
         retainedSetup.insert(inherited.getCallee().getDefiningOp());

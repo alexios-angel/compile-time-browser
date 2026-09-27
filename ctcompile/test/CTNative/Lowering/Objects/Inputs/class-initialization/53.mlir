@@ -227,3 +227,61 @@ function inherited_static_getters_shadow_throwing() {
     return leaf.k + (leaf.n === 3) * 3;
 }
 var a = inherited_static_getters_shadow_throwing();
+
+// A shared inherited method reads the overridden getter through
+// this.constructor: each class's instances run a body that selects its own.
+//--- inherited-static-getters-shadow-method-both.js
+function inherited_static_getters_shadow_method_both() {
+    class Base {
+        constructor() { this.n = 3; }
+        read() { return this.constructor.NAME === "leaf" ? 2 : this.constructor.NAME === "base" ? 1 : 0; }
+        static get NAME() { return "base"; }
+    }
+    class Leaf extends Base {
+        constructor() { super(); }
+        static get NAME() { return "leaf"; }
+    }
+    return new Base().read() * 3 + new Leaf().read() * 2;
+}
+var a = inherited_static_getters_shadow_method_both();
+
+// A class derived from the copy's class overrides again and gets its own.
+//--- inherited-static-getters-shadow-method-chain.js
+function inherited_static_getters_shadow_method_chain() {
+    class Base {
+        constructor() { this.n = 3; }
+        read() { return this.constructor.NAME === "sub" ? 5 : this.constructor.NAME === "leaf" ? 2 : 0; }
+        static get NAME() { return "base"; }
+    }
+    class Leaf extends Base {
+        constructor() { super(); }
+        static get NAME() { return "leaf"; }
+    }
+    class Sub extends Leaf {
+        constructor() { super(); }
+        static get NAME() { return "sub"; }
+    }
+    return new Leaf().read() + new Sub().read();
+}
+var a = inherited_static_getters_shadow_method_chain();
+
+// Bootstrap's shape again: B's method reads DATA_KEY, which is copied for the
+// component, so the component's copy of the method sees "bs.alert".
+//--- inherited-static-getters-component-method.js
+function inherited_static_getters_component_method() {
+    class W {
+        static get NAME() { throw new Error("NAME required"); }
+    }
+    class B extends W {
+        constructor() { super(); this.n = 3; }
+        keyed() { return (this.constructor.DATA_KEY === "bs.alert") * 4; }
+        static get DATA_KEY() { return `bs.${this.NAME}`; }
+    }
+    class Alert extends B {
+        constructor() { super(); }
+        static get NAME() { return "alert"; }
+    }
+    const alert = new Alert();
+    return alert.keyed() + (alert.n === 3) * 3;
+}
+var a = inherited_static_getters_component_method();
