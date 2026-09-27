@@ -9,7 +9,6 @@ import re
 from CTNative.HostContract.prefix import specialize as specialize_prefix
 
 from .driver_common import (
-    CONSTANT_GLOBAL_NODE,
     SOURCE,
     boundary,
     check_call_preservation,
@@ -18,6 +17,7 @@ from .driver_common import (
     forge_leaf_evidence,
     host,
     methods,
+    observe,
     owned,
 )
 from .driver_recorder import recorder_future_source, recorder_lifetime_cpp
@@ -105,17 +105,7 @@ def prepare_umd(args):
 
 
 def observe_umd(args, js, values):
-    expected = "".join(f"{key}={value}\n" for key, value in sorted(values.items()))
-    result = host.run([args.node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(values))])
-    if result.stdout != expected or result.stderr:
-        raise RuntimeError("browser UMD typed Node observations changed")
-    result = host.run([str(args.reference), str(js)])
-    if (
-        result.stdout != expected
-        or f"({len(values)} number, 0 boolean, 0 string, 0 null, 0 undefined)" not in result.stderr
-    ):
-        raise RuntimeError("browser UMD typed VM observations changed")
-    return expected
+    return observe(args, js.stem, js.read_text(), values)
 
 
 def umd_mutations(text):

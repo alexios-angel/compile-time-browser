@@ -12,6 +12,7 @@ from .driver_common import (
     constant_global_cases,
     constant_global_sources,
     contract,
+    distinguish,
     forge_leaf_evidence,
     host,
     json,
@@ -593,14 +594,8 @@ def check_constant_global_observations(args, node, reference):
         ("constant_branch_lifetime", "const copy = offset;", "const copy = first;"),
     ):
         row = constant_global_cases()[name]
-        assert row["source"].count(old) == 1, name
-        js = args.work / f"{name}-constant-blind.js"
-        js.write_text(row["source"].replace(old, replacement))
-        names = json.dumps(sorted(["trace", *row["saved"]]))
-        if host.run(
-            [node, "-e", CONSTANT_GLOBAL_NODE, str(js), names]
-        ).stdout == scalar_global_output(name, row["expected_trace"]):
-            raise RuntimeError(f"{name}: typed observation cannot distinguish {replacement}")
+        expected = scalar_global_output(name, row["expected_trace"])
+        distinguish(args, name, row["source"], old, replacement, expected, ["trace", *row["saved"]])
 
 
 def check_boolean_observation_mutations(args, compilers, nm):

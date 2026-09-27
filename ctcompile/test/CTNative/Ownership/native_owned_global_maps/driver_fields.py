@@ -5,6 +5,7 @@ from .driver_common import (
     check_call_preservation,
     comparable_provenance,
     contract,
+    distinguish,
     forge_leaf_evidence,
     host,
     leaf_readback_refusals,
@@ -80,14 +81,10 @@ def check_string_field_observations(args, node, reference):
         ("field_string_saved_overwrite", "return saved;", "return item.value;"),
         ("field_string_lifetime", "return saved;", "return alias.value;"),
     )
-    for index, (name, old, replacement) in enumerate(mutations):
+    for name, old, replacement in mutations:
         row = cases[name]
-        assert row["source"].count(old) == 1, name
-        js = args.work / f"{name}-field-blind-{index}.js"
-        js.write_text(row["source"].replace(old, replacement))
-        result = host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]'])
-        if result.stdout == scalar_global_output(name, row["expected_trace"]):
-            raise RuntimeError(f"{name}: typed field observer cannot distinguish {replacement}")
+        expected = scalar_global_output(name, row["expected_trace"])
+        distinguish(args, name, row["source"], old, replacement, expected)
     for name in STRING_FIELD_OBSERVERS:
         source = cases[name]["source"]
         observed, value = string_field_observer_source(source, name)

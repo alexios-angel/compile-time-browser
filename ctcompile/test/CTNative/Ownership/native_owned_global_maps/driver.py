@@ -283,15 +283,9 @@ def main(group=None):
         js, rejected, count = boundary.prepare(
             args, name, SOURCE.replace("return state.size;", body)
         )
-        expected = "trace=undefined\n"
-        reference_result = host.run([str(reference), str(js)])
-        if (
-            count != 4
-            or host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != expected
-            or reference_result.stdout != expected
-            or "(0 number, 0 boolean, 0 string, 0 null, 1 undefined)" not in reference_result.stderr
-        ):
+        if count != 4:
             raise RuntimeError(f"{name}: lost the exact nullable source observation")
+        expected = observe(args, name, js.read_text(), {"trace": "undefined"})
         fresh = contract(args, rejected, name)
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
             label = name + "-" + mode

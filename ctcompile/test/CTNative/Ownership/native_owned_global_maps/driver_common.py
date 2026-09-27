@@ -160,6 +160,49 @@ def comparable_provenance(cpp, input_ir):
     )
 
 
+def observe(args, name, source, values):
+    """Node and the VM must both print exactly `values` (Numbers, bools, "null" or
+    "undefined") for `source`, with those tags. Returns the printed text."""
+    js = args.work / f"{name}-observed.js"
+    js.write_text(source)
+    expected = "".join(f"{key}={str(value).lower()}\n" for key, value in sorted(values.items()))
+    tags = [
+        (
+            "boolean"
+            if isinstance(value, bool)
+            else value if value in ("null", "undefined") else "number"
+        )
+        for value in values.values()
+    ]
+    counts = ", ".join(
+        f"{tags.count(tag)} {tag}" for tag in ("number", "boolean", "string", "null", "undefined")
+    )
+    result = host.run([args.node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(values))])
+    if result.stdout != expected or result.stderr:
+        raise RuntimeError(
+            f"{name}: typed Node observation changed\n{result.stdout}{result.stderr}"
+        )
+    result = host.run([str(args.reference), str(js)])
+    if result.stdout != expected or f"({counts})" not in result.stderr:
+        raise RuntimeError(f"{name}: typed VM observation changed\n{result.stdout}{result.stderr}")
+    return expected
+
+
+def distinguish(args, name, source, old, replacement, expected, names=("trace",)):
+    """Node must fail, or print other than `expected`, once `old` becomes `replacement`."""
+    assert source.count(old) == 1, (name, old)
+    js = args.work / f"{name}-blind.js"
+    js.write_text(source.replace(old, replacement))
+    result = subprocess.run(
+        [args.node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(names))],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if not result.returncode and result.stdout == expected:
+        raise RuntimeError(f"{name}: observer cannot distinguish {replacement}")
+
+
 def numeric_reference_output(name, value):
     return scalar_global_output(name, value)
 

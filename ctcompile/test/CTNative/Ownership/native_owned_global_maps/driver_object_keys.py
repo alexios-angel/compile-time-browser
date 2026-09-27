@@ -1,13 +1,13 @@
 from .driver_common import (
-    CONSTANT_GLOBAL_NODE,
     boundary,
     check_budgets,
     check_call_preservation,
     contract,
+    distinguish,
     forge_leaf_evidence,
-    host,
     json,
     methods,
+    observe,
     object_argument_cases,
     object_argument_observer_source,
     object_argument_sources,
@@ -15,7 +15,6 @@ from .driver_common import (
     re,
     retained_key_observer_source,
     source_calls,
-    subprocess,
 )
 from .driver_fields import (
     string_field_method_graph,
@@ -28,54 +27,21 @@ from .harness_objects import object_payload_observer_source
 
 def check_object_argument_observations(args, node, reference):
     cases = object_argument_cases()
-
-    def observe(name, source, value, undefined_globals=()):
-        js = args.work / f"{name}-object-observed.js"
-        js.write_text(source)
-        names = sorted(["trace", *undefined_globals])
-        expected = "".join(f'{key}={value if key == "trace" else "undefined"}\n' for key in names)
-        if (
-            host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(names)]).stdout
-            != expected
-        ):
-            raise RuntimeError(f"{name}: typed Node object-key observation changed")
-        if reference:
-            result = host.run([str(reference), str(js)])
-            if (
-                result.stdout != expected
-                or f"(1 number, 0 boolean, 0 string, 0 null, {len(undefined_globals)} undefined)"
-                not in result.stderr
-            ):
-                raise RuntimeError(
-                    f"{name}: interpreter object-key observations changed\n"
-                    f"{result.stdout}\n{result.stderr}"
-                )
-        return expected
-
     for name, row in cases.items():
         undefined_globals = row.get("undefined_globals", ())
         assert not undefined_globals or not row["admitted"]
-        observe(name, row["source"], row["expected_trace"], undefined_globals)
+        values = dict.fromkeys(undefined_globals, "undefined")
+        observe(args, name, row["source"], {**values, "trace": row["expected_trace"]})
     named, value = object_argument_observer_source(
         cases["object_argument_global"]["source"], global_key=True
     )
-    expected_named = observe("object_argument_global_future", named, value)
+    expected_named = observe(args, "object_argument_global_future", named, {"trace": value})
     named_mutations = (
         ("const first = key,", "const first = {},"),
         ("key = {};\n    const distinct", "key = first;\n    const distinct"),
     )
-    for index, (old, replacement) in enumerate(named_mutations):
-        assert named.count(old) == 1, old
-        js = args.work / f"global-key-blinded-{index}.js"
-        js.write_text(named.replace(old, replacement))
-        result = subprocess.run(
-            [node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if not result.returncode and result.stdout == expected_named:
-            raise RuntimeError(f"global key observer cannot distinguish {replacement}")
+    for old, replacement in named_mutations:
+        distinguish(args, "global-key", named, old, replacement, expected_named)
     alias_mutations = 0
     for name, observer, mutations in (
         (
@@ -109,22 +75,12 @@ def check_object_argument_observations(args, node, reference):
             global_alias=True,
             global_chain=cases[name].get("global_chain", ()),
         )
-        expected_alias = observe(name + "_future", aliased, value)
-        for index, (old, replacement) in enumerate(mutations):
-            assert aliased.count(old) == 1, old
-            js = args.work / f"{name}-blinded-{index}.js"
-            js.write_text(aliased.replace(old, replacement))
-            result = subprocess.run(
-                [node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if not result.returncode and result.stdout == expected_alias:
-                raise RuntimeError(f"{name}: alias observer cannot distinguish {replacement}")
+        expected_alias = observe(args, name + "_future", aliased, {"trace": value})
+        for old, replacement in mutations:
+            distinguish(args, name, aliased, old, replacement, expected_alias)
             alias_mutations += 1
     source, value = object_argument_observer_source(cases["object_argument_exact"]["source"])
-    expected = observe("object_argument_future", source, value)
+    expected = observe(args, "object_argument_future", source, {"trace": value})
     mutations = (
         ("return t.has(e) ? 1 : 0;", "t.has(e); return 0;"),
         ("return t.has(e) ? 1 : 0;", "t.has(e); return 1;"),
@@ -134,20 +90,10 @@ def check_object_argument_observations(args, node, reference):
         ("captured.clear();", "captured.has(other);"),
         ("get({}) !== 0", "get(key) !== 0"),
     )
-    for index, (old, replacement) in enumerate(mutations):
-        assert source.count(old) == 1, old
-        js = args.work / f"object-argument-blinded-{index}.js"
-        js.write_text(source.replace(old, replacement))
-        result = subprocess.run(
-            [node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if not result.returncode and result.stdout == expected:
-            raise RuntimeError(f"object argument observer cannot distinguish {replacement}")
+    for old, replacement in mutations:
+        distinguish(args, "object-argument", source, old, replacement, expected)
     retained, value = retained_key_observer_source(cases["object_argument_siblings"]["source"])
-    expected = observe("retained_key_future", retained, value)
+    expected = observe(args, "retained_key_future", retained, {"trace": value})
     retained_mutations = (
         ("t.set(e, value);", "t.has(e);"),
         ("t.get(e) : 0;", "0 : 0;"),
@@ -156,57 +102,28 @@ def check_object_argument_observations(args, node, reference):
         ("alias = first", "alias = {}"),
         ("get(other) === 0", "get(first) === 0"),
     )
-    for index, (old, replacement) in enumerate(retained_mutations):
-        assert retained.count(old) == 1, old
-        js = args.work / f"retained-key-blinded-{index}.js"
-        js.write_text(retained.replace(old, replacement))
-        result = subprocess.run(
-            [node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if not result.returncode and result.stdout == expected:
-            raise RuntimeError(f"retained-key observer cannot distinguish {replacement}")
+    for old, replacement in retained_mutations:
+        distinguish(args, "retained-key", retained, old, replacement, expected)
     payload_observations = payload_mutations = 0
     for name, row in cases.items():
         if not row.get("object_payload"):
             continue
         payload, value = object_payload_observer_source(row["source"], name)
-        expected_payload = observe(name + "_future", payload, value)
+        expected_payload = observe(args, name + "_future", payload, {"trace": value})
         payload_observations += 1
         key = "1" if row.get("payload_only") else "e"
-        old = f"t.set({key}, e);"
-        assert payload.count(old) == 1
-        for index, replacement in enumerate(
-            (f"t.set({key}, {{}});", f"t.set({key}, 1);", f"t.has({key});", "t.set(2, e);")
+        for replacement in (
+            f"t.set({key}, {{}});",
+            f"t.set({key}, 1);",
+            f"t.has({key});",
+            "t.set(2, e);",
         ):
-            js = args.work / f"{name}-payload-blinded-{index}.js"
-            js.write_text(payload.replace(old, replacement))
-            result = subprocess.run(
-                [node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if not result.returncode and result.stdout == expected_payload:
-                raise RuntimeError(f"{name}: payload observer cannot distinguish {replacement}")
+            distinguish(args, name, payload, f"t.set({key}, e);", replacement, expected_payload)
             payload_mutations += 1
     source = cases["parameter_object"]["source"]
-    old = "state.set(key, 1);"
-    assert source.count(old) == 1
-    js = args.work / "parameter-object-blinded.js"
-    js.write_text(source.replace(old, "state.has(key);"))
-    result = subprocess.run(
-        [node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
-        capture_output=True,
-        text=True,
-        timeout=30,
+    distinguish(
+        args, "parameter_object", source, "state.set(key, 1);", "state.has(key);", "trace=1\n"
     )
-    if not result.returncode and result.stdout == "trace=1\n":
-        raise RuntimeError(
-            "historical object setter observation cannot distinguish a skipped write"
-        )
     return dict(
         sources=len(cases),
         observations=len(cases) + 7 + payload_observations,
