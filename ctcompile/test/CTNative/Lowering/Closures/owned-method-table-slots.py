@@ -6,14 +6,7 @@ import os
 from pathlib import Path
 import re
 
-from CTNative.harness import (
-    CORE_INCLUDE,
-    REFUSAL,
-    RUNTIME_INCLUDE,
-    native_tools,
-    prepare_js,
-    run,
-)
+from CTNative.harness import CORE_INCLUDE, REFUSAL, RUNTIME_INCLUDE, native_tools, prepare_js, run
 
 CTJS_FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE_FUNCTION = re.compile(r"^\s*emitc\.func\b", re.M)

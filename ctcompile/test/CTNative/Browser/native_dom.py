@@ -12,15 +12,7 @@ import re
 import shutil
 import subprocess
 
-from CTNative.harness import (
-    CLEANUP,
-    FLAGS,
-    FUNCTION,
-    find_compilers,
-    forge_module,
-    prepare_js,
-    run,
-)
+from CTNative.harness import CLEANUP, FLAGS, FUNCTION, find_compilers, forge_module, prepare_js, run
 from CTNative.HostContract.contract import fingerprint
 
 ACTION = """function toggle(element) {

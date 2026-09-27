@@ -6,14 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 
-from CTNative.harness import (
-    CLEANUP,
-    CORE_INCLUDE,
-    RUNTIME_INCLUDE,
-    find_compilers,
-    prepare_js,
-    run,
-)
+from CTNative.harness import CLEANUP, CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers, prepare_js, run
 
 FUNCTION = re.compile(r"ctjs\.func (?:private )?@([^ (]+)\(.*?(?=\n  ctjs\.func |\n})", re.S)
 NATIVE_PIPELINE = f"builtin.module(ctnative-lower-to-emitc{{optimize=false}},{CLEANUP})"
