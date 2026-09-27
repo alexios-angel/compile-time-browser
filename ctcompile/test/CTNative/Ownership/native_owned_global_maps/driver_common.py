@@ -11,6 +11,8 @@ import shutil
 import struct
 import subprocess
 
+from CTNative.Ownership.globals import CONSTANT_GLOBAL_NODE
+
 from .sources import (
     methods,
     owned,
@@ -180,26 +182,3 @@ def numeric_node_observer(value):
         )
     )
     return boundary.NODE.replace(predicate, condition)
-
-
-CONSTANT_GLOBAL_NODE = r"""const fs = require('node:fs');
-const vm = require('node:vm');
-const context = vm.createContext({});
-vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
-for (const name of JSON.parse(process.argv[2])) {
-    const value = vm.runInContext(name, context);
-    let text;
-    if (typeof value === 'number') {
-        text = Number.isNaN(value) ? 'nan' : Object.is(value, -0) ? '-0' :
-            value === -Infinity ? '-inf' : String(value);
-    } else if (typeof value === 'string') {
-        text = '"' + encodeURIComponent(value).replace(/[!'()*]/g,
-            c => '%' + c.charCodeAt(0).toString(16).toUpperCase()) + '"';
-    } else if (typeof value === 'boolean' || value === undefined || value === null) {
-        text = String(value);
-    } else {
-        throw new Error(name + ': unexpected scalar tag');
-    }
-    process.stdout.write(name + '=' + text + '\n');
-}
-"""

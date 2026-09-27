@@ -43,29 +43,6 @@ POSITIVES = {
     ),
 }
 
-BOOLEAN_NODE = r"""
-const fs = require('fs'), vm = require('vm');
-const context = vm.createContext({});
-vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
-const trace = vm.runInContext('trace', context);
-if (typeof trace !== 'boolean') throw new Error('non-boolean trace');
-process.stdout.write('trace=' + String(trace) + '\n');
-"""
-
-STRING_NODE = r"""
-const fs = require('fs'), vm = require('vm');
-const context = vm.createContext({});
-vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
-const trace = vm.runInContext('trace', context);
-if (typeof trace !== 'string') throw new Error('non-string trace');
-const quoted = Array.from(Buffer.from(trace, 'utf8'), byte => {
-    const character = String.fromCharCode(byte);
-    return /^[A-Za-z0-9_.~-]$/.test(character) ? character
-        : '%' + byte.toString(16).toUpperCase().padStart(2, '0');
-}).join('');
-process.stdout.write('trace="' + quoted + '"\n');
-"""
-
 
 def resolve_getter(args, ir):
     # The source query already supports a current direct call. Preserve its
@@ -362,9 +339,9 @@ def main():
         boolean_result = name in ("typed-boolean", "typed-boolean-false")
         string_result = name.startswith("typed-string")
         node_driver = (
-            STRING_NODE if string_result else BOOLEAN_NODE if boolean_result else boundary.NODE
+            owned.CONSTANT_GLOBAL_NODE if boolean_result or string_result else boundary.NODE
         )
-        if host.run([node, "-e", node_driver, str(js)]).stdout != expected:
+        if host.run([node, "-e", node_driver, str(js), '["trace"]']).stdout != expected:
             raise RuntimeError(f"{name}: Node source oracle mismatch")
         interpreted = host.run([str(reference), str(js)])
         if interpreted.stdout != expected:
@@ -465,8 +442,10 @@ def main():
         if count != 3:
             raise RuntimeError(f"typed-{name}: changed source denominator")
         expected = f"trace={name}\n"
-        node_driver = BOOLEAN_NODE.replace("typeof trace !== 'boolean'", f"trace !== {literal}")
-        if host.run([node, "-e", node_driver, str(js)]).stdout != expected:
+        if (
+            host.run([node, "-e", owned.CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout
+            != expected
+        ):
             raise RuntimeError(f"typed-{name}: Node source oracle mismatch")
         interpreted = host.run([str(reference), str(js)])
         tags = ", ".join(
