@@ -1,5 +1,7 @@
 """driver recorder: continued from sources_recorders."""
 
+from .driver_common import observe
+from .harness_map_results import run_sanitized_lifetime
 from .sources_recorders import *
 
 
@@ -339,31 +341,8 @@ def template_lifetime(
             raise RuntimeError(f"{name}/{mode}: linked VM symbols in template lifetime")
         if host.run([str(binary)]).stdout != expected * 2:
             raise RuntimeError(f"{name}/{mode}: future template lifetime mismatch")
-    binary = source.with_suffix(".sanitized").resolve()
-    host.run(
-        [
-            compilers[1],
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
+    result = run_sanitized_lifetime(
+        source, source.with_suffix(".sanitized").resolve(), compilers[1]
     )
     if result.returncode or result.stdout != expected * 2 or result.stderr:
         raise RuntimeError(
@@ -375,21 +354,8 @@ def check_recorders(args, node, reference, compilers, nm):
     cases = {**recorder_cases(), **recorder_refusals(), **snapshot_cases(), **template_cases()}
     observations = 0
 
-    def observe(name, source, values):
-        js = args.work / f"{name}-observed.js"
-        js.write_text(source)
-        expected = "".join(f"{key}={value}\n" for key, value in sorted(values.items()))
-        result = host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(values))])
-        if result.stdout != expected or result.stderr:
-            raise RuntimeError(f"{name}: typed Node observation changed")
-        result = host.run([str(reference), str(js)])
-        kinds = f"({len(values)} number, 0 boolean, 0 string, 0 null, 0 undefined)"
-        if result.stdout != expected or kinds not in result.stderr:
-            raise RuntimeError(f"{name}: typed VM observation changed")
-        return expected
-
     for name, row in cases.items():
-        observe(name, row["source"], row["values"])
+        observe(args, name, row["source"], row["values"])
         observations += len(row["values"])
         if row["admitted"]:
             values = dict(row["values"], traceFuture=1)
@@ -408,11 +374,11 @@ for (let i = 0; i < 1024; ++i) {
             )
             if row.get("recorder"):
                 values.update(traceErrorCount=values["traceErrorCount"] + 2048, traceErrorMessage=0)
-            observe(name + "-future", future, values)
+            observe(args, name + "-future", future, values)
             observations += len(row["values"]) + 1
     mutations = [*recorder_mutations(), *template_mutations()]
     for name, source, values in mutations:
-        observe(name, source, values)
+        observe(args, name, source, values)
         observations += len(values)
 
     for name, row in cases.items():

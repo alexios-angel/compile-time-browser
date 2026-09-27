@@ -3,13 +3,11 @@
 
 import argparse
 import json
-import os
 from pathlib import Path
 import re
-import shutil
 import sys
 
-from CTNative.harness import find_compilers
+from CTNative.harness import run_sanitized
 from CTNative.Ownership.native_owned_global_maps.driver_common import (
     comparable_provenance,
     forge_leaf_evidence,
@@ -34,17 +32,7 @@ def configure(args, ir, name, values):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
-    compilers, nm = find_compilers(), shutil.which("nm") or shutil.which("llvm-nm")
-    if not all(compilers) or not nm:
-        raise RuntimeError("need GCC, Clang and nm")
-    if not owned.VM.search(host.run([nm, "-C", args.reference]).stdout):
-        raise RuntimeError("VM symbol control is ineffective")
+    args, compilers, nm = owned.setup(argparse.ArgumentParser(description=__doc__))
     js, _, subject, values = prepare_umd(args)
     expected = observe_umd(args, js, values)
     source, _, _ = umd_source()
@@ -164,29 +152,8 @@ int main() {
 }
 """)
             binary = lifetime.with_suffix(".sanitized").resolve()
-            host.run(
-                [
-                    compilers[1],
-                    *owned.FLAGS,
-                    "-O1",
-                    "-g",
-                    "-fno-omit-frame-pointer",
-                    "-fsanitize=address,undefined",
-                    "-fsanitize-address-use-after-scope",
-                    str(lifetime),
-                    "-o",
-                    str(binary),
-                ]
-            )
-            result = host.run(
-                [str(binary)],
-                environment=dict(
-                    os.environ,
-                    ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                    UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-                ),
-            )
-            if result.stdout != expected * 2 or result.stderr:
+            result = run_sanitized(compilers[1], lifetime, binary, owned.FLAGS)
+            if result.returncode or result.stdout != expected * 2 or result.stderr:
                 raise RuntimeError("session reentry/lifetime check failed")
 
         def refuse(ir, manifest, label, extra=flags):

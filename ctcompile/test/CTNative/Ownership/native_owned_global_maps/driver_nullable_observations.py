@@ -1,7 +1,6 @@
 import hashlib
-import os
-import subprocess
 
+from .harness_map_results import run_sanitized_lifetime
 from .driver_common import (
     LEAF_ABSENCE_LIFETIMES,
     LEAF_CLEAR_LIFETIMES,
@@ -321,31 +320,8 @@ def check_nullable_foreign_empty(args, output, source, node, reference, compiler
                 or host.run([str(binary)]).stdout != "trace=2\n" * 2
             ):
                 raise RuntimeError("foreign empty Map: standalone lifetime/result mismatch")
-        binary = native.with_suffix(".sanitized").resolve()
-        host.run(
-            [
-                compilers[1],
-                *owned.FLAGS,
-                "-O1",
-                "-g",
-                "-fno-omit-frame-pointer",
-                "-fsanitize=address,undefined",
-                "-fsanitize-address-use-after-scope",
-                str(native),
-                "-o",
-                str(binary),
-            ]
-        )
-        result = subprocess.run(
-            [str(binary)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            env={
-                **os.environ,
-                "ASAN_OPTIONS": "detect_stack_use_after_return=1:detect_leaks=1",
-                "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1",
-            },
+        result = run_sanitized_lifetime(
+            native, native.with_suffix(".sanitized").resolve(), compilers[1]
         )
         if result.returncode or result.stdout != "trace=2\n" * 2 or result.stderr:
             raise RuntimeError(

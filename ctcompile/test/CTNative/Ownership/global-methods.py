@@ -2,15 +2,11 @@
 """Check live exported getter ownership through standalone native execution."""
 
 import argparse
-import os
 from pathlib import Path
 import re
-import shutil
 import struct
-import subprocess
 from urllib.parse import unquote_to_bytes
 
-from CTNative.harness import find_compilers
 from CTNative.Ownership import globals as owned
 
 boundary = owned.boundary
@@ -44,29 +40,6 @@ POSITIVES = {
         'trace="quote%20%22%0A%09%25%5C%3D%3B%E9%9B%AA%00tail"\n',
     ),
 }
-
-BOOLEAN_NODE = r"""
-const fs = require('fs'), vm = require('vm');
-const context = vm.createContext({});
-vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
-const trace = vm.runInContext('trace', context);
-if (typeof trace !== 'boolean') throw new Error('non-boolean trace');
-process.stdout.write('trace=' + String(trace) + '\n');
-"""
-
-STRING_NODE = r"""
-const fs = require('fs'), vm = require('vm');
-const context = vm.createContext({});
-vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
-const trace = vm.runInContext('trace', context);
-if (typeof trace !== 'string') throw new Error('non-string trace');
-const quoted = Array.from(Buffer.from(trace, 'utf8'), byte => {
-    const character = String.fromCharCode(byte);
-    return /^[A-Za-z0-9_.~-]$/.test(character) ? character
-        : '%' + byte.toString(16).toUpperCase().padStart(2, '0');
-}).join('');
-process.stdout.write('trace="' + quoted + '"\n');
-"""
 
 
 def resolve_getter(args, ir):
@@ -182,36 +155,7 @@ int main() {
     return 0;
 }
 """
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(changed)
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
-    if result.returncode or result.stdout != expected * 2:
-        raise RuntimeError(f"{name}/{mode}: lifetime failure\n{result.stdout}{result.stderr}")
+    owned.check_lifetime(args, name, mode, compiler, changed, expected)
 
 
 def standalone(args, output, name, expected, compilers, nm, *, result_type="ctnative::js_num"):
@@ -349,23 +293,8 @@ def forge_reports(text):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args, compilers, nm = owned.setup(argparse.ArgumentParser(description=__doc__))
     node, reference = args.node, args.reference
-    compilers = find_compilers()
-    nm = shutil.which("nm") or shutil.which("llvm-nm")
-    if (
-        not all(compilers)
-        or not nm
-        or not owned.VM.search(host.run([nm, "-C", str(reference)]).stdout)
-    ):
-        raise RuntimeError("need both compilers and a working VM-symbol positive control")
 
     saved = {}
     for name, (source, binding, expected) in POSITIVES.items():
@@ -379,9 +308,9 @@ def main():
         boolean_result = name in ("typed-boolean", "typed-boolean-false")
         string_result = name.startswith("typed-string")
         node_driver = (
-            STRING_NODE if string_result else BOOLEAN_NODE if boolean_result else boundary.NODE
+            owned.CONSTANT_GLOBAL_NODE if boolean_result or string_result else boundary.NODE
         )
-        if host.run([node, "-e", node_driver, str(js)]).stdout != expected:
+        if host.run([node, "-e", node_driver, str(js), '["trace"]']).stdout != expected:
             raise RuntimeError(f"{name}: Node source oracle mismatch")
         interpreted = host.run([str(reference), str(js)])
         if interpreted.stdout != expected:
@@ -482,8 +411,10 @@ def main():
         if count != 3:
             raise RuntimeError(f"typed-{name}: changed source denominator")
         expected = f"trace={name}\n"
-        node_driver = BOOLEAN_NODE.replace("typeof trace !== 'boolean'", f"trace !== {literal}")
-        if host.run([node, "-e", node_driver, str(js)]).stdout != expected:
+        if (
+            host.run([node, "-e", owned.CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout
+            != expected
+        ):
             raise RuntimeError(f"typed-{name}: Node source oracle mismatch")
         interpreted = host.run([str(reference), str(js)])
         tags = ", ".join(

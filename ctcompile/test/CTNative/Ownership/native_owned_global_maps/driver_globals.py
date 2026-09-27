@@ -1,3 +1,5 @@
+from CTNative.harness import find_compilers
+
 from .driver_common import (
     CONSTANT_GLOBAL_CARRIERS,
     CONSTANT_GLOBAL_NODE,
@@ -10,6 +12,7 @@ from .driver_common import (
     constant_global_cases,
     constant_global_sources,
     contract,
+    distinguish,
     forge_leaf_evidence,
     host,
     json,
@@ -591,14 +594,8 @@ def check_constant_global_observations(args, node, reference):
         ("constant_branch_lifetime", "const copy = offset;", "const copy = first;"),
     ):
         row = constant_global_cases()[name]
-        assert row["source"].count(old) == 1, name
-        js = args.work / f"{name}-constant-blind.js"
-        js.write_text(row["source"].replace(old, replacement))
-        names = json.dumps(sorted(["trace", *row["saved"]]))
-        if host.run(
-            [node, "-e", CONSTANT_GLOBAL_NODE, str(js), names]
-        ).stdout == scalar_global_output(name, row["expected_trace"]):
-            raise RuntimeError(f"{name}: typed observation cannot distinguish {replacement}")
+        expected = scalar_global_output(name, row["expected_trace"])
+        distinguish(args, name, row["source"], old, replacement, expected, ["trace", *row["saved"]])
 
 
 def check_boolean_observation_mutations(args, compilers, nm):
@@ -731,16 +728,12 @@ def check_constant_global_refusals(args, positives, node, reference):
                         f"{label}: constant-global refusal changed its independent owner boundary"
                     )
                 if promoted:
-                    compilers = [
-                        shutil.which("g++-13") or shutil.which("g++"),
-                        shutil.which("clang++-18") or shutil.which("clang++"),
-                    ]
                     owned.standalone(
                         args,
                         failed,
                         label,
                         scalar_global_output(name, row["expected_trace"]),
-                        compilers,
+                        find_compilers(),
                         shutil.which("nm"),
                     )
                     return failed
