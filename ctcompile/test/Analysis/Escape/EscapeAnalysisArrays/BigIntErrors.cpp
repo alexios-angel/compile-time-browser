@@ -533,7 +533,7 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, kind));
             inspect(kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::Mul ||
                             kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Mod ||
-                            kind == ctjs::BinaryKind::Pow
+                            kind == ctjs::BinaryKind::Pow || kind == ctjs::BinaryKind::UShr
                         ? ArrayContentsFailure::None
                         : ArrayContentsFailure::UnsupportedOperation);
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Sub));
@@ -867,7 +867,8 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
               ctjs::BinaryKind::Pow, ctjs::BinaryKind::UShr, static_cast<ctjs::BinaryKind>(255)}) {
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, kind));
             inspect(kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::Div ||
-                            kind == ctjs::BinaryKind::Mod || kind == ctjs::BinaryKind::Pow
+                            kind == ctjs::BinaryKind::Mod || kind == ctjs::BinaryKind::Pow ||
+                            kind == ctjs::BinaryKind::UShr
                         ? ArrayContentsFailure::None
                         : ArrayContentsFailure::UnsupportedOperation);
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, operation));

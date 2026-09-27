@@ -749,7 +749,8 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                       other == ctjs::BinaryKind::UShr)) ||
                             (!isStatic &&
                              (other == ctjs::BinaryKind::Div || other == ctjs::BinaryKind::Mod ||
-                              other == ctjs::BinaryKind::Pow || other == ctjs::BinaryKind::Concat))
+                              other == ctjs::BinaryKind::Pow || other == ctjs::BinaryKind::Concat ||
+                              ctjs::isBitwise(other)))
                         ? ArrayContentsFailure::None
                         : ArrayContentsFailure::UnsupportedOperation);
                 setKind(kind);
