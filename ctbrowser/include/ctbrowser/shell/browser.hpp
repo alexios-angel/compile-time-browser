@@ -725,6 +725,11 @@ private:
     // The element the finger went down on, and where it is now.
     node_id touch_target_;
     point touch_at_;
+    // Whether this finger's drag has started panning - its pointer was
+    // cancelled then (Pointer Events' "suppress a pointer").
+    bool touch_panning_ = false;
+    // The checkbox, radio or button a held Space made :active.
+    node_id space_active_;
     // The ELEMENT under a viewport point - a text run's hit is its parent's -
     // or the body over nothing: what a wheel or a finger is aimed at.
     [[nodiscard]] node_id element_at(float x, float y);

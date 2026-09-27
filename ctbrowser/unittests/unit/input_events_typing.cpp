@@ -96,9 +96,47 @@ void test_select_arrow_keys_fire_input_and_change() {
     check(picked, "ArrowDown picked the next option");
 }
 
+// checkable-active-onblur.html: Space held on a focused checkbox makes it
+// :active and its release clicks it; Tab away ends the press; Enter clicks a
+// button.
+void test_the_keyboard_clicks_a_focused_control() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<!doctype html><body><input type=checkbox id=c><button id=b>go</button>
+        <script>var clicks = 0; document.getElementById('b').onclick = () => ++clicks;</script>
+        </body>)");
+    page.frame();
+    (void)page.run_script("document.getElementById('c').focus();");
+    (void)page.handle(input_event::key_press("Space"));
+    (void)page.run_script("console.log('held=' + (document.querySelector('input:active') === "
+                          "document.getElementById('c')));");
+    (void)page.handle(input_event::key_release("Space"));
+    (void)page.run_script("console.log('released=' + document.getElementById('c').checked + ',' + "
+                          "document.querySelector(':active'));");
+    (void)page.handle(input_event::key_press("Space"));
+    (void)page.handle(input_event::key_press("Tab"));
+    (void)page.run_script("console.log('tabbed=' + document.querySelector(':active'));");
+    (void)page.handle(input_event::key_release("Space"));
+    (void)page.run_script("document.getElementById('b').focus();");
+    (void)page.handle(input_event::key_press("Enter"));
+    (void)page.run_script("console.log('enter=' + clicks + ',' + "
+                          "document.getElementById('c').checked);");
+    std::string held, released, tabbed, enter;
+    for (const std::string & line : page.bindings().console_output()) {
+        if (line.starts_with("held=")) { held = line; }
+        if (line.starts_with("released=")) { released = line; }
+        if (line.starts_with("tabbed=")) { tabbed = line; }
+        if (line.starts_with("enter=")) { enter = line; }
+    }
+    CHECK_EQ(held, std::string{"held=true"});
+    CHECK_EQ(released, std::string{"released=true,null"});
+    CHECK_EQ(tabbed, std::string{"tabbed=null"});
+    CHECK_EQ(enter, std::string{"enter=1,true"});
+}
+
 } // namespace
 
 int main() {
+    test_the_keyboard_clicks_a_focused_control();
     test_typing_fires_beforeinput_input_and_change();
     test_select_arrow_keys_fire_input_and_change();
     REPORT("input_events_typing");

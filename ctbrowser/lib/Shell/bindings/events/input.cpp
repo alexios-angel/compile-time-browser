@@ -332,30 +332,42 @@ bool dom_bindings::dispatch_wheel(node_id target, const input_event & input) {
 // touchstart and touchmove are cancelable only when a non-passive listener on
 // the path could cancel them, for the reason the wheel is (non-cancelable-
 // when-passive/'s twenty touch files); touchend always is.
-bool dom_bindings::dispatch_touch(std::string_view phase, node_id target, float x, float y) {
+//
+// `pointer` false is a finger whose pointer was CANCELLED when its drag began
+// to pan: Pointer Events stops sending that pointer's events, and the touch
+// events go on. Phase "cancel" is that moment - the `pointercancel` alone,
+// bubbling and not cancelable.
+bool dom_bindings::dispatch_touch(std::string_view phase, node_id target, float x, float y,
+                                  bool pointer) {
     if (cx_ == nullptr) { return false; }
     context & cx = *cx_;
     const bool start = phase == "start";
     const bool end = phase == "end";
-    const std::string pointer_type = start ? "pointerdown" : end ? "pointerup" : "pointermove";
+    const bool cancel = phase == "cancel";
+    const std::string pointer_type = start    ? "pointerdown"
+                                     : end    ? "pointerup"
+                                     : cancel ? "pointercancel"
+                                              : "pointermove";
     const std::string touch_type = start ? "touchstart" : end ? "touchend" : "touchmove";
     // Activation-triggering (HTML 6.4.3) is the LIFT for a finger: a non-mouse
     // pointerup, and touchend.
     if (end) { notify_activation(); }
 
-    input_event at = input_event::mouse_move_to(x, y);
-    const value pointer = make_mouse_event(cx, pointer_type, target, at, true);
-    {
-        const context::rooted keep{cx, pointer};
-        auto * object = static_cast<script::object_object *>(pointer.as_heap());
+    if (pointer || cancel) {
+        const input_event at = input_event::mouse_move_to(x, y);
+        const value made = make_mouse_event(cx, pointer_type, target, at, true);
+        const context::rooted keep{cx, made};
+        auto * object = static_cast<script::object_object *>(made.as_heap());
         object->set("pointerId", value::number(2)); // the mouse is 1
         object->set("pointerType", cx.string("touch"));
-        object->set("buttons", value::number(end ? 0 : 1));
-        object->set("pressure", value::number(end ? 0 : 0.5));
+        object->set("buttons", value::number(end || cancel ? 0 : 1));
+        object->set("pressure", value::number(end || cancel ? 0 : 0.5));
         object->set("width", value::number(1));
         object->set("height", value::number(1));
-        (void)dispatch_event(pointer_type, target, pointer);
+        if (cancel) { object->set("cancelable", value::boolean(false)); }
+        (void)dispatch_event(pointer_type, target, made);
     }
+    if (cancel) { return false; }
 
     value event = make_event(cx, touch_type, target);
     const context::rooted keep_event{cx, event};
@@ -484,6 +496,17 @@ void dom_bindings::select_by_user(node_id anchor, std::size_t anchor_byte, node_
     if (cx.failed()) { (void)cx.take_error(); }
 }
 
+void dom_bindings::hold_scrollend(bool hold) {
+    if (hold) {
+        if (!held_scrollend_) { held_scrollend_.emplace(); }
+        return;
+    }
+    if (!held_scrollend_) { return; }
+    const std::vector<node_id> due = std::move(*held_scrollend_);
+    held_scrollend_.reset();
+    if (cx_ != nullptr && !due.empty()) { fire_scrollend(*cx_, due); }
+}
+
 // Where a wheel notch or a touch drag goes once no listener kept it: the
 // nearest SCROLL CONTAINER on the flat-tree path from the target that can still
 // move that way - which is scroll chaining, CSSOM View's "scroll an element" on
@@ -518,7 +541,19 @@ bool dom_bindings::wheel_scroll(node_id from, float dx, float dy) {
 // scroll, which is every scroll this engine makes, completes as it happens, so
 // the targets are exactly the ones that just heard `scroll`. At a Document it
 // bubbles, to the window; at an element it does not. Neither is cancelable.
+//
+// A USER'S scroll completes when the user stops (CSSOM View: "if scrolling was
+// done by a user input, wait until the user input is done"), so while a finger
+// is down the targets are held, once each, and fired when it lifts.
 void dom_bindings::fire_scrollend(context & cx, std::span<const node_id> scrolled) {
+    if (held_scrollend_) {
+        for (const node_id at : scrolled) {
+            if (std::ranges::find(*held_scrollend_, at) == held_scrollend_->end()) {
+                held_scrollend_->push_back(at);
+            }
+        }
+        return;
+    }
     for (const node_id at : scrolled) {
         const value event = make_event(cx, "scrollend", at);
         auto * object = static_cast<script::object_object *>(event.as_heap());

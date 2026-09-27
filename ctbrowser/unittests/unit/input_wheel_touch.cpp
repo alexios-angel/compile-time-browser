@@ -169,9 +169,30 @@ void test_a_drag_selects_in_the_page_selection() {
     CHECK_EQ(logged(page, "dragged="), std::string{"dragged=true,true,forward"});
 }
 
+// scrollend-event-fired-after-sequence-of-scrolls.tentative.html: a drag that
+// pans cancels the finger's pointer once, and its scrolls end in ONE
+// scrollend, after the lift.
+void test_a_panning_drag_cancels_its_pointer_and_ends_once() {
+    browser page{browser_options{400, 300}};
+    page.load_html(page_source);
+    page.frame();
+    (void)page.run_script("for (const type of ['pointercancel', 'pointerup', 'scrollend']) {"
+                          "  box.addEventListener(type, e => seen.push(e.type)); }");
+    (void)page.touch("start", 50, 80);
+    (void)page.touch("move", 50, 60);
+    settle(page);
+    (void)page.touch("move", 50, 40);
+    settle(page);
+    CHECK_EQ(seen(page), std::string{"seen=pointercancel"});
+    (void)page.touch("end", 50, 40);
+    settle(page);
+    CHECK_EQ(seen(page), std::string{"seen=scrollend"});
+}
+
 } // namespace
 
 int main() {
+    test_a_panning_drag_cancels_its_pointer_and_ends_once();
     test_a_drag_selects_in_the_page_selection();
     test_wheel_cancelability_and_mousewheel();
     test_wheel_scrolls_the_container_and_scrollend_follows();

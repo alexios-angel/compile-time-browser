@@ -243,7 +243,20 @@ bool browser::handle(const input_event & event) {
         return changed;
     }
     case input_kind::key_down: return handle_key(event);
-    case input_kind::key_up: return dispatch_key("keyup", event);
+    case input_kind::key_up: {
+        const bool cancelled = dispatch_key("keyup", event);
+        // The release of a Space that made a control :active CLICKS it.
+        if (event.key == "Space" && space_active_) {
+            const node_id was = space_active_;
+            space_active_ = node_id{};
+            (void)set_state(was, state_active, false);
+            if (!cancelled && was == focused_) {
+                (void)dispatch_mouse("click", was, input_event{});
+            }
+            return true;
+        }
+        return cancelled;
+    }
     case input_kind::text_input: return text_input(event.key);
     case input_kind::resize:
         resize(static_cast<int>(event.x), static_cast<int>(event.y));
@@ -269,6 +282,9 @@ bool browser::touch(std::string_view phase, float x, float y) {
     if (phase == "start") {
         touch_target_ = element_at(x, y);
         touch_at_ = at;
+        touch_panning_ = false;
+        // The finger's scrolls end when it lifts, not between two moves.
+        bindings_->hold_scrollend(true);
         (void)bindings_->dispatch_touch(phase, touch_target_, x, y);
         return true;
     }
@@ -276,18 +292,29 @@ bool browser::touch(std::string_view phase, float x, float y) {
     const node_id target = touch_target_;
     if (phase == "end") {
         touch_target_ = node_id{};
-        (void)bindings_->dispatch_touch(phase, target, x, y);
+        (void)bindings_->dispatch_touch(phase, target, x, y, !touch_panning_);
+        bindings_->hold_scrollend(false);
         return true;
     }
     // A DRAG PANS: the content follows the finger, so it scrolls the other way
     // - the nearest scroll container that can, then the viewport - unless a
-    // listener cancelled the touchmove.
-    const bool cancelled = bindings_->dispatch_touch(phase, target, x, y);
+    // listener cancelled the touchmove. The first move that pans CANCELS the
+    // finger's pointer (Pointer Events 3: the user agent took the gesture), and
+    // its pointer events stop there.
+    const bool cancelled = bindings_->dispatch_touch(phase, target, x, y, !touch_panning_);
     const float dx = touch_at_.x - x;
     const float dy = touch_at_.y - y;
     touch_at_ = at;
-    if (!cancelled && !bindings_->wheel_scroll(target, dx, dy)) {
+    if (cancelled) { return true; }
+    bool panned = bindings_->wheel_scroll(target, dx, dy);
+    if (!panned) {
+        const point before = scroll_position();
         scroll_to(scroll_x_ + dx, scroll_y_ + dy);
+        panned = scroll_position() != before;
+    }
+    if (panned && !touch_panning_) {
+        touch_panning_ = true;
+        (void)bindings_->dispatch_touch("cancel", target, x, y);
     }
     return true;
 }
@@ -394,6 +421,12 @@ bool browser::handle_key(const input_event & event) {
     // LEAVE. It returns true whatever focus_next decides, so Tab can never fall
     // through to the page-scrolling keys below.
     if (event.key == "Tab") {
+        // Moving focus by keyboard ends whatever press was in progress: a
+        // control held :active by the pointer or by Space stops being it.
+        if (pressed_) { (void)set_state(pressed_, state_active, false); }
+        if (space_active_) { (void)set_state(space_active_, state_active, false); }
+        pressed_ = node_id{};
+        space_active_ = node_id{};
         (void)focus_next(event.shift);
         return true;
     }
@@ -411,6 +444,23 @@ bool browser::handle_key(const input_event & event) {
         }
     }
     if (select_key(event)) { return true; }
+    // THE KEYBOARD'S CLICK, the convention every browser keeps for HTML's
+    // activation behaviour: Space held on a focused checkbox, radio or button
+    // makes it :active and its release clicks it (key_up above); Enter clicks a
+    // button at once.
+    if (focused_) {
+        const control_kind kind = kind_of(doc_->read(), focused_);
+        if (event.key == "Space" && (kind == control_kind::checkbox ||
+                                     kind == control_kind::radio || kind == control_kind::button)) {
+            space_active_ = focused_;
+            (void)set_state(focused_, state_active, true);
+            return true;
+        }
+        if (event.key == "Enter" && kind == control_kind::button) {
+            (void)dispatch_mouse("click", focused_, input_event{});
+            return true;
+        }
+    }
     // THE SCROLLING KEYS move the nearest scroll container of what has focus
     // that can still go that way - a button inside a scrolled box scrolls the
     // box - and the viewport when none can, the same chain a wheel notch
