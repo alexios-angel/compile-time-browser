@@ -728,6 +728,7 @@ private:
     using frame_entry = binding_detail::frame_entry;
     std::vector<frame_entry> frames_;
     bool frames_dirty_ = true;
+    bool reconciling_ = false; // reconcile_frames is running on this document
     std::vector<planned_navigation> planned_navigations_; // the primary's
     // A frame document's <iframe>: the bindings it is in and the element (load_frame).
     dom_bindings * frame_owner_ = nullptr;
@@ -746,6 +747,7 @@ private:
     bool connect_blank_frame(node_id id, const std::string & source);
     void forget_frame_load(node_id id);
     dom_bindings * start_frame(node_id id, const std::string & source);
+    [[nodiscard]] bool may_nest(const std::string & source) const;
     [[nodiscard]] std::string frame_source(const read_txn & txn, node_id id) const;
     [[nodiscard]] std::string fallback_base_url();
     void connect_inserted_frames(const std::vector<document::write_note> & writes);

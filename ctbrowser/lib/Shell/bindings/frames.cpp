@@ -236,7 +236,11 @@ std::string_view dom_bindings::mime_for_path(std::string_view path) {
 // and "has a window" is exactly that fact: install_document leaves
 // `defaultView` null for one and load_frame sets it for a frame's.
 void dom_bindings::reconcile_frames() {
-    if (cx_ == nullptr) { return; }
+    // Not re-entered: a frame's script that dirties this document and reads
+    // `window.length` while it loads would otherwise start the frames this
+    // pass has not filed yet over again, and its script again.
+    if (cx_ == nullptr || reconciling_) { return; }
+    reconciling_ = true;
     [this] {
         if (!frames_dirty_) { return; }
         if (secondary_) {
@@ -265,7 +269,7 @@ void dom_bindings::reconcile_frames() {
                 still.push_back(*seen);
                 continue;
             }
-            still.push_back(frame_entry{id, src, start_frame(id, src)});
+            still.push_back(frame_entry{id, src, may_nest(src) ? start_frame(id, src) : nullptr});
         }
         // A FRAME THAT LEFT THE TREE IS FORGOTTEN, and its document is not: the
         // secondary bindings stay in `secondary_documents_` because a page may
@@ -279,10 +283,37 @@ void dom_bindings::reconcile_frames() {
     // and fires its `load` without anyone reading its `contentWindow` first
     // (shadow-dom/.../html-forms/test-003.html submits a frame document's
     // form at one). Over a copy - a load runs script, which can reconcile.
+    reconciling_ = false;
     const std::vector<frame_entry> children = frames_;
     for (const frame_entry & entry : children) {
         if (entry.bindings != nullptr) { entry.bindings->reconcile_frames(); }
     }
+}
+
+// WHETHER AN <iframe> HERE GETS A NAVIGABLE AT ALL. HTML 4.8.5's shared
+// attribute processing steps return null - no navigation, no `load` - when an
+// inclusive ancestor navigable's document has the frame's URL, fragments
+// excluded: a page that embeds itself stops at one copy. about:blank, srcdoc
+// and javascript: sources are exempt from that; nothing is from the depth
+// cap, which bounds what script and srcdoc can chain.
+// ponytail: Gecko's cap of 10 nested content frames.
+bool dom_bindings::may_nest(const std::string & source) const {
+    constexpr std::size_t max_depth = 10;
+    std::size_t depth = 0;
+    for (const dom_bindings * up = frame_owner_; up != nullptr; up = up->frame_owner_) {
+        if (++depth >= max_depth) { return false; }
+    }
+    if (is_blank_source(source) || source.starts_with(srcdoc_key) ||
+        source.starts_with(markup_key) || is_javascript_url(source)) {
+        return true;
+    }
+    const auto unfragmented = [](std::string url) { return url.substr(0, url.find('#')); };
+    const std::string url =
+        unfragmented(location_href_.empty() ? source : resolve(location_href_, source));
+    for (const dom_bindings * doc = this; doc != nullptr; doc = doc->frame_owner_) {
+        if (unfragmented(doc->location_href_) == url) { return false; }
+    }
+    return true;
 }
 
 // AN <iframe> CONNECTED WITH NO `src`, OR ONE THAT IS about:blank - HTML
@@ -332,7 +363,7 @@ dom_bindings * dom_bindings::start_frame(node_id id, const std::string & source)
 }
 
 bool dom_bindings::connect_blank_frame(node_id id, const std::string & source) {
-    if (cx_ == nullptr || !is_blank_source(source)) { return false; }
+    if (cx_ == nullptr || !is_blank_source(source) || !may_nest(source)) { return false; }
     if (std::ranges::any_of(frames_, [id](const frame_entry & e) { return e.element == id; })) {
         return true;
     }

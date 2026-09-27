@@ -50,6 +50,7 @@ constexpr const char * inner_xml = "<?xml version=\"1.0\"?><root viewBox=\"0 0 1
     page.set_location("file:///pages/the-page.html");
     page.assets().add("inner.html", bytes_of(inner_html));
     page.assets().add("inner.xml", bytes_of(inner_xml));
+    page.assets().add("self.html", bytes_of("<p>self</p><iframe id=s src=self.html></iframe>"));
     // A `setTimeout` INSIDE the window's load handler. One tick does, in
     // order: reconcile the frames, settle the frame and sheet loads, dispatch
     // the page's own `load`, then run the timers - so the timer is a moment at
@@ -627,7 +628,17 @@ void test_animation_frames_run_in_document_order() {
        "'unused'", "page,first,second");
 }
 
+// A PAGE THAT EMBEDS ITSELF STOPS AT ONE COPY (HTML 4.8.5: an ancestor
+// navigable's document already has the URL, so the frame gets no navigable).
+// Before the guard each copy's frame loaded the next, in one tick, until the
+// native stack ran out.
+void test_a_frame_that_embeds_itself_stops() {
+    is("<iframe id=f src=self.html></iframe>",
+       "document.getElementById('f').contentDocument.getElementById('s').contentDocument", "null");
+}
+
 int main() {
+    test_a_frame_that_embeds_itself_stops();
     test_animation_frames_run_in_document_order();
     test_a_frame_inside_a_frame_document_loads();
     test_a_frame_document_is_laid_out_at_the_size_of_its_box();
