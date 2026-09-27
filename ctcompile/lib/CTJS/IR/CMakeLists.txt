@@ -44,9 +44,4 @@ add_mlir_library(CTJSDialect
 # mirrors the source tree under the binary directory. The policy's rule is "do
 # not #include a generated header by relative path from another project", and
 # having the two roots agree is what makes that easy rather than a discipline.
-target_include_directories(CTJSDialect
-  PUBLIC
-    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)
-target_include_directories(CTJSDialect SYSTEM
-  PUBLIC
-    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>)
+ctcompile_includes(CTJSDialect)

@@ -4,13 +4,6 @@
 # DEPENDS on it, because omitting that "produces builds that succeed serially
 # and fail under -j".
 
-# THE INCLUDE PATH TABLEGEN SEES IS A DIRECTORY PROPERTY, not a flag variable.
-# LLVM's tablegen() reads INCLUDE_DIRECTORIES and turns each entry into a -I;
-# LLVM_TABLEGEN_FLAGS never becomes an include path. Without this line a .td
-# that includes a sibling by its PROJECT path does not resolve at all. The note
-# in ctcompile/include/ctcompile/CTJS/IR/CMakeLists.txt says it cost a build to find out.
-include_directories("${PROJECT_SOURCE_DIR}/include")
-
 # THE TYPES COME OUT OF THIS ONE CALL. add_mlir_dialect runs the op, dialect AND
 # typedef backends over the file it is named for, which is why CTNativeOps.td
 # includes CTNativeTypes.td and why the generated header is CTNativeOpsTypes.h.inc
