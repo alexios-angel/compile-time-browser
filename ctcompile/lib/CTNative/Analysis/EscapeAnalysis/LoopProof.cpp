@@ -225,12 +225,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (unary.getKind() == ctjs::UnaryKind::BitNot) {
                 boundedNumberComplement(*input, result);
             } else {
-                result.integerNumber = boundedConvertedNumber(*input);
-                if (!result.integerNumber) {
-                    result.negativeIntegerNumber = boundedConvertedNumber(*input, true);
-                }
-                if (unary.getKind() == ctjs::UnaryKind::Neg && result.integerNumber != 0) {
-                    std::swap(result.integerNumber, result.negativeIntegerNumber);
+                if (const auto number = signedConvertedNumber(*input)) {
+                    result.setSigned(unary.getKind() == ctjs::UnaryKind::Neg ? -*number : *number);
                 }
                 boundedNumberUnary(*input, unary.getKind() == ctjs::UnaryKind::Neg, result);
             }
@@ -311,8 +307,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         bool mixedShift = false;
     };
     const auto endpointNumber = [](const ContentsValue & endpoint) {
-        return endpoint.integerNumber ? static_cast<std::int64_t>(*endpoint.integerNumber)
-                                      : -static_cast<std::int64_t>(*endpoint.negativeIntegerNumber);
+        return *endpoint.signedNumber();
     };
     const auto boundEndpointPair = [&](IndexRange & range) {
         if (endpointNumber(range.first) > endpointNumber(range.last)) {
@@ -328,9 +323,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                    : 0;
     };
     const auto numberBits = [](const ContentsValue & endpoint) {
-        return endpoint.integerNumber
-                   ? static_cast<std::uint32_t>(*endpoint.integerNumber)
-                   : 0U - static_cast<std::uint32_t>(*endpoint.negativeIntegerNumber);
+        return static_cast<std::uint32_t>(*endpoint.signedNumber());
     };
     const auto convertedLattice = [&](mlir::Value operand, std::size_t period, std::size_t residue,
                                       bool unsignedOutput = false) -> std::optional<IndexRange> {
@@ -349,11 +342,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         for (auto [endpoint, value] :
              {std::pair{&range.first, first}, std::pair{&range.last, last}}) {
             if (!charge()) { return std::nullopt; }
-            if (value < 0) {
-                endpoint->negativeIntegerNumber = static_cast<std::size_t>(-value);
-            } else {
-                endpoint->integerNumber = static_cast<std::size_t>(value);
-            }
+            endpoint->setSigned(value);
         }
         return range;
     };
@@ -830,10 +819,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             auto divisor = boundedConvertedNumber(*offset);
             if (!divisor) { divisor = boundedConvertedNumber(*offset, true); }
             if (!divisor || *divisor == 0) { return std::nullopt; }
+            // Truncating signed division is the magnitude quotient with its sign.
             const auto quotient = [&](const ContentsValue & endpoint) {
-                return endpoint.integerNumber
-                           ? static_cast<std::int64_t>(*endpoint.integerNumber / *divisor)
-                           : -static_cast<std::int64_t>(*endpoint.negativeIntegerNumber / *divisor);
+                return endpointNumber(endpoint) / static_cast<std::int64_t>(*divisor);
             };
             // Between consecutive multiples, remainder is affine, including
             // the central band across zero. Preserve the enclosing lattice.
@@ -857,21 +845,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // Subtracting any multiple of the divisor preserves the dividend's
             // congruence modulo gcd(stride, divisor), including across zero.
             const auto period = static_cast<std::int64_t>(std::gcd(range->stride, *divisor));
-            const auto phase =
-                range->first.integerNumber
-                    ? static_cast<std::int64_t>(*range->first.integerNumber)
-                    : -static_cast<std::int64_t>(*range->first.negativeIntegerNumber);
+            const auto phase = endpointNumber(range->first);
             auto first = -static_cast<std::int64_t>(negative);
             auto last = static_cast<std::int64_t>(positive);
             first += ((phase - first) % period + period) % period;
             last -= ((last - phase) % period + period) % period;
             const auto endpoint = [&](std::int64_t value) {
                 ContentsValue result{operand, ContentsKind::NonBigInt};
-                if (value < 0) {
-                    result.negativeIntegerNumber = static_cast<std::size_t>(-value);
-                } else {
-                    result.integerNumber = static_cast<std::size_t>(value);
-                }
+                result.setSigned(value);
                 return result;
             };
             // Wrapping can leave gaps beyond the gcd lattice. Reuse the

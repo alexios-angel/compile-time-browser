@@ -66,6 +66,22 @@ struct ContentsValue {
     }
     bool bigInt() const { return kind == ContentsKind::BigInt; }
     bool string() const { return kind == ContentsKind::String; }
+    // The exact bounded Number as one signed value.
+    std::optional<std::int64_t> signedNumber() const {
+        if (integerNumber) { return static_cast<std::int64_t>(*integerNumber); }
+        if (negativeIntegerNumber) { return -static_cast<std::int64_t>(*negativeIntegerNumber); }
+        return std::nullopt;
+    }
+    // Records `value` in the magnitude its sign selects; one beyond 2^32-1 in
+    // magnitude records nothing.
+    void setSigned(std::int64_t value) {
+        if (value < -4294967295LL || value > 4294967295LL) { return; }
+        if (value < 0) {
+            negativeIntegerNumber = static_cast<std::size_t>(-value);
+        } else {
+            integerNumber = static_cast<std::size_t>(value);
+        }
+    }
 };
 
 // The operands both arms of `result`'s scf.if yield for it, then-arm first.
@@ -394,6 +410,8 @@ std::optional<std::size_t> arithmeticArrayIndex(const ContentsValue & key);
 std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
                                                const ContentsValue & key, mlir::Value result);
 std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, bool negate = false);
+// boundedConvertedNumber as one signed value, the nonnegative magnitude first.
+std::optional<std::int64_t> signedConvertedNumber(const ContentsValue & input);
 std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input);
 void boundedNumberUnary(const ContentsValue & input, bool negate, ContentsValue & result);
 void boundedNumberComplement(const ContentsValue & input, ContentsValue & result);
