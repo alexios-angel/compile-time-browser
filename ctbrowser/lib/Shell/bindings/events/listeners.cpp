@@ -23,10 +23,17 @@ bool dom_bindings::has_activation_behavior(const read_txn & txn, node_id node) c
         const node_id parent = txn.parent(node);
         return parent && atoms_->text(txn.tag(parent).value_or(atom{})) == "details";
     }
+    // An <input type=hidden> is no activation target: its state has no input
+    // activation behaviour, and every engine lets a click on one reach the
+    // <label> around it (clicking-noninteractive-unlabelable-content.html).
+    if (tag == "input") {
+        return !ascii_iequals(
+            trim(txn.attribute_value(node, atoms_->intern("type")), html_whitespace), "hidden");
+    }
     // A <select> has none in HTML. It is here because the engine opens its
     // popup from the same hook, and a click that reached no activation target
     // would never open one.
-    return tag == "button" || tag == "input" || tag == "label" || tag == "select";
+    return tag == "button" || tag == "label" || tag == "select";
 }
 
 void dom_bindings::run_activation_behavior(context & cx, node_id target) {
