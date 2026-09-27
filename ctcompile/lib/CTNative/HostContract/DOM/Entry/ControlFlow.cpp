@@ -29,18 +29,14 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             }
         }
         if (!spend() || !spend()) { return false; }
-        if (hasKind(thrown.getValue(), Kind::element) ||
-            hasKind(thrown.getValue(), Kind::nullableElement)) {
+        if (hasKind(thrown.getValue(), {Kind::element, Kind::nullableElement})) {
             // The host owns nodes only through this invocation. An escaping
             // exception can survive destruction of that document during unwind.
             refusal = "DOM thrown element requires an owner that outlives the exception";
             return false;
         }
-        if ((!hasKind(thrown.getValue(), Kind::number) &&
-             !hasKind(thrown.getValue(), Kind::boolean) &&
-             !hasKind(thrown.getValue(), Kind::string) &&
-             !hasKind(thrown.getValue(), Kind::optionalString) &&
-             !hasKind(thrown.getValue(), Kind::null)) ||
+        if (!hasKind(thrown.getValue(), {Kind::number, Kind::boolean, Kind::string,
+                                         Kind::optionalString, Kind::null}) ||
             !dominance.dominates(thrown.getValue(), thrown)) {
             refusal = "DOM saved throw requires a preceding owning primitive";
             return false;
@@ -67,9 +63,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         }
         for (auto [argument, initial] : llvm::zip(before.getArguments(), loop.getInits())) {
             if (!spend()) { return false; }
-            if (!hasKind(initial, Kind::number) && !hasKind(initial, Kind::string) &&
-                !hasKind(initial, Kind::boolean) && !hasKind(initial, Kind::symbol) &&
-                !hasKind(initial, Kind::undefinedString) && !hasKind(initial, Kind::element)) {
+            if (!hasKind(initial, loopKinds)) {
                 refusal = "DOM loop cannot carry borrowed or unknown values";
                 return false;
             }
@@ -139,9 +133,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         for (auto [argument, result, value] :
              llvm::zip(after.getArguments(), loop.getResults(), condition.getArgs())) {
             if (!spend()) { return false; }
-            if (!hasKind(value, Kind::number) && !hasKind(value, Kind::string) &&
-                !hasKind(value, Kind::boolean) && !hasKind(value, Kind::symbol) &&
-                !hasKind(value, Kind::undefinedString) && !hasKind(value, Kind::element)) {
+            if (!hasKind(value, loopKinds)) {
                 refusal = "DOM loop result is not an invariant scalar";
                 return false;
             }
@@ -222,10 +214,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             });
             if (auto predicate = predicates.find(branch.getCondition());
                 predicate != predicates.end() &&
-                (hasKind(predicate->second.optional, Kind::optionalString) ||
-                 hasKind(predicate->second.optional, Kind::undefinedString) ||
-                 hasKind(predicate->second.optional, Kind::nullableElement) ||
-                 hasKind(predicate->second.optional, Kind::json))) {
+                hasKind(predicate->second.optional, {Kind::optionalString, Kind::undefinedString,
+                                                     Kind::nullableElement, Kind::json})) {
                 // Reserve save/restore and the new evidence before visiting.
                 if (!spend() || !spend() || !spend()) { return false; }
                 refined = predicate->second.optional;
@@ -422,9 +412,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             if ((!matches && !hasKind(call.getCallee(), Kind::attribute)) ||
                 call.getArgs().size() != (matches ? 1u : 2u) ||
                 !hasKind(call.getArgs()[0], Kind::string) ||
-                (!matches && !hasKind(call.getArgs()[1], Kind::string) &&
-                 !hasKind(call.getArgs()[1], Kind::boolean) &&
-                 !hasKind(call.getArgs()[1], Kind::number))) {
+                (!matches &&
+                 !hasKind(call.getArgs()[1], {Kind::string, Kind::boolean, Kind::number}))) {
                 refusal = "DOM suppression requires typed setAttribute or matches arguments";
                 return false;
             }
@@ -494,8 +483,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             !llvm::isa<ctjs::ValueType>(invocation.getResult(0).getType()) ||
             !llvm::isa<ctjs::ValueType>(call.getResult().getType()) ||
             !caught.getArgument(0).use_empty() ||
-            (!hasKind(call.getCallee(), Kind::uriIntrinsic) &&
-             !hasKind(call.getCallee(), Kind::jsonParse))) {
+            !hasKind(call.getCallee(), {Kind::uriIntrinsic, Kind::jsonParse})) {
             refusal = "DOM URI invocation requires exact call and unused catch payload";
             return false;
         }

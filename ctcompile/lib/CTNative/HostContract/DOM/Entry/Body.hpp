@@ -12,6 +12,7 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringSet.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -83,6 +84,14 @@ enum class Kind {
     undefined
 };
 
+// Scalars whose truth test runs no conversion hook.
+inline constexpr std::array truthyKinds{
+    Kind::boolean,         Kind::number,          Kind::string, Kind::optionalString,
+    Kind::undefinedString, Kind::nullableElement, Kind::null,   Kind::symbol};
+// Invariant scalars a loop may carry.
+inline constexpr std::array loopKinds{Kind::number, Kind::string,          Kind::boolean,
+                                      Kind::symbol, Kind::undefinedString, Kind::element};
+
 struct DatasetOrigin {
     mlir::Value element;
     unsigned epoch;
@@ -133,6 +142,10 @@ struct Body {
     bool hasKind(mlir::Value value, Kind kind) const {
         const auto found = values.find(value);
         return found != values.end() && found->second == kind;
+    }
+    bool hasKind(mlir::Value value, llvm::ArrayRef<Kind> kinds) const {
+        const auto found = values.find(value);
+        return found != values.end() && llvm::is_contained(kinds, found->second);
     }
     bool visit(mlir::Block & body, unsigned depth, mlir::Value & frame);
     std::optional<bool> controlFlow(mlir::Operation & operation, mlir::Block & body, unsigned depth,

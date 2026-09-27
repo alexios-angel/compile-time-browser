@@ -513,8 +513,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             // No ToPrimitive/ToString hook can run for these exact input kinds.
             // Broader descriptions need their coercion and exception proof.
             if (!hasKind(invoke.getReceiver(), Kind::undefined) || arguments.size() > 1 ||
-                (!arguments.empty() && !hasKind(arguments[0], Kind::string) &&
-                 !hasKind(arguments[0], Kind::undefined))) {
+                (!arguments.empty() && !hasKind(arguments[0], {Kind::string, Kind::undefined}))) {
                 refusal = "Symbol call requires its initial builtin, undefined receiver "
                           "and at most one String/undefined description";
                 return false;
@@ -525,9 +524,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         }
         if (hasKind(invoke.getCallee(), Kind::numberIntrinsic)) {
             if (!hasKind(invoke.getReceiver(), Kind::undefined) || arguments.size() != 1 ||
-                (!hasKind(arguments[0], Kind::string) && !hasKind(arguments[0], Kind::null) &&
-                 !hasKind(arguments[0], Kind::optionalString) &&
-                 !hasKind(arguments[0], Kind::boolean) && !hasKind(arguments[0], Kind::number))) {
+                !hasKind(arguments[0], {Kind::string, Kind::null, Kind::optionalString,
+                                        Kind::boolean, Kind::number})) {
                 refusal = "Number call requires its initial builtin, undefined "
                           "receiver and one String/null/Boolean/Number input";
                 return false;
@@ -551,8 +549,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             values[invoke.getResult()] = documentAll ? Kind::elementVector : Kind::nullableElement;
             return true;
         }
-        if ((hasKind(invoke.getCallee(), Kind::symbolToString) ||
-             hasKind(invoke.getCallee(), Kind::symbolValueOf)) &&
+        if (hasKind(invoke.getCallee(), {Kind::symbolToString, Kind::symbolValueOf}) &&
             arguments.empty()) {
             const bool text = hasKind(invoke.getCallee(), Kind::symbolToString);
             proved.calls.push_back(
@@ -582,7 +579,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             if (kind == HostDOMMethod::matches) { values[invoke.getResult()] = Kind::boolean; }
             return true;
         }
-        if (hasKind(invoke.getCallee(), Kind::charAt) || hasKind(invoke.getCallee(), Kind::slice)) {
+        if (hasKind(invoke.getCallee(), {Kind::charAt, Kind::slice})) {
             const bool first = hasKind(invoke.getCallee(), Kind::charAt);
             if (arguments.size() > (first ? 1U : 2U)) {
                 refusal = "DOM String indexing permits an optional index and optional slice end";
@@ -774,11 +771,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             values[invoke.getResult()] = containsClass ? Kind::boolean : Kind::undefined;
             return true;
         }
-        if ((hasKind(invoke.getCallee(), Kind::toggle) ||
-             hasKind(invoke.getCallee(), Kind::toggleAttribute)) &&
+        if (hasKind(invoke.getCallee(), {Kind::toggle, Kind::toggleAttribute}) &&
             (arguments.size() == 1 ||
-             (arguments.size() == 2 &&
-              (hasKind(arguments[1], Kind::boolean) || hasKind(arguments[1], Kind::undefined)))) &&
+             (arguments.size() == 2 && hasKind(arguments[1], {Kind::boolean, Kind::undefined}))) &&
             hasKind(arguments[0], Kind::string)) {
             ++mutationEpoch;
             const bool classes = hasKind(invoke.getCallee(), Kind::toggle);
@@ -806,10 +801,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         }
         const bool sets = hasKind(invoke.getCallee(), Kind::attribute);
         if ((sets && arguments.size() == 2 && hasKind(arguments[0], Kind::string) &&
-             (hasKind(arguments[1], Kind::string) || hasKind(arguments[1], Kind::boolean) ||
-              hasKind(arguments[1], Kind::optionalBoolean) || hasKind(arguments[1], Kind::number) ||
-              hasKind(arguments[1], Kind::optionalNumber) ||
-              hasKind(arguments[1], Kind::optionalString))) ||
+             hasKind(arguments[1], {Kind::string, Kind::boolean, Kind::optionalBoolean,
+                                    Kind::number, Kind::optionalNumber, Kind::optionalString})) ||
             (hasKind(invoke.getCallee(), Kind::removeAttribute) && arguments.size() == 1 &&
              hasKind(arguments[0], Kind::string))) {
             ++mutationEpoch;

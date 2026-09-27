@@ -96,13 +96,9 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             auto name = ctjs::constantAttr<ctjs::StringAttr>(write.getKey());
             auto target = write.getObject().getDefiningOp<ctjs::CreateObjectOp>();
             if (!target || write.getObject() == write.getValue() ||
-                (!hasKind(write.getValue(), Kind::string) &&
-                 !hasKind(write.getValue(), Kind::optionalString) &&
-                 !hasKind(write.getValue(), Kind::null) &&
-                 !hasKind(write.getValue(), Kind::boolean) &&
-                 !hasKind(write.getValue(), Kind::number) &&
-                 !hasKind(write.getValue(), Kind::json) &&
-                 !hasKind(write.getValue(), Kind::jsonAggregate))) {
+                !hasKind(write.getValue(),
+                         {Kind::string, Kind::optionalString, Kind::null, Kind::boolean,
+                          Kind::number, Kind::json, Kind::jsonAggregate})) {
                 refusal = "DOM JSON assignment requires a fresh target and an owning value";
                 return false;
             }
@@ -191,16 +187,10 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                 return false;
             }
             if (depth || frame ||
-                (!hasKind(result.getValue(), Kind::undefined) &&
-                 !hasKind(result.getValue(), Kind::boolean) &&
-                 !hasKind(result.getValue(), Kind::number) &&
-                 !hasKind(result.getValue(), Kind::string) &&
-                 !hasKind(result.getValue(), Kind::undefinedString) &&
-                 !hasKind(result.getValue(), Kind::optionalString) &&
-                 !hasKind(result.getValue(), Kind::json) &&
-                 !hasKind(result.getValue(), Kind::jsonAggregate) &&
-                 !hasKind(result.getValue(), Kind::stringVector) &&
-                 !hasKind(result.getValue(), Kind::symbol))) {
+                !hasKind(result.getValue(),
+                         {Kind::undefined, Kind::boolean, Kind::number, Kind::string,
+                          Kind::undefinedString, Kind::optionalString, Kind::json,
+                          Kind::jsonAggregate, Kind::stringVector, Kind::symbol})) {
                 refusal = "DOM entry return must be a scalar with no borrowed browser handle";
                 return false;
             }
@@ -291,19 +281,15 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
         }
         if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
             unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
-            (hasKind(unary.getOperand(), Kind::optionalString) ||
-             hasKind(unary.getOperand(), Kind::undefinedString) ||
-             hasKind(unary.getOperand(), Kind::string) || hasKind(unary.getOperand(), Kind::null) ||
-             hasKind(unary.getOperand(), Kind::json) ||
-             hasKind(unary.getOperand(), Kind::jsonAggregate) ||
-             hasKind(unary.getOperand(), Kind::symbol))) {
+            hasKind(unary.getOperand(),
+                    {Kind::optionalString, Kind::undefinedString, Kind::string, Kind::null,
+                     Kind::json, Kind::jsonAggregate, Kind::symbol})) {
             if (!spend()) { return false; }
             values[unary.getResult()] = Kind::string;
             // JSON's object tag includes null and arrays, never member
             // authority. It permits only their own-data spread.
-            if (hasKind(unary.getOperand(), Kind::optionalString) ||
-                hasKind(unary.getOperand(), Kind::undefinedString) ||
-                hasKind(unary.getOperand(), Kind::json)) {
+            if (hasKind(unary.getOperand(),
+                        {Kind::optionalString, Kind::undefinedString, Kind::json})) {
                 typeQueries[unary.getResult()] = unary.getOperand();
             }
             continue;
@@ -312,16 +298,15 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             compare && (compare.getKind() == ctjs::CompareKind::StrictEq ||
                         compare.getKind() == ctjs::CompareKind::Eq)) {
             const auto elementIdentity = [&](mlir::Value value) {
-                return hasKind(value, Kind::element) || hasKind(value, Kind::nullableElement);
+                return hasKind(value, {Kind::element, Kind::nullableElement});
             };
             const auto stringOrNull = [&](mlir::Value value) {
-                return hasKind(value, Kind::string) || hasKind(value, Kind::optionalString) ||
-                       hasKind(value, Kind::null);
+                return hasKind(value, {Kind::string, Kind::optionalString, Kind::null});
             };
             const bool strings =
                 hasKind(compare.getLhs(), Kind::string) && hasKind(compare.getRhs(), Kind::string);
             const auto numberOrBoolean = [&](mlir::Value value) {
-                return hasKind(value, Kind::number) || hasKind(value, Kind::boolean);
+                return hasKind(value, {Kind::number, Kind::boolean});
             };
             const bool scalars =
                 numberOrBoolean(compare.getLhs()) && numberOrBoolean(compare.getRhs());
@@ -330,8 +315,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                                      hasKind(compare.getRhs(), Kind::undefinedString);
             if (description) {
                 const auto stringOrUndefined = [&](mlir::Value value) {
-                    return hasKind(value, Kind::string) || hasKind(value, Kind::undefinedString) ||
-                           hasKind(value, Kind::undefined);
+                    return hasKind(value, {Kind::string, Kind::undefinedString, Kind::undefined});
                 };
                 if (stringOrUndefined(compare.getLhs()) && stringOrUndefined(compare.getRhs())) {
                     for (auto [query, absent] : {std::pair{compare.getLhs(), compare.getRhs()},
@@ -358,9 +342,9 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             if (strict && (hasKind(compare.getLhs(), Kind::undefined) ||
                            hasKind(compare.getRhs(), Kind::undefined))) {
                 const auto scalar = [&](mlir::Value value) {
-                    return stringOrNull(value) || hasKind(value, Kind::undefined) ||
-                           hasKind(value, Kind::boolean) || hasKind(value, Kind::number) ||
-                           hasKind(value, Kind::json) || hasKind(value, Kind::jsonAggregate);
+                    return stringOrNull(value) ||
+                           hasKind(value, {Kind::undefined, Kind::boolean, Kind::number, Kind::json,
+                                           Kind::jsonAggregate});
                 };
                 if (scalar(compare.getLhs()) && scalar(compare.getRhs())) {
                     if (!spend()) { return false; }
@@ -402,13 +386,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             }
         }
         if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation);
-            truth &&
-            (hasKind(truth.getValue(), Kind::boolean) || hasKind(truth.getValue(), Kind::number) ||
-             hasKind(truth.getValue(), Kind::string) ||
-             hasKind(truth.getValue(), Kind::optionalString) ||
-             hasKind(truth.getValue(), Kind::undefinedString) ||
-             hasKind(truth.getValue(), Kind::nullableElement) ||
-             hasKind(truth.getValue(), Kind::null) || hasKind(truth.getValue(), Kind::symbol))) {
+            truth && hasKind(truth.getValue(), truthyKinds)) {
             values[truth.getResult()] = Kind::boolean;
             if (!spend()) { return false; }
             if (auto found = constantBooleans.find(truth.getValue());
@@ -435,14 +413,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
         }
         if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
             unary && unary.getKind() == ctjs::UnaryKind::Not &&
-            (hasKind(unary.getOperand(), Kind::boolean) ||
-             hasKind(unary.getOperand(), Kind::number) ||
-             hasKind(unary.getOperand(), Kind::optionalString) ||
-             hasKind(unary.getOperand(), Kind::undefinedString) ||
-             hasKind(unary.getOperand(), Kind::string) ||
-             hasKind(unary.getOperand(), Kind::nullableElement) ||
-             hasKind(unary.getOperand(), Kind::null) ||
-             hasKind(unary.getOperand(), Kind::symbol))) {
+            hasKind(unary.getOperand(), truthyKinds)) {
             values[unary.getResult()] = Kind::boolean;
             if (!spend()) { return false; }
             if (auto found = predicates.find(unary.getOperand()); found != predicates.end()) {
