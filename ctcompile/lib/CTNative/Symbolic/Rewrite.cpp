@@ -1,5 +1,6 @@
 #include "Facts.h"
 
+#include "../PartialEvaluation/Heap.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/PatternMatch.h"
@@ -18,14 +19,7 @@ mlir::Attribute literal(mlir::Operation * op, const Analysis & analysis) {
     if (!known) { return {}; }
     const auto type = op->getResult(0).getType();
     if (auto integer = llvm::dyn_cast<mlir::IntegerType>(type)) {
-        if (auto original = llvm::dyn_cast<mlir::IntegerAttr>(known)) {
-            return mlir::IntegerAttr::get(integer,
-                                          original.getValue().zextOrTrunc(integer.getWidth()));
-        }
-        if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(known)) {
-            return mlir::IntegerAttr::get(integer, boolean.getValue());
-        }
-        return {};
+        return partial_eval::integerConstant(integer, known);
     }
     if (!llvm::isa<ctjs::ValueType>(type) || llvm::isa<mlir::IntegerAttr>(known)) { return {}; }
     return known;

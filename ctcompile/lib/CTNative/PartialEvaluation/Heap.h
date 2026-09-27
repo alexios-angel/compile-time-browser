@@ -67,6 +67,8 @@ value binary(ctjs::BinaryKind kind, value left, value right, mlir::MLIRContext *
              bool staticConversions = false);
 value compare(ctjs::CompareKind kind, value left, value right, mlir::MLIRContext * context);
 value unary(ctjs::UnaryKind kind, value input, mlir::MLIRContext * context);
+// An IntegerAttr or ctjs Boolean literal as a constant of `type`, or null.
+mlir::IntegerAttr integerConstant(mlir::IntegerType type, mlir::Attribute literal);
 
 class evaluator {
 public:

@@ -162,4 +162,12 @@ value unary(ctjs::UnaryKind kind, value input, mlir::MLIRContext * context) {
     }
 }
 
+mlir::IntegerAttr integerConstant(mlir::IntegerType type, mlir::Attribute literal) {
+    if (auto integer = llvm::dyn_cast<mlir::IntegerAttr>(literal)) {
+        return mlir::IntegerAttr::get(type, integer.getValue().zextOrTrunc(type.getWidth()));
+    }
+    auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(literal);
+    return boolean ? mlir::IntegerAttr::get(type, boolean.getValue()) : mlir::IntegerAttr{};
+}
+
 } // namespace ctcompile::ctnative::partial_eval
