@@ -480,14 +480,7 @@ void classInitialization::rewrite() {
         auto closure = llvm::cast<ctjs::CreateClosureOp>(operation);
         mlir::SymbolTable::setSymbolVisibility(target(closure),
                                                mlir::SymbolTable::Visibility::Private);
-        if (llvm::any_of(closure->getUsers(),
-                         [](mlir::Operation * user) { return !llvm::isa<ctjs::RootOp>(user); })) {
-            continue;
-        }
-        for (mlir::Operation * root : llvm::make_early_inc_range(closure->getUsers())) {
-            root->erase();
-        }
-        closure.erase();
+        eraseIfRooted(closure);
     }
     // Captured reads have now been rewritten, including in unused slots.
     // DOM slots still need the complete typed invocation/effect proof.
@@ -534,8 +527,7 @@ void classInitialization::rewrite() {
         auto function = target(closure);
         if ((!baseClasses.contains(closure.getResult()) && !constructors.contains(function) &&
              !methods.contains(function)) ||
-            !llvm::all_of(closure->getUsers(),
-                          [](mlir::Operation * use) { return llvm::isa<ctjs::RootOp>(use); }) ||
+            !rootedOnly(closure) ||
             !mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation()) ||
             !mlir::SymbolTable::symbolKnownUseEmpty(function, &module.getBodyRegion())) {
             return;

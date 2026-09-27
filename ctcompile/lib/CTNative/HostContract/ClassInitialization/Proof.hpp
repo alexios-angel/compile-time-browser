@@ -29,6 +29,10 @@ inline uint64_t cloneCost(mlir::Operation * op) {
     return uint64_t(1) + op->getNumOperands() + op->getNumResults();
 }
 
+inline bool rootedOnly(mlir::Operation * operation) {
+    return llvm::all_of(operation->getUsers(), llvm::IsaPred<ctjs::RootOp>);
+}
+
 // The precharge for closedDeclaration's operation and use scans.
 inline uint64_t declarationCost(mlir::Operation * op) {
     return uint64_t(2) + op->getNumOperands();
@@ -192,6 +196,9 @@ struct classInitialization {
     bool transportHelperMaps();
 
     static void eraseRooted(mlir::Operation * operation);
+    static void eraseIfRooted(mlir::Operation * operation) {
+        if (rootedOnly(operation)) { eraseRooted(operation); }
+    }
     llvm::SmallVector<ctjs::FuncOp> expandHolders();
 
     void rewrite();

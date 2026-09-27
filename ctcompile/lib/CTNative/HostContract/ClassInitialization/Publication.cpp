@@ -25,6 +25,17 @@ std::optional<bool> publicationSymbolObserver(classInitialization & proof, ctjs:
     return std::nullopt;
 }
 
+// The same convention for the users of `op`: true at a user other than a root
+// or one of `allowed`, false on budget failure.
+std::optional<bool> unrootedUser(classInitialization & proof, mlir::Operation * op,
+                                 llvm::ArrayRef<mlir::Operation *> allowed = {}) {
+    for (mlir::Operation * user : op->getUsers()) {
+        if (!proof.step()) { return false; }
+        if (!llvm::isa<ctjs::RootOp>(user) && !llvm::is_contained(allowed, user)) { return true; }
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 bool classInitialization::publicationSuffix(ctjs::CallOp publication,
@@ -170,15 +181,9 @@ bool classInitialization::sinkCapturedPublication(
                 : !undefined(invocation.getReceiver()))) {
         return true;
     }
-    for (mlir::Operation * user : invocation->getUsers()) {
-        if (!step()) { return false; }
-        if (!llvm::isa<ctjs::RootOp>(user)) { return true; }
-    }
+    if (auto stop = unrootedUser(*this, invocation)) { return *stop; }
     if (holder) {
-        for (mlir::Operation * user : selection->getUsers()) {
-            if (!step()) { return false; }
-            if (user != invocation && !llvm::isa<ctjs::RootOp>(user)) { return true; }
-        }
+        if (auto stop = unrootedUser(*this, selection, invocation.getOperation())) { return *stop; }
         // Keep every slot and observer. The shared holder census proves that
         // moving this exact selection cannot cross a slot replacement.
         auto proof = analyzeLocalCallableObject(
@@ -617,9 +622,8 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
             invocation.getReceiver() != selectedHelper.getResult()) {
             return true;
         }
-        for (mlir::Operation * user : holderRead->getUsers()) {
-            if (!step()) { return false; }
-            if (user != invocation && !llvm::isa<ctjs::RootOp>(user)) { return true; }
+        if (auto stop = unrootedUser(*this, holderRead, invocation.getOperation())) {
+            return *stop;
         }
     }
     auto targetFunction = target(helper);
@@ -689,10 +693,7 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
               : !key || !llvm::isa<ctjs::StringAttr>(key.getValue())) {
         return true;
     }
-    for (mlir::Operation * user : publication->getUsers()) {
-        if (!step()) { return false; }
-        if (!llvm::isa<ctjs::RootOp>(user)) { return true; }
-    }
+    if (auto stop = unrootedUser(*this, publication)) { return *stop; }
     if (!holder) {
         for (mlir::OpOperand & use : selectedHelper.getResult().getUses()) {
             if (!step()) { return false; }
@@ -710,10 +711,7 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
         invocation.getArgs().back() != body.getArgument(ctjs::arg_receiver)) {
         return true;
     }
-    for (mlir::Operation * user : invocation->getUsers()) {
-        if (!step()) { return false; }
-        if (!llvm::isa<ctjs::RootOp>(user)) { return true; }
-    }
+    if (auto stop = unrootedUser(*this, invocation)) { return *stop; }
     // Raw cell uses matter: sourceUses intentionally omits capture transport.
     // No second helper/Map observer can survive retirement of this helper.
     bool initialized = mapCell.getDefiningOp<ctjs::CreateCellOp>().getInitial() == map.getResult();
@@ -924,20 +922,9 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
             return true;
         }
     }
-    for (mlir::Operation * user : captured->getUsers()) {
-        if (!step()) { return false; }
-        if (user != selection && user != publication && !llvm::isa<ctjs::RootOp>(user)) {
-            return true;
-        }
-    }
-    for (mlir::Operation * user : selection->getUsers()) {
-        if (!step()) { return false; }
-        if (user != publication && !llvm::isa<ctjs::RootOp>(user)) { return true; }
-    }
-    for (mlir::Operation * user : publication->getUsers()) {
-        if (!step()) { return false; }
-        if (!llvm::isa<ctjs::RootOp>(user)) { return true; }
-    }
+    if (auto stop = unrootedUser(*this, captured, {selection, publication})) { return *stop; }
+    if (auto stop = unrootedUser(*this, selection, publication.getOperation())) { return *stop; }
+    if (auto stop = unrootedUser(*this, publication)) { return *stop; }
     for (ctjs::ConstructOp made : instances) {
         if (!step()) { return false; }
         if (made->getBlock() != map->getBlock() || !map->isBeforeInBlock(made)) { return true; }

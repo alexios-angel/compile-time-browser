@@ -987,18 +987,8 @@ bool classInitialization::ownFieldSnapshots(
         loads.insert(read.getObject().getDefiningOp());
         eraseRooted(call);
     }
-    for (mlir::Operation * operation : selections) {
-        if (llvm::all_of(operation->getUsers(),
-                         [](mlir::Operation * op) { return llvm::isa<ctjs::RootOp>(op); })) {
-            eraseRooted(operation);
-        }
-    }
-    for (mlir::Operation * operation : loads) {
-        if (llvm::all_of(operation->getUsers(),
-                         [](mlir::Operation * op) { return llvm::isa<ctjs::RootOp>(op); })) {
-            eraseRooted(operation);
-        }
-    }
+    for (mlir::Operation * operation : selections) { eraseIfRooted(operation); }
+    for (mlir::Operation * operation : loads) { eraseIfRooted(operation); }
     // An empty snapshot is a requirement too. Descendants must recheck every
     // inherited body and field write even after its snapshot has been folded.
     snapshotFields[constructor.getResult()] = std::move(fields);

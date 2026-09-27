@@ -735,9 +735,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
         // Missing lookup results may disappear only after every observer was
         // discharged. Present reads retain the existing record/lifetime proof.
         for (ctjs::CallOp read : missingReads) {
-            if (llvm::all_of(read->getUsers(), [](mlir::Operation * user) {
-                    return llvm::isa<ctjs::RootOp>(user);
-                })) {
+            if (rootedOnly(read)) {
                 mapOperations.erase(read);
                 eraseRooted(read);
             }
@@ -765,8 +763,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
         mapOperations.erase(map);
         auto load = map.getCallee().getDefiningOp();
         eraseRooted(map);
-        if (llvm::all_of(load->getUsers(),
-                         [](mlir::Operation * user) { return llvm::isa<ctjs::RootOp>(user); })) {
+        if (rootedOnly(load)) {
             mapOperations.erase(load);
             eraseRooted(load);
         }
@@ -1115,11 +1112,7 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
         if (publication) {
             auto object = publication.getObject();
             publication.erase();
-            if (llvm::all_of(object.getUsers(), [](mlir::Operation * user) {
-                    return llvm::isa<ctjs::RootOp>(user);
-                })) {
-                eraseRooted(object.getDefiningOp());
-            }
+            eraseIfRooted(object.getDefiningOp());
         }
         if (helperCell) {
             llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
