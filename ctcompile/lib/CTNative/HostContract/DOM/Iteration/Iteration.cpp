@@ -1,5 +1,6 @@
 #include "../Snapshot/Bounds.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
@@ -15,16 +16,14 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
     const auto error = [](llvm::StringRef text) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), text);
     };
-    unsigned remaining = maxSteps;
-    const auto spend = [&] { return remaining && (--remaining, true); };
+    WorkBudget budget{maxSteps};
+    const auto spend = [&] { return budget.spend(); };
     // Charge the source census and fingerprint before inspecting the contract.
-    const auto census = candidate.walk([&](mlir::Operation * operation) {
-        for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
-            if (!spend() || !spend()) { return mlir::WalkResult::interrupt(); }
-        }
-        return mlir::WalkResult::advance();
-    });
-    if (census.wasInterrupted()) { return error("DOM element guard work budget exhausted"); }
+    if (!budget.spendWalk(candidate, [](mlir::Operation * operation) {
+            return 2 * (uint64_t(1) + operation->getNumOperands());
+        })) {
+        return error("DOM element guard work budget exhausted");
+    }
     if (hostContractFingerprint(candidate) != contract.moduleSha256 ||
         candidate->hasAttr("ctjs.skipped")) {
         return error("DOM element guard fingerprint mismatch or incomplete source");
@@ -152,16 +151,16 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                                   unsigned maxSteps) {
     // Only the private preparation clone is changed. Its complete DOM proof
     // must still reject writes, reentry, escaped snapshots and unknown calls.
-    unsigned remaining = maxSteps;
-    const auto spend = [&] { return remaining && (--remaining, true); };
+    WorkBudget budget{maxSteps};
+    const auto spend = [&] { return budget.spend(); };
     const auto error = [](llvm::StringRef text) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), text);
     };
     llvm::SmallVector<ctjs::CallOp> opens;
     bool hasLoop = false;
     const auto census = candidate.walk([&](mlir::Operation * operation) {
-        for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
-            if (!spend()) { return mlir::WalkResult::interrupt(); }
+        if (!budget.spend(uint64_t(1) + operation->getNumOperands())) {
+            return mlir::WalkResult::interrupt();
         }
         if (llvm::isa<mlir::scf::WhileOp>(operation)) {
             auto owner = operation->getParentOfType<ctjs::FuncOp>();
@@ -328,7 +327,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                                 return mlir::WalkResult::advance();
                             });
                             if (discarded.wasInterrupted()) {
-                                return error(remaining
+                                return error(budget.remaining
                                                  ? "DOM iteration would discard a recorded input"
                                                  : "DOM iteration work budget exhausted");
                             }
@@ -359,7 +358,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                             input.lengths.push_back(read);
                             recorded.insert(read);
                         } else if (!hasOwnSnapshotBound(read, iterable.getResult(), spend)) {
-                            return error(remaining
+                            return error(budget.remaining
                                              ? "DOM iterated index requires its own length guard"
                                              : "DOM iteration work budget exhausted");
                         } else {
@@ -422,28 +421,27 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
     }
     auto transformed = contract;
     const auto fingerprint = [&] {
-        const auto charged = candidate.walk([&](mlir::Operation * operation) {
-            for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
-                if (!spend()) { return mlir::WalkResult::interrupt(); }
-            }
-            return mlir::WalkResult::advance();
-        });
-        if (charged.wasInterrupted()) { return false; }
+        if (!budget.spendWalk(candidate, [](mlir::Operation * operation) {
+                return uint64_t(1) + operation->getNumOperands();
+            })) {
+            return false;
+        }
         transformed.moduleSha256 = hostContractFingerprint(candidate);
         return true;
     };
     if (!fingerprint()) { return error("DOM iteration work budget exhausted"); }
     mlir::IRMapping mapping;
     unsigned snapshotWork = 0;
-    if (auto failure = normalizeDOMSnapshotLengths(candidate, transformed, remaining, &mapping,
-                                                   &snapshotWork)) {
+    if (auto failure = normalizeDOMSnapshotLengths(candidate, transformed,
+                                                   static_cast<unsigned>(budget.remaining),
+                                                   &mapping, &snapshotWork)) {
         return failure;
     }
-    remaining -= snapshotWork;
+    budget.remaining -= snapshotWork;
     if (!fingerprint()) { return error("DOM iteration work budget exhausted"); }
-    const DOMEntryAnalysis proof(candidate, transformed, remaining);
+    const DOMEntryAnalysis proof(candidate, transformed, static_cast<unsigned>(budget.remaining));
     if (!proof.proved()) { return error(("DOM iterator entry: " + proof.reason()).str()); }
-    remaining -= proof.steps();
+    budget.remaining -= proof.steps();
     llvm::DenseSet<mlir::Operation *> live;
     const auto censusLive = candidate.walk([&](mlir::Operation * operation) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -493,7 +491,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         }
     }
     if (!fingerprint()) { return error("DOM iteration work budget exhausted"); }
-    const DOMEntryAnalysis capped(candidate, transformed, remaining);
+    const DOMEntryAnalysis capped(candidate, transformed, static_cast<unsigned>(budget.remaining));
     if (!capped.proved()) { return error(("DOM iterator capped entry: " + capped.reason()).str()); }
     return llvm::Error::success();
 }

@@ -1,4 +1,6 @@
+#include "../Snapshot/Bounds.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 
 #include "mlir/Conversion/ControlFlowToSCF/ControlFlowToSCF.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -19,7 +21,7 @@ namespace ctcompile::ctnative {
 
 // The caller owns a disposable clone. Preserve both source completions while
 // upstream structures their common CFG; no native effect or payload is proved here.
-static llvm::Error structureCloseCompletion(ctjs::FuncOp function, unsigned & remaining) {
+static llvm::Error structureCloseCompletion(ctjs::FuncOp function, WorkBudget & budget) {
     const auto refuse = [](llvm::StringRef reason) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
     };
@@ -36,12 +38,9 @@ static llvm::Error structureCloseCompletion(ctjs::FuncOp function, unsigned & re
     // Upstream has no work callback. Reserve its quadratic CFG work and the
     // terminal-region rewrite before touching this clone.
     const uint64_t blocks = function.getBody().getBlocks().size() + 1;
-    if (size > remaining / 4) { return refuse("DOM iterator completion work budget exhausted"); }
-    remaining -= static_cast<unsigned>(size * 4);
-    if (blocks > remaining / width / blocks) {
+    if (!budget.spend(size * 4) || !budget.spend(blocks * blocks * width)) {
         return refuse("DOM iterator completion work budget exhausted");
     }
-    remaining -= static_cast<unsigned>(blocks * blocks * width);
     auto * context = function.getContext();
     context->getOrLoadDialect<mlir::arith::ArithDialect>();
     context->getOrLoadDialect<mlir::scf::SCFDialect>();
@@ -132,12 +131,7 @@ static llvm::Error structureCloseCompletion(ctjs::FuncOp function, unsigned & re
 
 llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
                                                const HostContract & contract, unsigned maxSteps) {
-    unsigned remaining = maxSteps;
-    const auto spend = [&](uint64_t cost = 1) {
-        if (cost > remaining) { return false; }
-        remaining -= static_cast<unsigned>(cost);
-        return true;
-    };
+    WorkBudget budget{maxSteps};
     const auto refuse = [](llvm::StringRef reason) -> llvm::Expected<bool> {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
     };
@@ -146,16 +140,12 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
         if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
             replacedClose |= store.getName() == "__ctbrowser_iter_close";
         }
-        uint64_t cost = uint64_t(1) + operation->getNumOperands() + operation->getNumResults() +
-                        operation->getAttrs().size();
-        for (auto & region : operation->getRegions()) {
-            for (auto & block : region) { cost += uint64_t(1) + block.getNumArguments(); }
-        }
-        return spend(cost) ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
+        return budget.spend(operationWork(operation, true)) ? mlir::WalkResult::advance()
+                                                            : mlir::WalkResult::interrupt();
     });
-    const unsigned size = maxSteps - remaining;
+    const uint64_t size = maxSteps - budget.remaining;
     // Reserve fingerprinting, the disposable clone, verification and rewrite.
-    if (counted.wasInterrupted() || !spend(uint64_t(size) * 6)) {
+    if (counted.wasInterrupted() || !budget.spend(size * 6)) {
         return refuse("DOM iterator close normalization work budget exhausted");
     }
     auto entry = candidate.lookupSymbol<ctjs::FuncOp>(contract.entry);
@@ -184,7 +174,7 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
     unsigned pushes = 0, landings = 0;
     for (auto & block : copy->getBody()) {
         for (auto & operation : block) {
-            if (!spend()) {
+            if (!budget.spend()) {
                 return refuse("DOM iterator close normalization work budget exhausted");
             }
             if (operation.getNumRegions()) {
@@ -233,13 +223,13 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
     // ponytail: one argument-free straight close chain; retain register-vector
     // handlers until their state correspondence has a separate proof.
     for (auto * block = push.getBody(); block != joined;) {
-        if (!spend() || block == caught || block->getNumArguments() ||
+        if (!budget.spend() || block == caught || block->getNumArguments() ||
             !protectedBlocks.insert(block).second || block->getSinglePredecessor() != previous) {
             return refuse("DOM iterator close requires a private acyclic suppression chain");
         }
         normal.push_back(block);
         for (auto & operation : block->without_terminator()) {
-            if (!spend(uint64_t(1) + operation.getNumOperands())) {
+            if (!budget.spend(uint64_t(1) + operation.getNumOperands())) {
                 return refuse("DOM iterator close normalization work budget exhausted");
             }
             if (auto found = llvm::dyn_cast<ctjs::PopHandlerOp>(operation)) {
@@ -282,7 +272,9 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
         return refuse("DOM iterator close requires an unobserved call and one handler removal");
     }
     for (auto * block : caught->getPredecessors()) {
-        if (!spend()) { return refuse("DOM iterator close normalization work budget exhausted"); }
+        if (!budget.spend()) {
+            return refuse("DOM iterator close normalization work budget exhausted");
+        }
         auto check = llvm::dyn_cast<ctjs::CheckOp>(block->getTerminator());
         if (block->getTerminator() != push &&
             (!protectedBlocks.contains(block) || !check || check.getHandler() != caught)) {
@@ -290,7 +282,9 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
         }
     }
     for (auto * block : joined->getPredecessors()) {
-        if (!spend()) { return refuse("DOM iterator close normalization work budget exhausted"); }
+        if (!budget.spend()) {
+            return refuse("DOM iterator close normalization work budget exhausted");
+        }
         if (block != caught && block != previous) {
             return refuse("DOM iterator close saved throw has an unrelated predecessor");
         }
@@ -306,7 +300,7 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
     }
     for (auto * operation : setup) {
         for (auto * user : operation->getUsers()) {
-            if (!spend()) {
+            if (!budget.spend()) {
                 return refuse("DOM iterator close normalization work budget exhausted");
             }
             if (!protectedBlocks.contains(user->getBlock())) {
@@ -338,7 +332,7 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
     normal.push_back(caught);
     for (auto * block : normal) { block->dropAllReferences(); }
     for (auto * block : normal) { block->erase(); }
-    if (auto error = structureCloseCompletion(*copy, remaining)) { return std::move(error); }
+    if (auto error = structureCloseCompletion(*copy, budget)) { return std::move(error); }
     if (mlir::failed(mlir::verify(*copy))) {
         return refuse("DOM iterator close normalization lost source correspondence");
     }

@@ -7,19 +7,16 @@ bool DOMSource::refuse(llvm::StringRef message) {
     return false;
 }
 
-bool DOMSource::step() {
-    if (!remaining) { return refuse("DOM helper expansion work budget exhausted"); }
-    --remaining;
+bool DOMSource::step(uint64_t cost) {
+    if (cost > remaining) { return refuse("DOM helper expansion work budget exhausted"); }
+    remaining -= static_cast<unsigned>(cost);
     return true;
 }
 
 bool DOMSource::chargeCaptureQuery() {
     // The shared immutable-capture query scans the module and target uses.
     for (unsigned scan = 0; scan < 6; ++scan) {
-        if (remaining < operationCount) {
-            return refuse("DOM helper expansion work budget exhausted");
-        }
-        remaining -= operationCount;
+        if (!step(operationCount)) { return false; }
     }
     return true;
 }
@@ -131,10 +128,7 @@ bool DOMSource::bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncO
         // every symbol use before specializing, not only the first caller.
         auto module = target->getParentOfType<mlir::ModuleOp>();
         if (!target.isPrivate() || creations.lookup(*functionIndex(target)) != 0) { return true; }
-        if (remaining / 2 < operationCount) {
-            return refuse("DOM helper expansion work budget exhausted");
-        }
-        remaining -= 2 * operationCount;
+        if (!step(2 * uint64_t(operationCount))) { return false; }
         for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
                                   mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
             if (!uses) { return true; }

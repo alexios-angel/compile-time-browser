@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../Analysis.h"
+#include "../Snapshot/Bounds.h"
 #include "ctbrowser/core/algorithms.hpp"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
@@ -39,7 +40,7 @@ struct DOMSource {
     llvm::DenseSet<mlir::Value> inactiveFillers;
 
     bool refuse(llvm::StringRef message);
-    bool step();
+    bool step(uint64_t cost = 1);
     bool chargeCaptureQuery();
     static bool undefined(mlir::Value value) { return ctjs::isUndefinedConstant(value); }
 

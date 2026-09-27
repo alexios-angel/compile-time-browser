@@ -270,10 +270,9 @@ static llvm::Error normalizeIntrinsicGlobals(mlir::ModuleOp module, llvm::String
         auto store = declarations.lookup(helper.first());
         // ponytail: one charged complete census per declaration; index global
         // uses if large helper sets exhaust the existing preparation budget.
-        if (uint64_t(2) * sourceSize > remaining) {
+        if (!spend(uint64_t(2) * sourceSize)) {
             return refuse("intrinsic helper declaration work budget exhausted");
         }
-        remaining -= 2 * sourceSize;
         if (!closedDeclaration(store, helper.second, module)) {
             return refuse("intrinsic helper declaration is not closed");
         }
@@ -374,9 +373,9 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         // complete typed/effect proof follows expansion on a private candidate.
         mlir::OwningOpRef<mlir::ModuleOp> prepared;
         unsigned remaining = maxSteps;
-        const auto spend = [&] {
-            if (!remaining) { return false; }
-            --remaining;
+        const auto spend = [&](uint64_t cost = 1) {
+            if (cost > remaining) { return false; }
+            remaining -= static_cast<unsigned>(cost);
             return true;
         };
         bool helpers = false;
@@ -394,15 +393,8 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             unsigned sourceSize = 0;
             const auto scanned = module.walk([&](mlir::Operation * operation) {
                 // Reserve source inspection, clone and original fingerprint.
-                uint64_t cost = 3 * (uint64_t(1) + operation->getNumOperands() +
-                                     operation->getNumResults() + operation->getAttrs().size());
-                for (mlir::Region & region : operation->getRegions()) {
-                    for (mlir::Block & block : region) {
-                        cost += 3 * (uint64_t(1) + block.getNumArguments());
-                    }
-                }
-                if (cost > remaining) { return mlir::WalkResult::interrupt(); }
-                remaining -= static_cast<unsigned>(cost);
+                const uint64_t cost = 3 * operationWork(operation, true);
+                if (!spend(cost)) { return mlir::WalkResult::interrupt(); }
                 sourceSize += static_cast<unsigned>(cost / 3);
                 unsupported |= llvm::isa<ctjs::CreateObjectOp, ctjs::SetPropertyOp>(operation);
                 return mlir::WalkResult::advance();
@@ -454,10 +446,9 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             }
             remaining -= expansionSteps;
             const auto counted = expanded->walk([&](mlir::Operation * operation) {
-                const uint64_t cost = uint64_t(1) + operation->getNumOperands();
-                if (cost > remaining) { return mlir::WalkResult::interrupt(); }
-                remaining -= static_cast<unsigned>(cost);
-                return mlir::WalkResult::advance();
+                return spend(uint64_t(1) + operation->getNumOperands())
+                           ? mlir::WalkResult::advance()
+                           : mlir::WalkResult::interrupt();
             });
             if (counted.wasInterrupted()) {
                 return refuse("native intrinsic helper fingerprint work budget exhausted");
@@ -471,17 +462,8 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             remaining -= source.steps();
             const auto counted = sourceModule.walk([&](mlir::Operation * operation) {
                 // Reserve the clone, cleanup walks and refreshed fingerprint.
-                uint64_t cost = uint64_t(1) + operation->getNumOperands() +
-                                operation->getNumResults() + operation->getAttrs().size();
-                for (mlir::Region & region : operation->getRegions()) {
-                    for (mlir::Block & block : region) {
-                        cost += uint64_t(1) + block.getNumArguments();
-                    }
-                }
-                cost *= 4;
-                if (cost > remaining) { return mlir::WalkResult::interrupt(); }
-                remaining -= static_cast<unsigned>(cost);
-                return mlir::WalkResult::advance();
+                return spend(4 * operationWork(operation, true)) ? mlir::WalkResult::advance()
+                                                                 : mlir::WalkResult::interrupt();
             });
             if (counted.wasInterrupted()) {
                 return refuse("native intrinsic entry preparation work budget exhausted");

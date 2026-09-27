@@ -2,6 +2,7 @@
 #include "Entry/Body.hpp"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -26,18 +27,24 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     // refused as exhausted if it does not fit, and the same cost reserved
     // again for the fingerprint's own pass over the module. workSteps carries
     // both, so steps() is still the exact budget that reproduces the proof.
-    const auto scanned = module.walk([&](mlir::Operation * operation) {
-        const uint64_t cost = uint64_t(1) + operation->getNumOperands();
-        if (cost > maxSteps - workSteps) { return mlir::WalkResult::interrupt(); }
-        workSteps += static_cast<unsigned>(cost);
-        return mlir::WalkResult::advance();
-    });
-    if (scanned.wasInterrupted() || workSteps > maxSteps - workSteps) {
+    WorkBudget budget{maxSteps};
+    const llvm::scope_exit recordSteps(
+        [&] { workSteps = static_cast<unsigned>(maxSteps - budget.remaining); });
+    const auto spend = [&](uint64_t cost = 1) {
+        if (budget.spend(cost)) { return true; }
+        budgetExhausted = true;
+        refusal = "DOM entry analysis work budget exhausted";
+        return false;
+    };
+    if (!budget.spendWalk(module,
+                          [](mlir::Operation * operation) {
+                              return uint64_t(1) + operation->getNumOperands();
+                          }) ||
+        !spend(maxSteps - budget.remaining)) {
         budgetExhausted = true;
         refusal = "DOM entry analysis work budget exhausted";
         return;
     }
-    workSteps *= 2;
     if (hostContractFingerprint(module) != contract.moduleSha256) {
         refusal = "host contract module fingerprint mismatch";
         return;
@@ -74,15 +81,6 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                  : "DOM entry requires the isolated ctbrowser-dom-v1 declaration";
         return;
     }
-    const auto spend = [&] {
-        if (workSteps == maxSteps) {
-            budgetExhausted = true;
-            refusal = "DOM entry analysis work budget exhausted";
-            return false;
-        }
-        ++workSteps;
-        return true;
-    };
     if (!spend()) { return; }
     auto target = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     if (!target || target.getBody().empty()) {

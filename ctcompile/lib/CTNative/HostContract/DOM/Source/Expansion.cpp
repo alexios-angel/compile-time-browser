@@ -73,11 +73,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         invocation.getUnwindBody().isAncestor(operation->getParentRegion()) &&
                         llvm::isa<ctjs::CallOp, ctjs::CallDirectOp, ctjs::CreateClosureOp>(
                             operation);
-                    uint64_t cost =
-                        uint64_t(1) + operation->getNumOperands() + operation->getNumResults();
-                    for (auto & region : operation->getRegions()) {
-                        for (auto & block : region) { cost += 1 + block.getNumArguments(); }
-                    }
+                    const uint64_t cost = operationWork(operation, false);
                     if (cost > remaining) { return mlir::WalkResult::interrupt(); }
                     remaining -= static_cast<unsigned>(cost);
                     copyCost += cost;
@@ -211,11 +207,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             }
             if (forwards) {
                 const auto counted = invocation.walk([&](mlir::Operation * operation) {
-                    uint64_t cost =
-                        uint64_t(1) + operation->getNumOperands() + operation->getNumResults();
-                    for (auto & region : operation->getRegions()) {
-                        for (auto & block : region) { cost += 1 + block.getNumArguments(); }
-                    }
+                    const uint64_t cost = operationWork(operation, false);
                     if (cost > remaining / 2) { return mlir::WalkResult::interrupt(); }
                     remaining -= static_cast<unsigned>(cost * 2);
                     return mlir::WalkResult::advance();

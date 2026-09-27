@@ -163,11 +163,7 @@ llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, un
                 // Class lifting can retire an unread holder slot while retaining
                 // its original body. Numeric closures and symbolic calls must
                 // both be absent before its independent leaf proof can suffice.
-                if (source.remaining / 2 < source.operationCount) {
-                    source.refuse("DOM helper expansion work budget exhausted");
-                    break;
-                }
-                source.remaining -= 2 * source.operationCount;
+                if (!source.step(2 * uint64_t(source.operationCount))) { break; }
                 if (source.creations.lookup(index) != 0 ||
                     !mlir::SymbolTable::symbolKnownUseEmpty(function, candidate.getOperation()) ||
                     !mlir::SymbolTable::symbolKnownUseEmpty(function, &candidate.getBodyRegion()) ||

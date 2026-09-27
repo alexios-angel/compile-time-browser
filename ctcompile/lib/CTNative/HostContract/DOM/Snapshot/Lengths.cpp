@@ -1,5 +1,6 @@
 #include "Bounds.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
@@ -12,24 +13,20 @@ namespace ctcompile::ctnative {
 llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostContract & contract,
                                         unsigned maxSteps, mlir::IRMapping * mapping,
                                         unsigned * workSteps) {
-    unsigned remaining = maxSteps;
+    WorkBudget budget{maxSteps};
     const llvm::scope_exit recordWork([&] {
-        if (workSteps) { *workSteps = maxSteps - remaining; }
+        if (workSteps) { *workSteps = static_cast<unsigned>(maxSteps - budget.remaining); }
     });
     const auto error = [&](llvm::StringRef text) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                       remaining ? text : "DOM snapshot work budget exhausted");
+                                       budget.remaining ? text
+                                                        : "DOM snapshot work budget exhausted");
     };
-    const auto spend = [&] { return remaining && (--remaining, true); };
+    const auto spend = [&] { return budget.spend(); };
     const auto charge = [&](mlir::ModuleOp module) {
-        return !module
-                    .walk([&](mlir::Operation * operation) {
-                        for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
-                            if (!spend() || !spend()) { return mlir::WalkResult::interrupt(); }
-                        }
-                        return mlir::WalkResult::advance();
-                    })
-                    .wasInterrupted();
+        return budget.spendWalk(module, [](mlir::Operation * operation) {
+            return 2 * (uint64_t(1) + operation->getNumOperands());
+        });
     };
     if (!charge(candidate)) { return error("DOM snapshot work budget exhausted"); }
     if (hostContractFingerprint(candidate) != contract.moduleSha256) {
@@ -192,9 +189,9 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
     if (!charge(*changed)) { return error("DOM snapshot work budget exhausted"); }
     auto transformed = contract;
     transformed.moduleSha256 = hostContractFingerprint(*changed);
-    const DOMEntryAnalysis proof(*changed, transformed, remaining);
+    const DOMEntryAnalysis proof(*changed, transformed, static_cast<unsigned>(budget.remaining));
     if (!proof.proved()) { return error(proof.reason()); }
-    remaining -= proof.steps();
+    budget.remaining -= proof.steps();
     for (ctjs::CallOp snapshot : snapshots) {
         if (!spend()) { return error("DOM snapshot work budget exhausted"); }
         const auto * edge = proof.call(snapshot);

@@ -33,8 +33,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     const auto undefined = dom_source_detail::DOMSource::undefined;
     bool custom = false, undefinedWritten = false;
     const auto census = candidate.walk([&](mlir::Operation * operation) {
-        for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
-            if (!spend()) { return mlir::WalkResult::interrupt(); }
+        if (!work.step(uint64_t(1) + operation->getNumOperands())) {
+            return mlir::WalkResult::interrupt();
         }
         if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
             undefinedWritten |= store.getNameAttr() && store.getName() == "undefined";
@@ -1596,10 +1596,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (!helpers.empty()) {
         // Enumerate both symbol scopes once for the complete family. Charge
         // the source walk before allocating either list, then each visited use.
-        if (work.remaining / 2 < sourceCost) {
+        if (!work.step(2 * uint64_t(sourceCost))) {
             return error("DOM custom iterator budget exhausted");
         }
-        work.remaining -= 2 * sourceCost;
         for (const auto & uses : {mlir::SymbolTable::getSymbolUses(candidate.getOperation()),
                                   mlir::SymbolTable::getSymbolUses(&candidate.getBodyRegion())}) {
             if (!uses) { return error("DOM iterator sibling helper has unknown symbol uses"); }
@@ -3162,11 +3161,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     entry.getBody().takeBody(rewritten);
     if (retainedCompletions) {
         const auto charged = entry.walk([&](mlir::Operation * operation) {
-            for (unsigned i = 0; i <= operation->getNumOperands() + operation->getNumResults();
-                 ++i) {
-                if (!spend()) { return mlir::WalkResult::interrupt(); }
-            }
-            return mlir::WalkResult::advance();
+            return work.step(uint64_t(1) + operation->getNumOperands() + operation->getNumResults())
+                       ? mlir::WalkResult::advance()
+                       : mlir::WalkResult::interrupt();
         });
         if (charged.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
         if (mlir::failed(mlir::verify(entry))) {
@@ -3206,10 +3203,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
         if (dropped.empty()) { continue; }
-        for (unsigned i = 0; i < operation->getNumOperands() + operation->getNumResults() +
-                                     operation->getNumRegions() + dropped.size();
-             ++i) {
-            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+        if (!work.step(uint64_t(operation->getNumOperands()) + operation->getNumResults() +
+                       operation->getNumRegions() + dropped.size())) {
+            return error("DOM custom iterator budget exhausted");
         }
         mlir::OperationState built(operation->getLoc(), operation->getName());
         built.addOperands(operation->getOperands());
