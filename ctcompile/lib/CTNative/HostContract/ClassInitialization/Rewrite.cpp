@@ -251,6 +251,29 @@ void classInitialization::eraseRooted(mlir::Operation * operation) {
     operation->erase();
 }
 
+void classInitialization::retireCell(mlir::Value cell) {
+    llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
+        if (read.getCell() != cell) { return false; }
+        cellOperations.erase(read);
+        eraseRooted(read);
+        return true;
+    });
+    for (mlir::Operation * user : llvm::make_early_inc_range(cell.getUsers())) {
+        cellOperations.erase(user);
+        user->erase();
+    }
+    cellOperations.erase(cell.getDefiningOp());
+    cells.erase(cell);
+    cell.getDefiningOp()->erase();
+}
+
+void classInitialization::retireHelper(ctjs::CreateClosureOp closure, ctjs::FuncOp function) {
+    earlyCaptures.erase(closure);
+    eraseRooted(closure);
+    functions.erase(*functionIndex(function));
+    function.erase();
+}
+
 llvm::SmallVector<ctjs::FuncOp> classInitialization::expandHolders() {
     // Every alias and implicit-argument use was checked before mutation.
     // Local DOM slots remain as functions until the complete invocation/type

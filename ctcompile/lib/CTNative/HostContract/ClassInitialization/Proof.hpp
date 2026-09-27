@@ -213,6 +213,10 @@ struct classInitialization {
     static void eraseIfRooted(mlir::Operation * operation) {
         if (rootedOnly(operation)) { eraseRooted(operation); }
     }
+    // Erase a fixed cell with its recorded reads and remaining transport users.
+    void retireCell(mlir::Value cell);
+    // Erase a helper closure whose calls were all expanded, and its function.
+    void retireHelper(ctjs::CreateClosureOp closure, ctjs::FuncOp function);
     llvm::SmallVector<ctjs::FuncOp> expandHolders();
 
     void rewrite();

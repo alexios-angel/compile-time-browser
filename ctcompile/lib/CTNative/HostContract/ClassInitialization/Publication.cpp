@@ -776,24 +776,9 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
         holderSlot.erase();
     }
     setCaptures(constructor, function, mapCell);
-    llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
-        if (read.getCell() != helperCell) { return false; }
-        cellOperations.erase(read);
-        eraseRooted(read);
-        return true;
-    });
-    for (mlir::Operation * user : llvm::make_early_inc_range(helperCell.getUsers())) {
-        cellOperations.erase(user);
-        user->erase();
-    }
-    cellOperations.erase(helperCell.getDefiningOp());
-    cells.erase(helperCell);
-    helperCell.getDefiningOp()->erase();
+    retireCell(helperCell);
     if (holder) { eraseRooted(holder); }
-    earlyCaptures.erase(helper);
-    eraseRooted(helper);
-    functions.erase(*functionIndex(targetFunction));
-    targetFunction.erase();
+    retireHelper(helper, targetFunction);
     return true;
 }
 

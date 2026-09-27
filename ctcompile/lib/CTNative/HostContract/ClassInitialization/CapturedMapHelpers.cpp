@@ -750,15 +750,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
             eraseRooted(read);
         }
         // Fixed outer aliases are transport only; no captured observer remains.
-        for (mlir::Value cell : bindings) {
-            for (mlir::Operation * user : llvm::make_early_inc_range(cell.getUsers())) {
-                cellOperations.erase(user);
-                user->erase();
-            }
-            cellOperations.erase(cell.getDefiningOp());
-            cells.erase(cell);
-            cell.getDefiningOp()->erase();
-        }
+        for (mlir::Value cell : bindings) { retireCell(cell); }
         maps.erase(map.getResult());
         mapOperations.erase(map);
         auto load = map.getCallee().getDefiningOp();
@@ -1111,25 +1103,8 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
             publication.erase();
             eraseIfRooted(object.getDefiningOp());
         }
-        if (helperCell) {
-            llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
-                if (read.getCell() != helperCell) { return false; }
-                cellOperations.erase(read);
-                eraseRooted(read);
-                return true;
-            });
-            for (mlir::Operation * user : llvm::make_early_inc_range(helperCell.getUsers())) {
-                cellOperations.erase(user);
-                user->erase();
-            }
-            cellOperations.erase(helperCell.getDefiningOp());
-            cells.erase(helperCell);
-            helperCell.getDefiningOp()->erase();
-        }
-        earlyCaptures.erase(helper);
-        eraseRooted(helper);
-        functions.erase(*functionIndex(function));
-        function.erase();
+        if (helperCell) { retireCell(helperCell); }
+        retireHelper(helper, function);
         return true;
     };
     for (ctjs::CreateClosureOp helper : closures) {
