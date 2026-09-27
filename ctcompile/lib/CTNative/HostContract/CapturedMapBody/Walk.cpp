@@ -198,14 +198,8 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
                 }
                 continue;
             }
-            if (!chargeStates(mapStates)) { return false; }
-            for (const auto & value : alternatives) {
-                (void)value;
-                if (!owner.step()) { return false; }
-            }
-            for (const auto & field : fields) {
-                (void)field;
-                if (!owner.step()) { return false; }
+            if (!chargeStates(mapStates) || !owner.spend(alternatives.size() + fields.size())) {
+                return false;
             }
             const auto incoming = mapStates;
             const auto incomingFields = fields;
@@ -217,14 +211,9 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
             auto thenStates = std::move(mapStates);
             auto thenFields = std::move(fields);
             auto thenAlternatives = std::move(alternatives);
-            if (!chargeStates(incoming)) { return false; }
-            for (const auto & value : incomingAlternatives) {
-                (void)value;
-                if (!owner.step()) { return false; }
-            }
-            for (const auto & field : incomingFields) {
-                (void)field;
-                if (!owner.step()) { return false; }
+            if (!chargeStates(incoming) ||
+                !owner.spend(incomingAlternatives.size() + incomingFields.size())) {
+                return false;
             }
             // Resolve then-arm cardinality while its scalar facts are live.
             alternatives = thenAlternatives;
@@ -495,18 +484,13 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
             } else if (key == "clear") {
                 // Saved SSA reads retain their old payload or object; only
                 // the mutable Map state and live has observations change.
+                if (!owner.spend(state.entries.size() + state.observations.size() +
+                                 state.possibleKeys.size())) {
+                    return false;
+                }
                 for (auto & entry : state.entries) {
-                    if (!owner.step()) { return false; }
                     entry.present = false;
                     entry.absent = true;
-                }
-                for (auto * observed : state.observations) {
-                    (void)observed;
-                    if (!owner.step()) { return false; }
-                }
-                for (mlir::Value written : state.possibleKeys) {
-                    (void)written;
-                    if (!owner.step()) { return false; }
                 }
                 state.observations.clear();
                 state.possibleKeys.clear();

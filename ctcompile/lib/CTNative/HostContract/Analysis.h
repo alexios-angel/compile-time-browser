@@ -114,6 +114,8 @@ struct analyzer {
 
     analyzer(mlir::ModuleOp module, const HostContract & contract, unsigned steps);
     bool step();
+    // `count` steps at once; one that does not fit spends the rest, as `count` steps would.
+    bool spend(uint64_t count);
     mlir::BlockArgument elementInput(mlir::Value value) const;
     ctjs::FuncOp target(mlir::Operation * call) const;
     ctjs::FuncOp callable(mlir::Value value, unsigned depth = 0);

@@ -7,9 +7,24 @@
 namespace ctcompile::ctnative::class_detail {
 
 bool classInitialization::step() {
-    if (!remaining) { return refuse("class initialization work budget exhausted"); }
-    --remaining;
+    return spend(1);
+}
+
+bool classInitialization::spend(uint64_t count) {
+    if (count > remaining) {
+        remaining = 0;
+        return refuse("class initialization work budget exhausted");
+    }
+    remaining -= static_cast<unsigned>(count);
     return true;
+}
+
+bool classInitialization::spendWalk(mlir::Operation * root,
+                                    llvm::function_ref<uint64_t(mlir::Operation *)> cost) {
+    WorkBudget budget{remaining};
+    const bool fits = budget.spendWalk(*root, cost);
+    remaining = static_cast<unsigned>(budget.remaining);
+    return fits || refuse("class initialization work budget exhausted");
 }
 
 bool classInitialization::refuse(llvm::StringRef message) {
@@ -365,9 +380,9 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
                         helper.getBody().front().getNumArguments()) {
                     return refuse("captured helper escapes its ordinary local call");
                 }
-                for (auto i = call.getArgs().size() + ctjs::implicit_arguments;
-                     i < helper.getBody().front().getNumArguments(); ++i) {
-                    if (!step()) { return false; }
+                if (!spend(helper.getBody().front().getNumArguments() - call.getArgs().size() -
+                           ctjs::implicit_arguments)) {
+                    return false;
                 }
                 helperCalls.insert(call);
                 continue;
@@ -459,9 +474,9 @@ ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool
                 if (publication || localHolder) {
                     const auto parameters = target(closure).getBody().front().getNumArguments() -
                                             ctjs::implicit_arguments;
-                    if (call.getArgs().size() > parameters) { return {}; }
-                    for (auto i = call.getArgs().size(); i < parameters; ++i) {
-                        if (!step()) { return {}; }
+                    if (call.getArgs().size() > parameters ||
+                        !spend(parameters - call.getArgs().size())) {
+                        return {};
                     }
                 }
             }
@@ -506,16 +521,7 @@ ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool
         // Charge the existing declaration proof's operation/use scans once
         // per binding. Its hoisting and closed-callee rules also cover reads
         // in other functions without trusting resolver annotations.
-        auto walked = module.walk([&](mlir::Operation * op) {
-            const uint64_t cost = uint64_t(2) + op->getNumOperands();
-            if (cost > remaining) {
-                refuse("class initialization work budget exhausted");
-                return mlir::WalkResult::interrupt();
-            }
-            remaining -= static_cast<unsigned>(cost);
-            return mlir::WalkResult::advance();
-        });
-        cached->second = !walked.wasInterrupted() && closedDeclaration(store, fn, module);
+        cached->second = spendWalk(module, declarationCost) && closedDeclaration(store, fn, module);
     }
     return cached->second ? closure : ctjs::CreateClosureOp{};
 }
@@ -788,10 +794,7 @@ bool classInitialization::ownFieldSnapshots(
                 llvm::SmallVector<llvm::StringRef> joined;
                 bool live = false;
                 for (auto & region : branch->getRegions()) {
-                    for (auto field : ordered) {
-                        (void)field;
-                        if (!step()) { return false; }
-                    }
+                    if (!spend(ordered.size())) { return false; }
                     auto path = ordered;
                     bool throws = false;
                     if (!region.empty() &&
@@ -955,16 +958,11 @@ bool classInitialization::ownFieldSnapshots(
     }
     // Check the original Object binding, member and all aliases before erasing
     // any snapshot. Other calls/effects remain for the complete module census.
-    const auto counted = module.walk([&](mlir::Operation * op) {
-        const uint64_t cost = uint64_t(2) + 2 * uint64_t(op->getNumOperands());
-        if (cost > remaining) {
-            refuse("class initialization work budget exhausted");
-            return mlir::WalkResult::interrupt();
-        }
-        remaining -= static_cast<unsigned>(cost);
-        return mlir::WalkResult::advance();
-    });
-    if (counted.wasInterrupted()) { return false; }
+    if (!spendWalk(module, [](mlir::Operation * op) {
+            return uint64_t(2) + 2 * uint64_t(op->getNumOperands());
+        })) {
+        return false;
+    }
     if (auto problem = host_detail::initialBindingProblem(module, contract); !problem.empty()) {
         return refuse(problem);
     }
@@ -1471,9 +1469,7 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
     // Charge every clone before any mutation, including repeated reads and
     // the transitive expansion copied from already-expanded getter bodies.
     for (const auto & item : llvm::drop_begin(getterReads, firstRead)) {
-        const unsigned cost = getterExpansion.lookup(item.second);
-        if (cost > remaining) { return refuse("class initialization work budget exhausted"); }
-        remaining -= cost;
+        if (!spend(getterExpansion.lookup(item.second))) { return false; }
     }
     return true;
 }

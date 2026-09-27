@@ -351,10 +351,10 @@ bool classInitialization::sinkCapturedPublication(
     }
     // Precharge the new calls, constants, selection and rooted cleanup. The
     // outer pass owns a disposable candidate if any later proof refuses.
-    const uint64_t cost = (uint64_t(24) + 4 * keyParameters.size()) * instances.size() + 8;
-    if (cost > remaining) { return refuse("class initialization work budget exhausted"); }
-    remaining -= static_cast<unsigned>(cost);
-    if (!reason.empty()) { return false; }
+    if (!spend((uint64_t(24) + 4 * keyParameters.size()) * instances.size() + 8) ||
+        !reason.empty()) {
+        return false;
+    }
     for (auto [index, made] : llvm::enumerate(instances)) {
         mlir::OpBuilder at(made);
         at.setInsertionPointAfter(made);
@@ -458,16 +458,7 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
         }
         if (declaration) {
             // Precharge the shared hoisting/declaration proof's module/use scans.
-            scanned = module.walk([&](mlir::Operation * op) {
-                const uint64_t cost = uint64_t(2) + op->getNumOperands();
-                if (cost > remaining) {
-                    refuse("class initialization work budget exhausted");
-                    return mlir::WalkResult::interrupt();
-                }
-                remaining -= static_cast<unsigned>(cost);
-                return mlir::WalkResult::advance();
-            });
-            if (scanned.wasInterrupted()) { return false; }
+            if (!spendWalk(module, declarationCost)) { return false; }
             if (!closedDeclaration(declaration, scope, module)) { return true; }
             for (const auto & root : contract.roots) {
                 if (!step()) { return false; }
@@ -536,21 +527,10 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
     if (auto stop = publicationSymbolObserver(*this, function)) { return *stop; }
     // Charge substitutions/cleanup before mutation; the enclosing pass rolls
     // back this private candidate if any later source or ownership proof fails.
-    for (mlir::Value old : {key, mlir::Value(body.getArgument(ctjs::arg_callee))}) {
-        for (mlir::OpOperand & use : old.getUses()) {
-            (void)use;
-            if (!step()) { return false; }
-        }
-    }
-    for (ctjs::LoadUpvalueOp load : keys) {
-        for (mlir::OpOperand & use : load.getResult().getUses()) {
-            (void)use;
-            if (!step()) { return false; }
-        }
-    }
-    const uint64_t cost = uint64_t(2) * (keys.size() + 1) + cells.size();
-    if (cost > remaining) { return refuse("class initialization work budget exhausted"); }
-    remaining -= static_cast<unsigned>(cost);
+    uint64_t cost = key.getNumUses() + body.getArgument(ctjs::arg_callee).getNumUses() +
+                    uint64_t(2) * (keys.size() + 1) + cells.size();
+    for (ctjs::LoadUpvalueOp load : keys) { cost += load.getResult().getNumUses(); }
+    if (!spend(cost)) { return false; }
     if (parameter) {
         mlir::OpBuilder at(&scope.getBody().front(), scope.getBody().front().begin());
         auto constant = ctjs::ConstantOp::create(at, scope.getLoc(), value);
@@ -798,9 +778,7 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
     if (!reason.empty()) { return false; }
     // Count operations, operands and results before allocation. A forwarded
     // key keeps its original evaluation; the publication proof checks its type.
-    const unsigned expansionCost = keyed ? 12 : 14;
-    if (remaining < expansionCost) { return refuse("class initialization work budget exhausted"); }
-    remaining -= expansionCost;
+    if (!spend(keyed ? 12 : 14)) { return false; }
     // The helper has no other effects or callers. Replace its exact call,
     // then let the existing terminal-publication and owner proofs run afresh.
     mlir::OpBuilder at(invocation);
@@ -979,11 +957,7 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
     // registration immediately after each exact new, before its caller resumes.
     // A throwing prefix still skips it; a throwing set still skips the caller.
     for (auto [made, actual] : llvm::zip(instances, keys)) {
-        constexpr unsigned expansionCost = 14;
-        if (remaining < expansionCost) {
-            return refuse("class initialization work budget exhausted");
-        }
-        remaining -= expansionCost;
+        if (!spend(14)) { return false; }
         mlir::OpBuilder at(made);
         at.setInsertionPointAfter(made);
         auto name = ctjs::ConstantOp::create(at, selection.getLoc(),

@@ -670,16 +670,10 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
         }
         if (hasOriginalCall && provedOriginalCalls) { continue; }
         // Reserve the clone's operation/operand walk before allocating it.
-        auto counted = module.walk([&](mlir::Operation * op) {
-            const uint64_t cost = uint64_t(1) + op->getNumOperands();
-            if (cost > remaining) {
-                refuse("class initialization work budget exhausted");
-                return mlir::WalkResult::interrupt();
-            }
-            remaining -= static_cast<unsigned>(cost);
-            return mlir::WalkResult::advance();
-        });
-        if (counted.wasInterrupted()) { return false; }
+        if (!spendWalk(module,
+                       [](mlir::Operation * op) { return uint64_t(1) + op->getNumOperands(); })) {
+            return false;
+        }
         mlir::IRMapping mapping;
         mlir::OwningOpRef<mlir::ModuleOp> probe(llvm::cast<mlir::ModuleOp>(module->clone(mapping)));
         // Other uncalled methods have their own independent probes. Omit
@@ -722,16 +716,7 @@ bool classInitialization::normalizeMethods() {
         // Charge the private copy before allocating it. All source effect
         // and receiver checks have finished; only structural transport is
         // normalized, with the existing bounded exception machinery.
-        auto walked = function.walk([&](mlir::Operation * op) {
-            const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
-            if (cost > remaining) {
-                refuse("class initialization work budget exhausted");
-                return mlir::WalkResult::interrupt();
-            }
-            remaining -= static_cast<unsigned>(cost);
-            return mlir::WalkResult::advance();
-        });
-        if (walked.wasInterrupted()) { return false; }
+        if (!spendWalk(function, cloneCost)) { return false; }
         mlir::IRMapping mapping;
         mlir::OwningOpRef<ctjs::FuncOp> copy(llvm::cast<ctjs::FuncOp>(function->clone(mapping)));
         if (auto failed = lowering_detail::normalizeStructuredExits(*copy, remaining)) {

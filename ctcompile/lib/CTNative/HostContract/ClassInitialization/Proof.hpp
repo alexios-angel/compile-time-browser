@@ -4,6 +4,7 @@
 #include "../Analysis.h"
 #include "../Preparation.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -21,6 +22,16 @@ namespace ctcompile::ctnative::class_detail {
 inline bool closureMetadataKey(llvm::StringRef key) {
     static const llvm::StringSet<> names{"name", "length", "__home", "caller", "arguments"};
     return key.size() <= 9 && names.contains(key);
+}
+
+// The precharge for cloning an operation: itself, its operands and results.
+inline uint64_t cloneCost(mlir::Operation * op) {
+    return uint64_t(1) + op->getNumOperands() + op->getNumResults();
+}
+
+// The precharge for closedDeclaration's operation and use scans.
+inline uint64_t declarationCost(mlir::Operation * op) {
+    return uint64_t(2) + op->getNumOperands();
 }
 
 struct classInitialization {
@@ -93,6 +104,10 @@ struct classInitialization {
     classInitialization(mlir::ModuleOp module, unsigned steps) : module(module), remaining(steps) {}
 
     bool step();
+    // `count` steps at once; one that does not fit spends the rest, as `count` steps would.
+    bool spend(uint64_t count);
+    // Precharges every operation `root` walks, keeping what was spent before a misfit.
+    bool spendWalk(mlir::Operation * root, llvm::function_ref<uint64_t(mlir::Operation *)> cost);
     bool refuse(llvm::StringRef message);
     static bool undefined(mlir::Value value);
     ctjs::FuncOp target(ctjs::CreateClosureOp closure);

@@ -105,23 +105,12 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     using entry_fact = CapturedMapEntry;
     using map_state = CapturedMapState;
     const auto chargeStates = [&](const auto & states) {
+        uint64_t cost = states.size();
         for (const auto & item : states) {
-            if (!step()) { return false; }
             const auto & state = item.second;
-            for (const auto & entry : state.entries) {
-                (void)entry;
-                if (!step()) { return false; }
-            }
-            for (auto * observed : state.observations) {
-                (void)observed;
-                if (!step()) { return false; }
-            }
-            for (mlir::Value key : state.possibleKeys) {
-                (void)key;
-                if (!step()) { return false; }
-            }
+            cost += state.entries.size() + state.observations.size() + state.possibleKeys.size();
         }
-        return true;
+        return spend(cost);
     };
     llvm::DenseMap<CapturedMapOrigin, map_state> mapStates;
     if (invocation) {

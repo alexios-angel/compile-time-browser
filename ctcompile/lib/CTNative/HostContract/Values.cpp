@@ -62,11 +62,16 @@ analyzer::analyzer(mlir::ModuleOp input, const HostContract & request, unsigned 
 }
 
 bool analyzer::step() {
-    if (remaining == 0) {
+    return spend(1);
+}
+
+bool analyzer::spend(uint64_t count) {
+    if (count > remaining) {
         exhausted = true;
+        remaining = 0;
         return false;
     }
-    --remaining;
+    remaining -= static_cast<unsigned>(count);
     return true;
 }
 

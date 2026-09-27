@@ -145,11 +145,10 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
         // Captures box caller locals too. Discharge these already-proved
         // reads before a selected branch can retire their cached operations.
         for (ctjs::CellGetOp read : cellReads) {
-            if (!step()) { return false; }
-            if (!llvm::is_contained(bindings, read.getCell())) { continue; }
-            for (mlir::Operation * user : read->getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
+            if (!spend(1 + (llvm::is_contained(bindings, read.getCell())
+                                ? read.getResult().getNumUses()
+                                : 0))) {
+                return false;
             }
         }
         llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
@@ -671,54 +670,20 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
         }
         // Charge rewriting before mutation; the enclosing pass discards its
         // private module if any later child/record/effect proof fails.
+        uint64_t cost = cells.size();
         for (mlir::Operation * op : operations) {
-            if (!step()) { return false; }
-            if (constants.contains(op) && (!step() || !step())) { return false; }
-            for (mlir::OpOperand & use : op->getResult(0).getUses()) {
-                (void)use;
-                if (!step()) { return false; }
-            }
+            cost += (constants.contains(op) ? 3u : 1u) + op->getResult(0).getNumUses();
         }
-        for (mlir::Operation * op : lookupTests) {
-            if (!step() || !step()) { return false; }
-            for (mlir::Operation * user : op->getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
-            }
-        }
-        for (ctjs::CallOp read : missingReads) {
-            if (!step()) { return false; }
-            for (mlir::Operation * user : read->getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
-            }
-        }
-        for (auto [cell, initial] : cells) {
-            (void)cell;
-            (void)initial;
-            if (!step()) { return false; }
-        }
+        for (mlir::Operation * op : lookupTests) { cost += 2 + op->getResult(0).getNumUses(); }
+        for (ctjs::CallOp read : missingReads) { cost += 1 + read.getResult().getNumUses(); }
         for (auto [branch, selected] : branches) {
             (void)selected;
             for (mlir::Value result : branch.getResults()) {
-                for (mlir::Operation * user : result.getUsers()) {
-                    (void)user;
-                    if (!step()) { return false; }
-                }
-                for (auto [cell, initial] : cells) {
-                    (void)cell;
-                    (void)initial;
-                    if (!step()) { return false; }
-                }
+                cost += result.getNumUses() + cells.size();
             }
         }
-        for (mlir::Value cell : bindings) {
-            for (mlir::Operation * user : cell.getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
-            }
-        }
-        if (!reason.empty()) { return false; }
+        for (mlir::Value cell : bindings) { cost += cell.getNumUses(); }
+        if (!spend(cost) || !reason.empty()) { return false; }
         llvm::erase_if(selections, [&](ctjs::GetPropertyOp read) {
             return !visited.contains(read.getOperation());
         });
@@ -1096,49 +1061,18 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
         // Precharge expansion and cleanup before the first mutation. The
         // enclosing pass owns a disposable module if a later proof refuses.
         for (mlir::Operation * call : invocations) {
-            if (!step()) { return false; }
-            for (mlir::OpOperand & use : call->getResult(0).getUses()) {
-                (void)use;
-                if (!step()) { return false; }
+            if (!spend(1 + call->getResult(0).getNumUses() + cells.size()) ||
+                !spendWalk(function, cloneCost)) {
+                return false;
             }
-            for (auto [cell, initial] : cells) {
-                (void)cell;
-                (void)initial;
-                if (!step()) { return false; }
-            }
-            const auto counted = function.walk([&](mlir::Operation * op) {
-                const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
-                if (cost > remaining) {
-                    refuse("class initialization work budget exhausted");
-                    return mlir::WalkResult::interrupt();
-                }
-                remaining -= static_cast<unsigned>(cost);
-                return mlir::WalkResult::advance();
-            });
-            if (counted.wasInterrupted()) { return false; }
         }
+        uint64_t cost = cellReads.size() + helper.getResult().getNumUses() +
+                        (helperCell ? helperCell.getNumUses() : 0) +
+                        (publication ? publication.getObject().getNumUses() : 0);
         for (ctjs::CellGetOp read : cellReads) {
-            if (!step()) { return false; }
-            if (read.getCell() != helperCell) { continue; }
-            for (mlir::Operation * user : read->getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
-            }
+            if (read.getCell() == helperCell) { cost += read.getResult().getNumUses(); }
         }
-        for (mlir::Value value : {mlir::Value(helper.getResult()), helperCell}) {
-            if (!value) { continue; }
-            for (mlir::Operation * user : value.getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
-            }
-        }
-        if (publication) {
-            for (mlir::Operation * user : publication.getObject().getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
-            }
-        }
-        if (!reason.empty()) { return false; }
+        if (!spend(cost) || !reason.empty()) { return false; }
         for (mlir::Operation * call : invocations) {
             mlir::IRMapping mapping;
             auto dynamic = llvm::dyn_cast<ctjs::CallOp>(call);

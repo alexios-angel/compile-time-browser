@@ -120,16 +120,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
             return refuse("super guard escapes its private reads and write");
         }
     }
-    auto counted = function.walk([&](mlir::Operation * op) {
-        const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
-        if (cost > remaining) {
-            refuse("class initialization work budget exhausted");
-            return mlir::WalkResult::interrupt();
-        }
-        remaining -= static_cast<unsigned>(cost);
-        return mlir::WalkResult::advance();
-    });
-    if (counted.wasInterrupted()) { return false; }
+    if (!spendWalk(function, cloneCost)) { return false; }
     mlir::OwningOpRef<ctjs::FuncOp> copy(llvm::cast<ctjs::FuncOp>(function->cloneWithoutRegions()));
     auto * output = new mlir::Block;
     copy->getBody().push_back(output);
@@ -147,16 +138,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
     llvm::SmallVector<mlir::Value> captures(constructor.getUpvalues());
     llvm::SmallVector<mlir::Operation *> copiedHelperCalls;
     const auto clone = [&](mlir::Operation & op, mlir::IRMapping & values) {
-        const auto counted = op.walk([&](mlir::Operation * source) {
-            const uint64_t cost = uint64_t(1) + source->getNumOperands() + source->getNumResults();
-            if (cost > remaining) {
-                refuse("class initialization work budget exhausted");
-                return mlir::WalkResult::interrupt();
-            }
-            remaining -= static_cast<unsigned>(cost);
-            return mlir::WalkResult::advance();
-        });
-        if (counted.wasInterrupted()) { return false; }
+        if (!spendWalk(&op, cloneCost)) { return false; }
         at.clone(op, values);
         // A base's slot number belongs to its original closure, never the
         // leaf's environment. Carry the proved helper/holder identity with each copy.
@@ -596,9 +578,7 @@ bool classInitialization::normalizeSuperMethods(
         // ponytail: expand linear targets at their calls; target CFG/captures
         // need a receiver-preserving direct-call proof in closure lifting.
         for (mlir::Operation & op : body) {
-            const uint64_t cost = uint64_t(1) + op.getNumOperands() + op.getNumResults();
-            if (cost > remaining) { return refuse("class initialization work budget exhausted"); }
-            remaining -= static_cast<unsigned>(cost);
+            if (!spend(cloneCost(&op))) { return false; }
             if (op.getNumRegions() ||
                 llvm::isa<ctjs::CreateClosureOp, ctjs::StoreGlobalOp, ctjs::LoadHomeOp,
                           ctjs::RootOp>(op) ||
@@ -1108,9 +1088,9 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
                     fn.getBody().front().getNumArguments()) {
                 return refuse("static method escapes its exact local call");
             }
-            for (auto i = invocation.getArgs().size() + ctjs::implicit_arguments;
-                 i < fn.getBody().front().getNumArguments(); ++i) {
-                if (!step()) { return false; }
+            if (!spend(fn.getBody().front().getNumArguments() - invocation.getArgs().size() -
+                       ctjs::implicit_arguments)) {
+                return false;
             }
             helperCalls.insert(invocation);
         }
