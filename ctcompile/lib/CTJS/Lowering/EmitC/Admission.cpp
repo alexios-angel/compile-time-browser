@@ -62,7 +62,6 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
-        if (mlir::isa<FrameEnterOp, ReturnOp, TruthyOp>(op)) { return; }
         // THE ARITHMETIC, AND WITH IT THE FIRST EXCEPTION EDGE. Both families
         // answer with a ct_aot_status, so each becomes a call, a test against
         // ct_aot_status::ok by name, and a branch to the shared failure path.
@@ -125,15 +124,8 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
-        if (mlir::isa<CompareOp, GetPropertyOp, SetPropertyOp, CallOp, CreateClosureOp,
-                      CreateCellOp, CellGetOp, CellSetOp, CreateObjectOp, CreateArrayOp, AppendOp,
-                      ThrowOp, ConstructOp, IterableOp, HasPropertyOp, InstanceOfOp,
-                      DeletePropertyOp, FromBoolOp, LoadHomeOp, GetProtoOp, SetProtoOp,
-                      PassNewTargetOp, CallSpreadOp, ConstructSpreadOp, CopyPropsOp,
-                      DefineAccessorOp, DeleteNamedOp, OwnKeysOp, MakeArgumentsOp, GatherRestOp,
-                      WrapPromiseOp, PushHandlerOp, PopHandlerOp, CheckOp, CatchLandOp,
-                      ModuleImportCellOp, ModuleExportCellOp, ModuleNamespaceOp, DynamicImportOp>(
-                op)) {
+        if (mlir::isa<ReturnOp, CompareOp, ThrowOp, FromBoolOp, DefineAccessorOp, DeleteNamedOp,
+                      PushHandlerOp, PopHandlerOp, CatchLandOp>(op)) {
             return;
         }
 
@@ -172,7 +164,6 @@ bool body_is_supported(FuncOp function, std::string & why) {
                   "to it compiles and fails at link";
             return;
         }
-        if (mlir::isa<LoadGlobalOp, StoreGlobalOp>(op)) { return; }
         if (auto binary = mlir::dyn_cast<BinaryOp>(op)) {
             if (!is_valid_binary(binary.getKind())) {
                 supported = false;
@@ -187,6 +178,9 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
+        // EVERY OTHER CTJS_RuntimeOp: each has a lowering of its own or is the
+        // one helper call convertRuntime() builds from its row.
+        if (mlir::isa<RuntimeCallOpInterface>(op)) { return; }
         // THE BRANCHES, which is what makes a function with an `if` compilable.
         // Their block arguments are handled by a pass of their own afterwards -
         // see EmitCBlockArguments.cpp - because emitting them as they stand
