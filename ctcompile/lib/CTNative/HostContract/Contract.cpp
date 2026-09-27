@@ -8,6 +8,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -92,6 +93,25 @@ const llvm::StringSet<> & host_detail::domInitialIntrinsics() {
     return names;
 }
 
+llvm::StringRef hostProviderName(HostContract::Provider provider) {
+    using Provider = HostContract::Provider;
+    switch (provider) {
+    case Provider::closedSource: return "closed-source-v1";
+    case Provider::closedSourceSession: return "closed-source-session-v1";
+    case Provider::ctbrowserDOM: return "ctbrowser-dom-v1";
+    case Provider::ctbrowserDOMSession: return "ctbrowser-dom-session-v1";
+    case Provider::ctbrowserDOMDataSession: return "ctbrowser-dom-data-session-v1";
+    case Provider::ctbrowserIntrinsics: return "ctbrowser-intrinsics-v1";
+    }
+    llvm_unreachable("unknown host provider");
+}
+
+llvm::Expected<HostContract> readHostContract(llvm::StringRef path, llvm::StringRef unreadable) {
+    auto buffer = llvm::MemoryBuffer::getFile(path);
+    if (!buffer) { return error((unreadable + buffer.getError().message()).str()); }
+    return parseHostContract((*buffer)->getBuffer());
+}
+
 llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     auto parsed = llvm::json::parse(text);
     if (!parsed) { return parsed.takeError(); }
@@ -100,13 +120,16 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
         return error("host contract must be an object with only supported fields");
     }
     if (object->getInteger("version") != 1) { return error("unsupported host contract version"); }
-    const bool domSession = object->getString("provider") == "ctbrowser-dom-session-v1";
-    const bool dom = domSession || object->getString("provider") == "ctbrowser-dom-v1";
-    const bool domData = object->getString("provider") == "ctbrowser-dom-data-session-v1";
-    const bool session = object->getString("provider") == "closed-source-session-v1";
-    const bool intrinsics = object->getString("provider") == "ctbrowser-intrinsics-v1";
+    const auto named = [provider = object->getString("provider")](HostContract::Provider kind) {
+        return provider == hostProviderName(kind);
+    };
+    const bool domSession = named(HostContract::Provider::ctbrowserDOMSession);
+    const bool dom = domSession || named(HostContract::Provider::ctbrowserDOM);
+    const bool domData = named(HostContract::Provider::ctbrowserDOMDataSession);
+    const bool session = named(HostContract::Provider::closedSourceSession);
+    const bool intrinsics = named(HostContract::Provider::ctbrowserIntrinsics);
     if (!dom && !domData && !session && !intrinsics &&
-        object->getString("provider") != "closed-source-v1") {
+        !named(HostContract::Provider::closedSource)) {
         return error("unsupported host provider; expected closed-source-v1, "
                      "closed-source-session-v1, ctbrowser-dom-v1, ctbrowser-dom-session-v1, "
                      "ctbrowser-dom-data-session-v1 or ctbrowser-intrinsics-v1");
