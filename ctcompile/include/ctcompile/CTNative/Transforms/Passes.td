@@ -9,6 +9,13 @@
 
 include "mlir/Pass/PassBase.td"
 
+// The dialects a pass creating CTJS, scf and arith operations loads.
+defvar CTNative_ScalarDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",
+                               "::mlir::arith::ArithDialect"];
+// The driver-owned host contract every host-contract consumer takes.
+defvar CTNative_ManifestOption =
+    Option<"manifest", "manifest", "std::string", "\"\"", "Driver-owned host contract JSON path">;
+
 def CTNativeHostContract : Pass<"ctnative-host-contract", "mlir::ModuleOp"> {
   let summary = "Validate driver-bound closed source host roots and publication slot flow";
   let description = [{
@@ -22,15 +29,14 @@ def CTNativeHostContract : Pass<"ctnative-host-contract", "mlir::ModuleOp"> {
     operations. Retained AMD callable providers are not implemented yet.
   }];
   let options = [
-    Option<"manifest", "manifest", "std::string", "\"\"", "Driver-owned host contract JSON path">,
+    CTNative_ManifestOption,
     Option<"output", "output", "std::string", "\"\"", "Optional JSON evidence report path">,
     Option<"fingerprint", "fingerprint", "bool", "false", "Print the canonical module fingerprint only">,
     Option<"requireProof", "require-proof", "bool", "false", "Fail if the complete host contract is not proved">,
     Option<"maxSteps", "max-steps", "unsigned", "100000", "Maximum source proof discovery work">,
     Option<"report", "report", "bool", "false", "Report partial slot evidence and the remaining refusal">
   ];
-  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",
-                          "::mlir::arith::ArithDialect"];
+  let dependentDialects = CTNative_ScalarDialects;
 }
 
 def CTNativeSpecializeClassInitialization : Pass<"ctnative-specialize-class-initialization", "mlir::ModuleOp"> {
@@ -53,7 +59,7 @@ def CTNativeSpecializeClassInitialization : Pass<"ctnative-specialize-class-init
     admission; normal constructor lowering must prove those independently.
   }];
   let options = [
-    Option<"manifest", "manifest", "std::string", "\"\"", "Driver-owned host contract JSON path">,
+    CTNative_ManifestOption,
     Option<"maxSteps", "max-steps", "unsigned", "100000", "Maximum complete source census work">
   ];
   let dependentDialects = ["::ctcompile::ctjs::CTJSDialect"];
@@ -71,7 +77,7 @@ def CTNativeSpecializeHostPrefix : Pass<"ctnative-specialize-host-prefix", "mlir
     This narrower proof never grants complete host or native admission.
   }];
   let options = [
-    Option<"manifest", "manifest", "std::string", "\"\"", "Driver-owned host contract JSON path">,
+    CTNative_ManifestOption,
     Option<"output", "output", "std::string", "\"\"", "Optional JSON specialization report path">,
     Option<"maxSteps", "max-steps", "unsigned", "100000", "Maximum prefix discovery work">,
     Option<"followPublication", "follow-publication", "bool", "false", "Follow checked runtime factory allocation and publication">,
@@ -82,8 +88,7 @@ def CTNativeSpecializeHostPrefix : Pass<"ctnative-specialize-host-prefix", "mlir
     Option<"followProviderObjects", "follow-provider-objects", "bool", "false", "Carry initialized object identities and scalar own fields through private Map transactions">,
     Option<"report", "report", "bool", "false", "Report selected branches and resolved calls">
   ];
-  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",
-                          "::mlir::arith::ArithDialect"];
+  let dependentDialects = CTNative_ScalarDialects;
 }
 
 def CTNativePruneUnreachable : Pass<"ctnative-prune-unreachable", "mlir::ModuleOp"> {
@@ -116,8 +121,7 @@ def CTNativePrecompute : Pass<"ctnative-precompute", "mlir::ModuleOp"> {
     Option<"maxSteps", "max-steps", "unsigned", "100000", "Maximum symbolic analysis and rewrite work">,
     Option<"report", "report", "bool", "false", "Report precomputed expressions and control">
   ];
-  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",
-                          "::mlir::arith::ArithDialect"];
+  let dependentDialects = CTNative_ScalarDialects;
 }
 
 def CTNativeSpecialize : Pass<"ctnative-specialize", "mlir::ModuleOp"> {
@@ -136,7 +140,7 @@ def CTNativeSpecialize : Pass<"ctnative-specialize", "mlir::ModuleOp"> {
     Option<"maxClonedOps", "max-cloned-ops", "unsigned", "4096", "Maximum cloned body operations">,
     Option<"report", "report", "bool", "false", "Report function variants and redirected calls">
   ];
-  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect", "::mlir::arith::ArithDialect"];
+  let dependentDialects = CTNative_ScalarDialects;
 }
 
 def CTNativeSupercompile : Pass<"ctnative-supercompile", "mlir::ModuleOp"> {
@@ -159,8 +163,7 @@ def CTNativeSupercompile : Pass<"ctnative-supercompile", "mlir::ModuleOp"> {
     Option<"maxGrowth", "max-growth", "unsigned", "512", "Maximum added operations per source kernel; generic code remains">,
     Option<"report", "report", "bool", "false", "Report kernels, configurations, folds and whistles">
   ];
-  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",
-                          "::mlir::arith::ArithDialect"];
+  let dependentDialects = CTNative_ScalarDialects;
 }
 
 def CTNativeDeforest : Pass<"ctnative-deforest", "mlir::ModuleOp"> {
@@ -195,7 +198,7 @@ def CTNativeBindingTimeAnalysis : Pass<"ctnative-binding-time-analysis", "mlir::
     environment, callable, ownership and exact-evaluation checks.
   }];
   let options = [Option<"report", "report", "bool", "false", "Report static/dynamic binding counts">];
-  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect", "::mlir::arith::ArithDialect"];
+  let dependentDialects = CTNative_ScalarDialects;
 }
 
 def CTNativePartialEvaluate : Pass<"ctnative-partial-evaluate", "mlir::ModuleOp"> {
@@ -224,7 +227,7 @@ def CTNativePartialEvaluate : Pass<"ctnative-partial-evaluate", "mlir::ModuleOp"
     Option<"maxDepth", "max-depth", "unsigned", "32", "Maximum nested evaluation depth">,
     Option<"report", "report", "bool", "false", "Report evaluated functions, residual nodes and declines">
   ];
-  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect", "::mlir::arith::ArithDialect"];
+  let dependentDialects = CTNative_ScalarDialects;
 }
 
 def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
