@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../Analysis.h"
+#include "../Snapshot/Bounds.h"
 #include "ctbrowser/core/algorithms.hpp"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
@@ -39,15 +40,21 @@ struct DOMSource {
     llvm::DenseSet<mlir::Value> inactiveFillers;
 
     bool refuse(llvm::StringRef message);
-    bool step();
+    bool step(uint64_t cost = 1);
     bool chargeCaptureQuery();
-    static bool undefined(mlir::Value value);
+    static bool undefined(mlir::Value value) { return ctjs::isUndefinedConstant(value); }
 
     bool precedesInStructuredBody(mlir::Operation * definition, mlir::Operation * use);
 
-    bool confinedFilterCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target);
+    ctjs::FuncOp closureTarget(ctjs::CreateClosureOp closure) {
+        return closure && closure.getFunction() >= 0
+                   ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
+                   : ctjs::FuncOp{};
+    }
 
-    bool confinedReplacementCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target);
+    // A capture-free filter predicate or uppercase replacement, invoked only as
+    // the callback of its own Array filter or String replace call.
+    bool confinedCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target);
 
     bool bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncOp target);
 
@@ -70,6 +77,23 @@ struct DOMSource {
     bool initializeEntry(ctjs::FuncOp wrapper, ctjs::FuncOp target);
 
     bool normalizeCompletion(ctjs::FuncOp function);
+    // Erase the unused inert arithmetic under `root`, users before operands.
+    template <typename Root> bool eraseUnusedArithmetic(Root & root) {
+        llvm::SmallVector<mlir::Operation *> arithmetic;
+        const auto scanned = root.walk([&](mlir::Operation * operation) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (llvm::isa<mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp>(operation)) {
+                arithmetic.push_back(operation);
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (scanned.wasInterrupted()) { return false; }
+        for (mlir::Operation * operation : llvm::reverse(arithmetic)) {
+            if (!step()) { return false; }
+            if (operation->use_empty()) { operation->erase(); }
+        }
+        return true;
+    }
     bool repairInactiveCompletion(ctjs::FuncOp function);
 
     bool checkBody(ctjs::FuncOp function, bool entry, bool directReceiver = false,

@@ -274,20 +274,53 @@ struct HostDOMUnreachableYield {
 // Mutating the module invalidates this query; printed attributes are ignored.
 class DOMEntryAnalysis {
 public:
+    // Everything the proof establishes, published whole once every check passes.
+    struct Evidence {
+        ctjs::FuncOp entry, wrapper;
+        bool undefinedReturn = false;
+        std::vector<ctjs::FuncOp> callbacks;
+        std::vector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> closures;
+        std::vector<mlir::BlockArgument> elements, datasetElements;
+        llvm::DenseSet<mlir::Value> elementIdentities;
+        llvm::DenseMap<mlir::Value, HostIntrinsicParameter> intrinsicParameters;
+        std::vector<ctjs::GetPropertyOp> tokenLists, datasets;
+        std::vector<ctjs::GetPropertyOp> stringVectorLengths, stringVectorIndices;
+        llvm::DenseSet<ctjs::GetPropertyOp> elementVectorLengths, elementVectorIndices;
+        llvm::DenseSet<ctjs::GetPropertyOp> elementPrototypes, documentRoots, symbolDescriptions;
+        mlir::BlockArgument document;
+        std::vector<mlir::Value> styles;
+        // Initial intrinsic loads, of every supported name.
+        llvm::DenseSet<ctjs::LoadGlobalOp> documentLoads, intrinsics;
+        llvm::DenseMap<ctjs::GetPropertyOp, llvm::StringRef> symbols;
+        llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> datasetValues;
+        std::vector<ctjs::CallOp> stringPrefixRegExps;
+        std::vector<ctjs::InvokeOp> invocations;
+        std::vector<ctjs::ThrowOp> throws;
+        std::vector<HostDOMUnreachableYield> throwYields;
+        std::vector<mlir::Value> optionalStrings, strings;
+        std::vector<HostDOMStringRefinement> refinements;
+        std::vector<std::pair<mlir::Value, bool>> booleans;
+        llvm::DenseMap<ctjs::GetPropertyOp, HostDOMMethod> methods;
+        std::vector<HostDOMCall> calls;
+        std::vector<ctjs::CreateObjectOp> jsonObjects;
+        std::vector<ctjs::CopyPropsOp> jsonCopies;
+        std::vector<ctjs::SetPropertyOp> jsonAssignments, snapshotAssignments;
+    };
+
     DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & contract,
                      unsigned maxSteps = 100000);
     [[nodiscard]] bool proved() const { return refusal.empty(); }
     [[nodiscard]] llvm::StringRef reason() const { return refusal; }
     [[nodiscard]] unsigned steps() const { return workSteps; }
     [[nodiscard]] bool exhausted() const { return budgetExhausted; }
-    [[nodiscard]] ctjs::FuncOp entry() const { return checkedEntry; }
-    [[nodiscard]] bool returnsUndefined() const { return undefinedReturn; }
-    [[nodiscard]] ctjs::FuncOp wrapper() const { return checkedWrapper; }
-    [[nodiscard]] llvm::ArrayRef<ctjs::FuncOp> callbacks() const { return checkedCallbacks; }
+    [[nodiscard]] ctjs::FuncOp entry() const { return proof.entry; }
+    [[nodiscard]] bool returnsUndefined() const { return proof.undefinedReturn; }
+    [[nodiscard]] ctjs::FuncOp wrapper() const { return proof.wrapper; }
+    [[nodiscard]] llvm::ArrayRef<ctjs::FuncOp> callbacks() const { return proof.callbacks; }
     [[nodiscard]] ctjs::FuncOp callback(ctjs::CreateClosureOp closure) const;
     [[nodiscard]] bool isCallbackParameter(mlir::Value value) const;
     [[nodiscard]] std::optional<HostIntrinsicParameter> intrinsicParameter(mlir::Value value) const;
-    [[nodiscard]] llvm::ArrayRef<mlir::BlockArgument> parameters() const { return elements; }
+    [[nodiscard]] llvm::ArrayRef<mlir::BlockArgument> parameters() const { return proof.elements; }
     [[nodiscard]] bool isElement(mlir::Value value) const;
     // Validated parameters or nullable closest results, for equality only.
     [[nodiscard]] bool isElementIdentity(mlir::Value value) const;
@@ -297,8 +330,8 @@ public:
     [[nodiscard]] bool isElementPrototype(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isCurrentDocument(ctjs::LoadGlobalOp load) const;
     [[nodiscard]] bool isDocumentElement(ctjs::GetPropertyOp read) const;
-    [[nodiscard]] mlir::BlockArgument documentParameter() const { return documentAnchor; }
-    [[nodiscard]] llvm::ArrayRef<mlir::Value> styleValues() const { return carriedStyles; }
+    [[nodiscard]] mlir::BlockArgument documentParameter() const { return proof.document; }
+    [[nodiscard]] llvm::ArrayRef<mlir::Value> styleValues() const { return proof.styles; }
     [[nodiscard]] bool isStringVectorLength(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isStringVectorIndex(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isElementVectorLength(ctjs::GetPropertyOp read) const;
@@ -315,22 +348,22 @@ public:
     // the decode success continuation. This is fresh provider evidence.
     [[nodiscard]] bool invocation(ctjs::InvokeOp operation) const;
     // Exact nonreturning regions with owning Number, Boolean or String payloads.
-    [[nodiscard]] llvm::ArrayRef<ctjs::ThrowOp> savedThrows() const { return throws; }
+    [[nodiscard]] llvm::ArrayRef<ctjs::ThrowOp> savedThrows() const { return proof.throws; }
     [[nodiscard]] llvm::ArrayRef<HostDOMUnreachableYield> unreachableYields() const {
-        return throwYields;
+        return proof.throwYields;
     }
     [[nodiscard]] llvm::ArrayRef<mlir::Value> optionalStringJoins() const {
-        return optionalStrings;
+        return proof.optionalStrings;
     }
     [[nodiscard]] llvm::ArrayRef<HostDOMStringRefinement> stringRefinements() const {
-        return refinements;
+        return proof.refinements;
     }
     // Complete String-only branch/invocation yields, independently of the
     // producer-wide lattice. This never narrows a getAttribute result.
-    [[nodiscard]] llvm::ArrayRef<mlir::Value> stringResults() const { return strings; }
+    [[nodiscard]] llvm::ArrayRef<mlir::Value> stringResults() const { return proof.strings; }
     // Exact undefined tests and their truth conversions, after every arm is proved.
     [[nodiscard]] llvm::ArrayRef<std::pair<mlir::Value, bool>> constantBooleans() const {
-        return booleans;
+        return proof.booleans;
     }
     [[nodiscard]] std::optional<HostDOMMethod> method(ctjs::GetPropertyOp read) const;
     [[nodiscard]] const HostDOMCall * call(ctjs::CallOp operation) const;
@@ -344,45 +377,7 @@ public:
 
 private:
     std::string refusal;
-    ctjs::FuncOp checkedEntry;
-    bool undefinedReturn = false;
-    ctjs::FuncOp checkedWrapper;
-    std::vector<ctjs::FuncOp> checkedCallbacks;
-    std::vector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> callbackClosures;
-    std::vector<mlir::BlockArgument> elements;
-    llvm::DenseSet<mlir::Value> elementIdentities;
-    llvm::DenseMap<mlir::Value, HostIntrinsicParameter> intrinsicParameters;
-    std::vector<ctjs::GetPropertyOp> tokenLists, datasets;
-    std::vector<ctjs::GetPropertyOp> stringVectorLengths;
-    std::vector<ctjs::GetPropertyOp> stringVectorIndices;
-    llvm::DenseSet<ctjs::GetPropertyOp> elementVectorLengths, elementVectorIndices;
-    llvm::DenseSet<ctjs::GetPropertyOp> elementPrototypes;
-    mlir::BlockArgument documentAnchor;
-    std::vector<mlir::Value> carriedStyles;
-    llvm::DenseSet<ctjs::LoadGlobalOp> documentLoads;
-    llvm::DenseSet<ctjs::GetPropertyOp> documentRoots;
-    llvm::DenseSet<ctjs::LoadGlobalOp> elementIntrinsics, symbolIntrinsics;
-    llvm::DenseMap<ctjs::GetPropertyOp, llvm::StringRef> symbols;
-    llvm::DenseSet<ctjs::GetPropertyOp> symbolDescriptions;
-    llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> datasetValues;
-    std::vector<ctjs::CallOp> stringPrefixRegExps;
-    std::vector<mlir::BlockArgument> datasetElements;
-    std::vector<ctjs::LoadGlobalOp> numberIntrinsics;
-    std::vector<ctjs::LoadGlobalOp> uriIntrinsics, jsonIntrinsics, objectIntrinsics,
-        regexpIntrinsics;
-    std::vector<ctjs::InvokeOp> invocations;
-    std::vector<ctjs::ThrowOp> throws;
-    std::vector<HostDOMUnreachableYield> throwYields;
-    std::vector<mlir::Value> optionalStrings;
-    std::vector<HostDOMStringRefinement> refinements;
-    std::vector<mlir::Value> strings;
-    std::vector<std::pair<mlir::Value, bool>> booleans;
-    llvm::DenseMap<ctjs::GetPropertyOp, HostDOMMethod> methods;
-    std::vector<HostDOMCall> calls;
-    std::vector<ctjs::CreateObjectOp> jsonObjects;
-    std::vector<ctjs::CopyPropsOp> jsonCopies;
-    std::vector<ctjs::SetPropertyOp> jsonAssignments;
-    std::vector<ctjs::SetPropertyOp> snapshotAssignments;
+    Evidence proof;
     unsigned workSteps = 0;
     bool budgetExhausted = false;
 };

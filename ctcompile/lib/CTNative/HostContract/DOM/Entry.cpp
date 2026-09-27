@@ -2,6 +2,7 @@
 #include "Entry/Body.hpp"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -26,18 +27,24 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     // refused as exhausted if it does not fit, and the same cost reserved
     // again for the fingerprint's own pass over the module. workSteps carries
     // both, so steps() is still the exact budget that reproduces the proof.
-    const auto scanned = module.walk([&](mlir::Operation * operation) {
-        const uint64_t cost = uint64_t(1) + operation->getNumOperands();
-        if (cost > maxSteps - workSteps) { return mlir::WalkResult::interrupt(); }
-        workSteps += static_cast<unsigned>(cost);
-        return mlir::WalkResult::advance();
-    });
-    if (scanned.wasInterrupted() || workSteps > maxSteps - workSteps) {
+    WorkBudget budget{maxSteps};
+    const llvm::scope_exit recordSteps(
+        [&] { workSteps = static_cast<unsigned>(maxSteps - budget.remaining); });
+    const auto spend = [&](uint64_t cost = 1) {
+        if (budget.spend(cost)) { return true; }
+        budgetExhausted = true;
+        refusal = "DOM entry analysis work budget exhausted";
+        return false;
+    };
+    if (!budget.spendWalk(module,
+                          [](mlir::Operation * operation) {
+                              return uint64_t(1) + operation->getNumOperands();
+                          }) ||
+        !spend(maxSteps - budget.remaining)) {
         budgetExhausted = true;
         refusal = "DOM entry analysis work budget exhausted";
         return;
     }
-    workSteps *= 2;
     if (hostContractFingerprint(module) != contract.moduleSha256) {
         refusal = "host contract module fingerprint mismatch";
         return;
@@ -74,15 +81,6 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                  : "DOM entry requires the isolated ctbrowser-dom-v1 declaration";
         return;
     }
-    const auto spend = [&] {
-        if (workSteps == maxSteps) {
-            budgetExhausted = true;
-            refusal = "DOM entry analysis work budget exhausted";
-            return false;
-        }
-        ++workSteps;
-        return true;
-    };
     if (!spend()) { return; }
     auto target = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     if (!target || target.getBody().empty()) {
@@ -93,8 +91,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         refusal = "intrinsic entry requires a named function export";
         return;
     }
+    Evidence proved;
     ctjs::FuncOp declaration;
-    std::vector<ctjs::FuncOp> callbackFunctions;
     llvm::DenseMap<unsigned, ctjs::FuncOp> indexedCallbacks;
     llvm::DenseSet<unsigned> functionIndices;
     for (mlir::Operation & operation : module.getBody()->getOperations()) {
@@ -119,7 +117,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 refusal = "DOM filter callback requires one String parameter and unique identity";
                 return;
             }
-            callbackFunctions.push_back(function);
+            proved.callbacks.push_back(function);
         } else if (function != target) {
             if (declaration || functionIndex(function) != 0 ||
                 function.getBody().front().getNumArguments() != ctjs::implicit_arguments) {
@@ -141,42 +139,35 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                  : "DOM entry must declare every explicit parameter as an element";
         return;
     }
-    std::vector<mlir::BlockArgument> provedElements;
-    llvm::DenseSet<mlir::Value> provedElementIdentities;
     for (const auto [position, index] : llvm::enumerate(contract.elementParameters)) {
         if (!spend()) { return; }
         if (position != index) {
             refusal = "DOM element_parameters must list every explicit parameter in order";
             return;
         }
-        provedElements.push_back(targetBlock.getArgument(index + ctjs::implicit_arguments));
+        proved.elements.push_back(targetBlock.getArgument(index + ctjs::implicit_arguments));
     }
     mlir::BlockArgument documentParameter;
     if (contract.currentDocumentParameter) {
         if (!spend()) { return; }
-        if (*contract.currentDocumentParameter >= provedElements.size()) {
+        if (*contract.currentDocumentParameter >= proved.elements.size()) {
             refusal = "DOM current_document_parameter must name a declared element input";
             return;
         }
-        documentParameter = provedElements[*contract.currentDocumentParameter];
+        documentParameter = proved.elements[*contract.currentDocumentParameter];
     }
-    llvm::DenseSet<ctjs::LoadGlobalOp> provedDocumentLoads;
-    llvm::DenseSet<ctjs::GetPropertyOp> provedDocumentRoots;
-
-    std::vector<mlir::BlockArgument> provedDatasetElements;
     for (unsigned index : contract.datasetParameters) {
         if (!spend()) { return; }
-        if (index >= provedElements.size() ||
-            (!provedDatasetElements.empty() &&
-             index + ctjs::implicit_arguments <= provedDatasetElements.back().getArgNumber())) {
+        if (index >= proved.elements.size() ||
+            (!proved.datasetElements.empty() &&
+             index + ctjs::implicit_arguments <= proved.datasetElements.back().getArgNumber())) {
             refusal = "DOM dataset_parameters must be an ordered element subset";
             return;
         }
-        provedDatasetElements.push_back(provedElements[index]);
+        proved.datasetElements.push_back(proved.elements[index]);
     }
 
     using Kind = dom_entry_detail::Kind;
-    llvm::DenseMap<mlir::Value, HostIntrinsicParameter> provedIntrinsicParameters;
     llvm::DenseMap<mlir::Value, Kind> intrinsicKinds;
     for (const auto [index, parameter] : llvm::enumerate(contract.intrinsicParameters)) {
         if (!spend()) { return; }
@@ -190,36 +181,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         }
         auto argument =
             targetBlock.getArgument(static_cast<unsigned>(index) + ctjs::implicit_arguments);
-        provedIntrinsicParameters[argument] = parameter;
+        proved.intrinsicParameters[argument] = parameter;
         intrinsicKinds[argument] = kind;
     }
-    std::vector<ctjs::GetPropertyOp> provedTokens, provedDatasets, provedStringVectorLengths,
-        provedStringVectorIndices;
-    llvm::DenseSet<ctjs::GetPropertyOp> provedElementVectorLengths, provedElementVectorIndices;
-    llvm::DenseSet<ctjs::GetPropertyOp> provedElementPrototypes;
-    llvm::DenseSet<ctjs::LoadGlobalOp> provedElementIntrinsics, provedSymbolIntrinsics;
-    llvm::DenseMap<ctjs::GetPropertyOp, llvm::StringRef> provedSymbols;
-    llvm::DenseSet<ctjs::GetPropertyOp> provedSymbolDescriptions;
-    llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> provedDatasetValues;
-    std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics, provedURIIntrinsics,
-        provedJSONIntrinsics, provedObjectIntrinsics, provedRegExpIntrinsics;
-    std::vector<ctjs::CallOp> provedPrefixRegExps;
-    std::vector<ctjs::InvokeOp> provedInvocations;
-    std::vector<ctjs::ThrowOp> provedThrows;
-    std::vector<HostDOMUnreachableYield> provedThrowYields;
-    llvm::DenseMap<ctjs::GetPropertyOp, HostDOMMethod> provedMethods;
-    std::vector<HostDOMCall> provedCalls;
-    std::vector<ctjs::CreateObjectOp> provedJSONObjects;
-    std::vector<ctjs::CopyPropsOp> provedJSONCopies;
-    std::vector<ctjs::SetPropertyOp> provedJSONAssignments;
-    std::vector<ctjs::SetPropertyOp> provedSnapshotAssignments;
-    std::vector<mlir::Value> provedOptionalStrings;
-    std::vector<HostDOMStringRefinement> provedRefinements;
-    std::vector<mlir::Value> provedStrings;
-    std::vector<std::pair<mlir::Value, bool>> provedBooleans;
-    bool provedUndefinedReturn = false;
     mlir::DominanceInfo dominance(module);
-    std::vector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> provedClosures;
     llvm::DenseSet<mlir::Operation *> usedCallbacks;
     if (declaration && !host_detail::isInertEntryDeclaration(declaration, target, spend)) {
         if (refusal.empty()) {
@@ -227,24 +192,6 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         }
         return;
     }
-    const bool suppliedNumber = llvm::is_contained(contract.initialIntrinsics, "Number");
-    const bool suppliedURI = llvm::is_contained(contract.initialIntrinsics, "decodeURIComponent");
-    const bool suppliedObject = llvm::is_contained(contract.initialIntrinsics, "Object");
-    const bool suppliedJSON = llvm::is_contained(contract.initialIntrinsics, "JSON");
-    const bool suppliedArray = llvm::is_contained(contract.initialIntrinsics, "Array");
-    const bool suppliedString = llvm::is_contained(contract.initialIntrinsics, "String");
-    const bool suppliedElement = llvm::is_contained(contract.initialIntrinsics, "Element");
-    const bool suppliedFunction = llvm::is_contained(contract.initialIntrinsics, "Function");
-    const bool suppliedSymbol = llvm::is_contained(contract.initialIntrinsics, "Symbol");
-    const bool suppliedRegExp =
-        llvm::is_contained(contract.initialIntrinsics, "RegExp") &&
-        llvm::is_contained(contract.initialIntrinsics, "__ctbrowser_regexp");
-    const auto emptyString = [](mlir::Value value) {
-        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        auto string =
-            constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue()) : ctjs::StringAttr{};
-        return string && string.getValue().empty();
-    };
     if (declaration) {
         for (ctjs::StoreGlobalOp store :
              declaration.getBody().front().getOps<ctjs::StoreGlobalOp>()) {
@@ -258,158 +205,80 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     }
     llvm::DenseSet<mlir::Operation *> prefixCallbacks;
     llvm::DenseSet<mlir::Operation *> replacementCallbacks;
-    for (ctjs::FuncOp callback : callbackFunctions) {
+    for (ctjs::FuncOp callback : proved.callbacks) {
         if (host_detail::isLowercaseReplacement(callback, spend)) {
             replacementCallbacks.insert(callback);
         }
         if (budgetExhausted) { return; }
     }
-    auto functions = callbackFunctions;
+    auto functions = proved.callbacks;
     functions.push_back(target);
     for (ctjs::FuncOp function : functions) {
         const bool callbackBody = function != target;
-        const bool replacementBody = replacementCallbacks.contains(function);
         auto & block = function.getBody().front();
-        llvm::DenseMap<mlir::Value, Kind> values;
-        llvm::DenseSet<mlir::Value> increasingIndices;
-        unsigned mutationEpoch = 0;
-        llvm::DenseMap<mlir::Value, unsigned> datasetEpochs;
-        using DatasetOrigin = dom_entry_detail::DatasetOrigin;
-        llvm::DenseMap<mlir::Value, DatasetOrigin> snapshotOrigins, keyOrigins;
-        // Boolean truth requires the callback input to start with "bs". This
-        // implication proves filtered-key uniqueness after removing that prefix.
-        llvm::DenseSet<mlir::Value> prefixRequired, prefixSnapshots;
-        llvm::DenseMap<mlir::Value, ctjs::GetPropertyOp> strippedAssignmentKeys;
-        llvm::DenseMap<mlir::Value, mlir::Value> firstUnits, stringTails, loweredFirstUnits;
-        if (replacementBody) {
+        // Both arms are checked. Transport preserves invariant kinds and
+        // element owner/id pairs. Every admitted effect preserves node lifetime;
+        // escaping handles, structural mutation and script reentry still refuse.
+        dom_entry_detail::Body visitor{refusal,
+                                       budgetExhausted,
+                                       proved,
+                                       intrinsicNames,
+                                       documentParameter,
+                                       dominance,
+                                       usedCallbacks,
+                                       prefixCallbacks,
+                                       replacementCallbacks,
+                                       indexedCallbacks,
+                                       spend,
+                                       function,
+                                       block,
+                                       callbackBody,
+                                       replacementCallbacks.contains(function)};
+        if (visitor.replacementBody) {
             auto input = block.getArgument(ctjs::implicit_arguments);
-            firstUnits[input] = input;
+            visitor.firstUnits[input] = input;
         }
-        using Predicate = dom_entry_detail::Predicate;
-        llvm::DenseMap<mlir::Value, mlir::Value> typeQueries;
-        llvm::DenseMap<mlir::Value, Predicate> predicates;
-        llvm::DenseMap<mlir::Value, bool> constantBooleans;
-        llvm::DenseMap<mlir::Value, std::size_t> activeRefinements;
         for (mlir::BlockArgument argument : block.getArguments()) {
             if (!spend()) { return; }
             if (!llvm::isa<ctjs::ValueType>(argument.getType())) {
                 refusal = "DOM entry requires original JavaScript parameter types";
                 return;
             }
-            values[argument] = argument.getArgNumber() < ctjs::implicit_arguments ? Kind::implicit
-                               : callbackBody                                     ? Kind::string
-                               : intrinsicEntry ? intrinsicKinds.lookup(argument)
-                                                : Kind::element;
+            visitor.values[argument] = argument.getArgNumber() < ctjs::implicit_arguments
+                                           ? Kind::implicit
+                                       : callbackBody   ? Kind::string
+                                       : intrinsicEntry ? intrinsicKinds.lookup(argument)
+                                                        : Kind::element;
         }
-
-        // Both arms are checked. Transport preserves invariant kinds and
-        // element owner/id pairs. Every admitted effect preserves node lifetime;
-        // escaping handles, structural mutation and script reentry still refuse.
-        dom_entry_detail::Body visitor{refusal,
-                                       budgetExhausted,
-                                       block,
-                                       provedDatasetElements,
-                                       callbackBody,
-                                       replacementBody,
-                                       suppliedNumber,
-                                       suppliedURI,
-                                       suppliedObject,
-                                       suppliedJSON,
-                                       suppliedArray,
-                                       suppliedString,
-                                       suppliedRegExp,
-                                       suppliedElement,
-                                       suppliedFunction,
-                                       suppliedSymbol,
-                                       documentParameter,
-                                       provedDocumentLoads,
-                                       provedDocumentRoots,
-                                       provedUndefinedReturn,
-                                       values,
-                                       increasingIndices,
-                                       prefixRequired,
-                                       prefixSnapshots,
-                                       mutationEpoch,
-                                       datasetEpochs,
-                                       snapshotOrigins,
-                                       keyOrigins,
-                                       strippedAssignmentKeys,
-                                       firstUnits,
-                                       stringTails,
-                                       loweredFirstUnits,
-                                       typeQueries,
-                                       predicates,
-                                       constantBooleans,
-                                       activeRefinements,
-                                       provedTokens,
-                                       provedDatasets,
-                                       provedStringVectorLengths,
-                                       provedStringVectorIndices,
-                                       provedElementVectorLengths,
-                                       provedElementVectorIndices,
-                                       provedElementPrototypes,
-                                       provedElementIntrinsics,
-                                       provedSymbolIntrinsics,
-                                       provedSymbols,
-                                       provedSymbolDescriptions,
-                                       provedDatasetValues,
-                                       provedNumberIntrinsics,
-                                       provedURIIntrinsics,
-                                       provedJSONIntrinsics,
-                                       provedObjectIntrinsics,
-                                       provedRegExpIntrinsics,
-                                       provedPrefixRegExps,
-                                       provedInvocations,
-                                       provedThrows,
-                                       provedThrowYields,
-                                       provedMethods,
-                                       provedCalls,
-                                       provedJSONObjects,
-                                       provedJSONCopies,
-                                       provedJSONAssignments,
-                                       provedSnapshotAssignments,
-                                       provedOptionalStrings,
-                                       provedStrings,
-                                       provedRefinements,
-                                       provedBooleans,
-                                       dominance,
-                                       provedClosures,
-                                       usedCallbacks,
-                                       prefixCallbacks,
-                                       replacementCallbacks,
-                                       indexedCallbacks,
-                                       function,
-                                       target,
-                                       spend,
-                                       emptyString};
         mlir::Value frame;
         if (!visitor.visit(block, 0, frame)) { return; }
-        for (auto [value, kind] : values) {
+        for (auto [value, kind] : visitor.values) {
             if (!spend()) { return; }
             if (kind == Kind::element || kind == Kind::nullableElement) {
-                provedElementIdentities.insert(value);
+                proved.elementIdentities.insert(value);
             }
         }
         if (callbackBody) {
             if (!spend()) { return; }
             auto returned = llvm::cast<ctjs::ReturnOp>(block.getTerminator());
-            if (prefixRequired.contains(returned.getValue())) { prefixCallbacks.insert(function); }
+            if (visitor.prefixRequired.contains(returned.getValue())) {
+                prefixCallbacks.insert(function);
+            }
         }
     }
-    if (usedCallbacks.size() != callbackFunctions.size()) {
+    if (usedCallbacks.size() != proved.callbacks.size()) {
         refusal = "DOM entry contains an uninvoked callback function";
         return;
     }
     llvm::DenseMap<mlir::Value, mlir::Value> selectorOrigins;
-    for (const auto & call : provedCalls) {
+    for (const auto & call : proved.calls) {
         if (!spend()) { return; }
         if (call.returnsElement() || call.returnsElementVector()) {
             selectorOrigins[call.operation->getResult(0)] = call.element;
         }
     }
-    llvm::SmallVector<mlir::Value> provedStyleValues;
     llvm::DenseSet<mlir::Value> seenStyleValues;
-    for (auto & call : provedCalls) {
+    for (auto & call : proved.calls) {
         if (!spend()) { return; }
         if (!call.usesStyle()) { continue; }
         // Follow every incoming edge, including zero-trip initialization and
@@ -430,44 +299,17 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             auto value = pending.pop_back_val();
             if (!visited.insert(value).second) { continue; }
             values.push_back(value);
-            if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
-                if (argument.getOwner() == &targetBlock &&
-                    argument.getArgNumber() >= ctjs::implicit_arguments) {
-                    roots.push_back(argument);
-                    continue;
-                }
-                auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(argument.getOwner()->getParentOp());
-                if (!loop) {
-                    complete = false;
-                    break;
-                }
-                const auto index = argument.getArgNumber();
-                if (argument.getOwner() == &loop.getBefore().front()) {
-                    auto yield =
-                        llvm::cast<mlir::scf::YieldOp>(loop.getAfter().front().getTerminator());
-                    if (!append(loop.getInits()[index]) || !append(yield.getOperand(index))) {
-                        return;
-                    }
-                } else {
-                    auto condition = llvm::cast<mlir::scf::ConditionOp>(
-                        loop.getBefore().front().getTerminator());
-                    if (!append(condition.getArgs()[index])) { return; }
-                }
+            if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+                argument && argument.getOwner() == &targetBlock &&
+                argument.getArgNumber() >= ctjs::implicit_arguments) {
+                roots.push_back(argument);
                 continue;
             }
-            if (auto branch = value.getDefiningOp<mlir::scf::IfOp>()) {
-                const auto index = llvm::cast<mlir::OpResult>(value).getResultNumber();
-                for (mlir::Region & region : branch->getRegions()) {
-                    auto yield = llvm::cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                    if (!append(yield.getOperand(index))) { return; }
+            llvm::SmallVector<mlir::Value, 2> inputs;
+            if (transportInputs(value, inputs)) {
+                for (mlir::Value input : inputs) {
+                    if (!append(input)) { return; }
                 }
-                continue;
-            }
-            if (auto loop = value.getDefiningOp<mlir::scf::WhileOp>()) {
-                auto condition =
-                    llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().getTerminator());
-                const auto index = llvm::cast<mlir::OpResult>(value).getResultNumber();
-                if (!append(condition.getArgs()[index])) { return; }
                 continue;
             }
             if (auto origin = selectorOrigins.lookup(value)) {
@@ -475,9 +317,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 continue;
             }
             auto read = value.getDefiningOp<ctjs::GetPropertyOp>();
-            if (read && provedDocumentRoots.contains(read)) {
+            if (read && proved.documentRoots.contains(read)) {
                 if (!append(documentParameter)) { return; }
-            } else if (read && provedElementVectorIndices.contains(read)) {
+            } else if (read && proved.elementVectorIndices.contains(read)) {
                 if (!append(read.getObject())) { return; }
             } else {
                 complete = false;
@@ -494,12 +336,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             call.styleParameters = std::move(roots);
             for (auto value : values) {
                 if (!spend()) { return; }
-                if (seenStyleValues.insert(value).second) { provedStyleValues.push_back(value); }
+                if (seenStyleValues.insert(value).second) { proved.styles.push_back(value); }
             }
         }
     }
     if (intrinsicEntry &&
-        (!provedJSONObjects.empty() || llvm::any_of(provedCalls, [](const HostDOMCall & call) {
+        (!proved.jsonObjects.empty() || llvm::any_of(proved.calls, [](const HostDOMCall & call) {
             return !call.returnsSymbol() && call.kind != HostDOMMethod::symbolToString &&
                    call.kind != HostDOMMethod::startsWith &&
                    call.kind != HostDOMMethod::stringCharAt &&
@@ -514,7 +356,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     // finish every write before any such observation can snapshot it. No
     // member/identity observation or descendant mutation passed the census,
     // so the final single owning result cannot distinguish shallow aliases.
-    for (ctjs::CopyPropsOp copy : provedJSONCopies) {
+    for (ctjs::CopyPropsOp copy : proved.jsonCopies) {
         for (mlir::OpOperand & use : copy.getTarget().getUses()) {
             if (!spend()) { return; }
             auto * user = use.getOwner();
@@ -531,7 +373,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             }
         }
     }
-    for (ctjs::SetPropertyOp write : provedJSONAssignments) {
+    for (ctjs::SetPropertyOp write : proved.jsonAssignments) {
         for (mlir::OpOperand & use : write.getObject().getUses()) {
             if (!spend()) { return; }
             auto * user = use.getOwner();
@@ -570,187 +412,145 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             }
         }
     }
-    optionalStrings = std::move(provedOptionalStrings);
-    refinements = std::move(provedRefinements);
-    strings = std::move(provedStrings);
-    booleans = std::move(provedBooleans);
-    checkedCallbacks = std::move(callbackFunctions);
-    callbackClosures = std::move(provedClosures);
-    checkedEntry = target;
-    carriedStyles.assign(provedStyleValues.begin(), provedStyleValues.end());
-    undefinedReturn = provedUndefinedReturn;
-    checkedWrapper = declaration;
-    elements = std::move(provedElements);
-    elementIdentities = std::move(provedElementIdentities);
-    if (!provedDocumentLoads.empty()) { documentAnchor = documentParameter; }
-    documentLoads = std::move(provedDocumentLoads);
-    documentRoots = std::move(provedDocumentRoots);
-    intrinsicParameters = std::move(provedIntrinsicParameters);
-    tokenLists = std::move(provedTokens);
-    datasets = std::move(provedDatasets);
-    stringVectorLengths = std::move(provedStringVectorLengths);
-    stringVectorIndices = std::move(provedStringVectorIndices);
-    elementVectorLengths = std::move(provedElementVectorLengths);
-    elementVectorIndices = std::move(provedElementVectorIndices);
-    elementPrototypes = std::move(provedElementPrototypes);
-    elementIntrinsics = std::move(provedElementIntrinsics);
-    symbolIntrinsics = std::move(provedSymbolIntrinsics);
-    symbols = std::move(provedSymbols);
-    symbolDescriptions = std::move(provedSymbolDescriptions);
-    datasetValues = std::move(provedDatasetValues);
-    stringPrefixRegExps = std::move(provedPrefixRegExps);
-    datasetElements = std::move(provedDatasetElements);
-    objectIntrinsics = std::move(provedObjectIntrinsics);
-    regexpIntrinsics = std::move(provedRegExpIntrinsics);
-    numberIntrinsics = std::move(provedNumberIntrinsics);
-    uriIntrinsics = std::move(provedURIIntrinsics);
-    jsonIntrinsics = std::move(provedJSONIntrinsics);
-    invocations = std::move(provedInvocations);
-    throws = std::move(provedThrows);
-    throwYields = std::move(provedThrowYields);
-    methods = std::move(provedMethods);
-    calls = std::move(provedCalls);
-    jsonObjects = std::move(provedJSONObjects);
-    jsonCopies = std::move(provedJSONCopies);
-    jsonAssignments = std::move(provedJSONAssignments);
-    snapshotAssignments = std::move(provedSnapshotAssignments);
+    proved.entry = target;
+    proved.wrapper = declaration;
+    if (!proved.documentLoads.empty()) { proved.document = documentParameter; }
+    proof = std::move(proved);
 }
 
 ctjs::FuncOp DOMEntryAnalysis::callback(ctjs::CreateClosureOp closure) const {
-    for (const auto & [made, target] : callbackClosures) {
+    for (const auto & [made, target] : proof.closures) {
         if (made == closure) { return target; }
     }
     return {};
 }
 
 bool DOMEntryAnalysis::isCallbackParameter(mlir::Value value) const {
-    return llvm::any_of(checkedCallbacks, [&](ctjs::FuncOp callback) {
+    return llvm::any_of(proof.callbacks, [&](ctjs::FuncOp callback) {
         return callback.getBody().front().getArgument(ctjs::implicit_arguments) == value;
     });
 }
 
 std::optional<HostIntrinsicParameter> DOMEntryAnalysis::intrinsicParameter(
     mlir::Value value) const {
-    const auto found = intrinsicParameters.find(value);
-    if (found == intrinsicParameters.end()) { return {}; }
+    const auto found = proof.intrinsicParameters.find(value);
+    if (found == proof.intrinsicParameters.end()) { return {}; }
     return found->second;
 }
 
 bool DOMEntryAnalysis::isElement(mlir::Value value) const {
     if (!value) { return false; }
     auto read = value.getDefiningOp<ctjs::GetPropertyOp>();
-    return llvm::is_contained(elements, value) || (read && isElementVectorIndex(read));
+    return llvm::is_contained(proof.elements, value) || (read && isElementVectorIndex(read));
 }
 
 bool DOMEntryAnalysis::isElementIdentity(mlir::Value value) const {
     if (!value) { return false; }
     auto read = value.getDefiningOp<ctjs::GetPropertyOp>();
-    return elementIdentities.contains(value) || isElement(value) ||
-           (read && isDocumentElement(read)) || llvm::any_of(calls, [&](const HostDOMCall & call) {
+    return proof.elementIdentities.contains(value) || isElement(value) ||
+           (read && isDocumentElement(read)) ||
+           llvm::any_of(proof.calls, [&](const HostDOMCall & call) {
                return call.returnsElement() && call.operation->getResult(0) == value;
            });
 }
 
 bool DOMEntryAnalysis::isTokenList(mlir::Value value) const {
-    return llvm::any_of(tokenLists,
+    return llvm::any_of(proof.tokenLists,
                         [&](ctjs::GetPropertyOp read) { return read.getResult() == value; });
 }
 
 bool DOMEntryAnalysis::isDataset(mlir::Value value) const {
-    return llvm::any_of(datasets,
+    return llvm::any_of(proof.datasets,
                         [&](ctjs::GetPropertyOp read) { return read.getResult() == value; });
 }
 
 bool DOMEntryAnalysis::isDatasetElement(mlir::Value value) const {
-    return llvm::is_contained(datasetElements, value);
+    return llvm::is_contained(proof.datasetElements, value);
 }
 
 bool DOMEntryAnalysis::isElementPrototype(ctjs::GetPropertyOp read) const {
-    return elementPrototypes.contains(read);
+    return proof.elementPrototypes.contains(read);
 }
 
 bool DOMEntryAnalysis::isCurrentDocument(ctjs::LoadGlobalOp load) const {
-    return documentLoads.contains(load);
+    return proof.documentLoads.contains(load);
 }
 
 bool DOMEntryAnalysis::isDocumentElement(ctjs::GetPropertyOp read) const {
-    return documentRoots.contains(read);
+    return proof.documentRoots.contains(read);
 }
 
 bool DOMEntryAnalysis::isStringVectorLength(ctjs::GetPropertyOp read) const {
-    return llvm::is_contained(stringVectorLengths, read);
+    return llvm::is_contained(proof.stringVectorLengths, read);
 }
 
 bool DOMEntryAnalysis::isStringVectorIndex(ctjs::GetPropertyOp read) const {
-    return llvm::is_contained(stringVectorIndices, read);
+    return llvm::is_contained(proof.stringVectorIndices, read);
 }
 
 bool DOMEntryAnalysis::isElementVectorLength(ctjs::GetPropertyOp read) const {
-    return elementVectorLengths.contains(read);
+    return proof.elementVectorLengths.contains(read);
 }
 
 bool DOMEntryAnalysis::isElementVectorIndex(ctjs::GetPropertyOp read) const {
-    return elementVectorIndices.contains(read);
+    return proof.elementVectorIndices.contains(read);
 }
 
 mlir::Value DOMEntryAnalysis::datasetValueElement(ctjs::GetPropertyOp read) const {
-    return datasetValues.lookup(read);
+    return proof.datasetValues.lookup(read);
 }
 
 bool DOMEntryAnalysis::isStringPrefixRegExp(ctjs::CallOp call) const {
-    return llvm::is_contained(stringPrefixRegExps, call);
+    return llvm::is_contained(proof.stringPrefixRegExps, call);
 }
 
 bool DOMEntryAnalysis::isNumberIntrinsic(ctjs::LoadGlobalOp load) const {
-    return llvm::is_contained(numberIntrinsics, load);
+    return proof.intrinsics.contains(load) && load.getName() == "Number";
 }
 
 bool DOMEntryAnalysis::isInitialIntrinsic(ctjs::LoadGlobalOp load) const {
-    return isNumberIntrinsic(load) || llvm::is_contained(uriIntrinsics, load) ||
-           llvm::is_contained(jsonIntrinsics, load) || llvm::is_contained(objectIntrinsics, load) ||
-           llvm::is_contained(regexpIntrinsics, load) || elementIntrinsics.contains(load) ||
-           symbolIntrinsics.contains(load);
+    return proof.intrinsics.contains(load);
 }
 
 llvm::StringRef DOMEntryAnalysis::wellKnownSymbol(ctjs::GetPropertyOp read) const {
-    return symbols.lookup(read);
+    return proof.symbols.lookup(read);
 }
 
 bool DOMEntryAnalysis::isSymbolDescription(ctjs::GetPropertyOp read) const {
-    return symbolDescriptions.contains(read);
+    return proof.symbolDescriptions.contains(read);
 }
 
 bool DOMEntryAnalysis::invocation(ctjs::InvokeOp operation) const {
-    return llvm::is_contained(invocations, operation);
+    return llvm::is_contained(proof.invocations, operation);
 }
 
 std::optional<HostDOMMethod> DOMEntryAnalysis::method(ctjs::GetPropertyOp read) const {
-    const auto found = methods.find(read);
-    if (found == methods.end()) { return {}; }
+    const auto found = proof.methods.find(read);
+    if (found == proof.methods.end()) { return {}; }
     return found->second;
 }
 
 const HostDOMCall * DOMEntryAnalysis::call(ctjs::CallOp operation) const {
-    for (const auto & call : calls) {
+    for (const auto & call : proof.calls) {
         if (call.operation == operation) { return &call; }
     }
     return nullptr;
 }
 
 bool DOMEntryAnalysis::jsonObject(ctjs::CreateObjectOp operation) const {
-    return llvm::is_contained(jsonObjects, operation);
+    return llvm::is_contained(proof.jsonObjects, operation);
 }
 
 bool DOMEntryAnalysis::jsonCopy(ctjs::CopyPropsOp operation) const {
-    return llvm::is_contained(jsonCopies, operation);
+    return llvm::is_contained(proof.jsonCopies, operation);
 }
 
 bool DOMEntryAnalysis::jsonAssignment(ctjs::SetPropertyOp operation) const {
-    return llvm::is_contained(jsonAssignments, operation);
+    return llvm::is_contained(proof.jsonAssignments, operation);
 }
 
 bool DOMEntryAnalysis::jsonSnapshotAssignment(ctjs::SetPropertyOp operation) const {
-    return llvm::is_contained(snapshotAssignments, operation);
+    return llvm::is_contained(proof.snapshotAssignments, operation);
 }
 
 } // namespace ctcompile::ctnative

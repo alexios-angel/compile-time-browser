@@ -1,20 +1,24 @@
 #include "Body.hpp"
 
+#include "mlir/IR/Matchers.h"
+
 #include <ctbrowser/dom/element.hpp>
 #include <ctbrowser/style/css/parser.hpp>
+
+bool ctcompile::ctnative::validSelector(llvm::StringRef text) {
+    ctbrowser::atom_table atoms;
+    bool invalid = false;
+    (void)ctbrowser::style::css::parse_selector_text({text.data(), text.size()}, atoms, invalid);
+    return !invalid;
+}
 
 namespace ctcompile::ctnative::dom_entry_detail {
 
 std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block & body,
                                       unsigned depth, mlir::Value & frame, bool & returned) {
     if (auto abrupt = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
-        auto & region = abrupt.getRegion();
-        auto thrown = region.hasOneBlock() && llvm::hasSingleElement(region.front())
-                          ? llvm::dyn_cast<ctjs::ThrowOp>(region.front().front())
-                          : ctjs::ThrowOp{};
-        if (!llvm::isa<mlir::scf::IfOp>(body.getParentOp()) || !abrupt.getNoInline() ||
-            abrupt->getNumOperands() || abrupt.getNumResults() || !thrown ||
-            region.front().getNumArguments()) {
+        auto thrown = savedThrow(abrupt);
+        if (!llvm::isa<mlir::scf::IfOp>(body.getParentOp()) || !thrown) {
             refusal = "DOM abrupt region requires one exact saved primitive throw";
             return false;
         }
@@ -27,23 +31,19 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             }
         }
         if (!spend() || !spend()) { return false; }
-        if (hasKind(thrown.getValue(), Kind::element) ||
-            hasKind(thrown.getValue(), Kind::nullableElement)) {
+        if (hasKind(thrown.getValue(), {Kind::element, Kind::nullableElement})) {
             // The host owns nodes only through this invocation. An escaping
             // exception can survive destruction of that document during unwind.
             refusal = "DOM thrown element requires an owner that outlives the exception";
             return false;
         }
-        if ((!hasKind(thrown.getValue(), Kind::number) &&
-             !hasKind(thrown.getValue(), Kind::boolean) &&
-             !hasKind(thrown.getValue(), Kind::string) &&
-             !hasKind(thrown.getValue(), Kind::optionalString) &&
-             !hasKind(thrown.getValue(), Kind::null)) ||
+        if (!hasKind(thrown.getValue(), {Kind::number, Kind::boolean, Kind::string,
+                                         Kind::optionalString, Kind::null}) ||
             !dominance.dominates(thrown.getValue(), thrown)) {
             refusal = "DOM saved throw requires a preceding owning primitive";
             return false;
         }
-        provedThrows.push_back(thrown);
+        proved.throws.push_back(thrown);
         nonReturning.insert(&body);
         return true;
     }
@@ -65,23 +65,17 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         }
         for (auto [argument, initial] : llvm::zip(before.getArguments(), loop.getInits())) {
             if (!spend()) { return false; }
-            if (!hasKind(initial, Kind::number) && !hasKind(initial, Kind::string) &&
-                !hasKind(initial, Kind::boolean) && !hasKind(initial, Kind::symbol) &&
-                !hasKind(initial, Kind::undefinedString) && !hasKind(initial, Kind::element)) {
+            if (!hasKind(initial, loopKinds)) {
                 refusal = "DOM loop cannot carry borrowed or unknown values";
                 return false;
             }
             values[argument] = values[initial];
-            auto constant = initial.getDefiningOp<ctjs::ConstantOp>();
-            auto zero = constant ? llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue())
-                                 : ctjs::NumberAttr{};
+            auto zero = ctjs::constantAttr<ctjs::NumberAttr>(initial);
             if (!zero || zero.getDouble() != 0) { continue; }
             const auto increments = [](mlir::Value next, mlir::Value previous) {
                 auto add = next.getDefiningOp<ctjs::BinaryStaticOp>();
-                auto rhs =
-                    add ? add.getRhs().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
                 auto one =
-                    rhs ? llvm::dyn_cast<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
+                    add ? ctjs::constantAttr<ctjs::NumberAttr>(add.getRhs()) : ctjs::NumberAttr{};
                 return add && add.getKind() == ctjs::BinaryKind::Add && add.getLhs() == previous &&
                        one && one.getDouble() == 1;
             };
@@ -123,10 +117,11 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                     }
                     return true;
                 }
-                auto constant = flag.getDefiningOp<mlir::arith::ConstantOp>();
-                auto bit = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                    : mlir::IntegerAttr{};
-                if (!bit || !bit.getType().isInteger(1)) { return false; }
+                mlir::IntegerAttr bit;
+                if (!mlir::matchPattern(flag, mlir::m_Constant(&bit)) ||
+                    !bit.getType().isInteger(1)) {
+                    return false;
+                }
                 if (!bit.getInt()) { return true; }
                 return increments(next, argument);
             };
@@ -140,22 +135,20 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         for (auto [argument, result, value] :
              llvm::zip(after.getArguments(), loop.getResults(), condition.getArgs())) {
             if (!spend()) { return false; }
-            if (!hasKind(value, Kind::number) && !hasKind(value, Kind::string) &&
-                !hasKind(value, Kind::boolean) && !hasKind(value, Kind::symbol) &&
-                !hasKind(value, Kind::undefinedString) && !hasKind(value, Kind::element)) {
+            if (!hasKind(value, loopKinds)) {
                 refusal = "DOM loop result is not an invariant scalar";
                 return false;
             }
             values[argument] = values[result] = values[value];
             if (values[value] == Kind::string) {
-                provedStrings.push_back(argument);
-                provedStrings.push_back(result);
+                proved.strings.push_back(argument);
+                proved.strings.push_back(result);
             }
         }
         if (!visit(after, depth + 1, frame)) { return false; }
         // Supported attribute/class writes cannot reclaim nodes or change a
         // querySelectorAll snapshot. Dataset aliases still need a backedge proof.
-        if (mutationEpoch != loopEpoch && !provedDatasetElements.empty()) {
+        if (mutationEpoch != loopEpoch && !proved.datasetElements.empty()) {
             refusal = "DOM loop mutation needs a backedge dataset-alias proof";
             return false;
         }
@@ -203,10 +196,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             // selected cleanup arm without narrowing ordinary scalar joins.
             if (!spend()) { return false; }
             auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
-            auto constant =
-                truth ? truth.getValue().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-            auto boolean = constant ? llvm::dyn_cast<ctjs::BooleanAttr>(constant.getValue())
-                                    : ctjs::BooleanAttr{};
+            auto boolean = truth ? ctjs::constantAttr<ctjs::BooleanAttr>(truth.getValue())
+                                 : ctjs::BooleanAttr{};
             if (boolean) { selected = boolean.getValue(); }
         }
         for (mlir::Region & region : branch->getRegions()) {
@@ -225,17 +216,15 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             });
             if (auto predicate = predicates.find(branch.getCondition());
                 predicate != predicates.end() &&
-                (hasKind(predicate->second.optional, Kind::optionalString) ||
-                 hasKind(predicate->second.optional, Kind::undefinedString) ||
-                 hasKind(predicate->second.optional, Kind::nullableElement) ||
-                 hasKind(predicate->second.optional, Kind::json))) {
+                hasKind(predicate->second.optional, {Kind::optionalString, Kind::undefinedString,
+                                                     Kind::nullableElement, Kind::json})) {
                 // Reserve save/restore and the new evidence before visiting.
                 if (!spend() || !spend() || !spend()) { return false; }
                 refined = predicate->second.optional;
                 previous = values[refined];
                 const bool present = first == predicate->second.stringOnTrue;
                 if (present && previous == Kind::nullableElement &&
-                    provedDocumentRoots.contains(refined.getDefiningOp<ctjs::GetPropertyOp>())) {
+                    proved.documentRoots.contains(refined.getDefiningOp<ctjs::GetPropertyOp>())) {
                     // Every admitted effect preserves the document root:
                     // structural mutation and reentry fail the complete proof.
                     documentRootPresent = true;
@@ -250,8 +239,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                                                         : (present ? Kind::string : Kind::null);
                 if (present &&
                     (previous == Kind::optionalString || previous == Kind::undefinedString)) {
-                    activeRefinements[refined] = provedRefinements.size();
-                    provedRefinements.push_back({&region.front(), refined, {}});
+                    activeRefinements[refined] = proved.refinements.size();
+                    proved.refinements.push_back({&region.front(), refined, {}});
                 }
             }
             auto & armFrame = first ? thenFrame : elseFrame;
@@ -372,14 +361,14 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                     return false;
                 }
             }
-            provedThrowYields.push_back(std::move(padding));
+            proved.throwYields.push_back(std::move(padding));
         }
         for (auto [value, kind] : llvm::zip(branch.getResults(), joined)) {
             values[value] = kind;
             if (kind == Kind::optionalString || kind == Kind::null) {
-                provedOptionalStrings.push_back(value);
+                proved.optionalStrings.push_back(value);
             } else if (kind == Kind::string) {
-                provedStrings.push_back(value);
+                proved.strings.push_back(value);
             }
         }
         if (callbackBody && branch.getNumResults()) {
@@ -411,13 +400,9 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 return false;
             }
             auto & called = invocation.getBody().front();
-            auto call =
-                called.empty() ? ctjs::CallOp{} : llvm::dyn_cast<ctjs::CallOp>(called.front());
-            auto exit = called.empty() ? ctjs::InvokeExitOp{}
-                                       : llvm::dyn_cast<ctjs::InvokeExitOp>(called.back());
-            if (called.getNumArguments() || !call || !exit || call->getNextNode() != exit ||
-                exit.getNormalResult() != call.getResult() || !call.getResult().hasOneUse() ||
-                !exit.getState().empty() || !hasKind(call.getReceiver(), Kind::element)) {
+            auto call = invokedCall(invocation);
+            if (!call || !llvm::cast<ctjs::InvokeExitOp>(called.back()).getState().empty() ||
+                !hasKind(call.getReceiver(), Kind::element)) {
                 refusal = "DOM suppression requires one typed unused Element call";
                 return false;
             }
@@ -425,9 +410,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             if ((!matches && !hasKind(call.getCallee(), Kind::attribute)) ||
                 call.getArgs().size() != (matches ? 1u : 2u) ||
                 !hasKind(call.getArgs()[0], Kind::string) ||
-                (!matches && !hasKind(call.getArgs()[1], Kind::string) &&
-                 !hasKind(call.getArgs()[1], Kind::boolean) &&
-                 !hasKind(call.getArgs()[1], Kind::number))) {
+                (!matches &&
+                 !hasKind(call.getArgs()[1], {Kind::string, Kind::boolean, Kind::number}))) {
                 refusal = "DOM suppression requires typed setAttribute or matches arguments";
                 return false;
             }
@@ -446,9 +430,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                     return false;
                 }
             }
-            auto literal = call.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
-            auto name =
-                literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
+            auto name = ctjs::constantAttr<ctjs::StringAttr>(call.getArgs()[0]);
             if (!name) {
                 refusal = "DOM suppression requires a valid literal name or selector";
                 return false;
@@ -457,26 +439,22 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             for (std::size_t i = 0; i < name.getValue().size(); ++i) {
                 if (!spend()) { return false; }
             }
-            const std::string_view text{name.getValue().data(), name.getValue().size()};
-            if (matches) {
-                ctbrowser::atom_table atoms;
-                bool invalid = false;
-                (void)ctbrowser::style::css::parse_selector_text(text, atoms, invalid);
-                if (invalid) {
-                    refusal = "DOM suppressed matches requires a valid literal selector";
-                    return false;
-                }
-            } else if (!ctbrowser::is_valid_attribute_name(text)) {
+            if (matches && !validSelector(name.getValue())) {
+                refusal = "DOM suppressed matches requires a valid literal selector";
+                return false;
+            }
+            if (!matches && !ctbrowser::is_valid_attribute_name(
+                                {name.getValue().data(), name.getValue().size()})) {
                 refusal = "DOM suppressed attribute requires a valid literal name";
                 return false;
             }
             if (!visit(called, depth + 1, frame)) { return false; }
-            provedInvocations.push_back(invocation);
+            proved.invocations.push_back(invocation);
             return true;
         }
         // A nested invoke may only continue the enclosing success.
         auto parent = invocation->getParentOfType<ctjs::InvokeOp>();
-        if ((parent && (!llvm::is_contained(provedInvocations, parent) ||
+        if ((parent && (!llvm::is_contained(proved.invocations, parent) ||
                         invocation->getParentRegion() != &parent.getNormalBody())) ||
             invocation.getNumResults() != 1 || !invocation.getBody().hasOneBlock() ||
             !invocation.getNormalBody().hasOneBlock() ||
@@ -487,26 +465,21 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         auto & called = invocation.getBody().front();
         auto & normal = invocation.getNormalBody().front();
         auto & caught = invocation.getUnwindBody().front();
-        auto call = called.empty() ? ctjs::CallOp{} : llvm::dyn_cast<ctjs::CallOp>(called.front());
-        auto exit = called.empty() ? ctjs::InvokeExitOp{}
-                                   : llvm::dyn_cast<ctjs::InvokeExitOp>(called.back());
-        if (called.getNumArguments() || !call || !exit || call->getNextNode() != exit ||
-            exit.getNormalResult() != call.getResult() || !call.getResult().hasOneUse() ||
-            !exit.getState().empty() || normal.getNumArguments() != 1 ||
-            caught.getNumArguments() != 1 ||
+        auto call = invokedCall(invocation);
+        if (!call || !llvm::cast<ctjs::InvokeExitOp>(called.back()).getState().empty() ||
+            normal.getNumArguments() != 1 || caught.getNumArguments() != 1 ||
             !llvm::isa<ctjs::ValueType>(normal.getArgument(0).getType()) ||
             !llvm::isa<ctjs::ValueType>(caught.getArgument(0).getType()) ||
             !llvm::isa<ctjs::ValueType>(invocation.getResult(0).getType()) ||
             !llvm::isa<ctjs::ValueType>(call.getResult().getType()) ||
             !caught.getArgument(0).use_empty() ||
-            (!hasKind(call.getCallee(), Kind::uriIntrinsic) &&
-             !hasKind(call.getCallee(), Kind::jsonParse))) {
+            !hasKind(call.getCallee(), {Kind::uriIntrinsic, Kind::jsonParse})) {
             refusal = "DOM URI invocation requires exact call and unused catch payload";
             return false;
         }
         const bool parses = hasKind(call.getCallee(), Kind::jsonParse);
         // Reserve before nested invokes look this parent up.
-        provedInvocations.push_back(invocation);
+        proved.invocations.push_back(invocation);
         if (!visit(called, depth + 1, frame)) { return false; }
         values[normal.getArgument(0)] = parses ? Kind::json : Kind::string;
         Kind result = Kind::string;
@@ -524,7 +497,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             if (tree) { result = Kind::json; }
         }
         values[invocation.getResult(0)] = result;
-        if (result == Kind::string) { provedStrings.push_back(invocation.getResult(0)); }
+        if (result == Kind::string) { proved.strings.push_back(invocation.getResult(0)); }
         return true;
     }
     if (llvm::isa<ctjs::InvokeExitOp, ctjs::InvokeYieldOp>(operation)) {

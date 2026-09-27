@@ -1,5 +1,6 @@
 #include "Bounds.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
@@ -7,31 +8,25 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/Error.h"
 
-#include <bit>
-
 namespace ctcompile::ctnative {
 
 llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostContract & contract,
                                         unsigned maxSteps, mlir::IRMapping * mapping,
                                         unsigned * workSteps) {
-    unsigned remaining = maxSteps;
+    WorkBudget budget{maxSteps};
     const llvm::scope_exit recordWork([&] {
-        if (workSteps) { *workSteps = maxSteps - remaining; }
+        if (workSteps) { *workSteps = static_cast<unsigned>(maxSteps - budget.remaining); }
     });
     const auto error = [&](llvm::StringRef text) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                       remaining ? text : "DOM snapshot work budget exhausted");
+                                       budget.remaining ? text
+                                                        : "DOM snapshot work budget exhausted");
     };
-    const auto spend = [&] { return remaining && (--remaining, true); };
+    const auto spend = [&] { return budget.spend(); };
     const auto charge = [&](mlir::ModuleOp module) {
-        return !module
-                    .walk([&](mlir::Operation * operation) {
-                        for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
-                            if (!spend() || !spend()) { return mlir::WalkResult::interrupt(); }
-                        }
-                        return mlir::WalkResult::advance();
-                    })
-                    .wasInterrupted();
+        return budget.spendWalk(module, [](mlir::Operation * operation) {
+            return 2 * (uint64_t(1) + operation->getNumOperands());
+        });
     };
     if (!charge(candidate)) { return error("DOM snapshot work budget exhausted"); }
     if (hostContractFingerprint(candidate) != contract.moduleSha256) {
@@ -68,9 +63,7 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
         return true;
     };
     const auto numberIs = [](mlir::Value value, double expected) {
-        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        auto number =
-            constant ? llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue()) : ctjs::NumberAttr{};
+        auto number = ctjs::constantAttr<ctjs::NumberAttr>(value);
         return number && number.getDouble() == expected;
     };
     const auto erase = [](mlir::Operation * operation) {
@@ -174,27 +167,12 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
         if (observations.empty()) { return error("DOM snapshot length is not observed"); }
         snapshots.push_back(snapshot);
         mlir::OpBuilder at(call);
-        const auto where = call.getLoc();
-        auto size = ctjs::GetPropertyOp::create(at, where, call.getType(), snapshot.getResult(),
-                                                length.getKey());
-        // The VM materializes at most 2^24 proxy slots. Preserve that cap on
-        // the copy while retaining every original NodeList slot and length.
-        auto cap = ctjs::ConstantOp::create(
-            at, where,
-            ctjs::NumberAttr::get(candidate.getContext(),
-                                  std::bit_cast<uint64_t>(double(1U << 24))));
-        auto less = ctjs::CompareOp::create(at, where, call.getType(), ctjs::CompareKind::Lt,
-                                            size.getResult(), cap.getResult());
-        auto test = ctjs::TruthyOp::create(at, where, at.getI1Type(), less.getResult());
-        auto bounded = mlir::scf::IfOp::create(at, where, call->getResultTypes(), test.getResult());
-        for (auto [region, value] :
-             llvm::zip(bounded->getRegions(), llvm::ArrayRef<mlir::Value>{size, cap})) {
-            auto & arm = region.emplaceBlock();
-            mlir::OpBuilder nested(&arm, arm.begin());
-            mlir::scf::YieldOp::create(nested, where, value);
-        }
+        // Preserve the VM's slot cap on the copy while retaining every
+        // original NodeList slot and length.
+        const auto bounded =
+            cappedLength(at, call.getLoc(), call.getType(), snapshot.getResult(), length.getKey());
         for (ctjs::GetPropertyOp observation : observations) {
-            observation.getResult().replaceAllUsesWith(bounded.getResult(0));
+            observation.getResult().replaceAllUsesWith(bounded);
             observation.erase();
         }
         for (ctjs::GetPropertyOp index : indices) {
@@ -211,9 +189,9 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
     if (!charge(*changed)) { return error("DOM snapshot work budget exhausted"); }
     auto transformed = contract;
     transformed.moduleSha256 = hostContractFingerprint(*changed);
-    const DOMEntryAnalysis proof(*changed, transformed, remaining);
+    const DOMEntryAnalysis proof(*changed, transformed, static_cast<unsigned>(budget.remaining));
     if (!proof.proved()) { return error(proof.reason()); }
-    remaining -= proof.steps();
+    budget.remaining -= proof.steps();
     for (ctjs::CallOp snapshot : snapshots) {
         if (!spend()) { return error("DOM snapshot work budget exhausted"); }
         const auto * edge = proof.call(snapshot);

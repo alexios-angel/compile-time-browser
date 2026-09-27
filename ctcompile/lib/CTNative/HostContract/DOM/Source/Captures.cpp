@@ -7,26 +7,18 @@ bool DOMSource::refuse(llvm::StringRef message) {
     return false;
 }
 
-bool DOMSource::step() {
-    if (!remaining) { return refuse("DOM helper expansion work budget exhausted"); }
-    --remaining;
+bool DOMSource::step(uint64_t cost) {
+    if (cost > remaining) { return refuse("DOM helper expansion work budget exhausted"); }
+    remaining -= static_cast<unsigned>(cost);
     return true;
 }
 
 bool DOMSource::chargeCaptureQuery() {
     // The shared immutable-capture query scans the module and target uses.
     for (unsigned scan = 0; scan < 6; ++scan) {
-        if (remaining < operationCount) {
-            return refuse("DOM helper expansion work budget exhausted");
-        }
-        remaining -= operationCount;
+        if (!step(operationCount)) { return false; }
     }
     return true;
-}
-
-bool DOMSource::undefined(mlir::Value value) {
-    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-    return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
 }
 
 bool DOMSource::precedesInStructuredBody(mlir::Operation * definition, mlir::Operation * use) {
@@ -51,54 +43,44 @@ bool DOMSource::precedesInStructuredBody(mlir::Operation * definition, mlir::Ope
     return use->getBlock() == definition->getBlock() && definition->isBeforeInBlock(use);
 }
 
-bool DOMSource::confinedFilterCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
-    if (!target || !closure.getUpvalues().empty() || target.getUpvalueCount() != 0 ||
-        creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
-        target.getBody().front().getNumArguments() != ctjs::implicit_arguments + 1 ||
-        llvm::any_of(target.getBody().front().getArguments().take_front(ctjs::implicit_arguments),
-                     [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
-        return false;
-    }
-    bool invoked = false;
-    for (mlir::OpOperand & use : closure.getResult().getUses()) {
-        if (!step()) { return false; }
-        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-        auto read =
-            call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
-        if (!call || use.getOperandNumber() != 2 || call.getArgs().size() != 1 || !read ||
-            read.getObject() != call.getReceiver() ||
-            ctjs::constantKey(read.getKey()) != "filter" ||
-            call->getBlock() != closure->getBlock() || !closure->isBeforeInBlock(call)) {
-            return false;
-        }
-        invoked = true;
-    }
-    return invoked;
-}
-
-bool DOMSource::confinedReplacementCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
+bool DOMSource::confinedCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
     if (!target || !closure.getUpvalues().empty() ||
-        creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
-        !host_detail::isLowercaseReplacement(target, [&] { return step(); })) {
+        creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1) {
         return false;
     }
-    bool invoked = false;
-    for (mlir::OpOperand & use : closure.getResult().getUses()) {
-        if (!step()) { return false; }
-        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-        auto read =
-            call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
-        if (!call || use.getOperandNumber() != 3 || call.getArgs().size() != 2 || !read ||
-            read.getObject() != call.getReceiver() ||
-            ctjs::constantKey(read.getKey()) != "replace" ||
-            !precedesInStructuredBody(closure, call)) {
-            return false;
+    for (const bool replacement : {false, true}) {
+        auto & body = target.getBody();
+        if (replacement
+                ? !host_detail::isLowercaseReplacement(target, [&] { return step(); })
+                : target.getUpvalueCount() != 0 ||
+                      body.front().getNumArguments() != ctjs::implicit_arguments + 1 ||
+                      llvm::any_of(
+                          body.front().getArguments().take_front(ctjs::implicit_arguments),
+                          [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
+            continue;
         }
-        invoked = true;
+        bool invoked = false, confined = true;
+        for (mlir::OpOperand & use : closure.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+            auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                             : ctjs::GetPropertyOp{};
+            if (!call || use.getOperandNumber() != (replacement ? 3u : 2u) ||
+                call.getArgs().size() != (replacement ? 2u : 1u) || !read ||
+                read.getObject() != call.getReceiver() ||
+                ctjs::constantKey(read.getKey()) != (replacement ? "replace" : "filter") ||
+                (replacement ? !precedesInStructuredBody(closure, call)
+                             : call->getBlock() != closure->getBlock() ||
+                                   !closure->isBeforeInBlock(call))) {
+                confined = false;
+                break;
+            }
+            invoked = true;
+        }
+        if (confined && invoked) { return true; }
     }
-    return invoked;
+    return false;
 }
 
 bool DOMSource::bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
@@ -136,10 +118,7 @@ bool DOMSource::bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncO
         // every symbol use before specializing, not only the first caller.
         auto module = target->getParentOfType<mlir::ModuleOp>();
         if (!target.isPrivate() || creations.lookup(*functionIndex(target)) != 0) { return true; }
-        if (remaining / 2 < operationCount) {
-            return refuse("DOM helper expansion work budget exhausted");
-        }
-        remaining -= 2 * operationCount;
+        if (!step(2 * uint64_t(operationCount))) { return false; }
         for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
                                   mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
             if (!uses) { return true; }
@@ -164,9 +143,7 @@ bool DOMSource::bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncO
     for (mlir::ValueRange arguments : invocations) {
         for (auto [index, argument] : llvm::enumerate(arguments)) {
             if (!step()) { return false; }
-            auto constant = argument.getDefiningOp<ctjs::ConstantOp>();
-            auto string = constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
-                                   : ctjs::StringAttr{};
+            auto string = ctjs::constantAttr<ctjs::StringAttr>(argument);
             auto found = stringInputs.find(argument);
             const unsigned slot = static_cast<unsigned>(index) + ctjs::implicit_arguments;
             if (!string && found == stringInputs.end()) { complete[slot] = false; }
@@ -211,8 +188,7 @@ bool DOMSource::foldConstantReplacements(ctjs::FuncOp function) {
     for (ctjs::CallOp call : calls) {
         if (!step()) { return false; }
         auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-        auto text = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
-        auto string = text ? llvm::dyn_cast<ctjs::StringAttr>(text.getValue()) : ctjs::StringAttr{};
+        auto string = ctjs::constantAttr<ctjs::StringAttr>(call.getReceiver());
         auto found = stringInputs.find(call.getReceiver());
         if (!read || read.getObject() != call.getReceiver() ||
             (!string && found == stringInputs.end()) ||
@@ -226,13 +202,8 @@ bool DOMSource::foldConstantReplacements(ctjs::FuncOp function) {
             continue;
         }
         auto factory = regexp.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-        const auto stringArgument = [](mlir::Value value) {
-            auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-            return constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
-                            : ctjs::StringAttr{};
-        };
-        auto expression = stringArgument(regexp.getArgs()[0]);
-        auto flags = stringArgument(regexp.getArgs()[1]);
+        auto expression = ctjs::constantAttr<ctjs::StringAttr>(regexp.getArgs()[0]);
+        auto flags = ctjs::constantAttr<ctjs::StringAttr>(regexp.getArgs()[1]);
         if (!factory || factory.getName() != "__ctbrowser_regexp" || !expression || !flags) {
             continue;
         }
