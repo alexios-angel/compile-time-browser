@@ -59,14 +59,9 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
                     return refuse("DOM helper observes its shadow frame");
                 }
             }
-            if (auto abrupt = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
-                auto & region = abrupt.getRegion();
-                auto thrown = region.hasOneBlock() && llvm::hasSingleElement(region.front())
-                                  ? llvm::dyn_cast<ctjs::ThrowOp>(region.front().front())
-                                  : ctjs::ThrowOp{};
-                if (!llvm::isa<mlir::scf::IfOp>(body.getParentOp()) || !abrupt.getNoInline() ||
-                    abrupt->getNumOperands() || abrupt.getNumResults() || !thrown ||
-                    region.front().getNumArguments()) {
+            if (llvm::isa<mlir::scf::ExecuteRegionOp>(operation)) {
+                auto thrown = savedThrow(&operation);
+                if (!llvm::isa<mlir::scf::IfOp>(body.getParentOp()) || !thrown) {
                     return refuse("DOM helper abrupt region requires one exact saved throw");
                 }
                 if (!step() || !step()) { return false; }

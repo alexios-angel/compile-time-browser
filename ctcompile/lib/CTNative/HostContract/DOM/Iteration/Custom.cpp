@@ -82,14 +82,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
         if (llvm::isa<ctjs::PushHandlerOp>(operation)) { return mlir::WalkResult::interrupt(); }
-        if (auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(operation)) {
-            auto region = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(thrown->getParentOp());
-            if (!region || !region.getNoInline() || region.getNumResults() ||
-                region->getNumOperands() || !region.getRegion().hasOneBlock() ||
-                region.getRegion().front().getNumArguments() ||
-                !llvm::hasSingleElement(region.getRegion().front())) {
-                return mlir::WalkResult::interrupt();
-            }
+        if (llvm::isa<ctjs::ThrowOp>(operation) &&
+            savedThrow(operation->getParentOp()) != operation) {
+            return mlir::WalkResult::interrupt();
         }
         if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
             if (invocation->getNumOperands() || !invocation.getBody().hasOneBlock() ||
@@ -2181,11 +2176,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                            ? &continuation->front().front()
                            : nullptr;
             }
-            auto terminal = llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(next);
-            if (!terminal || !terminal.getNoInline() || terminal.getNumResults() ||
-                !terminal.getRegion().hasOneBlock() ||
-                !llvm::hasSingleElement(terminal.getRegion().front()) ||
-                !llvm::isa<ctjs::ThrowOp>(terminal.getRegion().front().front())) {
+            if (!savedThrow(next)) {
                 return error("DOM iterator protected state requires an immediate saved throw");
             }
         }
@@ -2787,12 +2778,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                             if (!called) { return false; }
                             if (observableThrow) {
                                 if (!spend() || !spend()) { return false; }
-                                auto abrupt = mlir::scf::ExecuteRegionOp::create(inside, where,
-                                                                                 mlir::TypeRange{});
-                                abrupt.setNoInline(true);
-                                auto & throwing = abrupt.getRegion().emplaceBlock();
-                                mlir::OpBuilder terminal(&throwing, throwing.begin());
-                                ctjs::ThrowOp::create(terminal, where, called.getResult());
+                                emitSavedThrow(inside, where, called.getResult());
                             }
                         }
                         if (!observableThrow && state.size() > 1) {
@@ -2978,14 +2964,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 values.map(operation.getResults(), copied->getResults());
                 continue;
             }
-            if (auto region = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
-                if (!region.getNoInline() || region.getNumResults() || region->getNumOperands() ||
-                    !region.getRegion().hasOneBlock() ||
-                    region.getRegion().front().getNumArguments() ||
-                    !llvm::hasSingleElement(region.getRegion().front()) ||
-                    !llvm::isa<ctjs::ThrowOp>(region.getRegion().front().back()) || !spend()) {
-                    return false;
-                }
+            if (llvm::isa<mlir::scf::ExecuteRegionOp>(operation)) {
+                if (!savedThrow(&operation) || !spend()) { return false; }
                 at.clone(operation, values);
                 continue;
             }
@@ -3342,15 +3322,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (!spend()) { return error("DOM custom iterator budget exhausted"); }
                 if (llvm::isa<ctjs::RootOp>(observer)) { continue; }
                 auto call = llvm::dyn_cast<ctjs::CallOp>(observer);
-                auto abrupt =
-                    call ? llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(call->getNextNode())
-                         : mlir::scf::ExecuteRegionOp{};
-                auto thrown =
-                    abrupt && abrupt.getNoInline() && !abrupt.getNumResults() &&
-                            abrupt.getRegion().hasOneBlock() &&
-                            llvm::hasSingleElement(abrupt.getRegion().front())
-                        ? llvm::dyn_cast<ctjs::ThrowOp>(abrupt.getRegion().front().front())
-                        : ctjs::ThrowOp{};
+                auto thrown = call ? savedThrow(call->getNextNode()) : ctjs::ThrowOp{};
                 const bool propagates = observableThrow && thrown && call->hasOneUse() &&
                                         thrown.getValue() == call.getResult();
                 if (!call || call.getCallee() != read || call.getReceiver() != holder ||

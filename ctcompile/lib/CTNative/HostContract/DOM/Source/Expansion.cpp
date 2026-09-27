@@ -48,12 +48,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         }
         mapping.map(load.getResult(), value);
     };
-    auto abrupt = llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(call->getNextNode());
-    auto rethrow = abrupt && abrupt.getNoInline() && !abrupt.getNumResults() &&
-                           abrupt.getRegion().hasOneBlock() &&
-                           llvm::hasSingleElement(abrupt.getRegion().front())
-                       ? llvm::dyn_cast<ctjs::ThrowOp>(abrupt.getRegion().front().front())
-                       : ctjs::ThrowOp{};
+    auto rethrow = savedThrow(call->getNextNode());
     if (!rethrow || call->getNumResults() != 1 || !call->getResult(0).hasOneUse() ||
         rethrow.getValue() != call->getResult(0)) {
         rethrow = {};
@@ -856,7 +851,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         const auto payload = rethrow.getValue();
         const auto where = rethrow.getLoc();
         if (!step()) { return false; }
-        abrupt.erase();
+        rethrow->getParentOp()->erase();
         // A result used only by this immediate throw needs no scalar join.
         // Keep each payload and all its producers in their original arm.
         // ponytail: one-result tail branches only; effectful continuations
@@ -881,11 +876,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             mlir::OpBuilder at(end);
             if (!project) {
                 if (!step() || !step()) { return false; }
-                auto scope = mlir::scf::ExecuteRegionOp::create(at, where, mlir::TypeRange{});
-                scope.setNoInline(true);
-                auto & throwing = scope.getRegion().emplaceBlock();
-                mlir::OpBuilder inside(&throwing, throwing.begin());
-                ctjs::ThrowOp::create(inside, where, value);
+                emitSavedThrow(at, where, value);
                 operationCount += 2;
                 return true;
             }

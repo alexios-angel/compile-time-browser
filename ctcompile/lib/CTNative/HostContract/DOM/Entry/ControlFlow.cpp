@@ -10,13 +10,8 @@ namespace ctcompile::ctnative::dom_entry_detail {
 std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block & body,
                                       unsigned depth, mlir::Value & frame, bool & returned) {
     if (auto abrupt = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
-        auto & region = abrupt.getRegion();
-        auto thrown = region.hasOneBlock() && llvm::hasSingleElement(region.front())
-                          ? llvm::dyn_cast<ctjs::ThrowOp>(region.front().front())
-                          : ctjs::ThrowOp{};
-        if (!llvm::isa<mlir::scf::IfOp>(body.getParentOp()) || !abrupt.getNoInline() ||
-            abrupt->getNumOperands() || abrupt.getNumResults() || !thrown ||
-            region.front().getNumArguments()) {
+        auto thrown = savedThrow(abrupt);
+        if (!llvm::isa<mlir::scf::IfOp>(body.getParentOp()) || !thrown) {
             refusal = "DOM abrupt region requires one exact saved primitive throw";
             return false;
         }

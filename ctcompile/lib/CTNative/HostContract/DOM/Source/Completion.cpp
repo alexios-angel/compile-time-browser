@@ -736,13 +736,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     values.lookupOrDefault(operation.getOperand(0))};
             }
             if (auto abrupt = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
-                auto & region = abrupt.getRegion();
-                auto thrown = region.hasOneBlock() && llvm::hasSingleElement(region.front())
-                                  ? llvm::dyn_cast<ctjs::ThrowOp>(region.front().front())
-                                  : ctjs::ThrowOp{};
-                if (!depth || !abrupt.getNoInline() || abrupt->getNumOperands() ||
-                    abrupt.getNumResults() || !thrown || region.front().getNumArguments() ||
-                    !step() || !values.contains(thrown.getValue()) ||
+                auto thrown = savedThrow(abrupt);
+                if (!depth || !thrown || !step() || !values.contains(thrown.getValue()) ||
                     !dominance.dominates(thrown.getValue(), thrown) ||
                     values.lookup(thrown.getValue()).getDefiningOp<mlir::ub::PoisonOp>()) {
                     refuse("DOM helper abrupt completion requires one exact saved throw");
