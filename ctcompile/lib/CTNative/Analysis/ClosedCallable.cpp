@@ -234,6 +234,49 @@ bool usesEnvironment(ctjs::FuncOp function) {
     return found;
 }
 
+bool hasAlternateCalleeCalls(ctjs::FuncOp function, mlir::ModuleOp module) {
+    const auto index = functionIndex(function);
+    if (!index) { return false; }
+    const auto alternate = [&](mlir::Value value) {
+        return llvm::any_of(value.getUses(), [&](mlir::OpOperand & use) {
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+            return call && use.getOperandNumber() == 2 && call.getCallee() != function.getSymName();
+        });
+    };
+    bool found = false;
+    module.walk([&](ctjs::CreateClosureOp made) {
+        if (found || made.getFunction() < 0 ||
+            static_cast<unsigned>(made.getFunction()) != *index) {
+            return;
+        }
+        found |= alternate(made.getResult());
+        for (mlir::Operation * user : made.getResult().getUsers()) {
+            auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(user);
+            if (!store) { continue; }
+            module.walk([&](ctjs::LoadGlobalOp load) {
+                if (load.getName() == store.getName()) { found |= alternate(load.getResult()); }
+            });
+        }
+    });
+    return found;
+}
+
+std::optional<llvm::SmallVector<ctjs::CallDirectOp>> directCallers(ctjs::FuncOp function,
+                                                                   mlir::ModuleOp module) {
+    const auto uses = mlir::SymbolTable::getSymbolUses(function, module);
+    if (!uses) { return std::nullopt; }
+    llvm::SmallVector<ctjs::CallDirectOp> calls;
+    for (const auto & use : *uses) {
+        auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+        if (!call || call.getTarget() != function ||
+            call->getNumOperands() != function.getBody().front().getNumArguments()) {
+            return std::nullopt;
+        }
+        calls.push_back(call);
+    }
+    return calls;
+}
+
 bool closedDeclaration(ctjs::StoreGlobalOp store, ctjs::FuncOp target, mlir::ModuleOp module) {
     auto parent = store->getParentOfType<ctjs::FuncOp>();
     if (!parent || functionIndex(parent) != 0 || parent.getBody().empty() ||

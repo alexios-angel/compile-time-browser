@@ -220,50 +220,17 @@ bool Analysis::collectCallers(llvm::ArrayRef<ctjs::FuncOp> functions) {
             return mlir::WalkResult::advance();
         });
         if (charged.wasInterrupted()) { return false; }
-        const auto uses = mlir::SymbolTable::getSymbolUses(fn, module);
-        if (!uses || !closedCallableProblem(fn, module).empty()) { continue; }
+        if (!closedCallableProblem(fn, module).empty()) { continue; }
         bool argumentsObject = false;
         fn.walk([&](ctjs::MakeArgumentsOp) { argumentsObject = true; });
         if (argumentsObject) { continue; } // Non-strict arguments.callee publishes this callable.
-        llvm::SmallVector<ctjs::CallDirectOp> sites;
-        bool closed = true;
-        for (const auto & use : *uses) {
-            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
-            if (!call || call.getTarget() != fn ||
-                call->getNumOperands() != fn.getBody().front().getNumArguments()) {
-                closed = false;
-                break;
-            }
-            sites.push_back(call);
-        }
         // Specialization may keep this closure as another symbol's boxed
         // dispatch value. Those actuals belong to the original function too;
         // leave it generic instead of using only its remaining symbolic calls.
-        const auto alternate = [&](mlir::Value value) {
-            return llvm::any_of(value.getUses(), [&](mlir::OpOperand & use) {
-                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-                return call && use.getOperandNumber() == 2 && call.getTarget() != fn;
-            });
-        };
-        const auto index = functionIndex(fn);
-        if (closed && index) {
-            module.walk([&](ctjs::CreateClosureOp made) {
-                if (made.getFunction() < 0 || static_cast<unsigned>(made.getFunction()) != *index) {
-                    return;
-                }
-                closed &= !alternate(made.getResult());
-                for (mlir::Operation * user : made.getResult().getUsers()) {
-                    auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(user);
-                    if (!store) { continue; }
-                    module.walk([&](ctjs::LoadGlobalOp load) {
-                        if (load.getName() == store.getName()) {
-                            closed &= !alternate(load.getResult());
-                        }
-                    });
-                }
-            });
+        auto sites = directCallers(fn, module);
+        if (sites && !sites->empty() && !hasAlternateCalleeCalls(fn, module)) {
+            callers[fn] = std::move(*sites);
         }
-        if (closed && !sites.empty()) { callers[fn] = std::move(sites); }
     }
     return true;
 }

@@ -152,20 +152,10 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
             // Numeric closure identities are checked above; symbol uses must
             // also be a complete census of ordinary direct calls. Each slot
             // retains its actual operands, never the receiver schema group.
-            const auto uses = mlir::SymbolTable::getSymbolUses(function, module);
-            if (!uses) { return; }
-            llvm::SmallVector<mlir::Operation *, 2> callers;
-            for (const auto & use : *uses) {
-                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
-                if (!call || call.getTarget() != function ||
-                    call->getNumOperands() != function.getBody().front().getNumArguments()) {
-                    return;
-                }
-                callers.push_back(call);
-            }
-            if (callers.empty()) { return; }
+            const auto callers = directCallers(function, module);
+            if (!callers || callers->empty()) { return; }
             for (mlir::Value parameter : parameters) {
-                objectParameterCallSites_[parameter] = callers;
+                objectParameterCallSites_[parameter].assign(callers->begin(), callers->end());
             }
         });
     }

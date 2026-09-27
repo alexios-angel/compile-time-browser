@@ -5,32 +5,6 @@
 
 namespace ctcompile::ctnative {
 namespace {
-bool hasAlternateCalleeCalls(ctjs::FuncOp function, mlir::ModuleOp module) {
-    const auto index = functionIndex(function);
-    if (!index) { return false; }
-    const auto alternate = [&](mlir::Value value) {
-        return llvm::any_of(value.getUses(), [&](mlir::OpOperand & use) {
-            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-            return call && use.getOperandNumber() == 2 && call.getCallee() != function.getSymName();
-        });
-    };
-    bool found = false;
-    module.walk([&](ctjs::CreateClosureOp made) {
-        if (found || made.getFunction() < 0 ||
-            static_cast<unsigned>(made.getFunction()) != *index) {
-            return;
-        }
-        found |= alternate(made.getResult());
-        for (mlir::Operation * user : made.getResult().getUsers()) {
-            auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(user);
-            if (!store) { continue; }
-            module.walk([&](ctjs::LoadGlobalOp load) {
-                if (load.getName() == store.getName()) { found |= alternate(load.getResult()); }
-            });
-        }
-    });
-    return found;
-}
 bool sameFact(const binding_time_detail::fact & left, const binding_time_detail::fact & right) {
     // Reference identities form a set; traversal order is not a semantic
     // difference and must not keep a recursive worklist alive.

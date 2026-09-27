@@ -32,5 +32,13 @@ bool calleeSlotOnly(ctjs::LoadGlobalOp load, bool rooted = false);
 bool implicitArgumentsRooted(mlir::Block & entry);
 // Whether `function` creates, reads or writes a closure or cell environment.
 bool usesEnvironment(ctjs::FuncOp function);
+// Whether a closure of `function`, directly or through a global it is stored
+// to, is the callee value of a call_direct of another symbol: a specialized
+// body's boxed dispatch, whose actuals belong to `function` too.
+bool hasAlternateCalleeCalls(ctjs::FuncOp function, mlir::ModuleOp module);
+// Every symbol use of `function`, when each is a call_direct of it passing
+// exactly its entry arguments; null otherwise.
+std::optional<llvm::SmallVector<ctjs::CallDirectOp>> directCallers(ctjs::FuncOp function,
+                                                                   mlir::ModuleOp module);
 std::string closedCallableProblem(ctjs::FuncOp function, mlir::ModuleOp module);
 } // namespace ctcompile::ctnative
