@@ -234,6 +234,9 @@ public:
     /// reason - a write through the pointer is a write the box has to report.
     static llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> groupCells(
         mlir::Operation * top);
+    /// The native type a Map key/read/write tag (mapScalarTag or
+    /// "nullable_string") names, or null.
+    static mlir::Type mapTagType(mlir::MLIRContext * c, llvm::StringRef tag);
 
 private:
     /// The one direct call protected by invoke has a checked normal-only

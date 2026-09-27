@@ -593,12 +593,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
                 if (globals->objectGlobal(load)) { return; }
                 if (globals->mutableScalarRead(load)) { return; }
                 const auto * scalar = globals->scalarRead(load);
-                if (scalar &&
-                    (scalar->alternatives.tag() == mlir::TypeID::get<ctjs::NumberAttr>() ||
-                     scalar->alternatives.tag() == mlir::TypeID::get<ctjs::BooleanAttr>() ||
-                     scalar->alternatives.tag() == mlir::TypeID::get<ctjs::StringAttr>())) {
-                    return;
-                }
+                if (scalar && !mapScalarTag(scalar->alternatives).empty()) { return; }
             }
             if (!calleeSlotOnly(load)) {
                 reason = "standard Map identity is unproved with other host/global value reads";

@@ -16,15 +16,6 @@
 namespace ctcompile::ctnative::map_detail {
 namespace {
 
-// This analysis also runs from CTJS-only binding-time and partial-evaluation
-// callers. Keep semantic tags independent of native dialect type storage.
-enum class payloadKind {
-    Unknown,
-    Boolean,
-    Number,
-    String
-};
-
 struct fact {
     mlir::Value instance;
     mlir::Value key;
@@ -149,13 +140,7 @@ struct state {
         }
         return {};
     }
-    payloadKind scalar(mlir::Value value) const {
-        const auto tag = alternatives(value).tag();
-        if (tag == mlir::TypeID::get<ctjs::BooleanAttr>()) { return payloadKind::Boolean; }
-        if (tag == mlir::TypeID::get<ctjs::NumberAttr>()) { return payloadKind::Number; }
-        if (tag == mlir::TypeID::get<ctjs::StringAttr>()) { return payloadKind::String; }
-        return payloadKind::Unknown;
-    }
+    llvm::StringRef scalar(mlir::Value value) const { return mapScalarTag(alternatives(value)); }
 
     bool contains(fact value) const {
         return llvm::any_of(entries, [&](const fact & old) { return old.matches(value); });
@@ -238,7 +223,7 @@ struct presenceAnalysis {
     llvm::DenseMap<mlir::Operation *, effects> summaries;
     llvm::DenseSet<mlir::Operation *> proved;
     llvm::DenseMap<mlir::Operation *, PrimitiveAlternatives> payloads;
-    llvm::DenseMap<mlir::Operation *, payloadKind> writes, keys;
+    llvm::DenseMap<mlir::Operation *, llvm::StringRef> writes, keys;
     llvm::DenseSet<mlir::Operation *> sizes;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<fact>> publications;
     llvm::DenseMap<mlir::Operation *, mlir::Value> storedOrigins;
@@ -632,11 +617,11 @@ struct presenceAnalysis {
             const auto action = actions.lookup(op);
             if (nativeMapKeyAction(action) && !call.getArgs().empty()) {
                 const auto kind = current.scalar(call.getArgs()[0]);
-                if (kind != payloadKind::Unknown) { keys[op] = kind; }
+                if (!kind.empty()) { keys[op] = kind; }
             }
             if (action == "set") {
                 const auto kind = current.scalar(call.getArgs()[1]);
-                if (kind != payloadKind::Unknown) { writes[op] = kind; }
+                if (!kind.empty()) { writes[op] = kind; }
                 write(current, call);
             } else if (action == "has") {
                 current.scalars[call.getResult()] =
@@ -748,10 +733,7 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
         if (!alternatives.known) { continue; }
         const auto mask = alternatives.truthy | alternatives.falsy;
         using Primitive = PrimitiveAlternatives;
-        llvm::StringRef tag;
-        if (mask == Primitive::Boolean) { tag = "bool"; }
-        if (mask == Primitive::Number) { tag = "number"; }
-        if (mask == Primitive::String) { tag = "string"; }
+        llvm::StringRef tag = mapScalarTag(alternatives);
         if ((mask & Primitive::String) != 0 &&
             (mask & (Primitive::Null | Primitive::Undefined)) != 0 &&
             (mask & ~(Primitive::String | Primitive::Null | Primitive::Undefined)) == 0) {
@@ -764,16 +746,10 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
             read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
         }
     }
-    for (const auto & [call, kind] : analysis.keys) {
-        const auto tag = kind == payloadKind::Boolean  ? "bool"
-                         : kind == payloadKind::Number ? "number"
-                                                       : "string";
+    for (const auto & [call, tag] : analysis.keys) {
         call->setAttr(kNativeMapKeyType, mlir::StringAttr::get(call->getContext(), tag));
     }
-    for (const auto & [write, kind] : analysis.writes) {
-        const auto tag = kind == payloadKind::Boolean  ? "bool"
-                         : kind == payloadKind::Number ? "number"
-                                                       : "string";
+    for (const auto & [write, tag] : analysis.writes) {
         write->setAttr(kNativeMapWriteType, mlir::StringAttr::get(write->getContext(), tag));
     }
     for (ctjs::CallOp read : optionalReads) {

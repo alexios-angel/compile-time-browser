@@ -3,6 +3,7 @@
 #define CTCOMPILE_CTNATIVE_ANALYSIS_NATIVEMAP_H
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/PrimitiveAlternatives.h"
 #include "mlir/IR/BuiltinOps.h"
 
 #include <cstdint>
@@ -73,6 +74,16 @@ inline bool plainMapConstruction(ctjs::ConstructOp made) {
     auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
     return load && load.getName() == "Map" && made.getArgs().empty() &&
            made.getNewTarget() == made.getCallee();
+}
+
+/// The Map scalar tag of a proved one-kind primitive set - "bool", "number" or
+/// "string" - or empty. Tags stay semantic: CTJS-only callers run this proof.
+inline llvm::StringRef mapScalarTag(PrimitiveAlternatives alternatives) {
+    const auto tag = alternatives.tag();
+    if (tag == mlir::TypeID::get<ctjs::BooleanAttr>()) { return "bool"; }
+    if (tag == mlir::TypeID::get<ctjs::NumberAttr>()) { return "number"; }
+    if (tag == mlir::TypeID::get<ctjs::StringAttr>()) { return "string"; }
+    return {};
 }
 
 /// A proved keys/values snapshot or its confined standard Array.from copy.

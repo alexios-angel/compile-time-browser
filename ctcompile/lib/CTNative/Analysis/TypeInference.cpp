@@ -52,6 +52,14 @@
 namespace ctcompile::ctnative {
 using ctjs::constantKey;
 
+mlir::Type TypeInference::mapTagType(mlir::MLIRContext * c, llvm::StringRef tag) {
+    if (tag == "bool") { return BoolType::get(c); }
+    if (tag == "number") { return NumType::getDouble(c); }
+    if (tag == "string") { return StrType::get(c, StrEncoding::UTF8); }
+    if (tag == "nullable_string") { return OptType::get(c, StrType::get(c, StrEncoding::UTF8)); }
+    return {};
+}
+
 void TypeValue::print(llvm::raw_ostream & os) const {
     if (type_ == nullptr) {
         os << "<uninitialized>";
@@ -604,14 +612,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 // including unvisited writes that depend on this same read.
                 // Seed it immediately: widening first cannot be undone by a
                 // later iteration of the monotone solver.
-                if (auto readType = call->getAttrOfType<mlir::StringAttr>(kNativeMapReadType)) {
-                    const auto tag = readType.getValue();
-                    if (tag == "bool") { mapAnswer = BoolType::get(c); }
-                    if (tag == "number") { mapAnswer = NumType::getDouble(c); }
-                    if (tag == "string") { mapAnswer = StrType::get(c, StrEncoding::UTF8); }
-                    if (tag == "nullable_string") {
-                        mapAnswer = OptType::get(c, StrType::get(c, StrEncoding::UTF8));
-                    }
+                auto readType = call->getAttrOfType<mlir::StringAttr>(kNativeMapReadType);
+                if (auto tagged = readType ? mapTagType(c, readType.getValue()) : mlir::Type{}) {
+                    mapAnswer = tagged;
                 }
             } else if (action == "clear") {
                 mapAnswer = absentType(c);

@@ -49,11 +49,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         if (nativeMapKeyAction(action)) {
             mlir::Type exact;
             if (auto proof = call->getAttrOfType<mlir::StringAttr>(kNativeMapKeyType)) {
-                const auto tag = proof.getValue();
-                auto * context = call.getContext();
-                if (tag == "bool") { exact = BoolType::get(context); }
-                if (tag == "number") { exact = NumType::getDouble(context); }
-                if (tag == "string") { exact = StrType::get(context, StrEncoding::UTF8); }
+                exact = mapTagType(call.getContext(), proof.getValue());
             }
             mapKeys_[group].push_back({call.getArgs()[0], exact});
         }
