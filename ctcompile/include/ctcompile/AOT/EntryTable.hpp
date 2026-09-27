@@ -3,6 +3,8 @@
 #include <ctbrowser/aot/aot_entry.h>
 #include <ctbrowser/script/bytecode.hpp>
 
+#include "ctcompile/Support/CppLiterals.hpp"
+
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -29,8 +31,9 @@
 // `stepShip`. Nothing else has to be transported: no side file, no serialized
 // metadata, no ordinal anybody counted twice.
 //
-// THIS FILE IS A SECOND COPY OF THAT NAMING RULE, and that cost is paid
-// deliberately. The alternative is a build-time tool that compiles the source a
+// THIS FILE RESTATES THAT NAMING RULE - the sanitiser is the shared
+// `cpp::identifier`, the `_<index>` suffix is spelled here again - and that
+// cost is paid deliberately. The alternative is a build-time tool that compiles the source a
 // third time to emit a metadata table - a third copy plus a build edge. What
 // makes the duplication safe is that a drift is LOUD RATHER THAN SILENT:
 // `install` refuses when a symbol in the table matches no function, and
@@ -93,31 +96,16 @@ struct install_report {
     [[nodiscard]] bool ok() const noexcept { return error.empty(); }
 };
 
-// THE IMPORTER'S NAMING RULE, reproduced. See the header comment for why this
+// THE IMPORTER'S NAMING RULE, restated. See the header comment for why this
 // is a copy and what stops it drifting quietly.
 //
-// `BytecodeImport.cpp`, at the `ctjs.func` it creates per function:
-//     std::string name = proto.name.empty() ? std::string{"fn"} : proto.name;
-//     for (char & c : name) { if (!isalnum(c) && c != '_') { c = '_'; } }
-//     name += "$" + std::to_string(index);
-// `CTJSToEmitC.cpp::c_identifier` then maps `$` to `_`, and the two together
-// cannot collide: the sanitised part contains no `$` and the index is decimal,
-// so `a$1` becomes `a_1` and `a_1$2` becomes `a_1_2`.
-//
-// ASCII BY HAND rather than `std::isalnum`, for the reason `core/algorithms.hpp`
-// gives about case folding: `isalnum` is locale-sensitive, and a symbol that
-// depends on `LC_ALL` is a symbol the linker resolves on one machine and not on
-// another.
+// `BytecodeImport.cpp` names each `ctjs.func` `cpp::identifier(name or "fn")`
+// + `$` + index, and `EmitC/Support.cpp::c_identifier` then maps `$` to `_`.
+// The two together cannot collide: the sanitised part contains no `$` and the
+// index is decimal, so `a$1` becomes `a_1` and `a_1$2` becomes `a_1_2`.
 [[nodiscard]] inline std::string entry_symbol(std::string_view name, std::size_t index) {
-    std::string symbol{name.empty() ? std::string_view{"fn"} : name};
-    for (char & c : symbol) {
-        const auto raw = static_cast<unsigned char>(c);
-        const bool alnum =
-            (raw >= '0' && raw <= '9') || (raw >= 'A' && raw <= 'Z') || (raw >= 'a' && raw <= 'z');
-        if (!alnum && c != '_') { c = '_'; }
-    }
-    symbol += "_" + std::to_string(index);
-    return symbol;
+    return cpp::identifier(name.empty() ? std::string_view{"fn"} : name) + "_" +
+           std::to_string(index);
 }
 
 // STAMP A GENERATED TABLE ONTO A PROGRAM.

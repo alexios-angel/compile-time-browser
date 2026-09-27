@@ -89,9 +89,7 @@ mlir::Value nonzero(mlir::OpBuilder & build, mlir::Location where, mlir::Value u
 // names distinct: `a$1` becomes `a_1` and `a_1$2` becomes `a_1_2`.
 std::string c_identifier(llvm::StringRef symbol) {
     std::string spelled = symbol.str();
-    for (char & c : spelled) {
-        if (c == '$') { c = '_'; }
-    }
+    std::ranges::replace(spelled, '$', '_');
     return spelled;
 }
 

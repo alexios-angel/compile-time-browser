@@ -1,4 +1,5 @@
 #include "Bytecode/Importer.h"
+#include "ctcompile/Support/CppLiterals.hpp"
 
 // THE IMPORTER.
 //
@@ -79,11 +80,8 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         //
         // The source name stays in front of it, because a trace that says
         // @createCanvas$412 is worth reading and @fn412 is not.
-        std::string name = proto.name.empty() ? std::string{"fn"} : proto.name;
-        for (char & c : name) {
-            if (std::isalnum(static_cast<unsigned char>(c)) == 0 && c != '_') { c = '_'; }
-        }
-        name += "$" + std::to_string(index);
+        const std::string name =
+            cpp::identifier(proto.name.empty() ? "fn" : proto.name) + "$" + std::to_string(index);
         auto function = ctjs::FuncOp::create(
             into, into.getUnknownLoc(), into.getStringAttr(name), mlir::TypeAttr::get(signature),
             into.getI32IntegerAttr(static_cast<std::int32_t>(proto.upvalues.size())),

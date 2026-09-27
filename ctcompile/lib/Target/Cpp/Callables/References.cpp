@@ -1,4 +1,5 @@
 #include "Body.h"
+#include "ctcompile/Support/CppLiterals.hpp"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
@@ -7,14 +8,10 @@ namespace ctcompile::cpp {
 namespace {
 
 bool containsIdentifier(llvm::StringRef text, llvm::StringRef name) {
-    const auto part = [](char ch) {
-        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
-               ch == '_';
-    };
     for (std::size_t at = text.find(name); at != llvm::StringRef::npos;
          at = text.find(name, at + name.size())) {
-        if ((at == 0 || !part(text[at - 1])) &&
-            (at + name.size() == text.size() || !part(text[at + name.size()]))) {
+        if ((at == 0 || !is_identifier_char(text[at - 1])) &&
+            (at + name.size() == text.size() || !is_identifier_char(text[at + name.size()]))) {
             return true;
         }
     }

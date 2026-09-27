@@ -1,4 +1,5 @@
 #include "LoweringSupport.h"
+#include "ctcompile/Support/CppLiterals.hpp"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -415,11 +416,7 @@ std::string siteOfFunction(ctjs::FuncOp fn) {
 }
 
 std::string cIdentifier(llvm::StringRef symbol) {
-    std::string name = symbol.str();
-    for (char & ch : name) {
-        if (!(std::isalnum(static_cast<unsigned char>(ch)) || ch == '_')) { ch = '_'; }
-    }
-    return name;
+    return cpp::identifier(symbol);
 }
 
 // BUILT ONCE PER LOWERING, not per function: FrozenRewritePatternSet is what
