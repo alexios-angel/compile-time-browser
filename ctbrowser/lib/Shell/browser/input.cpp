@@ -6,10 +6,16 @@
 namespace ctbrowser::shell {
 
 namespace {
-// How far one wheel notch moves a page, and how many VISUAL LINES it moves a
-// textarea - lines rather than pixels, because a field scrolls by whole lines.
+// How far an arrow key moves a page, and how many VISUAL LINES a wheel notch
+// moves a textarea - lines rather than pixels, because a field scrolls by
+// whole lines.
 constexpr float wheel_step = 53.0f;
 constexpr std::ptrdiff_t wheel_lines = 3;
+// How far one wheel notch moves a scroller: the 100 pixels its WheelEvent
+// reports as deltaY (dispatch_wheel), so the page scrolls by exactly what it
+// was told - a driver's `scroll` of N pixels moves N (scrollend-event-fired-
+// to-document asserts the distance).
+constexpr float notch_pixels = 100.0f;
 // How long a resting wheel keeps its transaction's target. UI Events leaves it
 // to the user agent; half a second is inside what the engines use.
 constexpr double wheel_transaction_ms = 500;
@@ -64,8 +70,8 @@ bool browser::handle(const input_event & event) {
         if (event.wheel_x == 0 && scroll_field_under(event)) { return true; }
         // Then the nearest scroll container that can move that way, and the
         // viewport when none can.
-        const float dx = event.wheel_x * wheel_step;
-        const float dy = -event.wheel_y * wheel_step;
+        const float dx = event.wheel_x * notch_pixels;
+        const float dy = -event.wheel_y * notch_pixels;
         if (bindings_->wheel_scroll(target, dx, dy)) { return true; }
         scroll_to(scroll_x_ + dx, scroll_y_ + dy);
         return true;
@@ -398,32 +404,38 @@ bool browser::handle_key(const input_event & event) {
         }
     }
     if (select_key(event)) { return true; }
+    // THE SCROLLING KEYS move the nearest scroll container of what has focus
+    // that can still go that way - a button inside a scrolled box scrolls the
+    // box - and the viewport when none can, the same chain a wheel notch
+    // takes. Home and End are a distance no box is longer than.
     const float page = static_cast<float>(options_.height) * 0.9f;
+    constexpr float all_the_way = 1e9f;
+    float dx = 0;
+    float dy = 0;
     if (event.key == "ArrowDown") {
-        scroll_by(wheel_step);
-        return true;
+        dy = wheel_step;
+    } else if (event.key == "ArrowUp") {
+        dy = -wheel_step;
+    } else if (event.key == "ArrowRight") {
+        dx = wheel_step;
+    } else if (event.key == "ArrowLeft") {
+        dx = -wheel_step;
+    } else if (event.key == "PageDown" || event.key == "Space") {
+        dy = page;
+    } else if (event.key == "PageUp") {
+        dy = -page;
+    } else if (event.key == "Home") {
+        dy = -all_the_way;
+    } else if (event.key == "End") {
+        dy = all_the_way;
+    } else {
+        return false;
     }
-    if (event.key == "ArrowUp") {
-        scroll_by(-wheel_step);
-        return true;
-    }
-    if (event.key == "PageDown" || event.key == "Space") {
-        scroll_by(page);
-        return true;
-    }
-    if (event.key == "PageUp") {
-        scroll_by(-page);
-        return true;
-    }
-    if (event.key == "Home") {
-        scroll_to(0);
-        return true;
-    }
-    if (event.key == "End") {
-        scroll_to(max_scroll());
-        return true;
-    }
-    return false;
+    if (focused_ && bindings_->wheel_scroll(focused_, dx, dy)) { return true; }
+    // Sideways arrows only ever scrolled a box: the page keeps them.
+    if (dy == 0) { return false; }
+    scroll_to(scroll_x_, std::clamp(scroll_y_ + dy, 0.0f, max_scroll()));
+    return true;
 }
 
 bool browser::dispatch_key(std::string_view type, const input_event & event) {

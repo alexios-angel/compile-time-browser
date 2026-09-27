@@ -135,11 +135,27 @@ void test_a_touch_is_pointer_then_touch_events() {
              std::string{"seen=touch touchstart:text:false touchmove:text:true 0/1/true/true"});
 }
 
+// scrollend-event-fires-for-repeat-key-ending-after-scroll-container-end-is-
+// reached: the scrolling keys move the focused scroller, not the page.
+void test_keys_scroll_the_focused_container() {
+    browser page{browser_options{400, 300}};
+    page.load_html(page_source);
+    page.frame();
+    (void)page.run_script("box.tabIndex = 0; box.focus();");
+    (void)page.handle(input_event::key_press("PageDown"));
+    (void)page.handle(input_event::key_press("End"));
+    (void)page.run_script("console.log('keys=' + (box.scrollTop === box.scrollHeight - "
+                          "box.clientHeight));");
+    CHECK_EQ(logged(page, "keys="), std::string{"keys=true"});
+    check(page.scroll_y() == 0, "and the page stays where it was");
+}
+
 } // namespace
 
 int main() {
     test_wheel_cancelability_and_mousewheel();
     test_wheel_scrolls_the_container_and_scrollend_follows();
     test_a_touch_is_pointer_then_touch_events();
+    test_keys_scroll_the_focused_container();
     REPORT("input_wheel_touch");
 }
