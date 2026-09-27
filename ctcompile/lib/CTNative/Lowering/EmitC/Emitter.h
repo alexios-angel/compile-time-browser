@@ -21,6 +21,13 @@ inline constexpr llvm::StringLiteral kDOMElementViewVectorType =
 ec::CallOpaqueOp callWithConstValueOperands(mlir::OpBuilder & builder, mlir::Location where,
                                             mlir::TypeRange results, mlir::StringAttr callee,
                                             mlir::ValueRange operands);
+// The single result of callWithConstValueOperands.
+mlir::Value callValue(mlir::OpBuilder & builder, mlir::Location where, mlir::Type result,
+                      const llvm::Twine & callee, mlir::ValueRange operands);
+// The single result of `receiver.name(operands...)`.
+mlir::Value memberCall(mlir::OpBuilder & builder, mlir::Location where, mlir::Type result,
+                       mlir::Value receiver, const llvm::Twine & name,
+                       mlir::ValueRange operands = {});
 
 struct lowering {
     mlir::DataFlowSolver & solver;

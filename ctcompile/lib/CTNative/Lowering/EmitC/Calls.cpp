@@ -16,4 +16,19 @@ ec::CallOpaqueOp callWithConstValueOperands(mlir::OpBuilder & builder, mlir::Loc
     return call;
 }
 
+mlir::Value callValue(mlir::OpBuilder & builder, mlir::Location where, mlir::Type result,
+                      const llvm::Twine & callee, mlir::ValueRange operands) {
+    return callWithConstValueOperands(builder, where, mlir::TypeRange{result},
+                                      builder.getStringAttr(callee), operands)
+        .getResult(0);
+}
+
+mlir::Value memberCall(mlir::OpBuilder & builder, mlir::Location where, mlir::Type result,
+                       mlir::Value receiver, const llvm::Twine & name, mlir::ValueRange operands) {
+    return ec::MemberCallOpaqueOp::create(builder, where, mlir::TypeRange{result}, receiver,
+                                          builder.getStringAttr(name), mlir::ArrayAttr{},
+                                          mlir::ArrayAttr{}, operands)
+        .getResult(0);
+}
+
 } // namespace ctcompile::ctnative::lowering_detail

@@ -87,10 +87,8 @@ bool lowering::replaceEnvironment(mlir::Operation * op) {
             made->hasAttr(kNativeStoredCallable) && !sessionTargets.contains(target)
                 ? "ctn_bind_" + cIdentifier(target)
                 : "std::make_tuple";
-        result = callWithConstValueOperands(at, op->getLoc(),
-                                            mlir::TypeRange{made.getResult().getType()},
-                                            at.getStringAttr(builder), made.getUpvalues())
-                     .getResult(0);
+        result =
+            callValue(at, op->getLoc(), made.getResult().getType(), builder, made.getUpvalues());
         if (const auto name = names.lookup(target); callableBodies.contains(name)) {
             result.getDefiningOp()->setAttr("ctnative.callable_create",
                                             mlir::FlatSymbolRefAttr::get(context, name));
@@ -98,10 +96,7 @@ bool lowering::replaceEnvironment(mlir::Operation * op) {
     } else if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op);
                read && op->hasAttr(kNativeEnvironmentRead)) {
         const auto callee = "std::get<" + std::to_string(read.getIndex()) + ">";
-        result = callWithConstValueOperands(
-                     at, op->getLoc(), mlir::TypeRange{read.getResult().getType()},
-                     at.getStringAttr(callee), mlir::ValueRange{read.getClosure()})
-                     .getResult(0);
+        result = callValue(at, op->getLoc(), read.getResult().getType(), callee, read.getClosure());
     } else {
         return false;
     }

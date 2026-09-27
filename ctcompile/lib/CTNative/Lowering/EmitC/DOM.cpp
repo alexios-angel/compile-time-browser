@@ -195,10 +195,7 @@ void lowering::prepareDOMStyles(ec::FuncOp function) {
     };
     for (auto value : domStyleValues) {
         if (auto style = domStyles.lookup(value)) {
-            bind(value, callWithConstValueOperands(at, value.getLoc(), mlir::TypeRange{pointer},
-                                                   at.getStringAttr("std::addressof"),
-                                                   mlir::ValueRange{style})
-                            .getResult(0));
+            bind(value, callValue(at, value.getLoc(), pointer, "std::addressof", style));
         } else if (auto call = domCalls.find(value.getDefiningOp()); call != domCalls.end()) {
             bind(value, source(call->second.element));
         } else if (auto read = value.getDefiningOp<ctjs::GetPropertyOp>()) {
@@ -316,17 +313,11 @@ void lowering::prepareDOMStrings() {
         const auto rawString = ec::OpaqueType::get(context, kRawStringType);
         mlir::Value text;
         if (isNullableStringCarrier(refinement.optional.getType())) {
-            text = callWithConstValueOperands(at, refinement.optional.getLoc(),
-                                              mlir::TypeRange{rawString},
-                                              at.getStringAttr("ctnative::global_string"),
-                                              mlir::ValueRange{refinement.optional})
-                       .getResult(0);
+            text = callValue(at, refinement.optional.getLoc(), rawString, "ctnative::global_string",
+                             refinement.optional);
         } else {
-            text = ec::MemberCallOpaqueOp::create(at, refinement.optional.getLoc(),
-                                                  mlir::TypeRange{rawString}, refinement.optional,
-                                                  at.getStringAttr("value"), mlir::ArrayAttr{},
-                                                  mlir::ArrayAttr{}, mlir::ValueRange{})
-                       .getResult(0);
+            text = memberCall(at, refinement.optional.getLoc(), rawString, refinement.optional,
+                              "value");
         }
         auto value = convertScalar(at, refinement.optional.getLoc(), text,
                                    carrierType(context, carrier::string));
@@ -352,19 +343,13 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         mlir::OpBuilder body = mlir::OpBuilder::atBlockBegin(&scope.getThenRegion().front());
         const auto value = thrown.getValue();
         if (value.getType() == ec::OpaqueType::get(context, kDOMOptionalStringType)) {
-            auto present = ec::MemberCallOpaqueOp::create(
-                body, where, mlir::TypeRange{body.getI1Type()}, value,
-                body.getStringAttr("has_value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-                mlir::ValueRange{});
-            auto selected = ec::IfOp::create(body, where, present.getResult(0), true);
+            auto present = memberCall(body, where, body.getI1Type(), value, "has_value");
+            auto selected = ec::IfOp::create(body, where, present, true);
             mlir::OpBuilder yes = mlir::OpBuilder::atBlockBegin(&selected.getThenRegion().front());
-            auto text = ec::MemberCallOpaqueOp::create(
-                yes, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)}, value,
-                yes.getStringAttr("value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-                mlir::ValueRange{});
-            CppThrowOp::create(yes, where,
-                               convertScalar(yes, where, text.getResult(0),
-                                             carrierType(context, carrier::string)));
+            auto text = memberCall(yes, where, ec::OpaqueType::get(context, kRawStringType), value,
+                                   "value");
+            CppThrowOp::create(
+                yes, where, convertScalar(yes, where, text, carrierType(context, carrier::string)));
             ec::YieldOp::create(yes, where);
             mlir::OpBuilder no = mlir::OpBuilder::atBlockBegin(&selected.getElseRegion().front());
             auto absent = ec::LiteralOp::create(no, where,
@@ -397,21 +382,17 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
          documentCall->second.kind == HostDOMMethod::documentQuerySelector)) {
         mlir::ValueRange arguments;
         if (!documentRoot) { arguments = llvm::cast<ctjs::CallOp>(operation).getArgs(); }
-        auto result = callWithConstValueOperands(
+        mlir::Value value = callValue(
             at, where,
-            mlir::TypeRange{ec::OpaqueType::get(
-                context, documentAll ? llvm::StringRef(kDOMElementViewVectorType)
-                                     : "std::optional<ctnative::js_element_t>")},
-            at.getStringAttr(documentRoot  ? "ctnative::document.documentElement"
-                             : documentAll ? "ctnative::document.querySelectorAll"
-                                           : "ctnative::document.querySelector"),
+            ec::OpaqueType::get(context, documentAll ? llvm::StringRef(kDOMElementViewVectorType)
+                                                     : "std::optional<ctnative::js_element_t>"),
+            documentRoot  ? "ctnative::document.documentElement"
+            : documentAll ? "ctnative::document.querySelectorAll"
+                          : "ctnative::document.querySelector",
             arguments);
-        mlir::Value value = result.getResult(0);
         if (!documentAll) {
-            value = callWithConstValueOperands(
-                        at, where, mlir::TypeRange{carrierType(context, carrier::domElement)},
-                        at.getStringAttr("ctnative::element_or_null"), mlir::ValueRange{value})
-                        .getResult(0);
+            value = callValue(at, where, carrierType(context, carrier::domElement),
+                              "ctnative::element_or_null", value);
         }
         domStyles[value] = domStyles.lookup(domDocumentParameter);
         if (auto style = domStylePointers.lookup(operation->getResult(0))) {
@@ -433,24 +414,15 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     if (domSymbolDescriptions.contains(operation)) {
         auto read = llvm::cast<ctjs::GetPropertyOp>(operation);
         const auto type = carrierType(context, carrier::nullableString);
-        auto description = ec::MemberCallOpaqueOp::create(
-            at, where,
-            mlir::TypeRange{ec::OpaqueType::get(context, "std::optional<ctnative::js_string>")},
-            read.getObject(), at.getStringAttr("description"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-            mlir::ValueRange{});
-        auto present = ec::MemberCallOpaqueOp::create(
-            at, where, mlir::TypeRange{at.getI1Type()}, description.getResult(0),
-            at.getStringAttr("has_value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-            mlir::ValueRange{});
-        auto branch =
-            mlir::scf::IfOp::create(at, where, mlir::TypeRange{type}, present.getResult(0), true);
+        auto description = memberCall(
+            at, where, ec::OpaqueType::get(context, "std::optional<ctnative::js_string>"),
+            read.getObject(), "description");
+        auto present = memberCall(at, where, at.getI1Type(), description, "has_value");
+        auto branch = mlir::scf::IfOp::create(at, where, mlir::TypeRange{type}, present, true);
         auto inside = mlir::OpBuilder::atBlockBegin(&branch.getThenRegion().front());
-        auto text = ec::MemberCallOpaqueOp::create(
-            inside, where, mlir::TypeRange{carrierType(context, carrier::string)},
-            description.getResult(0), inside.getStringAttr("value"), mlir::ArrayAttr{},
-            mlir::ArrayAttr{}, mlir::ValueRange{});
-        mlir::scf::YieldOp::create(inside, where,
-                                   convertScalar(inside, where, text.getResult(0), type));
+        auto text =
+            memberCall(inside, where, carrierType(context, carrier::string), description, "value");
+        mlir::scf::YieldOp::create(inside, where, convertScalar(inside, where, text, type));
         inside.setInsertionPointToStart(&branch.getElseRegion().front());
         mlir::scf::YieldOp::create(
             inside, where, convertScalar(inside, where, absentConstant(inside, where), type));
@@ -460,11 +432,10 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     }
     if (auto found = domDatasetValues.find(operation); found != domDatasetValues.end()) {
         auto read = llvm::cast<ctjs::GetPropertyOp>(operation);
-        auto value = callWithConstValueOperands(
-            at, where, mlir::TypeRange{rawString}, at.getStringAttr("ctnative::dataset_value"),
-            mlir::ValueRange{found->second, rawText(read.getKey())});
+        auto value = callValue(at, where, rawString, "ctnative::dataset_value",
+                               mlir::ValueRange{found->second, rawText(read.getKey())});
         read.getResult().replaceAllUsesWith(
-            convertScalar(at, where, value.getResult(0), read.getResult().getType()));
+            convertScalar(at, where, value, read.getResult().getType()));
         read.erase();
         return true;
     }
@@ -474,22 +445,14 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             read.getObject().getType() == ec::OpaqueType::get(context, kDOMElementViewVectorType);
         auto index = ec::CastOp::create(at, where, ec::OpaqueType::get(context, "std::size_t"),
                                         convertScalar(at, where, read.getKey(), at.getF64Type()));
-        mlir::Value value =
-            ec::MemberCallOpaqueOp::create(
-                at, where,
-                mlir::TypeRange{domStringVectorIndices.contains(operation) ? mlir::Type(rawString)
-                                : typedElements ? mlir::Type(ec::OpaqueType::get(
-                                                      context, "ctnative::js_element_t"))
-                                                : read.getResult().getType()},
-                read.getObject(), at.getStringAttr("at"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-                mlir::ValueRange{index.getResult()})
-                .getResult(0);
+        mlir::Value value = memberCall(
+            at, where,
+            domStringVectorIndices.contains(operation) ? mlir::Type(rawString)
+            : typedElements ? mlir::Type(ec::OpaqueType::get(context, "ctnative::js_element_t"))
+                            : read.getResult().getType(),
+            read.getObject(), "at", index.getResult());
         if (typedElements) {
-            value = ec::MemberCallOpaqueOp::create(
-                        at, where, mlir::TypeRange{read.getResult().getType()}, value,
-                        at.getStringAttr("value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-                        mlir::ValueRange{})
-                        .getResult(0);
+            value = memberCall(at, where, read.getResult().getType(), value, "value");
         }
         if (domElementVectorIndices.contains(operation)) {
             domStyles[value] = domStyles.lookup(read.getObject());
@@ -522,24 +485,20 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                 : optionalString;
         const mlir::Type produced =
             parses ? carrierType(context, carrier::json) : carrierType(context, carrier::string);
-        auto decoded = callWithConstValueOperands(
-            at, where, mlir::TypeRange{fallible},
-            at.getStringAttr(parses ? "ctbrowser::parse_json" : "ctbrowser::decode_uri_component"),
-            mlir::ValueRange{rawText(call.getArgs().front())});
-        auto present = ec::MemberCallOpaqueOp::create(
-            at, where, mlir::TypeRange{at.getI1Type()}, decoded.getResult(0),
-            at.getStringAttr("has_value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-            mlir::ValueRange{});
-        auto branch =
-            mlir::scf::IfOp::create(at, where, invocation.getResultTypes(), present.getResult(0));
+        auto decoded =
+            callValue(at, where, fallible,
+                      parses ? "ctbrowser::parse_json" : "ctbrowser::decode_uri_component",
+                      rawText(call.getArgs().front()));
+        auto present = memberCall(at, where, at.getI1Type(), decoded, "has_value");
+        auto branch = mlir::scf::IfOp::create(at, where, invocation.getResultTypes(), present);
         branch.getThenRegion().takeBody(invocation.getNormalBody());
         branch.getElseRegion().takeBody(invocation.getUnwindBody());
         auto & success = branch.getThenRegion().front();
         mlir::OpBuilder inside = mlir::OpBuilder::atBlockBegin(&success);
         // Move only on success. The original input and failure continuation
         // remain untouched; foreign allocation failures never select this else.
-        auto value = ec::ExpressionOp::create(inside, where, produced,
-                                              mlir::ValueRange{decoded.getResult(0)}, false);
+        auto value =
+            ec::ExpressionOp::create(inside, where, produced, mlir::ValueRange{decoded}, false);
         value.createBody();
         inside.setInsertionPointToStart(&value.getRegion().front());
         auto moved = ec::CallOpaqueOp::create(
@@ -548,12 +507,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                 context, llvm::cast<ec::OpaqueType>(fallible).getValue().str() + " &&")},
             inside.getStringAttr("std::move"),
             mlir::ValueRange{value.getRegion().front().getArgument(0)});
-        auto extracted = ec::MemberCallOpaqueOp::create(
-            inside, where, mlir::TypeRange{parses ? produced : mlir::Type(rawString)},
-            moved.getResult(0), inside.getStringAttr("value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-            mlir::ValueRange{});
-        ec::YieldOp::create(inside, where,
-                            convertScalar(inside, where, extracted.getResult(0), produced));
+        auto extracted = memberCall(inside, where, parses ? produced : mlir::Type(rawString),
+                                    moved.getResult(0), "value");
+        ec::YieldOp::create(inside, where, convertScalar(inside, where, extracted, produced));
         success.getArgument(0).replaceAllUsesWith(value.getResult());
         success.eraseArgument(0);
         branch.getElseRegion().front().eraseArgument(0);
@@ -647,11 +603,10 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         // Null, array and object alternatives share JavaScript's object tag.
         for (auto [type, tag] :
              {std::pair{"bool", "boolean"}, {"double", "number"}, {"std::string", "string"}}) {
-            auto holds = callWithConstValueOperands(
-                inside, where, mlir::TypeRange{inside.getI1Type()},
-                inside.getStringAttr(std::string("std::holds_alternative<") + type + ">"),
-                mlir::ValueRange{expression.getRegion().front().getArgument(0)});
-            result = ec::ConditionalOp::create(inside, where, stringType, holds.getResult(0),
+            auto holds = callValue(inside, where, inside.getI1Type(),
+                                   std::string("std::holds_alternative<") + type + ">",
+                                   expression.getRegion().front().getArgument(0));
+            result = ec::ConditionalOp::create(inside, where, stringType, holds,
                                                stringConstant(inside, where, tag), result);
         }
         ec::YieldOp::create(inside, where, result);
@@ -710,102 +665,71 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             call.getArgs()[0].getType() == carrierType(context, carrier::string)) {
             description.push_back(call.getArgs()[0]);
         }
-        swap(callWithConstValueOperands(at, where,
-                                        mlir::TypeRange{carrierType(context, carrier::symbol)},
-                                        at.getStringAttr("ctnative::Symbol"), description)
-                 .getResult(0));
+        swap(callValue(at, where, carrierType(context, carrier::symbol), "ctnative::Symbol",
+                       description));
         return true;
     }
     if (edge.kind == HostDOMMethod::symbolToString || edge.kind == HostDOMMethod::symbolValueOf) {
         const bool text = edge.kind == HostDOMMethod::symbolToString;
-        swap(ec::MemberCallOpaqueOp::create(
-                 at, where,
-                 mlir::TypeRange{carrierType(context, text ? carrier::string : carrier::symbol)},
-                 call.getReceiver(), at.getStringAttr(text ? "toString" : "valueOf"),
-                 mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{})
-                 .getResult(0));
+        swap(memberCall(at, where, carrierType(context, text ? carrier::string : carrier::symbol),
+                        call.getReceiver(), text ? "toString" : "valueOf"));
         return true;
     }
     if (edge.kind == HostDOMMethod::decodeURIComponent || edge.kind == HostDOMMethod::jsonParse) {
         return true;
     }
     if (edge.kind == HostDOMMethod::startsWith) {
-        auto value = ec::MemberCallOpaqueOp::create(
-            at, where, mlir::TypeRange{at.getI1Type()}, call.getReceiver(),
-            at.getStringAttr("startsWith"), mlir::ArrayAttr{}, mlir::ArrayAttr{}, call.getArgs());
-        swap(value.getResult(0));
+        swap(memberCall(at, where, at.getI1Type(), call.getReceiver(), "startsWith",
+                        call.getArgs()));
         return true;
     }
     if (edge.kind == HostDOMMethod::removeStringPrefix) {
         auto prefix = stringConstant(at, where, "bs");
-        auto matches = ec::MemberCallOpaqueOp::create(
-            at, where, mlir::TypeRange{at.getI1Type()}, call.getReceiver(),
-            at.getStringAttr("startsWith"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-            mlir::ValueRange{prefix});
+        auto matches =
+            memberCall(at, where, at.getI1Type(), call.getReceiver(), "startsWith", prefix);
         const auto indexType = ec::OpaqueType::get(context, "std::size_t");
         auto zero = ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "0"));
         auto two = ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "2"));
-        auto offset =
-            ec::ConditionalOp::create(at, where, indexType, matches.getResult(0), two, zero);
-        auto value = ec::MemberCallOpaqueOp::create(at, where, mlir::TypeRange{rawString},
-                                                    rawText(call.getReceiver()),
-                                                    at.getStringAttr("substr"), mlir::ArrayAttr{},
-                                                    mlir::ArrayAttr{}, mlir::ValueRange{offset});
-        swap(value.getResult(0));
+        auto offset = ec::ConditionalOp::create(at, where, indexType, matches, two, zero);
+        swap(memberCall(at, where, rawString, rawText(call.getReceiver()), "substr",
+                        mlir::ValueRange{offset}));
         return true;
     }
     if (edge.kind == HostDOMMethod::replaceUppercase) {
         auto callback = edge.callback;
-        auto value = callWithConstValueOperands(
-            at, where, mlir::TypeRange{carrierType(context, carrier::string)},
-            at.getStringAttr("ctnative::replace_uppercase<" + names.lookup(callback.getSymName()) +
-                             ">"),
-            mlir::ValueRange{call.getReceiver()});
-        swap(value.getResult(0));
+        swap(callValue(at, where, carrierType(context, carrier::string),
+                       "ctnative::replace_uppercase<" + names.lookup(callback.getSymName()) + ">",
+                       call.getReceiver()));
         return true;
     }
     if (edge.kind == HostDOMMethod::filterStrings) {
         auto callback = edge.callback;
-        auto value = callWithConstValueOperands(
-            at, where, mlir::TypeRange{ec::OpaqueType::get(context, kStringVectorType)},
-            at.getStringAttr("ctnative::filter_strings<" + names.lookup(callback.getSymName()) +
-                             ">"),
-            mlir::ValueRange{call.getReceiver()});
-        swap(value.getResult(0));
+        swap(callValue(at, where, ec::OpaqueType::get(context, kStringVectorType),
+                       "ctnative::filter_strings<" + names.lookup(callback.getSymName()) + ">",
+                       call.getReceiver()));
         return true;
     }
     if (edge.kind == HostDOMMethod::stringLowercaseUnit) {
         const auto unitsType = ec::OpaqueType::get(context, "std::u16string");
-        auto units = callWithConstValueOperands(at, where, mlir::TypeRange{unitsType},
-                                                at.getStringAttr("ctbrowser::wtf8_to_utf16"),
-                                                mlir::ValueRange{rawText(call.getReceiver())});
-        auto empty = ec::MemberCallOpaqueOp::create(
-            at, where, mlir::TypeRange{at.getI1Type()}, units.getResult(0),
-            at.getStringAttr("empty"), mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{});
-        auto branch = mlir::scf::IfOp::create(at, where, mlir::TypeRange{unitsType},
-                                              empty.getResult(0), true);
+        auto units = callValue(at, where, unitsType, "ctbrowser::wtf8_to_utf16",
+                               rawText(call.getReceiver()));
+        auto empty = memberCall(at, where, at.getI1Type(), units, "empty");
+        auto branch = mlir::scf::IfOp::create(at, where, mlir::TypeRange{unitsType}, empty, true);
         mlir::OpBuilder inside = mlir::OpBuilder::atBlockBegin(&branch.getThenRegion().front());
-        mlir::scf::YieldOp::create(inside, where, units.getResults());
+        mlir::scf::YieldOp::create(inside, where, units);
         inside.setInsertionPointToStart(&branch.getElseRegion().front());
-        auto first = ec::MemberCallOpaqueOp::create(
-            inside, where, mlir::TypeRange{ec::OpaqueType::get(context, "char16_t")},
-            units.getResult(0), inside.getStringAttr("front"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-            mlir::ValueRange{});
-        auto lowered = callWithConstValueOperands(
-            inside, where, mlir::TypeRange{unitsType},
-            inside.getStringAttr("ctbrowser::unicode_lowercase_unit"), first.getResults());
-        mlir::scf::YieldOp::create(inside, where, lowered.getResults());
-        auto value = callWithConstValueOperands(at, where, mlir::TypeRange{rawString},
-                                                at.getStringAttr("ctbrowser::utf16_to_wtf8"),
-                                                branch.getResults());
-        swap(value.getResult(0));
+        auto first =
+            memberCall(inside, where, ec::OpaqueType::get(context, "char16_t"), units, "front");
+        auto lowered =
+            callValue(inside, where, unitsType, "ctbrowser::unicode_lowercase_unit", first);
+        mlir::scf::YieldOp::create(inside, where, lowered);
+        swap(callValue(at, where, rawString, "ctbrowser::utf16_to_wtf8", branch.getResults()));
         return true;
     }
     if (edge.kind == HostDOMMethod::stringCharAt || edge.kind == HostDOMMethod::stringSlice) {
         const auto unitsType = ec::OpaqueType::get(context, "std::u16string");
-        auto units = callWithConstValueOperands(at, where, mlir::TypeRange{unitsType},
-                                                at.getStringAttr("ctbrowser::wtf8_to_utf16"),
-                                                mlir::ValueRange{rawText(call.getReceiver())});
+        auto units = callValue(at, where, unitsType, "ctbrowser::wtf8_to_utf16",
+                               rawText(call.getReceiver()));
         const auto indexType = ec::OpaqueType::get(context, "std::size_t");
         // The host proof admits Number/Boolean/null literals, undefined and
         // one arithmetic operation on Number literals, including produced NaN.
@@ -819,27 +743,16 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         const bool nullEnd =
             call.getArgs().size() == 2 && call.getArgs()[1].getType() == optionalString;
         mlir::Value length;
-        if (startIndex || endIndex) {
-            length = ec::MemberCallOpaqueOp::create(at, where, mlir::TypeRange{indexType},
-                                                    units.getResult(0), at.getStringAttr("size"),
-                                                    mlir::ArrayAttr{}, mlir::ArrayAttr{},
-                                                    mlir::ValueRange{})
-                         .getResult(0);
-        }
+        if (startIndex || endIndex) { length = memberCall(at, where, indexType, units, "size"); }
         const auto offset = [&](mlir::Value argument) -> mlir::Value {
             // Truncate before testing the sign: -0.5 selects index zero, not
             // the end of the String, for both charAt and slice.
-            auto truncated =
-                callWithConstValueOperands(
-                    at, where, mlir::TypeRange{at.getF64Type()}, at.getStringAttr("std::trunc"),
-                    mlir::ValueRange{convertScalar(at, where, argument, at.getF64Type())})
-                    .getResult(0);
+            auto truncated = callValue(at, where, at.getF64Type(), "std::trunc",
+                                       convertScalar(at, where, argument, at.getF64Type()));
             auto zero = ec::ConstantOp::create(at, where, at.getF64Type(), at.getF64FloatAttr(0.0));
-            auto nan = callWithConstValueOperands(at, where, mlir::TypeRange{at.getI1Type()},
-                                                  at.getStringAttr("std::isnan"),
-                                                  mlir::ValueRange{truncated});
-            auto number = ec::ConditionalOp::create(at, where, at.getF64Type(), nan.getResult(0),
-                                                    zero, truncated);
+            auto nan = callValue(at, where, at.getI1Type(), "std::isnan", truncated);
+            auto number =
+                ec::ConditionalOp::create(at, where, at.getF64Type(), nan, zero, truncated);
             auto negative =
                 ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt, number, zero);
             auto negated = ec::UnaryMinusOp::create(at, where, at.getF64Type(), number);
@@ -892,13 +805,8 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                 ec::ConditionalOp::create(at, where, indexType, reversed, range.front(), end);
             range.push_back(ec::SubOp::create(at, where, indexType, limit, range.front()));
         }
-        auto part = ec::MemberCallOpaqueOp::create(at, where, mlir::TypeRange{unitsType},
-                                                   units.getResult(0), at.getStringAttr("substr"),
-                                                   mlir::ArrayAttr{}, mlir::ArrayAttr{}, range);
-        auto value = callWithConstValueOperands(at, where, mlir::TypeRange{rawString},
-                                                at.getStringAttr("ctbrowser::utf16_to_wtf8"),
-                                                mlir::ValueRange{part.getResult(0)});
-        swap(value.getResult(0));
+        auto part = memberCall(at, where, unitsType, units, "substr", range);
+        swap(callValue(at, where, rawString, "ctbrowser::utf16_to_wtf8", part));
         return true;
     }
     llvm::SmallVector<mlir::Value> arguments;
@@ -937,13 +845,12 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     }
     if (edge.kind == HostDOMMethod::matches || edge.returnsElement() ||
         edge.returnsElementVector()) {
-        auto receiver = callWithConstValueOperands(
-            at, where, mlir::TypeRange{ec::OpaqueType::get(context, "ctnative::js_element_t")},
-            at.getStringAttr("ctnative::js_element_t"),
-            mlir::ValueRange{arguments[0], arguments[1]});
-        domStyles[receiver.getResult(0)] = arguments[1];
+        auto receiver =
+            callValue(at, where, ec::OpaqueType::get(context, "ctnative::js_element_t"),
+                      "ctnative::js_element_t", mlir::ValueRange{arguments[0], arguments[1]});
+        domStyles[receiver] = arguments[1];
         arguments.erase(arguments.begin(), arguments.begin() + 2);
-        arguments.insert(arguments.begin(), receiver.getResult(0));
+        arguments.insert(arguments.begin(), receiver);
     } else {
         if (edge.kind == HostDOMMethod::setAttribute &&
             isNullableCarrier(arguments.back().getType())) {
@@ -999,15 +906,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             : callee == "ctbrowser::string_to_number" ? mlir::Type(at.getF64Type())
             : edge.returnsString()                    ? mlir::Type(rawString)
                                                       : type;
-        mlir::Value value =
-            callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{resultType},
-                                       at.getStringAttr(callee), arguments)
-                .getResult(0);
+        mlir::Value value = callValue(at, call.getLoc(), resultType, callee, arguments);
         if (edge.returnsElement()) {
-            value = callWithConstValueOperands(at, where, mlir::TypeRange{type},
-                                               at.getStringAttr("ctnative::element_or_null"),
-                                               mlir::ValueRange{value})
-                        .getResult(0);
+            value = callValue(at, where, type, "ctnative::element_or_null", value);
         }
         if (edge.returnsElement() || edge.returnsElementVector()) {
             // Every chain begins with a parameter's selector call, which already

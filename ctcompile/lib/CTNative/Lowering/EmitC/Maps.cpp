@@ -42,9 +42,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
             : llvm::isa<StrType>(map.getKeyType())
                 ? std::string{"ctnative::make_string_to_number_map"}
                 : ("ctnative::make_number_map<" + mapKeySpelling(map.getKeyType()) + ">").str();
-        swap(callWithConstValueOperands(b, where, mlir::TypeRange{made.getResult().getType()},
-                                        b.getStringAttr(callee), mlir::ValueRange{})
-                 .getResult(0));
+        swap(callValue(b, where, made.getResult().getType(), callee, mlir::ValueRange{}));
         return true;
     }
     if (const llvm::StringRef action = nativeMapAction(o); !action.empty()) {
@@ -70,10 +68,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
             if (isBooleanStringCarrier(value.getType())) {
                 const auto helper = tag == "string" ? "std::get<ctnative::js_string>"
                                                     : "std::get<ctnative::js_boolean_t>";
-                return callWithConstValueOperands(b, where,
-                                                  mlir::TypeRange{carrierType(context, scalar)},
-                                                  b.getStringAttr(helper), mlir::ValueRange{value})
-                    .getResult(0);
+                return callValue(b, where, carrierType(context, scalar), helper, value);
             }
             if (isNullableCarrier(value.getType()) || isNullableStringCarrier(value.getType())) {
                 // Only a rederived exact tag can narrow an owning temporary.
@@ -112,10 +107,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
                 spelling = key ? mixedMapKeySpelling(type) : mixedMapSpelling(type);
                 if (spelling.empty()) { return value; }
             }
-            return callWithConstValueOperands(
-                       b, where, mlir::TypeRange{ec::OpaqueType::get(context, spelling)},
-                       b.getStringAttr(spelling), mlir::ValueRange{value})
-                .getResult(0);
+            return callValue(b, where, ec::OpaqueType::get(context, spelling), spelling, value);
         };
         if (map && args.size() >= 2) {
             if (llvm::isa<OptType>(map.getKeyType()) &&

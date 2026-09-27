@@ -305,19 +305,15 @@ bool lowering::replaceSessionAllocation(mlir::Operation * operation) {
     if (!storage.owner) {
         // The complete factory proof excludes callbacks and publication here.
         // Construct once at the earlier source allocation, in either order.
-        storage.owner =
-            callWithConstValueOperands(
-                at, where,
-                mlir::TypeRange{domDataSession.empty()
-                                    ? mlir::Type(ec::OpaqueType::get(
-                                          context, "std::shared_ptr<" + storage.tableName + ">"))
-                                    : mlir::Type(ec::PointerType::get(
-                                          ec::OpaqueType::get(context, storage.tableName)))},
-                at.getStringAttr(domDataSession.empty()
-                                     ? "std::make_shared<" + storage.tableName + ">"
-                                     : "reset_data_table_" + std::to_string(found->second)),
-                mlir::ValueRange{})
-                .getResult(0);
+        storage.owner = callValue(
+            at, where,
+            domDataSession.empty()
+                ? mlir::Type(
+                      ec::OpaqueType::get(context, "std::shared_ptr<" + storage.tableName + ">"))
+                : mlir::Type(ec::PointerType::get(ec::OpaqueType::get(context, storage.tableName))),
+            domDataSession.empty() ? "std::make_shared<" + storage.tableName + ">"
+                                   : "reset_data_table_" + std::to_string(found->second),
+            mlir::ValueRange{});
     }
     mlir::Value value = storage.owner;
     if (llvm::isa<ctjs::ConstructOp>(operation)) {
@@ -330,14 +326,11 @@ bool lowering::replaceSessionAllocation(mlir::Operation * operation) {
             sessionAllocations.erase(found);
             return true;
         }
-        value =
-            callWithConstValueOperands(
-                at, where, mlir::TypeRange{storage.borrowedType},
-                at.getStringAttr(domDataSession.empty() ? "ctnative::invoke_session<&" +
-                                                              storage.tableName + "::capture_map>"
-                                                        : "ctnative::data_map"),
-                mlir::ValueRange{storage.owner})
-                .getResult(0);
+        value = callValue(at, where, storage.borrowedType,
+                          domDataSession.empty()
+                              ? "ctnative::invoke_session<&" + storage.tableName + "::capture_map>"
+                              : "ctnative::data_map",
+                          storage.owner);
     }
     operation->getResult(0).replaceAllUsesWith(value);
     sessionAllocations.erase(found);
@@ -358,23 +351,18 @@ bool lowering::replaceMethodTable(mlir::Operation * op) {
             // The complete family proves this callee and its sole Map capture.
             // Borrow the private table's Map for the direct member call.
             const auto mapType = sessionMaps.front().borrowedType;
-            args.front() = callWithConstValueOperands(at, op->getLoc(), mlir::TypeRange{mapType},
-                                                      at.getStringAttr("ctnative::data_map"),
-                                                      mlir::ValueRange{call.getCalleeValue()})
-                               .getResult(0);
-            auto invoked = callWithConstValueOperands(
-                at, op->getLoc(), mlir::TypeRange{call.getResult().getType()},
-                at.getStringAttr(names.lookup(call.getCallee())), args);
-            call.getResult().replaceAllUsesWith(invoked.getResult(0));
+            args.front() =
+                callValue(at, op->getLoc(), mapType, "ctnative::data_map", call.getCalleeValue());
+            auto invoked = callValue(at, op->getLoc(), call.getResult().getType(),
+                                     names.lookup(call.getCallee()), args);
+            call.getResult().replaceAllUsesWith(invoked);
             eraseIfUnused(op);
             return true;
         }
-        auto invoked = callWithConstValueOperands(
-            at, op->getLoc(), mlir::TypeRange{call.getResult().getType()},
-            at.getStringAttr(session == sessionCalls.end() ? "ctnative::invoke_callable"
-                                                           : session->second),
-            args);
-        call.getResult().replaceAllUsesWith(invoked.getResult(0));
+        auto invoked = callValue(
+            at, op->getLoc(), call.getResult().getType(),
+            session == sessionCalls.end() ? "ctnative::invoke_callable" : session->second, args);
+        call.getResult().replaceAllUsesWith(invoked);
         eraseIfUnused(op);
         return true;
     }
@@ -382,10 +370,9 @@ bool lowering::replaceMethodTable(mlir::Operation * op) {
     if (site.empty()) { return false; }
     const auto name = "ctnative::method_" + cIdentifier(site);
     if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(op)) {
-        auto created = callWithConstValueOperands(
-            at, op->getLoc(), mlir::TypeRange{made.getResult().getType()},
-            at.getStringAttr("std::make_shared<" + name + ">"), mlir::ValueRange{});
-        made.getResult().replaceAllUsesWith(created.getResult(0));
+        auto created = callValue(at, op->getLoc(), made.getResult().getType(),
+                                 "std::make_shared<" + name + ">", mlir::ValueRange{});
+        made.getResult().replaceAllUsesWith(created);
     } else {
         const auto key = op->getAttrOfType<mlir::StringAttr>(kNativeTableField).getValue();
         const auto member = "<&" + name + "::m_" + key.str() + ">";
@@ -395,11 +382,9 @@ bool lowering::replaceMethodTable(mlir::Operation * op) {
                 eraseIfUnused(op);
                 return true;
             }
-            auto value = callWithConstValueOperands(
-                at, op->getLoc(), mlir::TypeRange{get.getResult().getType()},
-                at.getStringAttr("ctnative::method_get" + member),
-                mlir::ValueRange{get.getObject()});
-            get.getResult().replaceAllUsesWith(value.getResult(0));
+            auto value = callValue(at, op->getLoc(), get.getResult().getType(),
+                                   "ctnative::method_get" + member, get.getObject());
+            get.getResult().replaceAllUsesWith(value);
         } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
             auto closure = set.getValue().getDefiningOp<ctjs::CreateClosureOp>();
             if (closure && sessionTables.contains(site) &&

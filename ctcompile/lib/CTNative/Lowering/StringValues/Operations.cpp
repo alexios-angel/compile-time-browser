@@ -14,12 +14,10 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         read && read.getObject().getType() == string) {
         // Admission proved the length key before key constants were lowered.
         // ND-1: the engine's String length counts its stored UTF-8 bytes.
-        auto size = callWithConstValueOperands(
-            b, where, mlir::TypeRange{ec::OpaqueType::get(context, "std::size_t")},
-            b.getStringAttr("std::size"),
-            mlir::ValueRange{convertScalar(b, where, read.getObject(),
-                                           ec::OpaqueType::get(context, kRawStringType))});
-        auto count = ec::CastOp::create(b, where, b.getF64Type(), size.getResult(0));
+        auto size = callValue(b, where, ec::OpaqueType::get(context, "std::size_t"), "std::size",
+                              convertScalar(b, where, read.getObject(),
+                                            ec::OpaqueType::get(context, kRawStringType)));
+        auto count = ec::CastOp::create(b, where, b.getF64Type(), size);
         swap(convertScalar(b, where, count, carrierType(context, carrier::number)));
         return true;
     }
@@ -42,10 +40,8 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op);
         binary && binary.getKind() == ctjs::BinaryKind::Add &&
         isNumberStringCarrier(binary.getResult().getType())) {
-        swap(callWithConstValueOperands(b, where, mlir::TypeRange{binary.getResult().getType()},
-                                        b.getStringAttr("ctnative::add"),
-                                        mlir::ValueRange{binary.getLhs(), binary.getRhs()})
-                 .getResult(0));
+        swap(callValue(b, where, binary.getResult().getType(), "ctnative::add",
+                       mlir::ValueRange{binary.getLhs(), binary.getRhs()}));
         return true;
     }
     if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op);
@@ -58,11 +54,8 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
             {kNullableNumberStringType, "ctnative::nullable_number_string_typeof"}};
         if (auto helper = helpers.find(opaqueSpelling(unary.getOperand().getType()));
             helper != helpers.end()) {
-            auto result =
-                callWithConstValueOperands(
-                    b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
-                    b.getStringAttr(helper->second), mlir::ValueRange{unary.getOperand()})
-                    .getResult(0);
+            auto result = callValue(b, where, ec::OpaqueType::get(context, kRawStringType),
+                                    helper->second, unary.getOperand());
             swap(convertScalar(b, where, result, op->getResult(0).getType()));
             return true;
         }
@@ -94,9 +87,7 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
     } else {
         return false;
     }
-    auto value = callWithConstValueOperands(b, where, mlir::TypeRange{result},
-                                            b.getStringAttr(helper), operands)
-                     .getResult(0);
+    auto value = callValue(b, where, result, helper, operands);
     swap(convertScalar(b, where, value, op->getResult(0).getType()));
     return true;
 }

@@ -231,11 +231,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     }
     if (auto object = llvm::dyn_cast<CreateObjectOp>(o)) {
         if (o->hasAttr(kNativeObjectIdentity)) {
-            swap(callWithConstValueOperands(
-                     b, where, mlir::TypeRange{object.getResult().getType()},
-                     b.getStringAttr("std::make_shared<ctnative::identity_object>"),
-                     mlir::ValueRange{})
-                     .getResult(0));
+            swap(callValue(b, where, object.getResult().getType(),
+                           "std::make_shared<ctnative::identity_object>", mlir::ValueRange{}));
             return;
         }
         // The struct, by value, in this frame. Fields with observable
@@ -282,10 +279,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         return;
     }
     if (vectorLengthReads.contains(o)) {
-        swap(callWithConstValueOperands(b, where, mlir::TypeRange{numeric},
-                                        b.getStringAttr("ctnative::vec_length"),
-                                        mlir::ValueRange{cellPlace(b, where, o->getOperand(0))})
-                 .getResult(0));
+        swap(callValue(b, where, numeric, "ctnative::vec_length",
+                       cellPlace(b, where, o->getOperand(0))));
         return;
     }
     if (vectorIndexReads.contains(o)) {
@@ -295,10 +290,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         const auto storageType =
             isNumberCarrier(resultType) ? carrierType(context, carrier::nullable) : resultType;
         const auto value =
-            callWithConstValueOperands(
-                b, where, mlir::TypeRange{storageType}, b.getStringAttr("ctnative::vec_at"),
-                mlir::ValueRange{cellPlace(b, where, o->getOperand(0)), o->getOperand(1)})
-                .getResult(0);
+            callValue(b, where, storageType, "ctnative::vec_at",
+                      mlir::ValueRange{cellPlace(b, where, o->getOperand(0)), o->getOperand(1)});
         swap(convertScalar(b, where, value, resultType));
         return;
     }
@@ -394,10 +387,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             swap(ec::BitwiseRightShiftOp::create(b, where, numeric, l, r));
             return;
         case BinaryKind::UShr:
-            swap(ec::MemberCallOpaqueOp::create(
-                     b, where, mlir::TypeRange{numeric}, l, b.getStringAttr("unsigned_shift_right"),
-                     mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{r})
-                     .getResult(0));
+            swap(memberCall(b, where, numeric, l, "unsigned_shift_right", r));
             return;
         default: llvm_unreachable("admission refused it");
         }
@@ -430,25 +420,17 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                 swap(stringConstant(b, where, "symbol"));
             } else if (isObjectValueCarrier(u.getOperand().getType())) {
                 needsObjectValue = true;
-                swap(convertScalar(
-                    b, where,
-                    callWithConstValueOperands(
-                        b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
-                        b.getStringAttr("ctnative::object_typeof"),
-                        mlir::ValueRange{u.getOperand()})
-                        .getResult(0),
-                    carrierType(context, carrier::string)));
+                swap(convertScalar(b, where,
+                                   callValue(b, where, ec::OpaqueType::get(context, kRawStringType),
+                                             "ctnative::object_typeof", u.getOperand()),
+                                   carrierType(context, carrier::string)));
             } else if (isIdentityCarrier(u.getOperand().getType())) {
                 swap(stringConstant(b, where, "object"));
             } else if (isNullableCarrier(u.getOperand().getType())) {
-                swap(convertScalar(
-                    b, where,
-                    callWithConstValueOperands(
-                        b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
-                        b.getStringAttr("ctnative::scalar_typeof"),
-                        mlir::ValueRange{u.getOperand()})
-                        .getResult(0),
-                    carrierType(context, carrier::string)));
+                swap(convertScalar(b, where,
+                                   callValue(b, where, ec::OpaqueType::get(context, kRawStringType),
+                                             "ctnative::scalar_typeof", u.getOperand()),
+                                   carrierType(context, carrier::string)));
             } else {
                 swap(stringConstant(b, where,
                                     u.getOperand().getType() == numeric          ? "number"
@@ -473,18 +455,14 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             needsObjectValue = true;
             const auto helper = cmp.getKind() == CompareKind::Eq ? "ctnative::object_equal"
                                                                  : "ctnative::object_strict_equal";
-            swap(callWithConstValueOperands(b, where, mlir::TypeRange{boolean},
-                                            b.getStringAttr(helper), mlir::ValueRange{left, right})
-                     .getResult(0));
+            swap(callValue(b, where, boolean, helper, mlir::ValueRange{left, right}));
             return;
         }
         if (equality && (isNullableCarrier(left.getType()) || isNullableCarrier(right.getType()) ||
                          left.getType() != right.getType())) {
             const auto helper = cmp.getKind() == CompareKind::Eq ? "ctnative::scalar_equal"
                                                                  : "ctnative::scalar_strict_equal";
-            swap(callWithConstValueOperands(b, where, mlir::TypeRange{boolean},
-                                            b.getStringAttr(helper), mlir::ValueRange{left, right})
-                     .getResult(0));
+            swap(callValue(b, where, boolean, helper, mlir::ValueRange{left, right}));
             return;
         }
         if (!equality) {
@@ -563,10 +541,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     if (auto store = llvm::dyn_cast<StoreGlobalOp>(o)) {
         mlir::Value value = store.getValue();
         if (scalarStores.erase(o) && isObjectValueCarrier(value.getType())) {
-            value = callWithConstValueOperands(
-                        b, where, mlir::TypeRange{carrierType(context, carrier::nullable)},
-                        b.getStringAttr("ctnative::global_scalar"), mlir::ValueRange{value})
-                        .getResult(0);
+            value = callValue(b, where, carrierType(context, carrier::nullable),
+                              "ctnative::global_scalar", value);
         }
         ec::AssignOp::create(b, where, lvalueOfGlobal(b, where, store.getName()),
                              convertScalar(b, where, value, globalStorageType(store.getName())));
@@ -621,10 +597,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                     mlir::Value loaded = convertScalar(b, where, lvalueOfGlobal(b, where, name),
                                                        globalStorageType(name));
                     mlir::Value current =
-                        callWithConstValueOperands(
-                            b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
-                            b.getStringAttr("ctnative::global_string"), mlir::ValueRange{loaded})
-                            .getResult(0);
+                        callValue(b, where, ec::OpaqueType::get(context, kRawStringType),
+                                  "ctnative::global_string", loaded);
                     mlir::Value label = ec::LiteralOp::create(
                         b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
                         b.getStringAttr(cpp::c_string_literal(name.str())));
@@ -638,15 +612,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                     ec::PointerType::get(ec::OpaqueType::get(context, "const char"));
                 mlir::Value loaded = convertScalar(b, where, lvalueOfGlobal(b, where, name),
                                                    carrierType(context, carrier::nullable));
-                mlir::Value current =
-                    callWithConstValueOperands(
-                        b, where,
-                        mlir::TypeRange{isBoolean ? boolean
-                                                  : ec::OpaqueType::get(context, kNumberType)},
-                        b.getStringAttr(isBoolean ? "ctnative::global_boolean"
-                                                  : "ctnative::global_number"),
-                        mlir::ValueRange{loaded})
-                        .getResult(0);
+                mlir::Value current = callValue(
+                    b, where, isBoolean ? boolean : ec::OpaqueType::get(context, kNumberType),
+                    isBoolean ? "ctnative::global_boolean" : "ctnative::global_number", loaded);
                 if (isBoolean) {
                     const auto literal = [&](llvm::StringRef spelling) -> mlir::Value {
                         return ec::LiteralOp::create(b, where, textType, b.getStringAttr(spelling));
@@ -656,11 +624,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                                                   literal("\"true\""), literal("\"false\""));
                 } else {
                     // C varargs consume binary64, not the JavaScript value class.
-                    current = ec::MemberCallOpaqueOp::create(
-                                  b, where, mlir::TypeRange{b.getF64Type()}, current,
-                                  b.getStringAttr("value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-                                  mlir::ValueRange{})
-                                  .getResult(0);
+                    current = memberCall(b, where, b.getF64Type(), current, "value");
                 }
                 mlir::Value format = ec::LiteralOp::create(
                     b, where, textType,
