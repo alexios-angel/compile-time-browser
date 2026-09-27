@@ -889,24 +889,20 @@ const HostSlotEdge * HostContractAnalysis::property(ctjs::GetPropertyOp read) co
 }
 
 const HostCallableEdge * HostContractAnalysis::callable(mlir::Operation * call) const {
-    for (const HostCallableEdge & edge : checkedCalls) {
-        if (edge.call == call) { return &edge; }
-    }
-    return nullptr;
+    auto found = llvm::find_if(checkedCalls, [&](const auto & edge) { return edge.call == call; });
+    return found == checkedCalls.end() ? nullptr : &*found;
 }
 
 const HostScalarGlobalRead * HostContractAnalysis::scalarRead(ctjs::LoadGlobalOp read) const {
-    for (const HostScalarGlobalRead & edge : checkedScalarReads) {
-        if (edge.read == read) { return &edge; }
-    }
-    return nullptr;
+    auto found =
+        llvm::find_if(checkedScalarReads, [&](const auto & edge) { return edge.read == read; });
+    return found == checkedScalarReads.end() ? nullptr : &*found;
 }
 
 const HostObjectGlobalRead * HostContractAnalysis::objectRead(ctjs::LoadGlobalOp read) const {
-    for (const HostObjectGlobalRead & edge : checkedObjectReads) {
-        if (edge.read == read) { return &edge; }
-    }
-    return nullptr;
+    auto found =
+        llvm::find_if(checkedObjectReads, [&](const auto & edge) { return edge.read == read; });
+    return found == checkedObjectReads.end() ? nullptr : &*found;
 }
 
 } // namespace ctcompile::ctnative

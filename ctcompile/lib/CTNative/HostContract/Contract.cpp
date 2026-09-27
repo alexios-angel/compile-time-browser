@@ -6,6 +6,7 @@
 #include "mlir/IR/AsmState.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -39,10 +40,9 @@ llvm::Error names(const llvm::json::Object & object, llvm::StringRef field,
 }
 
 bool keys(const llvm::json::Object & object, llvm::ArrayRef<llvm::StringRef> allowed) {
-    for (const auto & member : object) {
-        if (!llvm::is_contained(allowed, member.first.str())) { return false; }
-    }
-    return true;
+    return llvm::all_of(object, [&](const auto & member) {
+        return llvm::is_contained(allowed, member.first.str());
+    });
 }
 
 bool closedSourceIntrinsic(llvm::StringRef name) {
@@ -359,16 +359,9 @@ std::string hostContractFingerprint(mlir::ModuleOp module) {
     std::string text;
     llvm::raw_string_ostream stream(text);
     module.print(stream, mlir::OpPrintingFlags().printGenericOpForm().enableDebugInfo(false));
-    const auto digest = llvm::SHA256::hash(llvm::ArrayRef<std::uint8_t>(
-        reinterpret_cast<const std::uint8_t *>(text.data()), text.size()));
-    constexpr char hex[] = "0123456789abcdef";
-    std::string result;
-    result.reserve(64);
-    for (const std::uint8_t byte : digest) {
-        result.push_back(hex[byte >> 4]);
-        result.push_back(hex[byte & 15]);
-    }
-    return result;
+    return llvm::toHex(llvm::SHA256::hash(llvm::ArrayRef<std::uint8_t>(
+                           reinterpret_cast<const std::uint8_t *>(text.data()), text.size())),
+                       /*LowerCase=*/true);
 }
 
 } // namespace ctcompile::ctnative

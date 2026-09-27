@@ -51,13 +51,10 @@ bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
     for (mlir::Operation & operation : region.front()) {
         if (!step()) { return false; }
         if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-            std::optional<bool> selected;
-            for (auto proof : branches) {
-                if (proof.operation == branch) {
-                    selected = proof.selected;
-                    break;
-                }
-            }
+            const auto proof = llvm::find_if(
+                branches, [&](const auto & candidate) { return candidate.operation == branch; });
+            const auto selected =
+                proof == branches.end() ? std::nullopt : std::optional(proof->selected);
             for (unsigned arm = 0; arm < 2; ++arm) {
                 if (selected && arm != (*selected ? 0u : 1u)) { continue; }
                 if (!identitySafeRegion(branch->getRegion(arm), stack)) { return false; }
@@ -66,12 +63,9 @@ bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
         }
         ctjs::FuncOp callee;
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation)) {
-            for (auto proof : calls) {
-                if (proof.operation == call) {
-                    callee = proof.target;
-                    break;
-                }
-            }
+            const auto proof = llvm::find_if(
+                calls, [&](const auto & candidate) { return candidate.operation == call; });
+            if (proof != calls.end()) { callee = proof->target; }
             if (!callee || !identitySafeFunction(callee, stack)) { return false; }
             continue;
         }
