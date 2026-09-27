@@ -6,6 +6,7 @@
 #include "mlir/IR/BuiltinOps.h"
 
 #include <cstdint>
+#include <optional>
 
 namespace ctcompile::ctnative {
 
@@ -44,6 +45,24 @@ llvm::StringRef nativeMapAction(mlir::Operation * op);
 
 /// Names an action taking a key; this lexical check supplies no call proof.
 bool nativeMapKeyAction(llvm::StringRef action);
+
+/// The argument count of set/get/has/delete/clear, or nullopt for any other
+/// name. `size` is a property; keys/values are left to the callers admitting them.
+inline std::optional<unsigned> mapMethodArity(llvm::StringRef name) {
+    return llvm::StringSwitch<std::optional<unsigned>>(name)
+        .Case("set", 2U)
+        .Cases({"get", "has", "delete"}, 1U)
+        .Case("clear", 0U)
+        .Default(std::nullopt);
+}
+
+/// A zero-argument `new Map` whose new.target is its own callee. Lexical only:
+/// whether global `Map` is the standard constructor is the caller's proof.
+inline bool plainMapConstruction(ctjs::ConstructOp made) {
+    auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+    return load && load.getName() == "Map" && made.getArgs().empty() &&
+           made.getNewTarget() == made.getCallee();
+}
 
 /// A proved keys/values snapshot or its confined standard Array.from copy.
 bool isNativeMapSnapshot(mlir::Operation * op);

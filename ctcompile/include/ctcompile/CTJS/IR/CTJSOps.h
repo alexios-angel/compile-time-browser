@@ -44,12 +44,28 @@ inline std::optional<unsigned> functionIndex(FuncOp function) {
     return index;
 }
 
+// The attribute of kind A a ctjs.constant operand carries, or null - for a
+// value no constant defines and a constant of another kind alike.
+template <class A> A constantAttr(mlir::Value value) {
+    auto constant = value.getDefiningOp<ConstantOp>();
+    return constant ? llvm::dyn_cast<A>(constant.getValue()) : A{};
+}
+
+inline bool isUndefinedConstant(mlir::Value value) {
+    return static_cast<bool>(constantAttr<UndefinedAttr>(value));
+}
+
+// The key operand of a get_property or set_property, or null for any other op.
+inline mlir::Value propertyKey(mlir::Operation * op) {
+    if (auto get = llvm::dyn_cast<GetPropertyOp>(op)) { return get.getKey(); }
+    if (auto set = llvm::dyn_cast<SetPropertyOp>(op)) { return set.getKey(); }
+    return {};
+}
+
 // The constant string a property key operand carries, or empty - for a
 // non-constant key, a constant that is not a string, and `""` alike.
 inline llvm::StringRef constantKey(mlir::Value key) {
-    auto constant = key.getDefiningOp<ConstantOp>();
-    if (!constant) { return {}; }
-    auto text = llvm::dyn_cast<StringAttr>(constant.getValue());
+    auto text = constantAttr<StringAttr>(key);
     return text ? text.getValue() : llvm::StringRef{};
 }
 
@@ -78,8 +94,7 @@ inline bool ordinaryKey(llvm::StringRef key) {
 // dynamic key. (The unification that dropped this distinction refused the
 // object-fields fixture.)
 inline bool ordinaryKey(mlir::Value key) {
-    auto constant = key.getDefiningOp<ConstantOp>();
-    auto text = constant ? llvm::dyn_cast<StringAttr>(constant.getValue()) : StringAttr{};
+    auto text = constantAttr<StringAttr>(key);
     return text && !reservedKey(text.getValue());
 }
 } // namespace ctcompile::ctjs
