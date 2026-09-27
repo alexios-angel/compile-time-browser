@@ -150,6 +150,9 @@ int main() {
     module_refused("return 1;");
     module_refused("export default function () {}();");
     module_accepted("export default (function () { return 1; })();");
+    // By token: a comment is neither the parenthesis nor proof there is none.
+    module_accepted("export default (/* c */ function () { return 1; })();");
+    module_refused("export default // (\n function () {}();");
     // B.3.1: a label's item may be a (labelled) function declaration in
     // sloppy code - never in strict code, nor as an `if` body.
     accepted("label1: label2: function f() {}");

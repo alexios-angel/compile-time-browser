@@ -7,6 +7,7 @@
 // The class is declared whole in compiler_impl.hpp beside this.
 
 #include "compiler_impl.hpp"
+#include "early_errors.hpp"
 
 namespace ctbrowser::script::detail {
 
@@ -212,11 +213,9 @@ void compiler_impl::compile_program() {
     // HoistableDeclaration[+Default]), instantiated before the module's first
     // statement - a module importing itself, or a cycle, calls it before its
     // text. A parenthesised function is an expression and is not hoisted; the
-    // parser gives the two the same node, so the TOKEN before the function
-    // says which: `default`, or a `(`. A token and not a byte, because a
-    // comment may sit between them and may hold either one - so the text up to
-    // the function is lexed again, which only a module with a default-exported
-    // function pays for, once.
+    // parser gives the two the same node, so the token before the function
+    // says which: `default`, or a `(` (after_open_paren, which a comment
+    // between them cannot fool). Asked once, before the two passes.
     const auto hoisted_default = [this](std::int32_t s) {
         const vp::node & n = at(s);
         if (!module_scope_ || n.kind != vp::nk::export_decl || n.c != 1 || n.a < 0 ||
@@ -224,11 +223,7 @@ void compiler_impl::compile_program() {
             return false;
         }
         const std::size_t begin = at(n.a).begin;
-        if (begin == 0 || begin > source_view_.size()) { return false; }
-        const std::vector<vp::token> before = vp::lex(source_view_.substr(0, begin));
-        const auto last = std::ranges::find_if(
-            before.rbegin(), before.rend(), [](const auto & t) { return t.kind != vp::tk::end; });
-        return last != before.rend() && !(last->kind == vp::tk::punct && last->s == "(");
+        return begin != 0 && begin <= source_view_.size() && !after_open_paren(source_view_, begin);
     };
     std::int32_t default_declaration = -1;
     for (const std::int32_t s : kids(root)) {

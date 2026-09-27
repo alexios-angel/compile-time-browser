@@ -100,12 +100,8 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
             }();
             if (cannot_start && (first.kind == nk::func_expr || first.kind == nk::class_decl)) {
                 const std::size_t where = offset_of(left);
-                std::size_t i = where == early_error::nowhere ? 0 : where;
-                while (i > 0 && (source_[i - 1] == ' ' || source_[i - 1] == '\t' ||
-                                 source_[i - 1] == '\n' || source_[i - 1] == '\r')) {
-                    --i;
-                }
-                if (where != early_error::nowhere && i > 0 && source_[i - 1] != '(') {
+                if (where != early_error::nowhere && where > 0 &&
+                    !after_open_paren(source_, where)) {
                     report("a default-exported declaration ends at its `}`", idx);
                 }
             }
