@@ -120,6 +120,12 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
         if (obj != nullptr) { mark(value::object(obj)); }
     }
     mark(blob_prototype_);
+    // The rendering contexts' prototypes: their natives capture the
+    // CanvasGradient, CanvasPattern and TextMetrics prototypes by pointer and
+    // reach them through private keys here, and a page may delete the globals.
+    mark(canvas2d_prototype_);
+    mark(webgl_prototype_);
+    mark(webgl2_prototype_);
     // Event.prototype and CustomEvent.prototype, for the same reason
     // Blob.prototype is here: they are held on a global a page can delete,
     // and an event whose prototype was collected stops being an Event.
