@@ -191,40 +191,6 @@ inline std::string scalar_typeof(nullable_scalar value) {
     std::terminate();
 }
 
-inline bool boolean_string_truthy(const std::variant<js_boolean_t, std::string> & value) {
-    return std::visit(
-        [](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_boolean_t>) {
-                return static_cast<bool>(alternative);
-            } else {
-                return !alternative.empty();
-            }
-        },
-        value);
-}
-inline js_string boolean_string_text(const std::variant<js_boolean_t, std::string> & value) {
-    return std::visit(
-        [](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_boolean_t>) {
-                return js_string{} + alternative;
-            } else {
-                return js_string{alternative};
-            }
-        },
-        value);
-}
-inline js_num to_number(const std::variant<js_boolean_t, std::string> & value) {
-    return std::visit(
-        [](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_boolean_t>) {
-                return alternative.to_number();
-            } else {
-                return js_num{ctbrowser::string_to_number(alternative)};
-            }
-        },
-        value);
-}
-
 // --- owning strings ----------------------------------------------------------
 
 // ctcompile: owning strings retain separate null and undefined tags
@@ -332,6 +298,94 @@ inline bool operator<(const nullable_string & a, const nullable_string & b) {
     return a.tag == nullable_string::kind::string && a.value < b.value;
 }
 
+// --- Boolean/Number/String variant carriers ----------------------------------
+//
+// An alternative is either String text or a scalar nullable_scalar carries.
+// Each observation is written once over any such variant; the named helpers
+// below are the spellings generated code calls.
+namespace detail {
+template <class T>
+constexpr bool is_absent = std::is_same_v<T, undefined_t> || std::is_same_v<T, js_null_t>;
+
+template <class... T, class Text, class Scalar>
+auto visit_carrier(const std::variant<T...> & value, Text text, Scalar scalar) {
+    return std::visit(
+        [&](const auto & alternative) {
+            using A = std::decay_t<decltype(alternative)>;
+            if constexpr (std::is_same_v<A, js_string>) {
+                return text(alternative.value());
+            } else if constexpr (std::is_same_v<A, std::string>) {
+                return text(alternative);
+            } else {
+                return scalar(nullable_scalar{alternative});
+            }
+        },
+        value);
+}
+template <class... T> js_string variant_text(const std::variant<T...> & value) {
+    return visit_carrier(
+        value, [](const std::string & text) { return js_string{text}; },
+        [](nullable_scalar scalar) { return scalar.to_string(); });
+}
+template <class... T> bool variant_truthy(const std::variant<T...> & value) {
+    return visit_carrier(
+        value, [](const std::string & text) { return !text.empty(); }, scalar_truthy);
+}
+template <class... T> std::string variant_typeof(const std::variant<T...> & value) {
+    return visit_carrier(
+        value, [](const std::string &) { return std::string{"string"}; }, scalar_typeof);
+}
+template <class... T> js_num variant_number(const std::variant<T...> & value) {
+    return visit_carrier(
+        value, [](const std::string & text) { return js_num{ctbrowser::string_to_number(text)}; },
+        [](nullable_scalar scalar) { return to_number(scalar); });
+}
+template <class... T> void print_variant(const char * name, const std::variant<T...> & value) {
+    visit_carrier(
+        value, [name](const std::string & text) { print_string(name, text); },
+        [name](nullable_scalar scalar) { print_scalar(name, scalar); });
+}
+// Widening keeps every alternative; absence stays its own alternative.
+template <class R, class... T> R widen(const std::variant<T...> & value) {
+    return std::visit([](const auto & alternative) -> R { return alternative; }, value);
+}
+template <class R> R widen(const nullable_string & value) {
+    switch (value.tag) {
+    case nullable_string::kind::undefined: return undefined_t{};
+    case nullable_string::kind::null_value: return js_null_t{};
+    case nullable_string::kind::string: return js_string{value.value};
+    }
+    std::terminate();
+}
+// Global observation is a proof about the stored alternative: absence is a
+// missing generated store, never a value to coerce.
+template <class A, class... T> const A & present(const std::variant<T...> & value) {
+    if (const auto * alternative = std::get_if<A>(&value)) { return *alternative; }
+    std::terminate();
+}
+template <class R, class... T> R present_carrier(const std::variant<T...> & value) {
+    return std::visit(
+        [](const auto & alternative) -> R {
+            if constexpr (is_absent<std::decay_t<decltype(alternative)>>) {
+                std::terminate();
+            } else {
+                return alternative;
+            }
+        },
+        value);
+}
+} // namespace detail
+
+inline bool boolean_string_truthy(const std::variant<js_boolean_t, std::string> & value) {
+    return detail::variant_truthy(value);
+}
+inline js_string boolean_string_text(const std::variant<js_boolean_t, std::string> & value) {
+    return detail::variant_text(value);
+}
+inline js_num to_number(const std::variant<js_boolean_t, std::string> & value) {
+    return detail::variant_number(value);
+}
+
 // A proved Number/String union owns exactly those two alternatives.
 using number_string = std::variant<js_num, js_string>;
 
@@ -347,30 +401,13 @@ inline js_num to_number(T value) {
     return to_number(nullable_scalar{value});
 }
 inline js_num to_number(const number_string & value) {
-    return std::visit(
-        [](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_num>) {
-                return alternative;
-            } else {
-                return alternative.to_number();
-            }
-        },
-        value);
+    return detail::variant_number(value);
 }
 inline js_string number_string_text(const number_string & value) {
-    return std::visit(
-        [](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
-                return alternative;
-            } else {
-                return js_string{} + alternative;
-            }
-        },
-        value);
+    return detail::variant_text(value);
 }
 inline bool number_string_truthy(const number_string & value) {
-    return std::visit([](const auto & alternative) { return static_cast<bool>(alternative); },
-                      value);
+    return detail::variant_truthy(value);
 }
 inline std::string number_string_typeof(const number_string & value) {
     return std::holds_alternative<js_num>(value) ? "number" : "string";
@@ -381,15 +418,7 @@ inline number_string global_number_string(const std::optional<number_string> & v
     return *value;
 }
 inline void print_number_string(const char * name, const number_string & value) {
-    std::visit(
-        [name](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_num>) {
-                print_scalar(name, nullable_scalar{alternative});
-            } else {
-                print_string(name, alternative.value());
-            }
-        },
-        value);
+    detail::print_variant(name, value);
 }
 
 // Source optional unions preserve absence as values, including reads before
@@ -397,8 +426,7 @@ inline void print_number_string(const char * name, const number_string & value) 
 using nullable_number_string = std::variant<undefined_t, js_null_t, js_num, js_string>;
 
 inline nullable_number_string to_nullable_number_string(const number_string & value) {
-    return std::visit(
-        [](const auto & alternative) -> nullable_number_string { return alternative; }, value);
+    return detail::widen<nullable_number_string>(value);
 }
 inline nullable_number_string to_nullable_number_string(nullable_scalar value) {
     switch (value.tag) {
@@ -410,121 +438,53 @@ inline nullable_number_string to_nullable_number_string(nullable_scalar value) {
     std::terminate();
 }
 inline nullable_number_string to_nullable_number_string(const nullable_string & value) {
-    switch (value.tag) {
-    case nullable_string::kind::undefined: return undefined_t{};
-    case nullable_string::kind::null_value: return js_null_t{};
-    case nullable_string::kind::string: return js_string{value.value};
-    }
-    std::terminate();
+    return detail::widen<nullable_number_string>(value);
 }
 inline js_num to_number(const nullable_number_string & value) {
-    return std::visit([](const auto & alternative) { return to_number(alternative); }, value);
+    return detail::variant_number(value);
 }
-
 inline js_string nullable_number_string_text(const nullable_number_string & value) {
-    return std::visit(
-        [](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
-                return alternative;
-            } else {
-                return nullable_scalar{alternative}.to_string();
-            }
-        },
-        value);
+    return detail::variant_text(value);
 }
 inline bool nullable_number_string_truthy(const nullable_number_string & value) {
-    return std::visit(
-        [](const auto & alternative) {
-            using T = std::decay_t<decltype(alternative)>;
-            if constexpr (std::is_same_v<T, js_num> || std::is_same_v<T, js_string>) {
-                return static_cast<bool>(alternative);
-            } else {
-                return false;
-            }
-        },
-        value);
+    return detail::variant_truthy(value);
 }
 inline std::string nullable_number_string_typeof(const nullable_number_string & value) {
-    return std::visit(
-        [](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
-                return std::string{"string"};
-            } else {
-                return scalar_typeof(nullable_scalar{alternative});
-            }
-        },
-        value);
+    return detail::variant_typeof(value);
 }
 inline void print_nullable_number_string(const char * name, const nullable_number_string & value) {
-    std::visit(
-        [name](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
-                print_string(name, alternative.value());
-            } else {
-                print_scalar(name, nullable_scalar{alternative});
-            }
-        },
-        value);
+    detail::print_variant(name, value);
 }
 inline number_string global_number_string(const nullable_number_string & value) {
-    return std::visit(
-        [](const auto & alternative) -> number_string {
-            using T = std::decay_t<decltype(alternative)>;
-            if constexpr (std::is_same_v<T, js_num> || std::is_same_v<T, js_string>) {
-                return alternative;
-            } else {
-                std::terminate();
-            }
-        },
-        value);
+    return detail::present_carrier<number_string>(value);
 }
 inline js_num global_number(const nullable_number_string & value) {
-    if (const auto * number = std::get_if<js_num>(&value)) { return *number; }
-    std::terminate();
+    return detail::present<js_num>(value);
 }
 inline std::string global_string(const nullable_number_string & value) {
-    if (const auto * text = std::get_if<js_string>(&value)) { return text->value(); }
-    std::terminate();
+    return detail::present<js_string>(value).value();
 }
 
 using boolean_string = std::variant<js_boolean_t, js_string>;
 using nullable_boolean_string = std::variant<undefined_t, js_null_t, js_boolean_t, js_string>;
 
 inline js_num to_number(const boolean_string & value) {
-    return std::visit([](const auto & alternative) { return alternative.to_number(); }, value);
+    return detail::variant_number(value);
 }
 inline js_string boolean_string_text(const boolean_string & value) {
-    return std::visit(
-        [](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
-                return alternative;
-            } else {
-                return js_string{} + alternative;
-            }
-        },
-        value);
+    return detail::variant_text(value);
 }
 inline bool boolean_string_truthy(const boolean_string & value) {
-    return std::visit([](const auto & alternative) { return static_cast<bool>(alternative); },
-                      value);
+    return detail::variant_truthy(value);
 }
 inline std::string boolean_string_typeof(const boolean_string & value) {
     return std::holds_alternative<js_boolean_t>(value) ? "boolean" : "string";
 }
 inline void print_boolean_string(const char * name, const boolean_string & value) {
-    std::visit(
-        [name](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
-                print_string(name, alternative.value());
-            } else {
-                print_scalar(name, nullable_scalar{alternative});
-            }
-        },
-        value);
+    detail::print_variant(name, value);
 }
 inline nullable_boolean_string to_nullable_boolean_string(const boolean_string & value) {
-    return std::visit(
-        [](const auto & alternative) -> nullable_boolean_string { return alternative; }, value);
+    return detail::widen<nullable_boolean_string>(value);
 }
 inline nullable_boolean_string to_nullable_boolean_string(nullable_scalar value) {
     switch (value.tag) {
@@ -536,81 +496,32 @@ inline nullable_boolean_string to_nullable_boolean_string(nullable_scalar value)
     std::terminate();
 }
 inline nullable_boolean_string to_nullable_boolean_string(const nullable_string & value) {
-    switch (value.tag) {
-    case nullable_string::kind::undefined: return undefined_t{};
-    case nullable_string::kind::null_value: return js_null_t{};
-    case nullable_string::kind::string: return js_string{value.value};
-    }
-    std::terminate();
+    return detail::widen<nullable_boolean_string>(value);
 }
 inline js_num to_number(const nullable_boolean_string & value) {
-    return std::visit([](const auto & alternative) { return to_number(alternative); }, value);
+    return detail::variant_number(value);
 }
 inline js_string nullable_boolean_string_text(const nullable_boolean_string & value) {
-    return std::visit(
-        [](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
-                return alternative;
-            } else {
-                return nullable_scalar{alternative}.to_string();
-            }
-        },
-        value);
+    return detail::variant_text(value);
 }
 inline bool nullable_boolean_string_truthy(const nullable_boolean_string & value) {
-    return std::visit(
-        [](const auto & alternative) {
-            using T = std::decay_t<decltype(alternative)>;
-            if constexpr (std::is_same_v<T, js_boolean_t> || std::is_same_v<T, js_string>) {
-                return static_cast<bool>(alternative);
-            } else {
-                return false;
-            }
-        },
-        value);
+    return detail::variant_truthy(value);
 }
 inline std::string nullable_boolean_string_typeof(const nullable_boolean_string & value) {
-    return std::visit(
-        [](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
-                return std::string{"string"};
-            } else {
-                return scalar_typeof(nullable_scalar{alternative});
-            }
-        },
-        value);
+    return detail::variant_typeof(value);
 }
 inline void print_nullable_boolean_string(const char * name,
                                           const nullable_boolean_string & value) {
-    std::visit(
-        [name](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
-                print_string(name, alternative.value());
-            } else {
-                print_scalar(name, nullable_scalar{alternative});
-            }
-        },
-        value);
+    detail::print_variant(name, value);
 }
 inline boolean_string global_boolean_string(const nullable_boolean_string & value) {
-    return std::visit(
-        [](const auto & alternative) -> boolean_string {
-            using T = std::decay_t<decltype(alternative)>;
-            if constexpr (std::is_same_v<T, js_boolean_t> || std::is_same_v<T, js_string>) {
-                return alternative;
-            } else {
-                std::terminate();
-            }
-        },
-        value);
+    return detail::present_carrier<boolean_string>(value);
 }
 inline js_boolean_t global_boolean(const nullable_boolean_string & value) {
-    if (const auto * boolean = std::get_if<js_boolean_t>(&value)) { return *boolean; }
-    std::terminate();
+    return detail::present<js_boolean_t>(value);
 }
 inline std::string global_string(const nullable_boolean_string & value) {
-    if (const auto * text = std::get_if<js_string>(&value)) { return text->value(); }
-    std::terminate();
+    return detail::present<js_string>(value).value();
 }
 
 template <class T>
@@ -647,17 +558,10 @@ number_string add(const L & left, const R & right) {
             return value.to_string();
         } else if constexpr (std::is_same_v<T, nullable_string>) {
             return js_string{string_text(value)};
-        } else if constexpr (std::is_same_v<T, std::variant<js_boolean_t, std::string>> ||
-                             std::is_same_v<T, boolean_string>) {
-            return boolean_string_text(value);
-        } else if constexpr (std::is_same_v<T, number_string>) {
-            return number_string_text(value);
-        } else if constexpr (std::is_same_v<T, nullable_number_string>) {
-            return nullable_number_string_text(value);
-        } else if constexpr (std::is_same_v<T, nullable_boolean_string>) {
-            return nullable_boolean_string_text(value);
-        } else {
+        } else if constexpr (std::is_same_v<T, js_num> || std::is_same_v<T, js_boolean_t>) {
             return js_string{} + value;
+        } else {
+            return detail::variant_text(value);
         }
     };
     const auto number = []<class T>(const T & value) {

@@ -39,21 +39,18 @@ std::optional<difference> compare(const engine & expected, const engine & actual
     const auto fail = [](std::string where, std::string what) {
         return std::optional<difference>{difference{std::move(where), std::move(what)}};
     };
+    const auto vs = [](auto a, auto b) { return std::to_string(a) + " vs " + std::to_string(b); };
 
     if (expected.selector_count() != actual.selector_count()) {
-        return fail("selector count", std::to_string(expected.selector_count()) + " vs " +
-                                          std::to_string(actual.selector_count()));
+        return fail("selector count", vs(expected.selector_count(), actual.selector_count()));
     }
     if (expected.rule_count() != actual.rule_count()) {
-        return fail("rule count", std::to_string(expected.rule_count()) + " vs " +
-                                      std::to_string(actual.rule_count()));
+        return fail("rule count", vs(expected.rule_count(), actual.rule_count()));
     }
 
     const std::vector<engine::filed_rule> ea = filed(expected);
     const std::vector<engine::filed_rule> ab = filed(actual);
-    if (ea.size() != ab.size()) {
-        return fail("filed rules", std::to_string(ea.size()) + " vs " + std::to_string(ab.size()));
-    }
+    if (ea.size() != ab.size()) { return fail("filed rules", vs(ea.size(), ab.size())); }
 
     for (std::size_t i = 0; i < ea.size(); ++i) {
         const engine::filed_rule & x = ea[i];
@@ -73,8 +70,7 @@ std::optional<difference> compare(const engine & expected, const engine & actual
         if (kx != ky) { return fail(where, "bucket key " + kx + " vs " + ky); }
 
         if (x.spec.packed != y.spec.packed) {
-            return fail(where, "specificity " + std::to_string(x.spec.packed) + " vs " +
-                                   std::to_string(y.spec.packed));
+            return fail(where, "specificity " + vs(x.spec.packed, y.spec.packed));
         }
         const std::string px{expected.atoms().text(x.property)};
         const std::string py{actual.atoms().text(y.property)};
@@ -90,28 +86,19 @@ std::optional<difference> compare(const engine & expected, const engine & actual
         // the CALLER of add_sheet rather than by the sheet - so a compiled
         // program that files an author rule as user-agent loses every tie it
         // should win, with no other field differing.
-        if (x.origin != y.origin) {
-            return fail(where,
-                        "origin " + std::to_string(x.origin) + " vs " + std::to_string(y.origin));
-        }
+        if (x.origin != y.origin) { return fail(where, "origin " + vs(x.origin, y.origin)); }
         // The condition ORDINAL, which is engine-local: add_sheet remaps a
         // sheet's condition indices as it appends them, so this is not the
         // number the parser produced.
         if (x.condition != y.condition) {
-            return fail(where, "media condition " + std::to_string(x.condition) + " vs " +
-                                   std::to_string(y.condition));
+            return fail(where, "media condition " + vs(x.condition, y.condition));
         }
-        if (x.order != y.order) {
-            return fail(where, "source order " + std::to_string(x.order) + " vs " +
-                                   std::to_string(y.order));
-        }
+        if (x.order != y.order) { return fail(where, "source order " + vs(x.order, y.order)); }
     }
 
     const auto & fa = expected.page_fonts();
     const auto & fb = actual.page_fonts();
-    if (fa.size() != fb.size()) {
-        return fail("page fonts", std::to_string(fa.size()) + " vs " + std::to_string(fb.size()));
-    }
+    if (fa.size() != fb.size()) { return fail("page fonts", vs(fa.size(), fb.size())); }
     for (std::size_t i = 0; i < fa.size(); ++i) {
         const std::string where = "font " + std::to_string(i);
         if (fa[i].family != fb[i].family) {

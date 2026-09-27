@@ -89,6 +89,13 @@ void record_skipped(mlir::ModuleOp module,
     module->setAttr("ctjs.skipped", builder.getArrayAttr(rows));
 }
 
+// THE IMPORTED MODULE with its refusals recorded on it, or null.
+mlir::OwningOpRef<mlir::Operation *> adopt(ctcompile::js::import_result imported) {
+    if (!imported.module) { return {}; }
+    record_skipped(*imported.module, imported.skipped);
+    return mlir::OwningOpRef<mlir::Operation *>(imported.module.release().getOperation());
+}
+
 // WHICH KIND OF SCRIPT THE TEXT IS, and it is not a detail. A classic script's
 // top-level `var` is a GLOBAL and a module's is a local of a scope of its own -
 // but the difference that matters here is that compile_program emits
@@ -106,10 +113,7 @@ mlir::OwningOpRef<mlir::Operation *> import_source(llvm::StringRef text, llvm::S
             << "the JavaScript did not compile: " << compiled.error;
         return {};
     }
-    ctcompile::js::import_result imported = ctcompile::js::import_program(compiled, name, context);
-    if (!imported.module) { return {}; }
-    record_skipped(*imported.module, imported.skipped);
-    return mlir::OwningOpRef<mlir::Operation *>(imported.module.release().getOperation());
+    return adopt(ctcompile::js::import_program(compiled, name, context));
 }
 
 mlir::OwningOpRef<mlir::Operation *> import_image(llvm::StringRef bytes, llvm::StringRef name,
@@ -124,11 +128,7 @@ mlir::OwningOpRef<mlir::Operation *> import_image(llvm::StringRef bytes, llvm::S
             << "not a ctbrowser program image: " << loaded.error;
         return {};
     }
-    ctcompile::js::import_result imported =
-        ctcompile::js::import_program(loaded.value, name, context);
-    if (!imported.module) { return {}; }
-    record_skipped(*imported.module, imported.skipped);
-    return mlir::OwningOpRef<mlir::Operation *>(imported.module.release().getOperation());
+    return adopt(ctcompile::js::import_program(loaded.value, name, context));
 }
 
 // REGISTERED FROM main, NOT BY A STATIC IN A LIBRARY. A static
@@ -147,14 +147,16 @@ void register_translations() {
     // THE SOURCE-MANAGER FORM, for the input's name: it becomes the program id
     // and the file slot of every location, so a diagnostic or a Stage 53F pin
     // reads `fixture.js:12:5` rather than a placeholder.
+    const auto from_text = [](ctbrowser::script::script_kind kind) {
+        return [kind](const std::shared_ptr<llvm::SourceMgr> & sources,
+                      mlir::MLIRContext * context) {
+            const llvm::MemoryBuffer * buffer = sources->getMemoryBuffer(sources->getMainFileID());
+            return import_source(buffer->getBuffer(), buffer->getBufferIdentifier(), context, kind);
+        };
+    };
     static mlir::TranslateToMLIRRegistration from_source(
         "ctbrowser-js-to-ctjs", "compile JavaScript source and import it as CTJS MLIR",
-        [](const std::shared_ptr<llvm::SourceMgr> & sources, mlir::MLIRContext * context) {
-            const llvm::MemoryBuffer * buffer = sources->getMemoryBuffer(sources->getMainFileID());
-            return import_source(buffer->getBuffer(), buffer->getBufferIdentifier(), context,
-                                 ctbrowser::script::script_kind::classic);
-        },
-        dialects);
+        from_text(ctbrowser::script::script_kind::classic), dialects);
     // A SEPARATE FLAG RATHER THAN AN OPTION ON THE ONE ABOVE. mlir-translate's
     // registrations are selected BY FLAG, and a translation whose behaviour
     // depends on a second unrelated option is one a pipeline can get wrong
@@ -163,12 +165,7 @@ void register_translations() {
     static mlir::TranslateToMLIRRegistration from_module(
         "ctbrowser-module-to-ctjs",
         "compile JavaScript source AS AN ES MODULE and import it as CTJS MLIR",
-        [](const std::shared_ptr<llvm::SourceMgr> & sources, mlir::MLIRContext * context) {
-            const llvm::MemoryBuffer * buffer = sources->getMemoryBuffer(sources->getMainFileID());
-            return import_source(buffer->getBuffer(), buffer->getBufferIdentifier(), context,
-                                 ctbrowser::script::script_kind::module_);
-        },
-        dialects);
+        from_text(ctbrowser::script::script_kind::module_), dialects);
     static mlir::TranslateToMLIRRegistration from_image(
         "ctbrowser-bytecode-to-ctjs", "import a serialized ctbrowser program image as CTJS MLIR",
         [](llvm::StringRef bytes, mlir::MLIRContext * context) {

@@ -1,9 +1,25 @@
 #pragma once
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 
 namespace ctcompile::cpp {
+// ONE CHARACTER OF A C++ IDENTIFIER, [A-Za-z0-9_]. ASCII by hand rather than
+// `std::isalnum`, which is locale-sensitive: a symbol that depends on `LC_ALL`
+// is a symbol the linker resolves on one machine and not on another.
+[[nodiscard]] constexpr bool is_identifier_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+           ch == '_';
+}
+
+// `text` WITH EVERY CHARACTER OUTSIDE [A-Za-z0-9_] REPLACED BY `_`.
+[[nodiscard]] inline std::string identifier(std::string_view text) {
+    std::string spelled{text};
+    std::ranges::replace_if(spelled, [](char ch) { return !is_identifier_char(ch); }, '_');
+    return spelled;
+}
+
 // A C++ STRING LITERAL FOR ARBITRARY BYTES.
 //
 // OCTAL ESCAPES, NOT HEX, and the difference is a real bug rather than a taste.

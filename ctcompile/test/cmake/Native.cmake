@@ -21,10 +21,27 @@ ctcompile_target(ctcompile-test-native-reference)
 # compiles it under -Werror - a header only generated programs compile is the
 # string literal it replaced. Needs no MLIR, like the reference above; needs
 # ctbrowser for its DOM section.
-add_executable(ctcompile-test-native-runtime)
-target_link_libraries(ctcompile-test-native-runtime PRIVATE ctbrowser::ctbrowser)
-ctcompile_target(ctcompile-test-native-runtime)
-add_test(NAME ctcompile_native_runtime COMMAND ctcompile-test-native-runtime)
+ctcompile_unit_test(native-runtime LIBS ctbrowser::ctbrowser)
+
+# A VM-LINKED NEGATIVE CONTROL: <name>-fixture.emitc.mlir's C++, emitted at
+# build time by the same emitter the gate uses, plus one object that reaches the
+# interpreter, linked against the engine - it must FAIL the symbol check. THE
+# GATE'S OWN FLAGS, not ctcompile_target's: this is the same text under the same
+# compile the gate performs, plus one object and one library.
+function(ctcompile_vm_linked_control name module)
+  set(_cpp "${CMAKE_CURRENT_BINARY_DIR}/${name}-fixture.generated.cpp")
+  add_custom_command(
+    OUTPUT "${_cpp}"
+    COMMAND $<TARGET_FILE:ctjs-translate> --mlir-to-cpp "${module}" -o "${_cpp}"
+    DEPENDS "${module}" ctjs-translate
+    COMMENT "Emitting ${name}-fixture.emitc.mlir to C++ for the VM-linked control"
+    VERBATIM)
+  add_executable(ctcompile-test-${name}-vm-linked "${_cpp}")
+  target_link_libraries(ctcompile-test-${name}-vm-linked PRIVATE ctbrowser::ctbrowser)
+  target_compile_features(ctcompile-test-${name}-vm-linked PRIVATE cxx_std_23)
+  target_compile_options(ctcompile-test-${name}-vm-linked PRIVATE
+    -O2 -Wall -Wextra -Werror -pedantic -ffp-contract=off)
+endfunction()
 
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
   # nm, the one CMake found beside the compiler at configure time (llvm-nm for
@@ -38,26 +55,10 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
     message(FATAL_ERROR "ctcompile: no nm found - the Phase 62½-D native gate cannot run, and it IS the definition of native")
   endif()
 
-  # NEGATIVE PROOF 2 (functions.emitc.mlir's VM-LINKED RUN line): the same C++,
-  # plus one object that reaches the interpreter, linked against the engine -
-  # must FAIL the symbol check. The C++ is emitted at build time by the same
-  # emitter the gate uses, so this binary is the fixture's program in every
-  # respect but the one that matters.
-  set(_native_module "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.emitc.mlir")
-  set(_native_cpp "${CMAKE_CURRENT_BINARY_DIR}/native-fixture.generated.cpp")
-  add_custom_command(
-    OUTPUT "${_native_cpp}"
-    COMMAND $<TARGET_FILE:ctjs-translate> --mlir-to-cpp "${_native_module}" -o "${_native_cpp}"
-    DEPENDS "${_native_module}" ctjs-translate
-    COMMENT "Emitting native-fixture.emitc.mlir to C++ for the VM-linked control"
-    VERBATIM)
-  add_executable(ctcompile-test-native-vm-linked "${_native_cpp}")
-  target_link_libraries(ctcompile-test-native-vm-linked PRIVATE ctbrowser::ctbrowser)
-  target_compile_features(ctcompile-test-native-vm-linked PRIVATE cxx_std_23)
-  # THE GATE'S OWN FLAGS, not ctcompile_target's: this is the same text under
-  # the same compile the gate performs, plus one object and one library.
-  target_compile_options(ctcompile-test-native-vm-linked PRIVATE
-    -O2 -Wall -Wextra -Werror -pedantic -ffp-contract=off)
+  # NEGATIVE PROOF 2 (functions.emitc.mlir's VM-LINKED RUN line): this binary
+  # is the fixture's program in every respect but the one that matters.
+  ctcompile_vm_linked_control(native
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.emitc.mlir")
 endif()
 
 # === PHASE 62½-C+D: JavaScript through the native pipeline and the gate ===
@@ -125,24 +126,40 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
     add_custom_target(ctcompile-native-pipeline-${name} ALL DEPENDS "${_module}" "${_deduced}" "${_mutated}")
     set_property(GLOBAL APPEND PROPERTY CTCOMPILE_NATIVE_PIPELINES ctcompile-native-pipeline-${name})
   endfunction()
-  # numbers and booleans, no functions
-  ctcompile_add_native_pipeline(numeric "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/globals.js")
-  # the gate's own eight functions: recursion, loops, a boolean predicate
-  ctcompile_add_native_pipeline(functions "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js")
-  # Phase 56: object literals with closed shapes, on the stack
-  ctcompile_add_native_pipeline(structs "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/struct.js")
-  # Phase 57A: dense, uniformly numeric array literals, as std::vector<double>
-  ctcompile_add_native_pipeline(arrays "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array.js")
-  # Current own-contents evidence permits only bounded local Number overwrites.
-  ctcompile_add_native_pipeline(array_overwrite "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite.js")
-  ctcompile_add_native_pipeline(array_overwrite_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite.js" NO_DEFAULT_OPTIMIZATIONS)
-  ctcompile_add_native_pipeline(array_read_overwrite "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-read-overwrite.js")
-  ctcompile_add_native_pipeline(array_read_overwrite_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-read-overwrite.js" NO_DEFAULT_OPTIMIZATIONS)
-  ctcompile_add_native_pipeline(array_shrink "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-shrink.js")
-  ctcompile_add_native_pipeline(array_shrink_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-shrink.js" NO_DEFAULT_OPTIMIZATIONS)
-  ctcompile_add_native_pipeline(array_overwrite_loop "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite-loop.js")
-  ctcompile_add_native_pipeline(array_overwrite_loop_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite-loop.js" NO_DEFAULT_OPTIMIZATIONS)
 endif()
+
+# ONE FIXTURE, BOTH GATES: the native pipeline over CTNative/Fixtures/<rel>,
+# its remaining arguments forwarded as pipeline options, and with CLAIMS the
+# four census floors. The two gates have different preconditions (claims also
+# needs Python3), so each is checked on its own. See NativeFixtures.cmake.
+function(ctcompile_native_fixture name rel)
+  cmake_parse_arguments(_fx "" "" "CLAIMS" ${ARGN})
+  set(_js "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/${rel}")
+  if(COMMAND ctcompile_add_native_pipeline)
+    ctcompile_add_native_pipeline(${name} "${_js}" ${_fx_UNPARSED_ARGUMENTS})
+  endif()
+  if(DEFINED _fx_CLAIMS AND COMMAND ctcompile_add_native_claims)
+    ctcompile_add_native_claims(${name} "${_js}" ${_fx_CLAIMS})
+  endif()
+endfunction()
+
+# numbers and booleans, no functions
+ctcompile_native_fixture(numeric ControlFlow/globals.js)
+# the gate's own eight functions: recursion, loops, a boolean predicate
+ctcompile_native_fixture(functions ControlFlow/functions.js)
+# Phase 56: object literals with closed shapes, on the stack
+ctcompile_native_fixture(structs Objects/struct.js)
+# Phase 57A: dense, uniformly numeric array literals, as std::vector<double>
+ctcompile_native_fixture(arrays Objects/array.js)
+# Current own-contents evidence permits only bounded local Number overwrites.
+ctcompile_native_fixture(array_overwrite Objects/array-overwrite.js)
+ctcompile_native_fixture(array_overwrite_unoptimized Objects/array-overwrite.js NO_DEFAULT_OPTIMIZATIONS)
+ctcompile_native_fixture(array_read_overwrite Objects/array-read-overwrite.js)
+ctcompile_native_fixture(array_read_overwrite_unoptimized Objects/array-read-overwrite.js NO_DEFAULT_OPTIMIZATIONS)
+ctcompile_native_fixture(array_shrink Objects/array-shrink.js)
+ctcompile_native_fixture(array_shrink_unoptimized Objects/array-shrink.js NO_DEFAULT_OPTIMIZATIONS)
+ctcompile_native_fixture(array_overwrite_loop Objects/array-overwrite-loop.js)
+ctcompile_native_fixture(array_overwrite_loop_unoptimized Objects/array-overwrite-loop.js NO_DEFAULT_OPTIMIZATIONS)
 
 # === PHASE 63 STEPS 2 AND 3: the claimed set, per corpus ===
 # ============================================================================
@@ -259,15 +276,8 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   # Owning UTF-8 strings (2026-09-05) raise admission to 19 / 39 / 43.
   # Resolver and lift counts stay unchanged; native-strings.md records the
   # measured scope, and the floors below now protect the additional functions.
-  function(ctcompile_add_native_claims name js floor resolved direct lifted)
-    cmake_parse_arguments(_claims "DEFAULT_OPTIMIZATIONS" "" "" ${ARGN})
-    # Preserve historical admission floors independently of removing dead
-    # helpers. Separate DEFAULT_OPTIMIZATIONS cases measure ordinary lowering
-    # and keep pruned functions in the source denominator.
-    set(_optimization_args --no-default-optimizations)
-    if(_claims_DEFAULT_OPTIMIZATIONS)
-      set(_optimization_args)
-    endif()
+  # native-claims.py over one corpus; ARGN are its remaining options.
+  function(ctcompile_add_native_claims_negative name js)
     add_test(NAME ctcompile_native_claims_${name}
              COMMAND ${Python3_EXECUTABLE}
                      ${CTBROWSER_MONOREPO_ROOT}/tools/check/native-claims.py
@@ -275,16 +285,26 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
                      --opt $<TARGET_FILE:ctjs-opt>
                      --corpus ${js}
                      --name ${name}
-                     ${_optimization_args}
-                     --json ${CMAKE_CURRENT_BINARY_DIR}/native-claims-${name}.json
-                     --min-claimed ${floor}
-                     --min-resolved ${resolved}
-                     --min-direct ${direct}
-                     --min-lifted-direct ${lifted})
+                     ${ARGN})
+  endfunction()
+  # Preserve historical admission floors independently of removing dead
+  # helpers: the floors are measured with --no-default-optimizations. BOTH also
+  # registers default_<name>, which measures ordinary lowering and keeps pruned
+  # functions in the source denominator.
+  function(ctcompile_add_native_claims name js floor resolved direct lifted)
+    cmake_parse_arguments(_claims "BOTH" "" "" ${ARGN})
+    set(_floors --min-claimed ${floor} --min-resolved ${resolved} --min-direct ${direct}
+                --min-lifted-direct ${lifted})
+    ctcompile_add_native_claims_negative(${name} ${js} --no-default-optimizations
+      --json ${CMAKE_CURRENT_BINARY_DIR}/native-claims-${name}.json ${_floors})
+    if(_claims_BOTH)
+      ctcompile_add_native_claims_negative(default_${name} ${js}
+        --json ${CMAKE_CURRENT_BINARY_DIR}/native-claims-default_${name}.json ${_floors})
+    endif()
   endfunction()
   # THE FIXTURE IS THE VACUITY CHECK: 9 of 9, so a run that reports nothing
   # claimed anywhere is not mistaken for a clean sheet.
-  ctcompile_add_native_claims(fixture "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js" 9 8 16 0)
+  ctcompile_add_native_claims(fixture "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js" 9 8 16 0 BOTH)
   # TWO CLOSED PROGRAMS, ADDED BECAUSE THE FLOORS ABOVE ARE NOT ENOUGH.
   # differential.js and launcher.js are already compiled through the EmitC
   # backend by the blocks further up this file, so they cost nothing to fetch
@@ -296,35 +316,14 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   ctcompile_add_native_claims(differential "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Differential/differential.js" 2 56 10 0)
   ctcompile_add_native_claims(launcher "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Launcher/application.js" 0 9 9 0)
   ctcompile_add_native_claims(bootstrap
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 19 0 21 208)
-  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 39 0 41 328)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 19 0 21 208 BOTH)
+  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 39 0 41 328 BOTH)
   ctcompile_add_native_claims(phaser
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 45 0 48 283)
-  ctcompile_add_native_claims(default_fixture
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js" 9 8 16 0 DEFAULT_OPTIMIZATIONS)
-  ctcompile_add_native_claims(default_bootstrap
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
-    19 0 21 208 DEFAULT_OPTIMIZATIONS)
-  ctcompile_add_native_claims(default_p5
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js"
-    39 0 41 328 DEFAULT_OPTIMIZATIONS)
-  ctcompile_add_native_claims(default_phaser
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js"
-    45 0 48 283 DEFAULT_OPTIMIZATIONS)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 45 0 48 283 BOTH)
 
   # BOTH TEETH, PROVED. Each runs the same check as a child and passes only
   # when that child failed for the stated reason - not ctest's WILL_FAIL,
   # which a crash or a missing corpus would satisfy just as well.
-  function(ctcompile_add_native_claims_negative name js)
-    add_test(NAME ctcompile_native_claims_${name}
-             COMMAND ${Python3_EXECUTABLE}
-                     ${CTBROWSER_MONOREPO_ROOT}/tools/check/native-claims.py
-                     --translate $<TARGET_FILE:ctjs-translate>
-                     --opt $<TARGET_FILE:ctjs-opt>
-                     --corpus ${js}
-                     --name ${name}
-                     ${ARGN})
-  endfunction()
   # 1: the floor bites. The fixture claims 9 of 9; a floor of 10 must fail.
   ctcompile_add_native_claims_negative(floor_bites
     "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js"

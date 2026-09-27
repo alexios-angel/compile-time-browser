@@ -61,9 +61,9 @@ endif()
 # accommodate a dependency the engine does not have.
 set(CTCOMPILE_WARNING_OPTIONS -O2 -pedantic -Wall -Wextra -Werror -Wconversion)
 
-function(ctcompile_target name)
-  target_compile_options(${name} PRIVATE ${CTCOMPILE_WARNING_OPTIONS})
-  target_compile_features(${name} PUBLIC cxx_std_23)
+# THE TWO INCLUDE ROOTS, source and generated, spelled the same way - a
+# generated header is included exactly as a hand-written one is.
+function(ctcompile_includes name)
   target_include_directories(${name} PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)
   # AND THE GENERATED HEADERS, reached by their PROJECT path rather than by a
@@ -84,6 +84,12 @@ function(ctcompile_target name)
   # own bar does not move either way, which is the point.
   target_include_directories(${name} SYSTEM PUBLIC
     $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>)
+endfunction()
+
+function(ctcompile_target name)
+  target_compile_options(${name} PRIVATE ${CTCOMPILE_WARNING_OPTIONS})
+  target_compile_features(${name} PUBLIC cxx_std_23)
+  ctcompile_includes(${name})
 endfunction()
 
 # LLVM Option/Support supply command-line parsing even without the MLIR pipeline.

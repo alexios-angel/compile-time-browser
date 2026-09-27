@@ -10,13 +10,11 @@
 # as macros, and that the call-path and GC-root inventories hold the properties
 # later phases are built on. It also compiles EngineContract.hpp, which is
 # nothing but static_asserts about the engine's layout.
-add_executable(ctcompile-test-inventories)
+#
 # THE ROLE CLASSIFIER IS HEADER-ONLY and reads only ctbrowser's ABI table, so
 # this test needs no MLIR - which is the point of the experiment it carries:
 # whether the roles are derivable is answerable before a line of MLIR is written.
-target_link_libraries(ctcompile-test-inventories PRIVATE ctcompile::support)
-ctcompile_target(ctcompile-test-inventories)
-add_test(NAME ctcompile_inventories COMMAND ctcompile-test-inventories)
+ctcompile_unit_test(inventories LIBS ctcompile::support)
 
 # PHASE 13'S COVERAGE MEASUREMENT, derived from both sides rather than written
 # down. The opcode list comes from the X-macro so it cannot disagree with the
@@ -25,14 +23,10 @@ add_test(NAME ctcompile_inventories COMMAND ctcompile-test-inventories)
 # is what has drifted here before.
 #
 # IT NEEDS NO MLIR either - it reads a .cpp as text.
-add_executable(ctcompile-test-importer-coverage)
-target_compile_definitions(ctcompile-test-importer-coverage PRIVATE
+ctcompile_unit_test(importer-coverage LIBS ctcompile::support DEFS
   CTCOMPILE_IMPORTER_SOURCE="${PROJECT_SOURCE_DIR}/lib/CTJS/Import/BytecodeImport.cpp"
   CTCOMPILE_IMPORTER_DISPATCH="${PROJECT_SOURCE_DIR}/lib/CTJS/Import/Bytecode/Instructions.cpp"
   CTCOMPILE_IMPORTER_TABLES="${PROJECT_SOURCE_DIR}/lib/CTJS/Import/Bytecode/OperatorTables.h")
-target_link_libraries(ctcompile-test-importer-coverage PRIVATE ctcompile::support)
-ctcompile_target(ctcompile-test-importer-coverage)
-add_test(NAME ctcompile_importer_coverage COMMAND ctcompile-test-importer-coverage)
 
 # THE STUB HAS TO RUN. Phase -1's gate says ctcompile builds an executable, and
 # an executable that builds and then dies on a missing symbol has passed a
@@ -71,36 +65,24 @@ endif()
 # THE COMPARATOR THAT ACCEPTS PHASE 16A, and the negative cases that stop it
 # from accepting anything. A comparator too lenient does not fail to catch a
 # bad blueprint - it certifies one.
-add_executable(ctcompile-test-html_comparator)
-target_link_libraries(ctcompile-test-html_comparator PRIVATE ctcompile::html)
-ctcompile_target(ctcompile-test-html_comparator)
-add_test(NAME ctcompile_html_comparator COMMAND ctcompile-test-html_comparator)
+ctcompile_unit_test(html_comparator LIBS ctcompile::html)
 
 # THE COMPARATOR THAT ACCEPTS PHASE 16B. Every case below leaves
 # selector_count() and rule_count() untouched and changes what the page looks
 # like - which is exactly the class of difference the two counts cannot see and
 # the reason engine::for_each_rule exists.
-add_executable(ctcompile-test-css_comparator)
-target_link_libraries(ctcompile-test-css_comparator PRIVATE ctcompile::css)
-ctcompile_target(ctcompile-test-css_comparator)
-add_test(NAME ctcompile_css_comparator COMMAND ctcompile-test-css_comparator)
+ctcompile_unit_test(css_comparator LIBS ctcompile::css)
 
 # THE PROGRAM IMAGE: a round trip that must be exact, and a loader that must
 # refuse. An image is executable input - the VM reads its pools with unchecked
 # operator[] and one of those reads is a WRITE - so the negative cases here are
 # the point of the file.
-add_executable(ctcompile-test-program_image)
-target_link_libraries(ctcompile-test-program_image PRIVATE ctcompile::javascript)
-ctcompile_target(ctcompile-test-program_image)
-add_test(NAME ctcompile_program_image COMMAND ctcompile-test-program_image)
+ctcompile_unit_test(program_image LIBS ctcompile::javascript)
 
 # THE MANIFEST. Phase 1's gate asks for one; this checks the part of it that can
 # be wrong, which is the string escaping - a resource name is whatever the
 # document said, and a document may say `p5"; drop</script>`.
-add_executable(ctcompile-test-manifest)
-target_link_libraries(ctcompile-test-manifest PRIVATE ctcompile::support)
-ctcompile_target(ctcompile-test-manifest)
-add_test(NAME ctcompile_manifest COMMAND ctcompile-test-manifest)
+ctcompile_unit_test(manifest LIBS ctcompile::support)
 
 # THE APPLICATION BUNDLE, on the same terms as the program image above and for
 # a sharper reason: a bundle is a table of offsets read out of a file, and what
@@ -108,15 +90,12 @@ add_test(NAME ctcompile_manifest COMMAND ctcompile-test-manifest)
 # that file is the one that matters - it asserts the COUNTER that says the
 # images were used, because a page that quietly recompiled produces an
 # identical document.
-add_executable(ctcompile-test-app_bundle)
-target_link_libraries(ctcompile-test-app_bundle PRIVATE ctbrowser::ctbrowser)
-ctcompile_target(ctcompile-test-app_bundle)
+#
 # THE BINARY DIRECTORY IS AN ARGUMENT because two of its cases cannot be run
 # here: they are bundles the LAUNCHER has to refuse, and the guard that refuses
 # them lives behind a window. It writes them out and Packaging/roundtrip.test
 # feeds them to the real ctrun.
-add_test(NAME ctcompile_app_bundle
-         COMMAND ctcompile-test-app_bundle ${CMAKE_CURRENT_BINARY_DIR})
+ctcompile_unit_test(app_bundle LIBS ctbrowser::ctbrowser ARGS ${CMAKE_CURRENT_BINARY_DIR})
 
 # AND THE WHOLE THING, THE WAY SOMEONE USES IT - a directory in, an executable
 # out, started from somewhere else entirely, and the four refusals - is
@@ -152,54 +131,12 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   # builds a closure and a compiled body bakes that closure's function index,
   # so the two agreed only because the extra functions happened to sit after
   # `keep`.
-  set(_gc_inc "${CMAKE_CURRENT_BINARY_DIR}/gc-roots.js.inc")
-  add_custom_command(
-    OUTPUT "${_gc_inc}"
-    COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_gc_js} -DOUTPUT=${_gc_inc}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-    DEPENDS "${_gc_js}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-    COMMENT "Embedding gc-roots.js for the driver"
-    VERBATIM)
-  set(_gc_cpp "${CMAKE_CURRENT_BINARY_DIR}/gc-roots.generated.cpp")
-  add_custom_command(
-    OUTPUT "${_gc_cpp}"
-    # THE SYMBOL IS RENAMED so the driver's declaration does not depend on how
-    # the importer numbers functions - `f` becomes `f$1` becomes `f_1`, and a
-    # second function in the fixture would renumber it.
-    COMMAND "${CMAKE_COMMAND}"
-            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-            -DOPT=$<TARGET_FILE:ctjs-opt>
-            -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
-            -DSOURCE=${_gc_js}
-            "-DENTRIES=f;held;built"
-            -DOUTPUT=${_gc_cpp}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
-    DEPENDS "${_gc_js}" ctjs-translate ctjs-opt
-            "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
-    COMMENT "Compiling gc-roots.js through the EmitC backend"
-    VERBATIM)
-
-  # GENERATED CODE IS NOT THIS PROJECT'S CODE, and the flags that keep the
-  # hand-written sources honest do not apply to it. The entry's signature is
-  # fixed by ct_aot_entry_fn, so a function that never looks at `argc` has an
-  # unused parameter by construction; a JavaScript expression whose value is
-  # discarded leaves a variable that is set and never read; and the backend
-  # emits no dead-code elimination because that is a later phase's job.
-  # -Werror would make every such program a build failure. Narrowed to the
-  # three warnings inherent to emitted code rather than turning -Werror off.
-  set(CTCOMPILE_GENERATED_WARNINGS
-      "-Wno-unused-parameter;-Wno-unused-variable;-Wno-unused-but-set-variable")
-  set_source_files_properties("${_gc_cpp}" PROPERTIES
-    COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
-
-  add_executable(ctcompile-test-gc_roots "${_gc_cpp}" "${_gc_inc}")
-  target_include_directories(ctcompile-test-gc_roots PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-  target_link_libraries(ctcompile-test-gc_roots PRIVATE ctbrowser::script)
-  ctcompile_target(ctcompile-test-gc_roots)
-  add_test(NAME ctcompile_gc_roots COMMAND ctcompile-test-gc_roots)
-else()
-  message(STATUS "ctcompile: gc-roots test unavailable (needs ctjs-opt and mlir-translate)")
-endif()
+  ctcompile_embed_js(gc-roots.js.inc "${_gc_js}")
+  # THE SYMBOL IS RENAMED so the driver's declaration does not depend on how
+  # the importer numbers functions - `f` becomes `f$1` becomes `f_1`, and a
+  # second function in the fixture would renumber it.
+  ctcompile_compile_js(gc-roots.generated.cpp "${_gc_js}" ENTRIES f held built)
+  ctcompile_boxed_test(gc_roots gc-roots.generated.cpp EMBED gc-roots.js.inc)
 
 # --- and does it compute what the interpreter computes? -----------------------
 #
@@ -212,7 +149,6 @@ endif()
 # its compiled entry installed - and compares. Nothing writes an expected answer
 # down: "when a CTJS operation and the ctbrowser VM disagree, the VM is correct
 # by definition."
-if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set(_diff_js "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Differential/differential.js")
   # THE DRIVER READS THE SAME FILE THE PIPELINE COMPILES, as a raw string.
   #
@@ -224,38 +160,10 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   # function index means nothing outside the program it was compiled in", so a
   # reordered fixture makes a compiled body build a closure over a different
   # function. It presented as a case that passed with the wrong answer.
-  set(_diff_inc "${CMAKE_CURRENT_BINARY_DIR}/differential.js.inc")
-  add_custom_command(
-    OUTPUT "${_diff_inc}"
-    COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_diff_js} -DOUTPUT=${_diff_inc}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-    DEPENDS "${_diff_js}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-    COMMENT "Embedding differential.js for the driver"
-    VERBATIM)
-  set(_diff_cpp "${CMAKE_CURRENT_BINARY_DIR}/differential.generated.cpp")
-  add_custom_command(
-    OUTPUT "${_diff_cpp}"
-    COMMAND "${CMAKE_COMMAND}"
-            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-            -DOPT=$<TARGET_FILE:ctjs-opt>
-            -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
-            -DSOURCE=${_diff_js}
-            "-DENTRIES=plus;ge;strict;loose;pick;globals;apply;step;counter;middle;methodish;fn;neg;bnot;put;greet;pack;kindOf;thrower;build;Point;newBad;coalesce;chain;dflt;total;chars;spread;hasIt;isA;drop;greetChain;Kid;spreadCall;spreadMethod;spreadNew;merge;mergeArray;firstLoop;accessors;guarded;plusOf;coerce;keysOf;dropNamed;bigLits;howMany;sumAll;restOf;bothOf;wrapped;passes;arrayOut"
-            -DOUTPUT=${_diff_cpp}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
-    DEPENDS "${_diff_js}" ctjs-translate ctjs-opt
-            "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
-    COMMENT "Compiling differential.js through the EmitC backend"
-    VERBATIM)
-
-  set_source_files_properties("${_diff_cpp}" PROPERTIES
-    COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
-  add_executable(ctcompile-test-differential "${_diff_cpp}" "${_diff_inc}")
-  target_include_directories(ctcompile-test-differential PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-  target_link_libraries(ctcompile-test-differential PRIVATE ctbrowser::script)
-  ctcompile_target(ctcompile-test-differential)
-  add_test(NAME ctcompile_differential COMMAND ctcompile-test-differential)
-endif()
+  ctcompile_embed_js(differential.js.inc "${_diff_js}")
+  ctcompile_compile_js(differential.generated.cpp "${_diff_js}" ENTRIES
+    "plus;ge;strict;loose;pick;globals;apply;step;counter;middle;methodish;fn;neg;bnot;put;greet;pack;kindOf;thrower;build;Point;newBad;coalesce;chain;dflt;total;chars;spread;hasIt;isA;drop;greetChain;Kid;spreadCall;spreadMethod;spreadNew;merge;mergeArray;firstLoop;accessors;guarded;plusOf;coerce;keysOf;dropNamed;bigLits;howMany;sumAll;restOf;bothOf;wrapped;passes;arrayOut")
+  ctcompile_boxed_test(differential differential.generated.cpp EMBED differential.js.inc)
 
 # --- and the same question for a MODULE ---------------------------------------
 #
@@ -270,7 +178,6 @@ endif()
 # ONLY module-main.js IS COMPILED. dep and user stay interpreted in every arm,
 # which is what holds one variable still: dep is where the live binding is
 # written, and user is the only thing that can see what bind_export decided.
-if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set(_mod_main "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Modules/main.js")
   set(_mod_dep "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Modules/dep.js")
   set(_mod_user "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Modules/user.js")
@@ -281,51 +188,20 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set(_mod_incs "")
   foreach(_mod_js IN ITEMS "${_mod_main}" "${_mod_dep}" "${_mod_user}")
     get_filename_component(_mod_name "${_mod_js}" NAME)
-    set(_mod_inc "${CMAKE_CURRENT_BINARY_DIR}/module-${_mod_name}.inc")
-    add_custom_command(
-      OUTPUT "${_mod_inc}"
-      COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_mod_js} -DOUTPUT=${_mod_inc}
-              -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-      DEPENDS "${_mod_js}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-      COMMENT "Embedding ${_mod_name} for the module driver"
-      VERBATIM)
-    list(APPEND _mod_incs "${_mod_inc}")
+    ctcompile_embed_js(module-${_mod_name}.inc "${_mod_js}")
+    list(APPEND _mod_incs "module-${_mod_name}.inc")
   endforeach()
 
-  set(_mod_cpp "${CMAKE_CURRENT_BINARY_DIR}/module-main.generated.cpp")
-  add_custom_command(
-    OUTPUT "${_mod_cpp}"
-    # -DKIND=module SELECTS --ctbrowser-module-to-ctjs. Without it the fixture
-    # is compiled as a classic script, every `import` is a syntax error, and the
-    # failure reads as a bad fixture rather than as a missing flag.
-    #
-    # `_script_` IS THE TOP LEVEL. compile/entry.cpp names functions[0]
-    # "<script>", the importer sanitises that to `_script_$0` and the backend
-    # spells it `_script__0`, which this script renames to ctc__script_.
-    COMMAND "${CMAKE_COMMAND}"
-            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-            -DOPT=$<TARGET_FILE:ctjs-opt>
-            -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
-            -DSOURCE=${_mod_main}
-            -DKIND=module
-            "-DENTRIES=_script_;raise2;loadTwo;fn"
-            -DOUTPUT=${_mod_cpp}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
-    DEPENDS "${_mod_main}" ctjs-translate ctjs-opt
-            "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
-    COMMENT "Compiling module-main.js through the EmitC backend as a MODULE"
-    VERBATIM)
-
-  set_source_files_properties("${_mod_cpp}" PROPERTIES
-    COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
-  add_executable(ctcompile-test-module_differential "${_mod_cpp}" ${_mod_incs})
-  target_include_directories(ctcompile-test-module_differential
-                             PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-  target_link_libraries(ctcompile-test-module_differential PRIVATE ctbrowser::script)
-  ctcompile_target(ctcompile-test-module_differential)
-  add_test(NAME ctcompile_module_differential
-           COMMAND ctcompile-test-module_differential)
-endif()
+  # KIND module SELECTS --ctbrowser-module-to-ctjs. Without it the fixture is
+  # compiled as a classic script, every `import` is a syntax error, and the
+  # failure reads as a bad fixture rather than as a missing flag.
+  #
+  # `_script_` IS THE TOP LEVEL. compile/entry.cpp names functions[0]
+  # "<script>", the importer sanitises that to `_script_$0` and the backend
+  # spells it `_script__0`, which this script renames to ctc__script_.
+  ctcompile_compile_js(module-main.generated.cpp "${_mod_main}" KIND module
+                       ENTRIES _script_ raise2 loadTwo fn)
+  ctcompile_boxed_test(module_differential module-main.generated.cpp EMBED ${_mod_incs})
 
 # --- and does any of it LINK? -------------------------------------------------
 #
@@ -336,28 +212,9 @@ endif()
 #
 # This compiles a function exercising everything the backend accepts and LINKS
 # it. The link is the whole assertion; the executable barely does anything.
-if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
-  set(_link_js "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Linking/linkable.js")
-  set(_link_cpp "${CMAKE_CURRENT_BINARY_DIR}/linkable.generated.cpp")
-  add_custom_command(
-    OUTPUT "${_link_cpp}"
-    COMMAND "${CMAKE_COMMAND}"
-            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-            -DOPT=$<TARGET_FILE:ctjs-opt>
-            -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
-            -DSOURCE=${_link_js}
-            -DENTRIES=everything
-            -DOUTPUT=${_link_cpp}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
-    DEPENDS "${_link_js}" ctjs-translate ctjs-opt
-            "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
-    COMMENT "Compiling linkable.js through the EmitC backend"
-    VERBATIM)
-
-  set_source_files_properties("${_link_cpp}" PROPERTIES
-    COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
-  add_executable(ctcompile-test-linkable "${_link_cpp}")
-  target_link_libraries(ctcompile-test-linkable PRIVATE ctbrowser::script)
-  ctcompile_target(ctcompile-test-linkable)
-  add_test(NAME ctcompile_linkable COMMAND ctcompile-test-linkable)
+  ctcompile_compile_js(linkable.generated.cpp
+                       "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Linking/linkable.js" ENTRIES everything)
+  ctcompile_boxed_test(linkable linkable.generated.cpp)
+else()
+  message(STATUS "ctcompile: gc-roots test unavailable (needs ctjs-opt and mlir-translate)")
 endif()

@@ -1,9 +1,8 @@
 // Boxed EmitC runtimeops lowering.
 #include "Lowering.h"
-#include "ctcompile/Support/CppLiterals.hpp"
+#include "ctcompile/CTJS/Lowering/RuntimeHelpers.hpp"
 
 namespace ctcompile::ctjs::emitc_detail {
-using cpp::c_string_literal;
 
 bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
                               mlir::IRMapping & mapping, compiled_entry & scope) {
@@ -53,12 +52,7 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         dispatched_result = direct.getResult();
     }
     if (dispatched_result) {
-        const unsigned base = scope.argument_windows.lookup(&op);
-        for (auto [index, argument] : llvm::enumerate(dispatched_arguments)) {
-            park(scope, build, where, mapping.lookup(argument),
-                 base + static_cast<unsigned>(index));
-        }
-
+        const unsigned base = park_window(scope, build, where, mapping, op, dispatched_arguments);
         const mlir::Value argv = window_pointer(scope, build, where, base);
 
         // `key` AND `site` ARE THE ROW'S DIAGNOSTIC ARGUMENTS and the
@@ -106,12 +100,8 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
     // importer built and what the helper reads. Packed would capture the
     // wrong bindings and say nothing.
     if (auto made = mlir::dyn_cast<CreateClosureOp>(op)) {
-        const unsigned base = scope.argument_windows.lookup(&op);
         const auto upvalues = made.getUpvalues();
-        for (auto [index, captured] : llvm::enumerate(upvalues)) {
-            park(scope, build, where, mapping.lookup(captured),
-                 base + static_cast<unsigned>(index));
-        }
+        const unsigned base = park_window(scope, build, where, mapping, op, upvalues);
         const auto u32 = opaque(build.getContext(), "uint32_t");
         mapping.map(
             made.getResult(),
@@ -123,41 +113,6 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
                                  literal(build, where, u32, std::to_string(upvalues.size())),
                                  mapping.lookup(made.getEnclosingThis())})
                 .getResult(0));
-        return true;
-    }
-
-    // CELLS - the boxes a captured binding lives in.
-    //
-    // ALL THREE ARE EDGE-FREE. cell_get and cell_set are (0, 0, 0) and take
-    // no frame at all: their FAILURE line calls the silence a semantic
-    // guarantee, because a non-cell argument yields undefined or is
-    // dropped, and that is what lets them compose with ct_aot_upvalue_cell
-    // to reproduce the fused opcodes exactly.
-    //
-    // ct_aot_cell_new IS may_throw AND a safepoint, but RAISE TIER ONLY -
-    // allocate() raises past the ceiling and still returns a well-formed
-    // cell - so it is a plain call whose result is parked, not a status
-    // test.
-    if (auto cell = mlir::dyn_cast<CreateCellOp>(op)) {
-        mapping.map(cell.getResult(),
-                    ec::CallOpaqueOp::create(
-                        build, where, mlir::TypeRange{value}, callee("ct_aot_cell_new"),
-                        mlir::ValueRange{scope.frame, mapping.lookup(cell.getInitial())})
-                        .getResult(0));
-        return true;
-    }
-    if (auto read = mlir::dyn_cast<CellGetOp>(op)) {
-        mapping.map(read.getResult(),
-                    ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
-                                             callee("ct_aot_cell_get"),
-                                             mlir::ValueRange{mapping.lookup(read.getCell())})
-                        .getResult(0));
-        return true;
-    }
-    if (auto write = mlir::dyn_cast<CellSetOp>(op)) {
-        ec::CallOpaqueOp::create(
-            build, where, mlir::TypeRange{}, callee("ct_aot_cell_set"),
-            mlir::ValueRange{mapping.lookup(write.getCell()), mapping.lookup(write.getValue())});
         return true;
     }
 
@@ -180,19 +135,12 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // OBJECT AND ARRAY LITERALS.
+    // AN ARRAY LITERAL.
     //
-    // BOTH ALLOCATE AND ARE RAISE TIER ONLY: allocate() raises past the
+    // IT ALLOCATES AND IS RAISE TIER ONLY: allocate() raises past the
     // ceiling and STILL returns a well-formed object, so there is no status
-    // to test - only a poll to schedule at a back edge. They are safepoints,
-    // so their results are parked like every other value.
-    if (auto made = mlir::dyn_cast<CreateObjectOp>(op)) {
-        mapping.map(made.getResult(), ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
-                                                               callee("ct_aot_new_object"),
-                                                               mlir::ValueRange{scope.frame})
-                                          .getResult(0));
-        return true;
-    }
+    // to test - only a poll to schedule at a back edge. It is a safepoint,
+    // so its result is parked like every other value.
     if (auto made = mlir::dyn_cast<CreateArrayOp>(op)) {
         // `reserve_hint` IS A HINT and the row says so - an array that
         // ignores it is merely slower. The elements the operation carries
@@ -314,45 +262,10 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         // INTERNED name record rather than characters. The length travels
         // beside the text because a property name is BYTES and one
         // containing a zero byte is legal JavaScript that strlen stops at.
-        const llvm::StringRef name = gone.getName();
-        const mlir::Value interned =
-            ec::CallOpaqueOp::create(
-                build, where,
-                mlir::TypeRange{
-                    pointer_to(build.getContext(), "const ctbrowser::aot::ct_aot_name")},
-                callee("ct_aot_intern_name"),
-                mlir::ValueRange{literal(build, where, pointer_to(build.getContext(), "const char"),
-                                         c_string_literal(name)),
-                                 literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                         std::to_string(name.size()))})
-                .getResult(0);
+        const mlir::Value interned = intern(build, where, gone.getName());
         ec::CallOpaqueOp::create(
             build, where, mlir::TypeRange{}, callee("ct_aot_delete_prop"),
             mlir::ValueRange{scope.frame, mapping.lookup(gone.getObject()), interned});
-        return true;
-    }
-    if (auto keys = mlir::dyn_cast<OwnKeysOp>(op)) {
-        // RAISE TIER: it answers the array itself, so there is no status to
-        // test and no exception edge - a caller polls at a back edge. It IS
-        // a safepoint, so the result is parked like every other value.
-        mapping.map(keys.getResult(),
-                    ec::CallOpaqueOp::create(
-                        build, where, mlir::TypeRange{value}, callee("ct_aot_own_keys"),
-                        mlir::ValueRange{scope.frame, mapping.lookup(keys.getSource())})
-                        .getResult(0));
-        return true;
-    }
-    if (auto wrapped = mlir::dyn_cast<WrapPromiseOp>(op)) {
-        // RAISE TIER, exactly like ct_aot_own_keys above: the helper
-        // answers the promise rather than a status, so there is no
-        // exception edge and a caller polls at a back edge. It allocates -
-        // a table, a prototype, four property writes and an array - so it
-        // IS a safepoint and the result is parked like every other value.
-        mapping.map(wrapped.getResult(),
-                    ec::CallOpaqueOp::create(
-                        build, where, mlir::TypeRange{value}, callee("ct_aot_wrap_promise"),
-                        mlir::ValueRange{scope.frame, mapping.lookup(wrapped.getValue())})
-                        .getResult(0));
         return true;
     }
     // ---- THE FOUR MODULE OPERATIONS ------------------------------
@@ -368,22 +281,16 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         // no exception edge - a missing module and a missing export are
         // both uncatchable engine faults and a caller polls at a back edge.
         // NOT a safepoint either: two flat_map lookups allocate nothing.
-        const llvm::StringRef specifier = imported.getSpecifier();
-        const llvm::StringRef exported = imported.getExportName();
-        mapping.map(
-            imported.getResult(),
-            ec::CallOpaqueOp::create(
-                build, where, mlir::TypeRange{value}, callee("ct_aot_module_import_cell"),
-                mlir::ValueRange{scope.frame,
-                                 literal(build, where, pointer_to(build.getContext(), "const char"),
-                                         c_string_literal(specifier)),
-                                 literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                         std::to_string(specifier.size())),
-                                 literal(build, where, pointer_to(build.getContext(), "const char"),
-                                         c_string_literal(exported)),
-                                 literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                         std::to_string(exported.size()))})
-                .getResult(0));
+        const auto [specifier, specifier_length] =
+            bytes_and_length(build, where, imported.getSpecifier());
+        const auto [exported, exported_length] =
+            bytes_and_length(build, where, imported.getExportName());
+        mapping.map(imported.getResult(),
+                    ec::CallOpaqueOp::create(
+                        build, where, mlir::TypeRange{value}, callee("ct_aot_module_import_cell"),
+                        mlir::ValueRange{scope.frame, specifier, specifier_length, exported,
+                                         exported_length})
+                        .getResult(0));
         return true;
     }
     if (auto published = mlir::dyn_cast<ModuleExportCellOp>(op)) {
@@ -393,46 +300,23 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         // op::bind_export's CONDITIONAL write is expressed without the
         // CT_AOT_NO_WRITE status its ABI row asked for and the enum never
         // had. See status_call.
-        const llvm::StringRef name = published.getName();
+        const auto [name, length] = bytes_and_length(build, where, published.getName());
         mapping.map(published.getResult(),
                     status_call(scope, build, where, callee("ct_aot_module_export_cell"),
-                                {scope.frame,
-                                 literal(build, where, pointer_to(build.getContext(), "const char"),
-                                         c_string_literal(name)),
-                                 literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                         std::to_string(name.size()))},
-                                value, mapping.lookup(published.getCurrent())));
+                                {scope.frame, name, length}, value,
+                                mapping.lookup(published.getCurrent())));
         return true;
     }
     if (auto space = mlir::dyn_cast<ModuleNamespaceOp>(op)) {
         // RAISE TIER like the import row, and a SAFEPOINT unlike it: the
         // namespace object and one native getter per export are allocated
         // here. The result is parked like every other value.
-        const llvm::StringRef specifier = space.getSpecifier();
-        mapping.map(
-            space.getResult(),
-            ec::CallOpaqueOp::create(
-                build, where, mlir::TypeRange{value}, callee("ct_aot_module_namespace"),
-                mlir::ValueRange{scope.frame,
-                                 literal(build, where, pointer_to(build.getContext(), "const char"),
-                                         c_string_literal(specifier)),
-                                 literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                         std::to_string(specifier.size()))})
-                .getResult(0));
-        return true;
-    }
-    if (auto dynamic = mlir::dyn_cast<DynamicImportOp>(op)) {
-        // A FULL STATUS, and the two failing arms are not what they look
-        // like. A module that was not FOUND is CT_AOT_OK carrying an
-        // already-rejected promise - the embedder's loader builds it - so
-        // it must not reach this edge. Only "no loader is installed" is a
-        // failure, because the interpreter raise()s there and stops.
-        //
-        // NO SEED: unlike bind_export this genuinely does not write on a
-        // failure, and the interpreter does not write the register either.
-        mapping.map(dynamic.getResult(),
-                    status_call(scope, build, where, callee("ct_aot_dynamic_import"),
-                                {scope.frame, mapping.lookup(dynamic.getSpecifier())}, value));
+        const auto [specifier, length] = bytes_and_length(build, where, space.getSpecifier());
+        mapping.map(space.getResult(),
+                    ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
+                                             callee("ct_aot_module_namespace"),
+                                             mlir::ValueRange{scope.frame, specifier, length})
+                        .getResult(0));
         return true;
     }
     if (auto accessor = mlir::dyn_cast<DefineAccessorOp>(op)) {
@@ -444,29 +328,11 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         // THE LENGTH IS EMITTED BESIDE THE TEXT for ct_aot_global_get's
         // reason: a property name is BYTES, and one containing a zero byte
         // is legal JavaScript that strlen would stop at.
-        const llvm::StringRef name = accessor.getName();
-        const mlir::Value interned =
-            ec::CallOpaqueOp::create(
-                build, where,
-                mlir::TypeRange{
-                    pointer_to(build.getContext(), "const ctbrowser::aot::ct_aot_name")},
-                callee("ct_aot_intern_name"),
-                mlir::ValueRange{literal(build, where, pointer_to(build.getContext(), "const char"),
-                                         c_string_literal(name)),
-                                 literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                         std::to_string(name.size()))})
-                .getResult(0);
+        const mlir::Value interned = intern(build, where, accessor.getName());
         ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_define_accessor"),
                                  mlir::ValueRange{scope.frame, mapping.lookup(accessor.getTarget()),
                                                   interned, mapping.lookup(accessor.getGetter()),
                                                   mapping.lookup(accessor.getSetter())});
-        return true;
-    }
-    if (auto merge = mlir::dyn_cast<CopyPropsOp>(op)) {
-        // (0, 0, 0): one call, no status, no edge and nothing to park.
-        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_copy_props"),
-                                 mlir::ValueRange{scope.frame, mapping.lookup(merge.getTarget()),
-                                                  mapping.lookup(merge.getSource())});
         return true;
     }
     // THE SPREAD CALLS, WHICH NEED NO WINDOW. Their arguments arrived as
@@ -490,37 +356,6 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
                                 value));
         return true;
     }
-    if (mlir::isa<PassNewTargetOp>(op)) {
-        // (0, 0, 0) and no result: one write to a context field, consumed
-        // by whatever frame is pushed next.
-        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_pass_new_target"),
-                                 mlir::ValueRange{scope.frame});
-        return true;
-    }
-    if (auto chain = mlir::dyn_cast<GetProtoOp>(op)) {
-        // (0, 0, 0): a plain field read behind a kind test.
-        mapping.map(chain.getResult(),
-                    ec::CallOpaqueOp::create(
-                        build, where, mlir::TypeRange{value}, callee("ct_aot_get_proto"),
-                        mlir::ValueRange{scope.frame, mapping.lookup(chain.getObject())})
-                        .getResult(0));
-        return true;
-    }
-    if (auto link = mlir::dyn_cast<SetProtoOp>(op)) {
-        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_set_proto"),
-                                 mlir::ValueRange{scope.frame, mapping.lookup(link.getObject()),
-                                                  mapping.lookup(link.getProto())});
-        return true;
-    }
-    if (auto lookup = mlir::dyn_cast<LoadHomeOp>(op)) {
-        // (0, 0, 0): one call, no status, no edge, no parking. It reads a
-        // property whose lookup consults `props` only, so nothing runs.
-        mapping.map(lookup.getResult(),
-                    ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
-                                             callee("ct_aot_home"), mlir::ValueRange{scope.frame})
-                        .getResult(0));
-        return true;
-    }
     if (auto asks = mlir::dyn_cast<HasPropertyOp>(op)) {
         // ITS OUT-PARAMETER IS A uint32_t BOOLEAN, not a value - the same
         // shape ct_aot_loose_equals has, and boxed the same way.
@@ -528,10 +363,8 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         const mlir::Value answered = status_call(
             scope, build, where, callee("ct_aot_has_property"),
             {scope.frame, mapping.lookup(asks.getObject()), mapping.lookup(asks.getKey())}, u32);
-        auto truth =
-            ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
-                              ec::CmpPredicate::ne, answered, literal(build, where, u32, "0"));
-        mapping.map(asks.getResult(), box(build, where, value, "ctc_box_bool", truth.getResult()));
+        mapping.map(asks.getResult(),
+                    box(build, where, value, "ctc_box_bool", nonzero(build, where, answered)));
         return true;
     }
     if (auto is_a = mlir::dyn_cast<InstanceOfOp>(op)) {
@@ -545,39 +378,12 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
                                      mlir::ValueRange{scope.frame, mapping.lookup(is_a.getObject()),
                                                       mapping.lookup(is_a.getConstructor())})
                 .getResult(0);
-        mapping.map(is_a.getResult(),
-                    ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
-                                      ec::CmpPredicate::ne, answered,
-                                      literal(build, where, u32, "0"))
-                        .getResult());
+        mapping.map(is_a.getResult(), nonzero(build, where, answered));
         return true;
     }
     if (auto boxed = mlir::dyn_cast<FromBoolOp>(op)) {
         mapping.map(boxed.getResult(),
                     box(build, where, value, "ctc_box_bool", mapping.lookup(boxed.getBit())));
-        return true;
-    }
-    if (auto gone = mlir::dyn_cast<DeletePropertyOp>(op)) {
-        status_call_void(
-            scope, build, where, callee("ct_aot_delete_index"),
-            {scope.frame, mapping.lookup(gone.getObject()), mapping.lookup(gone.getKey())});
-        return true;
-    }
-    if (auto over = mlir::dyn_cast<IterableOp>(op)) {
-        // (1, 1, 1) and so a status call: it drains generators and calls
-        // lookup_property on an array-like, either of which runs user
-        // JavaScript and can throw.
-        mapping.map(over.getResult(),
-                    status_call(scope, build, where, callee("ct_aot_iterable_values"),
-                                {scope.frame, mapping.lookup(over.getSource())}, value));
-        return true;
-    }
-    if (auto push = mlir::dyn_cast<AppendOp>(op)) {
-        // (0, 0, 0): growing a std::vector is malloc, not allocate(), so no
-        // GC object is created and there is nothing to test or park.
-        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_append"),
-                                 mlir::ValueRange{scope.frame, mapping.lookup(push.getArray()),
-                                                  mapping.lookup(push.getElement())});
         return true;
     }
 
@@ -628,12 +434,8 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
     // ct_aot_construct sets it from the callee itself, which is what
     // op::construct does with `fresh.new_target = callee`.
     if (auto built = mlir::dyn_cast<ConstructOp>(op)) {
-        const unsigned base = scope.argument_windows.lookup(&op);
         const auto arguments = built.getArgs();
-        for (auto [index, argument] : llvm::enumerate(arguments)) {
-            park(scope, build, where, mapping.lookup(argument),
-                 base + static_cast<unsigned>(index));
-        }
+        const unsigned base = park_window(scope, build, where, mapping, op, arguments);
         mapping.map(built.getResult(),
                     status_call(scope, build, where, callee("ct_aot_construct"),
                                 {scope.frame, mapping.lookup(built.getCallee()),
@@ -679,6 +481,37 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
     // all this needs.
     if (mlir::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp>(op)) {
         build.clone(op, mapping);
+        return true;
+    }
+
+    // EVERY OTHER CTJS_RuntimeOp IS ONE CALL TO ITS HELPER: the frame when
+    // the row leads with one, then the operands in order. The row decides the
+    // tier - a status return is tested; anything else is raise tier or
+    // edge-free, called plainly, its result parked like every other value.
+    // A row with a parameter this does not supply falls through to
+    // convert()'s loud failure rather than being called without it.
+    if (auto runtime = mlir::dyn_cast<RuntimeCallOpInterface>(op)) {
+        const runtime_helper & helper = helper_for(runtime.getHelperID());
+        const bool tested = returns_status(helper);
+        llvm::SmallVector<mlir::Value> arguments;
+        if (helper.roles[0] == param_role::frame) { arguments.push_back(scope.frame); }
+        for (const mlir::Value operand : op.getOperands()) {
+            arguments.push_back(mapping.lookup(operand));
+        }
+        if (arguments.size() + (tested ? op.getNumResults() : 0) != helper.role_count) {
+            return false;
+        }
+        const std::string symbol = callee(helper.symbol);
+        if (tested && op.getNumResults() == 0) {
+            status_call_void(scope, build, where, symbol, arguments);
+        } else if (tested) {
+            mapping.map(op.getResult(0),
+                        status_call(scope, build, where, symbol, arguments, value));
+        } else {
+            const llvm::SmallVector<mlir::Type> produces(op.getNumResults(), value);
+            auto call = ec::CallOpaqueOp::create(build, where, produces, symbol, arguments);
+            if (op.getNumResults() != 0) { mapping.map(op.getResult(0), call.getResult(0)); }
+        }
         return true;
     }
 

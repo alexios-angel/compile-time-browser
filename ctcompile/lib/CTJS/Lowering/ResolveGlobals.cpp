@@ -239,6 +239,12 @@ struct verdict {
     std::string reason;      // why not, when the target is null
 };
 
+// A BODY WHOSE ENTRY BLOCK CARRIES THE IMPLICIT ARGUMENTS every call binds.
+bool has_entry(FuncOp function) {
+    return !function.getBody().empty() &&
+           function.getBody().front().getNumArguments() >= implicit_arguments;
+}
+
 verdict bound_closure(const census & world, mlir::StringAttr name, const binding & facts) {
     const auto no = [](std::string because) {
         return verdict{FuncOp{}, CreateClosureOp{}, std::move(because)};
@@ -270,9 +276,7 @@ verdict bound_closure(const census & world, mlir::StringAttr name, const binding
     if (target->hasAttr("ctjs.not_lowered")) {
         return no("function " + target.getSymName().str() + " was refused");
     }
-    if (target.getBody().empty() || target.getBody().front().getNumArguments() < 3) {
-        return no("function " + target.getSymName().str() + " has no body");
-    }
+    if (!has_entry(target)) { return no("function " + target.getSymName().str() + " has no body"); }
     return verdict{target, made, {}};
 }
 
@@ -340,6 +344,57 @@ bool reads_raw_arguments(FuncOp function) {
 // change nothing about them.
 bool padding_hides_arguments(FuncOp target, std::size_t supplied, unsigned parameters) {
     return supplied < parameters && reads_raw_arguments(target);
+}
+
+// WHY `call` CANNOT BECOME A ctjs.call_direct INTO `target`, or nothing.
+//
+// ARITY IS A HARD VERIFIER FAILURE, NOT A REFUSAL THIS MAY LEAVE TO SOMEBODY
+// ELSE. CallDirectOp::verifySymbolUses holds the operand count equal to the
+// entry block's, so a surplus call is refused; a short one is padded, as
+// VM_CASE(call) pads - unless the pad would be visible: a short call into a
+// body that reads its raw argument window was once padded, and
+// `arguments.length` came out as the parameter count instead of the argument
+// count. new.target is undefined for a plain call, and a function holding a
+// ctjs.pass_new_target may have the pending flag live at any call in it -
+// adjacency is an invariant nothing checks.
+std::optional<std::string> direct_refusal(
+    CallOp call, unsigned parameters, FuncOp target,
+    const llvm::DenseSet<mlir::Operation *> & passes_new_target) {
+    const std::size_t supplied = call.getArgs().size();
+    const auto counts = [&] {
+        return "a call passes " + std::to_string(supplied) + " argument(s) to " +
+               std::to_string(parameters) + " parameter(s)";
+    };
+    if (supplied > parameters) {
+        return counts() + " - the surplus has frame semantics (" + describe(call) + ")";
+    }
+    if (passes_new_target.contains(call->getParentOfType<FuncOp>())) {
+        return "a call sits in a function that passes new.target (" + describe(call) + ")";
+    }
+    if (padding_hides_arguments(target, supplied, parameters)) {
+        return counts() +
+               " and the callee reads its raw argument window, which the pad would lengthen (" +
+               describe(call) + ")";
+    }
+    return std::nullopt;
+}
+
+// THE REWRITE: `call` becomes a ctjs.call_direct into `target`, its short
+// argument list padded with undefined.
+void rewrite_direct(CallOp call, FuncOp target, unsigned parameters) {
+    mlir::OpBuilder at(call);
+    mlir::MLIRContext * context = call.getContext();
+    const auto value_type = ValueType::get(context);
+    const mlir::Value undefined =
+        ConstantOp::create(at, call.getLoc(), value_type, UndefinedAttr::get(context));
+    llvm::SmallVector<mlir::Value> arguments(call.getArgs());
+    while (arguments.size() < parameters) { arguments.push_back(undefined); }
+    auto direct = CallDirectOp::create(at, call.getLoc(), value_type,
+                                       mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
+                                       call.getReceiver(), undefined, call.getCallee(), arguments,
+                                       /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+    call.getResult().replaceAllUsesWith(direct.getResult());
+    call.erase();
 }
 
 // CLAUSE 5: can anything in the module write the globals table other than a
@@ -458,7 +513,7 @@ std::optional<std::string> dynamic_global_writes(
     // new.target, callee, then the declared parameters.
     const auto enter = [&](FuncOp target, std::size_t supplied, unsigned parameter,
                            mlir::Operation * at, watched kind) -> std::optional<std::string> {
-        if (!target || target.getBody().empty() || target.getBody().front().getNumArguments() < 3) {
+        if (!target || !has_entry(target)) {
             return std::string{name_of(kind)} +
                    " escapes into a call whose callee this module does not name (" + describe(at) +
                    ")";
@@ -590,9 +645,7 @@ std::optional<std::string> dynamic_global_writes(
 // CLAUSE 4's second half: F's own closure, as its body sees it, feeds nothing
 // but nested closures and upvalue reads. Anything else is an escape.
 std::optional<std::string> own_closure_escapes(FuncOp function) {
-    if (function.getBody().empty() || function.getBody().front().getNumArguments() < 3) {
-        return "the function has no callee argument";
-    }
+    if (!has_entry(function)) { return "the function has no callee argument"; }
     const mlir::BlockArgument callee = function.getBody().front().getArgument(2);
     for (mlir::OpOperand & use : callee.getUses()) {
         mlir::Operation * op = use.getOwner();
@@ -753,34 +806,8 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                         }
                         continue;
                     }
-                    if (call.getArgs().size() > parameters) {
-                        if (!open) {
-                            open = "a call passes " + std::to_string(call.getArgs().size()) +
-                                   " argument(s) to " + std::to_string(parameters) +
-                                   " parameter(s) - the surplus has frame semantics (" +
-                                   describe(user) + ")";
-                        }
-                        continue;
-                    }
-                    if (passes_new_target.contains(call->getParentOfType<FuncOp>())) {
-                        if (!open) {
-                            open = "a call sits in a function that passes new.target (" +
-                                   describe(user) + ")";
-                        }
-                        continue;
-                    }
-                    // AND THE PAD MAY NOT BE VISIBLE. This clause was missing:
-                    // a short call into a body that reads its raw argument
-                    // window was padded, and `arguments.length` came out as the
-                    // parameter count instead of the argument count.
-                    if (padding_hides_arguments(target, call.getArgs().size(), parameters)) {
-                        if (!open) {
-                            open = "a call passes " + std::to_string(call.getArgs().size()) +
-                                   " argument(s) to " + std::to_string(parameters) +
-                                   " parameter(s) and the callee reads its raw argument window, "
-                                   "which the pad would lengthen (" +
-                                   describe(user) + ")";
-                        }
+                    if (auto why = direct_refusal(call, parameters, target, passes_new_target)) {
+                        if (!open) { open = std::move(why); }
                         continue;
                     }
                     calls.push_back(call);
@@ -788,19 +815,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 // Do not erase a call while its other operand uses are still
                 // in the census above (f(f) is an escape as well as a call).
                 for (CallOp call : calls) {
-                    mlir::OpBuilder at(call);
-                    const auto value_type = ValueType::get(context);
-                    const mlir::Value undefined = ConstantOp::create(at, call.getLoc(), value_type,
-                                                                     UndefinedAttr::get(context));
-                    llvm::SmallVector<mlir::Value> arguments(call.getArgs());
-                    while (arguments.size() < parameters) { arguments.push_back(undefined); }
-                    auto direct = CallDirectOp::create(
-                        at, call.getLoc(), value_type,
-                        mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()), call.getReceiver(),
-                        undefined, call.getCallee(), arguments,
-                        /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
-                    call.getResult().replaceAllUsesWith(direct.getResult());
-                    call.erase();
+                    rewrite_direct(call, target, parameters);
                     ++rewritten;
                     ++rewrittenCalls;
                     ++rewritten_here;
@@ -853,36 +868,11 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         });
         for (CallOp call : closure_calls) {
             FuncOp target = known_callee(world, call.getCallee());
-            if (!target || target->hasAttr("ctjs.not_lowered")) { continue; }
-            if (target.getBody().empty() || target.getBody().front().getNumArguments() < 3) {
-                continue;
-            }
+            if (!target || target->hasAttr("ctjs.not_lowered") || !has_entry(target)) { continue; }
             const unsigned parameters =
                 target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
-            // ARITY IS A HARD VERIFIER FAILURE, NOT A REFUSAL THIS MAY LEAVE TO
-            // SOMEBODY ELSE. CallDirectOp::verifySymbolUses holds the operand
-            // count equal to the entry block's, so a surplus call must be
-            // refused HERE; a short one is padded, as VM_CASE(call) pads.
-            if (call.getArgs().size() > parameters) { continue; }
-            if (padding_hides_arguments(target, call.getArgs().size(), parameters)) { continue; }
-            // new.target is undefined for a plain call, and a function holding
-            // a ctjs.pass_new_target may have the pending flag live at any call
-            // in it - adjacency is an invariant nothing checks.
-            if (passes_new_target.contains(call->getParentOfType<FuncOp>())) { continue; }
-
-            mlir::OpBuilder at(call);
-            const auto value_type = ValueType::get(context);
-            const mlir::Value undefined =
-                ConstantOp::create(at, call.getLoc(), value_type, UndefinedAttr::get(context));
-            llvm::SmallVector<mlir::Value> arguments(call.getArgs());
-            while (arguments.size() < parameters) { arguments.push_back(undefined); }
-            auto direct =
-                CallDirectOp::create(at, call.getLoc(), value_type,
-                                     mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
-                                     call.getReceiver(), undefined, call.getCallee(), arguments,
-                                     /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
-            call.getResult().replaceAllUsesWith(direct.getResult());
-            call.erase();
+            if (direct_refusal(call, parameters, target, passes_new_target)) { continue; }
+            rewrite_direct(call, target, parameters);
             ++rewrittenCalls;
             ++rewritten_here;
             ++closure_here;

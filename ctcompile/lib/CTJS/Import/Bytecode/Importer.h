@@ -4,6 +4,7 @@
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTJS/Lowering/OpcodeMapping.hpp"
 
 #include <ctbrowser/script/bytecode.hpp>
 #include <ctbrowser/script/source_lines.hpp>
@@ -35,7 +36,6 @@ struct dropped_globals {
     std::string opaque;
 };
 
-std::string_view name_of(op code);
 bool may_suspend(op code);
 dropped_globals summarise_globals(const function_proto & proto);
 std::int64_t jump_target(std::size_t at, const instruction & in);
@@ -43,7 +43,6 @@ bool is_conditional_jump(op code);
 bool is_jump(op code);
 bool ends_a_block(op code);
 bool falls_through(op code);
-bool in_terminator(op code);
 
 using ctjs::arg_callee;
 using ctjs::arg_new_target;
@@ -119,10 +118,17 @@ struct function_importer {
         // program's, outlives the scratch module, and is the only description
         // of this function that survives the refusal.
         dropped_globals globals = summarise_globals(proto);
-        skipped.push_back(unsupported_opcode{program_id.str(), function_index,
-                                             static_cast<std::uint32_t>(at),
-                                             std::string{name_of(code)}, std::move(reason),
-                                             std::move(globals.stores), std::move(globals.opaque)});
+        skipped.push_back(
+            unsupported_opcode{program_id.str(), function_index, static_cast<std::uint32_t>(at),
+                               std::string{ctjs::opcode_name(code)}, std::move(reason),
+                               std::move(globals.stores), std::move(globals.opaque)});
+    }
+
+    // proto.names[index], or null after giving up on an index past the pool.
+    [[nodiscard]] const std::string * name_at(std::size_t at, op code, std::size_t index) {
+        if (index < proto.names.size()) { return &proto.names[index]; }
+        give_up(at, code, "name index out of range");
+        return nullptr;
     }
 
     [[nodiscard]] mlir::Value constant(mlir::Location where, mlir::Attribute value) {

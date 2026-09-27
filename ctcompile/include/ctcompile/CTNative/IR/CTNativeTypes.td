@@ -35,6 +35,13 @@
 include "ctcompile/CTNative/IR/CTNativeBase.td"
 include "ctcompile/CTNative/IR/CTNativeEnums.td"
 
+// A TYPE OF ONE PARAMETER, spelled `<parameter>`.
+class CTNative_WrapperType<string name, string typeMnemonic, dag parameter>
+    : CTNative_Type<name, typeMnemonic> {
+  let parameters = parameter;
+  let assemblyFormat = "`<` $" # !getdagname(parameter, 0) # " `>`";
+}
+
 //===----------------------------------------------------------------------===//
 // The two ends of the lattice
 //===----------------------------------------------------------------------===//
@@ -237,7 +244,7 @@ def CTNative_JsonType : CTNative_Type<"Json", "json"> {
 // The lifts and the unions
 //===----------------------------------------------------------------------===//
 
-def CTNative_OptType : CTNative_Type<"Opt", "opt"> {
+def CTNative_OptType : CTNative_WrapperType<"Opt", "opt", (ins "::mlir::Type":$elementType)> {
   let summary = "`std::optional<T>` - `T`, or `null`/`undefined`";
   let description = [{
     A LIFT, NOT A RUNG. `opt` does not sit at a height in the chain; it
@@ -259,8 +266,6 @@ def CTNative_OptType : CTNative_Type<"Opt", "opt"> {
     between the two is OBSERVED cannot use this type, which is Phase 54's
     obligation to check and not something the type can enforce about itself.
   }];
-  let parameters = (ins "::mlir::Type":$elementType);
-  let assemblyFormat = "`<` $elementType `>`";
 }
 
 def CTNative_VariantType : CTNative_Type<"Variant", "variant"> {
@@ -301,7 +306,7 @@ def CTNative_VariantType : CTNative_Type<"Variant", "variant"> {
 // here because the lattice has to be able to name them.
 //===----------------------------------------------------------------------===//
 
-def CTNative_VecType : CTNative_Type<"Vec", "vec"> {
+def CTNative_VecType : CTNative_WrapperType<"Vec", "vec", (ins "::mlir::Type":$elementType)> {
   let summary = "`std::vector<T>` - a dense JavaScript array of uniform element type";
   let description = [{
     TWO PROOFS STAND BETWEEN A JS ARRAY AND THIS TYPE, and Phase 57 owns
@@ -314,8 +319,6 @@ def CTNative_VecType : CTNative_Type<"Vec", "vec"> {
     why every construction of it in a later phase has to be able to point at
     one.
   }];
-  let parameters = (ins "::mlir::Type":$elementType);
-  let assemblyFormat = "`<` $elementType `>`";
 }
 
 def CTNative_MapType : CTNative_Type<"Map", "map"> {
@@ -338,15 +341,13 @@ def CTNative_MapType : CTNative_Type<"Map", "map"> {
   let assemblyFormat = "`<` $keyType `,` $valueType `>`";
 }
 
-def CTNative_SetType : CTNative_Type<"Set", "set"> {
+def CTNative_SetType : CTNative_WrapperType<"Set", "set", (ins "::mlir::Type":$elementType)> {
   let summary = "`std::unordered_set<T>` - a JavaScript `Set`";
   let description = [{
     Part 24 §8's row, and it inherits `map`'s key problem verbatim: a JS
     `Set` uses SameValueZero, so `NaN` is a member of `new Set([NaN])` and
     `-0` and `0` are one member. Same obligation, same owner.
   }];
-  let parameters = (ins "::mlir::Type":$elementType);
-  let assemblyFormat = "`<` $elementType `>`";
 }
 
 def CTNative_ObjectIdentityType : CTNative_Type<"ObjectIdentity", "object_identity"> {
@@ -364,7 +365,8 @@ def CTNative_ObjectIdentityType : CTNative_Type<"ObjectIdentity", "object_identi
   }];
 }
 
-def CTNative_GlobalObjectType : CTNative_Type<"GlobalObject", "global_object"> {
+def CTNative_GlobalObjectType
+    : CTNative_WrapperType<"GlobalObject", "global_object", (ins StringRefParameter<>:$binding)> {
   let summary = "An ordinary object retained by a checked module global owner";
   let description = [{
     The binding identifies one source allocation in a live OwnedGlobalRoots
@@ -373,11 +375,10 @@ def CTNative_GlobalObjectType : CTNative_Type<"GlobalObject", "global_object"> {
     load and field access; this type or an input annotation never authorizes
     ownership. The source allocation still escapes through StoredGlobal.
   }];
-  let parameters = (ins StringRefParameter<>:$binding);
-  let assemblyFormat = "`<` $binding `>`";
 }
 
-def CTNative_MethodTableType : CTNative_Type<"MethodTable", "method_table"> {
+def CTNative_MethodTableType
+    : CTNative_WrapperType<"MethodTable", "method_table", (ins StringRefParameter<>:$site)> {
   let summary = "An owning closed table of immutable stored callable fields";
   let description = [{
     The site is a nominal schema identity proved across all closed arguments
@@ -385,11 +386,10 @@ def CTNative_MethodTableType : CTNative_Type<"MethodTable", "method_table"> {
     Fields own concrete std::function values; object inspection, replacement,
     deletion, open boundaries and cyclic captures remain refused.
   }];
-  let parameters = (ins StringRefParameter<>:$site);
-  let assemblyFormat = "`<` $site `>`";
 }
 
-def CTNative_ClosureType : CTNative_Type<"Closure", "closure"> {
+def CTNative_ClosureType
+    : CTNative_WrapperType<"Closure", "closure", (ins StringRefParameter<>:$target)> {
   let summary = "A proved monomorphic callable with an owning capture environment";
   let description = [{
     The target is a nominal identity, not a C++ function pointer. The native
@@ -404,8 +404,6 @@ def CTNative_ClosureType : CTNative_Type<"Closure", "closure"> {
     parameters. They are not recursively embedded in this nominal type, so a
     recursive call graph cannot grow the type lattice indefinitely.
   }];
-  let parameters = (ins StringRefParameter<>:$target);
-  let assemblyFormat = "`<` $target `>`";
 }
 
 //===----------------------------------------------------------------------===//
@@ -413,17 +411,16 @@ def CTNative_ClosureType : CTNative_Type<"Closure", "closure"> {
 // between them; these are the vocabulary that analysis will speak in.
 //===----------------------------------------------------------------------===//
 
-def CTNative_OwnedType : CTNative_Type<"Owned", "owned"> {
+def CTNative_OwnedType : CTNative_WrapperType<"Owned", "owned", (ins "::mlir::Type":$pointeeType)> {
   let summary = "`std::unique_ptr<T>` - one owner, proved";
   let description = [{
     Stage 55B's preferred outcome for anything that escapes its frame at
     all: stack first, then this, then `shared`.
   }];
-  let parameters = (ins "::mlir::Type":$pointeeType);
-  let assemblyFormat = "`<` $pointeeType `>`";
 }
 
-def CTNative_SharedType : CTNative_Type<"Shared", "shared"> {
+def CTNative_SharedType
+    : CTNative_WrapperType<"Shared", "shared", (ins "::mlir::Type":$pointeeType)> {
   let summary = "`std::shared_ptr<T>` - several owners, none of them provably last";
   let description = [{
     `owned` WIDENS INTO THIS AND NOT THE OTHER WAY. A unique owner can
@@ -433,11 +430,9 @@ def CTNative_SharedType : CTNative_Type<"Shared", "shared"> {
     only ordering relation among the three pointers, and the lattice
     implements exactly it.
   }];
-  let parameters = (ins "::mlir::Type":$pointeeType);
-  let assemblyFormat = "`<` $pointeeType `>`";
 }
 
-def CTNative_WeakType : CTNative_Type<"Weak", "weak"> {
+def CTNative_WeakType : CTNative_WrapperType<"Weak", "weak", (ins "::mlir::Type":$pointeeType)> {
   let summary = "`std::weak_ptr<T>` - ONLY where the JavaScript said `WeakRef`";
   let description = [{
     THIS TYPE MAY NOT BE INTRODUCED BY THE COMPILER TO BREAK A CYCLE, and
@@ -458,8 +453,6 @@ def CTNative_WeakType : CTNative_Type<"Weak", "weak"> {
     pointer. That is deliberately awkward, because silently unifying a
     strong and a weak reference is the miscompile above.
   }];
-  let parameters = (ins "::mlir::Type":$pointeeType);
-  let assemblyFormat = "`<` $pointeeType `>`";
 }
 
 // WHERE `!ctnative.struct<name, fields>` WILL GO, when Phase 56 has the proof
