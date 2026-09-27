@@ -7,38 +7,18 @@ from pathlib import Path
 import re
 import shutil
 
-from CTNative.harness import find_compilers, run_sanitized
+from CTNative.harness import (
+    CLEANUP,
+    CONSTANT_GLOBAL_NODE,
+    VM_SYMBOL as VM,
+    find_compilers,
+    run_sanitized,
+    threshold,
+)
 from CTNative.Exports import boundary
 from Target.Cpp.harness import FLAGS
 
 host = boundary.host
-VM = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_")
-CLEANUP = (
-    "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
-    "canonicalize,ctnative-prune-dead-stores,canonicalize)"
-)
-# Node prints the named globals (argv[2], a JSON list) with their tags distinct.
-CONSTANT_GLOBAL_NODE = r"""const fs = require('node:fs');
-const vm = require('node:vm');
-const context = vm.createContext({});
-vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
-for (const name of JSON.parse(process.argv[2])) {
-    const value = vm.runInContext(name, context);
-    let text;
-    if (typeof value === 'number') {
-        text = Number.isNaN(value) ? 'nan' : Object.is(value, -0) ? '-0' :
-            value === -Infinity ? '-inf' : String(value);
-    } else if (typeof value === 'string') {
-        text = '"' + encodeURIComponent(value).replace(/[!'()*]/g,
-            c => '%' + c.charCodeAt(0).toString(16).toUpperCase()) + '"';
-    } else if (typeof value === 'boolean' || value === undefined || value === null) {
-        text = String(value);
-    } else {
-        throw new Error(name + ': unexpected scalar tag');
-    }
-    process.stdout.write(name + '=' + text + '\n');
-}
-"""
 
 
 def contract(args, ir, name, binding="host", *, absent=(), undefined=()):
@@ -337,9 +317,7 @@ def main():
     if boundary.GLOBAL_ESCAPE not in reasons:
         raise RuntimeError("fixed undefined forgery supplied authority without a manifest")
 
-    low, high = 0, 100000
-    while high - low > 1:
-        budget = (low + high) // 2
+    def admitted(budget):
         candidate = lower(
             args,
             ir,
@@ -348,10 +326,9 @@ def main():
             options=f"host-max-steps={budget}",
             cleanup=False,
         )
-        if boundary.NATIVE.search(candidate.read_text()):
-            high = budget
-        else:
-            low = budget
+        return boundary.NATIVE.search(candidate.read_text())
+
+    low = threshold(admitted) - 1
     rollback = refused(
         args, ir, "fixed-undefined-rollback", config, options=f"host-max-steps={low}"
     )

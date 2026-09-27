@@ -370,11 +370,9 @@ def main():
             admitted=1,
         )
     rollback = []
-    completed = None
+
     # Locate the boundary without pinning the work charged by each proof scan.
-    low, high = 0, 100000
-    while high - low > 1:
-        budget = (low + high) // 2
+    def completes(budget):
         candidate = owned.lower(
             args,
             ir,
@@ -386,11 +384,9 @@ def main():
         text = census(candidate, 3, f"preparation-budget-{budget}")
         admitted = len(boundary.NATIVE.findall(text))
         if admitted == 3:
-            completed = high = budget
-            continue
+            return True
         if admitted != 1:
             raise RuntimeError(f"budget-{budget}: leaked a partial native call component")
-        low = budget
         if "ctnative.host_owner_proved = true" in text:
             rollback.append(budget)
             for op in ("create_object", "set_property", "get_property", "call", "call_direct"):
@@ -399,7 +395,11 @@ def main():
                     re.findall(pattern, text, re.M)
                 ):
                     raise RuntimeError(f"budget-{budget}: incomplete preparation changed {op}")
-    if low not in rollback or completed != high:
+        return False
+
+    completed = owned.threshold(completes)
+    # 100000 is never tried, so returning it means no budget completed.
+    if completed - 1 not in rollback or completed == 100000:
         raise RuntimeError("preparation budget control did not exercise rollback and completion")
 
     # The original nullish getters now keep their exact tag through the owning
