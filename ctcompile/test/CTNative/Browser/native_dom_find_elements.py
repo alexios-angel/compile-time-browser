@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """Execute original Bootstrap R.find with confined indexed element consumers."""
 
-from pathlib import Path
-
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser.native_dom_document import CURRENT_DOCUMENT_CHECKS, INPUT_CHECKS
 from CTNative.Browser.native_dom_spread_length import FIND
-from CTNative.harness import find_compilers
 
 BODY = """  if (anchor.hasAttribute('data-invalid')) {
     anchor.setAttribute('data-before', 'yes');
@@ -203,11 +200,10 @@ REFUSALS = {
 
 def main():
     args = dom.parse_args(__doc__)
-    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    vendor = dom.BOOTSTRAP
     if FIND + "," not in vendor.read_text():
         raise RuntimeError("Bootstrap R.find source pin changed")
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     refusals = 0
     for kind in ("explicit", "omitted", "undefined"):

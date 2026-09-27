@@ -309,8 +309,7 @@ def main():
     assert BOOTSTRAP_H in vendor.read_text(), "Bootstrap H source pin changed"
     assert FILTER_PREDICATE in BOOTSTRAP_H, "Bootstrap dataset predicate changed"
     observations = check_oracles(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     prepared, refusals = [], 0
     for name, (body, _) in CASES.items():

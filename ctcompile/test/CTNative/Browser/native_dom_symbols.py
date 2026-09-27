@@ -5,7 +5,7 @@ import json
 
 from CTNative.Browser import native_dom as dom
 from CTNative.HostContract.contract import fingerprint
-from CTNative.harness import find_compilers, forge_module, run
+from CTNative.harness import forge_module, run
 
 # Independent language inventory: a missing catalog entry must fail this check.
 KEYS = (
@@ -253,8 +253,7 @@ var symbolDescriptionSecond = observeDescriptions(true);
 def main():
     args = dom.parse_args(__doc__, oracles=True)
     oracle(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     ir, manifest = dom.prepare(args, "symbols", SOURCE, 1)
     manifest["initial_intrinsics"] = ["Symbol"]

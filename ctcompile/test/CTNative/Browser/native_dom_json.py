@@ -6,17 +6,14 @@ failure returns the original String. Normalization owns ctbrowser::json_value;
 typeof and guarded spreads are compared against Node and the VM.
 """
 
-import argparse
 import json
-from pathlib import Path
 import re
-import shutil
 from urllib.parse import quote_from_bytes
 
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_numbers as numbers
 from CTNative.Browser import native_dom_strings as strings
-from CTNative.harness import build_and_run, find_compilers, run
+from CTNative.harness import build_and_run, run
 from Target.Cpp.harness import FLAGS
 
 BODY = "try { return JSON.parse(decodeURIComponent(text)); } catch (ignored) { return text; }"
@@ -444,16 +441,10 @@ REFUSALS = {
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    for name in ("translate", "opt", "clang", "node", "reference", "build", "include", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = dom.parse_args(__doc__, oracles=True)
     if not args.nm:
         raise RuntimeError("native DOM JSON gate requires nm")
-    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    vendor = dom.BOOTSTRAP
     if any(
         source not in vendor.read_text()
         for source in (
@@ -466,8 +457,7 @@ def main():
     ):
         raise RuntimeError("Bootstrap M/F/getDataAttribute/Config spread source pin changed")
     expected = check_oracles(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     intrinsics = ["decodeURIComponent", "JSON", "Number"]
     source_intrinsics = {

@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """Proved HTML/SVG dataset snapshots, filtering, iteration and present values."""
 
-import argparse
 import json
-from pathlib import Path
 import re
-import shutil
 
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser.native_dom_json import BOOTSTRAP_M, quote
-from CTNative.harness import build_and_run, find_compilers, run
+from CTNative.harness import build_and_run, run
 from Target.Cpp.harness import FLAGS
 
 BODIES = {
@@ -603,22 +600,15 @@ def client(symbol, owned, name):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    for name in ("translate", "opt", "clang", "node", "reference", "build", "include", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
-    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    args = dom.parse_args(__doc__, oracles=True)
+    vendor = dom.BOOTSTRAP
     assert BOOTSTRAP_FILTER in vendor.read_text(), "Bootstrap dataset source pin changed"
     assert PREFIX in vendor.read_text(), "Bootstrap prefix source pin changed"
     assert "t.dataset[n]" in vendor.read_text(), "Bootstrap live-value source pin changed"
     assert BOOTSTRAP_GUARD in vendor.read_text(), "Bootstrap element-guard source pin changed"
     assert BOOTSTRAP_M in vendor.read_text(), "Bootstrap M source pin changed"
     expected = oracles(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     prepared = [
         (name, *dom.prepare(args, name, source, 1, entry_name=name))

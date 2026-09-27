@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """Gate prepared class and record providers against real DOM Data session owners."""
 
-import argparse
 from pathlib import Path
 import re
-import shutil
 
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_data_session as session
 from CTNative.Exports import boundary
-from CTNative.harness import build_and_run, find_compilers, run
+from CTNative.harness import build_and_run, run
 from CTNative.HostContract import contract as host
 from CTNative.Lowering.Objects import class_initialization_inputs as classes
 from Target.Cpp.harness import FLAGS
@@ -175,8 +173,7 @@ def check_record_executable(
             "auto check = [&] {\n"
             f"            assert(ctnative::global_number(session.observe_classResult()).value() == {class_value});",
         )
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     executions = 0
     deduced = args.work / f"{name}.deduced.mlir"
@@ -1192,17 +1189,7 @@ def object_constructors(args, constructor):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference", "clang"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("build", "include"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--class-families-only", action="store_true")
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = dom.parse_args(__doc__, oracles=True, switches=("class-families-only",))
     published_families(args)
     published_composite_results(args)
     published_class_fields(args)

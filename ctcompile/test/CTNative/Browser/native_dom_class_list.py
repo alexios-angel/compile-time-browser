@@ -2,7 +2,6 @@
 """Execute native classList methods against the shared DOM token-list core."""
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers
 
 SOURCE = """function classes(element) {
   const list = element.classList;
@@ -161,8 +160,7 @@ REFUSALS = (
 
 def main():
     args = dom.parse_args(__doc__)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     ir, contract = dom.prepare(args, "classes", SOURCE, 1)
     for owned in (False, True):

@@ -2,7 +2,6 @@
 """Check native Element.querySelector against the shared public selector engine."""
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers
 
 SOURCE = """function query(element, expected) {
   if (element.hasAttribute('data-invalid')) {
@@ -94,8 +93,7 @@ OWNED_CHECKS = r"""
 
 def main():
     args = dom.parse_args(__doc__)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     ir, contract = dom.prepare(args, "query", SOURCE, 2)
     for owned in (False, True):

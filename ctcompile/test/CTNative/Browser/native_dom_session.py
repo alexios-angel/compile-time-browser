@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """Gate owned synchronous DOM entries; retained Data keys remain outside this contract."""
 
-import argparse
-from pathlib import Path
 import re
-import shutil
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import build_and_run, find_compilers, forge_module, run
+from CTNative.harness import build_and_run, forge_module, run
 from CTNative.HostContract.contract import fingerprint
 from Target.Cpp.harness import FLAGS
 
@@ -125,19 +122,8 @@ QUERY_CHECKS = r"""
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--clang", required=True)
-    parser.add_argument("--build", type=Path, required=True)
-    parser.add_argument("--include", type=Path, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    args = dom.parse_args(__doc__)
+    compilers = args.compilers
     for name, source, checks in (
         ("action", ACTION, ACTION_CHECKS),
         ("closest", dom.CLOSEST, CLOSEST_CHECKS),

@@ -4,7 +4,6 @@
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser.native_dom_document import CURRENT_DOCUMENT_CHECKS, INPUT_CHECKS
 from CTNative.Browser.native_dom_query_all import REFUSALS as ELEMENT_REFUSALS
-from CTNative.harness import find_compilers
 
 SOURCE = """function queryAll(anchor, expected) {
   if (anchor.hasAttribute('data-invalid')) {
@@ -193,8 +192,7 @@ REFUSALS.update(
 
 def main():
     args = dom.parse_args(__doc__)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     refusals = 0
     for anchor in (0, 1):

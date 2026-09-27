@@ -6,7 +6,7 @@ import re
 
 from CTNative.Browser import native_dom as dom
 from CTNative.HostContract.contract import fingerprint
-from CTNative.harness import build_and_run, find_compilers, forge_module, run
+from CTNative.harness import build_and_run, forge_module, run
 from Target.Cpp.harness import FLAGS
 
 STATE = """function state() {
@@ -3332,8 +3332,7 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
 def main():
     args = dom.parse_args(__doc__, oracles=True)
     agreements, differences = oracle(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, core_only=True)
     accepted = {}
     for name, (source, checks, expected) in CASES.items():

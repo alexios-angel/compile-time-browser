@@ -7,7 +7,7 @@ import re
 import subprocess
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import build_and_run, find_compilers, node_globals, run, threshold
+from CTNative.harness import build_and_run, node_globals, run, threshold
 from CTNative.HostContract import contract as host
 from CTNative.Ownership.native_owned_global_maps.driver_umd import (
     observe_umd,
@@ -186,8 +186,7 @@ int main() {
 
 def main():
     args = dom.parse_args(__doc__, oracles=True)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     source, values, prefix = umd_source()
     js, _, original, _ = prepare_umd(args)
     observe_umd(args, js, values)

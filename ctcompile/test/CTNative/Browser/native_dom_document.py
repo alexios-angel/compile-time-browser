@@ -2,7 +2,6 @@
 """Execute an explicitly bound source document against public DOM/Style."""
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers
 
 ROOT_SOURCE = """function root(anchor, expected) {
   const root = document.documentElement;
@@ -204,8 +203,7 @@ REFUSALS = {
 
 def main():
     args = dom.parse_args(__doc__)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     cases = (
         ("root", ROOT_SOURCE, ROOT_CHECKS, 0),

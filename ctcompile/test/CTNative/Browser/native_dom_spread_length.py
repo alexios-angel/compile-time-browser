@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """Execute confined Bootstrap R.find and NodeList spread/concat counts."""
 
-from pathlib import Path
-
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers
 
 FIND = (
     "find: (t, e = document.documentElement) => "
@@ -153,11 +150,10 @@ REFUSALS = {
 
 def main():
     args = dom.parse_args(__doc__)
-    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    vendor = dom.BOOTSTRAP
     if FIND + "," not in vendor.read_text():
         raise RuntimeError("Bootstrap R.find source pin changed")
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     for name, source, checks in (
         ("bootstrap", BOOTSTRAP_SOURCE, BOOTSTRAP_CHECKS),

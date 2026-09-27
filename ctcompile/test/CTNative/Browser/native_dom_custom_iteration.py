@@ -4,7 +4,6 @@
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser.native_dom_element_iteration import INTRINSICS as SNAPSHOT_INTRINSICS
 from CTNative.Browser.native_dom_json import quote
-from CTNative.harness import find_compilers
 
 INTRINSICS = [
     *SNAPSHOT_INTRINSICS,
@@ -8236,8 +8235,7 @@ var savedThrow, savedExhausted;
 def main():
     args = dom.parse_args(__doc__, oracles=True)
     observations = oracles(args) + mixed_oracles(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     protected_attribute(args, compilers, includes, libraries)
     saved_throws(args, compilers, includes, libraries)

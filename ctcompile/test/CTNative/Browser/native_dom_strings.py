@@ -5,19 +5,10 @@ from CTNative.Browser.native_dom_string_provenance import *
 
 
 def main():
-    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    vendor = dom.BOOTSTRAP
     if any(source not in vendor.read_text() for source in (BOOTSTRAP_F, BOOTSTRAP_H_WRITES)):
         raise RuntimeError("original Bootstrap F/H source changed")
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "clang", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("build", "include", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    parser.add_argument("--regexp-only", action="store_true")
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = dom.parse_args(__doc__, oracles=True, switches=("regexp-only",))
     if not args.nm:
         raise RuntimeError("native DOM String gate requires nm")
     check_regexp_matching(args)
@@ -90,8 +81,7 @@ function makeElement(value) {
         encoded.append(f"observation{index}={value}\n")
     if reference != "".join(sorted(encoded, key=lambda line: line.partition("=")[0])):
         raise RuntimeError(f"VM optional String observations disagree with Node: {reference}")
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     prepared = [
         (

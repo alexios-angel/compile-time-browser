@@ -2,7 +2,6 @@
 """Execute static Element.querySelectorAll snapshots against public DOM/Style."""
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers
 
 SOURCE = """function queryAll(element) {
   if (element.hasAttribute('data-invalid')) {
@@ -180,8 +179,7 @@ REFUSALS = {
 
 def main():
     args = dom.parse_args(__doc__)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     ir, contract = dom.prepare(args, "query-all", SOURCE, 1)
     contract["initial_intrinsics"] = ["Number"]

@@ -712,8 +712,7 @@ def check_regexp_matching(args):
         if result[0] != (None if expected == "null" else True):
             raise RuntimeError(f"{name}: original replacement return changed: {result}")
     includes, libraries = dom.link_options(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     for optimize in (False, True):
         headers, bodies, checks = set(), [], []
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):

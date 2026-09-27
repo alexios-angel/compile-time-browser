@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Confined node catches preserve identity and reads without a native throw."""
 
-import argparse
 import json
-from pathlib import Path
 from urllib.parse import unquote
 
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser.native_dom_custom_iteration import INTRINSICS
-from CTNative.harness import find_compilers, run
+from CTNative.harness import run
 
 SOURCES = {
     "identity": "function customElements(anchor) { try { throw anchor; } catch (error) { return error === anchor; } }\n",
@@ -616,16 +614,8 @@ var result0 = observe(false), result1 = observe(true);
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    for name in ("translate", "opt", "clang", "nm", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("build", "include", "work"):
-        parser.add_argument("--" + name, required=True, type=Path)
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    args = dom.parse_args(__doc__, oracles=True)
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     for name, source in SOURCES.items():
         string_read = name.startswith("write-string-read-")
@@ -1787,8 +1777,7 @@ RAW_HELPER_SOURCES |= {
 
 
 def check_outer_catches(args):
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     checks = r"""
         const auto exercise = [&](ctbrowser::document & target, node_id id, auto && call) {

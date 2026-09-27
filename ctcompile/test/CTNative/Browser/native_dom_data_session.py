@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import build_and_run, find_compilers, run
+from CTNative.harness import build_and_run, run
 from Target.Cpp.harness import FLAGS
 
 _spec = importlib.util.spec_from_file_location(
@@ -119,8 +119,7 @@ int main() {
 
 def main():
     args = dom.parse_args(__doc__, oracles=True)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     read_client = (
         CLIENT.replace(
             "assert(!ctnative::global_boolean(session.observe_traceBefore()));",

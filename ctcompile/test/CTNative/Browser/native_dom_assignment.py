@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """Fresh DOM result assignments preserve order and own original M's values."""
 
-import argparse
 import json
-from pathlib import Path
 import re
-import shutil
 
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_json as values
 from CTNative.Browser import native_dom_numbers as numbers
 from CTNative.Browser.native_dom_dataset import BOOTSTRAP_FILTER, PREFIX_INTRINSICS
-from CTNative.harness import build_and_run, find_compilers, run
+from CTNative.harness import build_and_run, run
 from Target.Cpp.harness import FLAGS
 
 GET = "M(t.getAttribute('data-bs-config'))"
@@ -472,19 +469,12 @@ def check_output(args, output, expected):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    for name in ("translate", "opt", "clang", "node", "reference", "build", "include", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
-    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    args = dom.parse_args(__doc__, oracles=True)
+    vendor = dom.BOOTSTRAP
     assert values.BOOTSTRAP_M in vendor.read_text(), "Bootstrap M source pin changed"
     assert BOOTSTRAP_FILTER in vendor.read_text(), "Bootstrap filter source pin changed"
     expected = oracles(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     intrinsics = PREFIX_INTRINSICS + ["Number", "JSON", "decodeURIComponent"]
     prepared = [

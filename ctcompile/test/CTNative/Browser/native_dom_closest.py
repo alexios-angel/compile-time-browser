@@ -4,7 +4,7 @@
 import re
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import build_and_run, find_compilers, forge_module, run
+from CTNative.harness import build_and_run, forge_module, run
 from CTNative.HostContract.contract import fingerprint
 from Target.Cpp.harness import FLAGS
 
@@ -145,8 +145,7 @@ REFUSALS = {
 
 def main():
     args = dom.parse_args(__doc__)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     ir, contract = dom.prepare(args, "closest", SOURCE, 2)
     executions = 0

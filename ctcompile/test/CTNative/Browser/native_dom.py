@@ -24,6 +24,8 @@ from CTNative.harness import (
 )
 from CTNative.HostContract.contract import fingerprint
 
+BOOTSTRAP = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+
 ACTION = """function toggle(element) {
   const active = element.classList.toggle('active');
   element.setAttribute('aria-pressed', active);
@@ -494,7 +496,9 @@ INVALID_SELECTOR_CHECKS = r"""
 """
 
 
-def parse_args(description, *, oracles=False):
+def parse_args(description, *, oracles=False, switches=()):
+    """The Browser drivers' command line; args.compilers is the host pair with
+    --clang (the configured DOM's compiler) in the Clang slot."""
     parser = argparse.ArgumentParser(description=description)
     tools = ("translate", "opt", "clang") + (("node", "reference") if oracles else ())
     for name in tools:
@@ -502,9 +506,13 @@ def parse_args(description, *, oracles=False):
     for name in ("build", "include", "work"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--nm", default=shutil.which("nm"))
+    for name in switches:
+        parser.add_argument("--" + name, action="store_true")
     args = parser.parse_args()
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=True)
+    args.compilers = find_compilers()
+    args.compilers[1] = args.clang
     return args
 
 
@@ -667,22 +675,10 @@ def standalone(
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--clang", help="Clang with the configured DOM's C++23 library support")
-    parser.add_argument("--build", type=Path, required=True)
-    parser.add_argument("--include", type=Path, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = parse_args(__doc__)
     if not args.nm:
         raise RuntimeError("native DOM gate requires nm")
-    compilers = find_compilers()
-    if args.clang:
-        compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = link_options(args)
     prepared = {}
     entries = (

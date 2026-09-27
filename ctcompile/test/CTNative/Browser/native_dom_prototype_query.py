@@ -4,7 +4,6 @@
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_query as query
 from CTNative.Browser import native_dom_query_all as query_all
-from CTNative.harness import find_compilers
 
 
 def prototype_source(source, method, calls):
@@ -120,8 +119,7 @@ REFUSALS = {
 
 def main():
     args = dom.parse_args(__doc__)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     cases = (
         ("query", QUERY_SOURCE, 2, query.CHECKS, query.OWNED_CHECKS, []),

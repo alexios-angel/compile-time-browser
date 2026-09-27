@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """Keep sequential DOM Map keys sound for equal and distinct native inputs."""
 
-import argparse
-from pathlib import Path
 import re
-import shutil
 
 from CTNative.Browser import native_class_dom_data as data
 from CTNative.Browser import native_dom as dom
@@ -95,15 +92,7 @@ def observe(args, name, text, suffix, expected):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference", "clang"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("build", "include", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = dom.parse_args(__doc__, oracles=True)
     executions = refusals = 0
     variants = sources()
     for label, (text, expected) in variants.items():
