@@ -8,6 +8,7 @@ import re
 
 from CTNative.Exports import boundary
 from CTNative.HostContract import contract as host
+from CTNative.harness import FUNCTION
 
 SOURCE = """function dataEntry(element, other) {
   host = {};
@@ -29,7 +30,6 @@ SOURCE = """function dataEntry(element, other) {
   traceAfter = host.slot.get(element);
 }
 """
-FUNCTION = re.compile(r"\bctjs\.func (?:private )?@([^ (]+)\(")
 OBSERVATIONS = ["traceAfter", "traceBefore", "traceEntered", "traceOther"]
 OBSERVER = """
 var first = {}, second = {};

@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import shutil
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers, run
+from CTNative.harness import CLEANUP, CORE_INCLUDE, FLAGS, REFUSAL, VM_SYMBOL, find_compilers, run
 from CTNative.Browser.native_dom import link_options
 
 PROGRAMS = {
@@ -116,17 +116,11 @@ CPP_HELPER_CALLS = {
 }
 IMPORT_REFUSALS = ("catch_finally", "nested_catch")
 IMPORT_REASON = "more than one protected region in a function"
-NATIVE_PIPELINE = (
-    "builtin.module(ctnative-lower-to-emitc{optimize=false},"
-    "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
-    "canonicalize,ctnative-prune-dead-stores,canonicalize))"
-)
+NATIVE_PIPELINE = f"builtin.module(ctnative-lower-to-emitc{{optimize=false}},{CLEANUP})"
 DEFAULT_NATIVE_PIPELINE = NATIVE_PIPELINE.replace("{optimize=false}", "")
 
 CTJS_FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE_FUNCTION = re.compile(r"^\s*emitc\.func\b", re.M)
-REFUSAL = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
-VM_SYMBOL = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_")
 
 
 NODE_ORACLE = r"""
@@ -475,18 +469,6 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
             str(deduced),
         ]
     )
-    flags = [
-        "-std=c++23",
-        RUNTIME_INCLUDE,
-        CORE_INCLUDE,
-        "-O2",
-        "-Wall",
-        "-Wextra",
-        "-Werror",
-        "-Wconversion",
-        "-pedantic",
-        "-ffp-contract=off",
-    ]
     for mode, ir in [("explicit", module), ("deduced", deduced)]:
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         if VM_SYMBOL.search(cpp) or re.search(r"#include [<\"]ctbrowser/", cpp):
@@ -513,7 +495,7 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
         for index, compiler in enumerate(compilers):
             binary = (args.work / f"{name}.{mode}.{index}").resolve()
             binary.unlink(missing_ok=True)
-            run([compiler, *flags, str(source), *libraries, "-o", str(binary)])
+            run([compiler, *FLAGS, str(source), *libraries, "-o", str(binary)])
             if VM_SYMBOL.search(run([nm, "-C", str(binary)]).stdout):
                 raise RuntimeError(f"{name}/{mode}: compiled binary reaches the VM")
             observed = run([str(binary)]).stdout
@@ -540,7 +522,7 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
             run(
                 [
                     compilers[1],
-                    *flags,
+                    *FLAGS,
                     "-O1",
                     "-g",
                     "-fno-omit-frame-pointer",

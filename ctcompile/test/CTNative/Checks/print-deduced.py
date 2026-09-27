@@ -27,6 +27,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from CTNative.harness import FLAGS
+
 AUTO = re.compile(r"^[ \t]*(constexpr )?auto( const)? [A-Za-z_0-9]+ = ")
 PIN = re.compile(r"^[ \t]*CTCOMPILE_PIN\(")
 # Qualification is part of the contract: normalise the carrier spelling but
@@ -59,20 +61,6 @@ CARRIERS = [
     ),
 ]
 SITE = re.compile(r"ctcompile: [A-Za-z_0-9]+ @ [^\"\n]*\.js:[0-9]+:[0-9]+")
-# The runtime header every native program includes lives in ctcompile/include.
-CORE_INCLUDE = "-I" + str(Path(__file__).resolve().parents[4] / "ctbrowser/include")
-RUNTIME_INCLUDE = "-I" + str(Path(__file__).resolve().parents[3] / "include")
-FLAGS = [
-    "-std=c++23",
-    RUNTIME_INCLUDE,
-    CORE_INCLUDE,
-    "-O2",
-    "-Wall",
-    "-Wextra",
-    "-Werror",
-    "-pedantic",
-    "-Wconversion",
-]
 
 
 def normalise(lines):
@@ -179,7 +167,6 @@ def main():
             [
                 args.cxx,
                 *FLAGS,
-                "-ffp-contract=off",
                 "-fsyntax-only",
                 *extra,
                 str(work / "mutated.cpp"),

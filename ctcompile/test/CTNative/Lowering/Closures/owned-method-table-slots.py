@@ -7,11 +7,10 @@ from pathlib import Path
 import re
 import shutil
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers, run
+from CTNative.harness import CORE_INCLUDE, REFUSAL, RUNTIME_INCLUDE, find_compilers, run
 
 CTJS_FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE_FUNCTION = re.compile(r"^\s*emitc\.func\b", re.M)
-REFUSAL = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
 VM_SYMBOL = re.compile(r"ctbrowser::(?:script|aot)::")
 
 

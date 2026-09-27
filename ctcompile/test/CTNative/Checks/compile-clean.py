@@ -23,25 +23,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+from CTNative.harness import FLAGS
+
 DEFINITION = re.compile(
     r"^[A-Za-z_][A-Za-z_0-9:<>]* [A-Za-z_][A-Za-z_0-9]*\(.*\) \{$"
     r"|^(class|struct) [A-Za-z_][A-Za-z_0-9]* \{$"
     r"|^static [A-Za-z_][A-Za-z_0-9:<>]* [A-Za-z_][A-Za-z_0-9]* = "
 )
-# The runtime header every native program includes lives in ctcompile/include.
-CORE_INCLUDE = "-I" + str(Path(__file__).resolve().parents[4] / "ctbrowser/include")
-RUNTIME_INCLUDE = "-I" + str(Path(__file__).resolve().parents[3] / "include")
-FLAGS = [
-    "-std=c++23",
-    RUNTIME_INCLUDE,
-    CORE_INCLUDE,
-    "-O2",
-    "-pedantic",
-    "-Wall",
-    "-Wextra",
-    "-Werror",
-    "-Wconversion",
-]
 
 
 def main():
@@ -101,7 +89,7 @@ def main():
         version = subprocess.run([cxx, "--version"], capture_output=True, text=True).stdout
         version = version.split("\n", 1)[0]
         result = subprocess.run(
-            [cxx, *FLAGS, "-ffp-contract=off", "-c", "-o", str(work / f"unit.{i}.o"), str(unit)],
+            [cxx, *FLAGS, "-c", "-o", str(work / f"unit.{i}.o"), str(unit)],
             capture_output=True,
             text=True,
         )

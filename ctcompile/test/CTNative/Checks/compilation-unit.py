@@ -68,6 +68,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from CTNative.harness import CORE_INCLUDE, FLAGS
+
 # THE CONVENTION AS A REGEX - the five forms of the value, in one place.
 GRAMMAR = re.compile(
     r"^[A-Za-z_$][A-Za-z0-9_$]*=(true|false|undefined|null|-?(inf|nan)"
@@ -175,30 +177,15 @@ def main():
         exe = str(work / "unit")
         # String numeric conversion/formatting uses public Core. Other fixtures
         # retain their header-only link; both reject Script and boxed AOT symbols.
-        runtime_include = "-I" + str(Path(__file__).resolve().parents[3] / "include")
-        core_headers = Path(__file__).resolve().parents[4] / "ctbrowser/include"
-        core_include = "-I" + str(core_headers)
         libraries = []
         if args.core_build:
             from CTNative.Browser.native_dom import link_options
 
             _, libraries = link_options(
-                argparse.Namespace(build=args.core_build, include=core_headers), core_only=True
+                argparse.Namespace(build=args.core_build, include=Path(CORE_INCLUDE[2:])),
+                core_only=True,
             )
-        compiled = run(
-            [
-                args.cxx,
-                "-std=c++23",
-                runtime_include,
-                core_include,
-                "-O2",
-                "-Wall",
-                "-Wextra",
-                "-Werror",
-            ]
-            + ["-pedantic", "-Wconversion", "-ffp-contract=off", "-o", exe, str(src)]
-            + libraries
-        )
+        compiled = run([args.cxx, *FLAGS, "-o", exe, str(src), *libraries])
         if compiled.returncode != 0:
             fail(
                 f"the emitted C++ does not compile standalone (exit {compiled.returncode})\n"

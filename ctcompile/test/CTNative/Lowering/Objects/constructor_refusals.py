@@ -6,8 +6,7 @@ from pathlib import Path
 import re
 
 from CTNative.Exports.boundary import FUNCTION, NATIVE, REFUSAL
-from CTNative.harness import find_compilers, run
-from Target.Cpp.harness import FLAGS
+from CTNative.harness import CLEANUP, FLAGS, find_compilers, run
 
 NODE = """const fs = require('fs'), vm = require('vm');
 const scope = {};
@@ -65,7 +64,7 @@ def check_native(args, source, name, expected):
             [
                 args.opt,
                 str(native),
-                "--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))",
+                "--pass-pipeline=builtin.module(" + CLEANUP + ")",
                 "-o",
                 str(clean),
             ]

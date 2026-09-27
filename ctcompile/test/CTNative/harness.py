@@ -11,13 +11,26 @@ by CMake (lit.site.cfg.py.in).
 
 import os
 from pathlib import Path
+import re
 import subprocess
 
 from Target.Cpp.harness import (
     CORE_INCLUDE,
+    FLAGS,
     RUNTIME_INCLUDE,
     find_compilers,
 )  # noqa: F401  (re-exported)
+
+# What follows ctnative-lower-to-emitc in every native pipeline.
+CLEANUP = (
+    "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
+    "canonicalize,ctnative-prune-dead-stores,canonicalize)"
+)
+# A refused function's reason, and a source function's symbol.
+REFUSAL = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
+FUNCTION = re.compile(r"\bctjs\.func (?:private )?@([^ (]+)\(")
+# An interpreter or boxed-AOT symbol, in nm -C output or generated C++.
+VM_SYMBOL = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_")
 
 RUNTIME_HEADER = (
     Path(__file__).resolve().parents[2] / "include/ctcompile/CTNative/Runtime/ctnative.hpp"

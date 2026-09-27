@@ -7,14 +7,10 @@ import re
 import shutil
 import subprocess
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, run
+from CTNative.harness import CLEANUP, CORE_INCLUDE, RUNTIME_INCLUDE, run
 
 FUNCTION = re.compile(r"ctjs\.func (?:private )?@([^ (]+)\(.*?(?=\n  ctjs\.func |\n})", re.S)
-NATIVE_PIPELINE = (
-    "builtin.module(ctnative-lower-to-emitc{optimize=false},"
-    "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
-    "canonicalize,ctnative-prune-dead-stores,canonicalize))"
-)
+NATIVE_PIPELINE = f"builtin.module(ctnative-lower-to-emitc{{optimize=false}},{CLEANUP})"
 
 
 def resolve_callbacks(source, mixed=False):

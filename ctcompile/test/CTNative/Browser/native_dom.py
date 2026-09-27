@@ -12,9 +12,8 @@ import re
 import shutil
 import subprocess
 
-from CTNative.harness import find_compilers, run
+from CTNative.harness import CLEANUP, FLAGS, FUNCTION, find_compilers, run
 from CTNative.HostContract.contract import fingerprint
-from Target.Cpp.harness import FLAGS
 
 ACTION = """function toggle(element) {
   const active = element.classList.toggle('active');
@@ -101,13 +100,8 @@ INVALID_SELECTOR = """function invalidSelector(element) {
   return true;
 }
 """
-FUNCTION = re.compile(r"\bctjs\.func (?:private )?@([^ (]+)\(")
 NATIVE = re.compile(r"\bemitc\.func @([^ (]+)\(")
 VM = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_|ctbrowser/(?:script/|aot/aot\.hpp)")
-CLEANUP = (
-    "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
-    "canonicalize,ctnative-prune-dead-stores,canonicalize)"
-)
 
 CLIENT = r"""
 #include <cassert>

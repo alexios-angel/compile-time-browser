@@ -11,10 +11,10 @@ from pathlib import Path
 import re
 
 from CTNative.HostContract import contract as host
+from CTNative.harness import REFUSAL
 
 FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE = re.compile(r"^\s*emitc\.func\b", re.M)
-REFUSAL = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
 GLOBAL_ESCAPE = "an object literal that escapes - it reaches `ctjs.store_global`"
 TABLE_ESCAPE = "returned method table is written through an alias or stored into another object"
 FOLLOW = (

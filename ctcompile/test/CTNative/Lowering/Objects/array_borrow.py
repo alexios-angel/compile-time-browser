@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 import re
 
-from CTNative.harness import find_compilers, run
-from Target.Cpp.harness import FLAGS, function_body
+from CTNative.harness import CLEANUP, FLAGS, find_compilers, run
+from Target.Cpp.harness import function_body
 
 ORIGINAL_SHA256 = "ac17441800c02afebc9c0f2ca529984c3fd21653ba676eff991ade6028daf490"
 NODE = """const fs = require('fs'), vm = require('vm');
@@ -16,10 +16,6 @@ const scope = {};
 vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), scope);
 for (const name of JSON.parse(process.argv[2])) console.log(name + '=' + scope[name]);
 """
-CLEANUP = (
-    "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
-    "canonicalize,ctnative-prune-dead-stores,canonicalize)"
-)
 
 
 def main():

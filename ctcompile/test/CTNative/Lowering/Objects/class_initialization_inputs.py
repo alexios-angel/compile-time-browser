@@ -9,9 +9,8 @@ import subprocess
 
 from CTNative.Exports.boundary import FUNCTION, NATIVE, REFUSAL
 from CTNative.HostContract import contract as host
-from CTNative.harness import find_compilers, run
+from CTNative.harness import CLEANUP, FLAGS, find_compilers, run
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_mutable_helper, check_native
-from Target.Cpp.harness import FLAGS
 
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
@@ -1657,7 +1656,7 @@ def check_executable(args, name, native, expected):
         [
             args.opt,
             str(native),
-            "--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))",
+            "--pass-pipeline=builtin.module(" + CLEANUP + ")",
             "-o",
             str(clean),
         ]
