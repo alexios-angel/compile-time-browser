@@ -164,9 +164,7 @@ llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, un
                 // its original body. Numeric closures and symbolic calls must
                 // both be absent before its independent leaf proof can suffice.
                 if (!source.step(2 * uint64_t(source.operationCount))) { break; }
-                if (source.creations.lookup(index) != 0 ||
-                    !mlir::SymbolTable::symbolKnownUseEmpty(function, candidate.getOperation()) ||
-                    !mlir::SymbolTable::symbolKnownUseEmpty(function, &candidate.getBodyRegion()) ||
+                if (source.creations.lookup(index) != 0 || !symbolUnused(function, candidate) ||
                     !source.proveUnusedBody(function)) {
                     source.refuse("DOM helper source contains an unvisited function");
                     break;

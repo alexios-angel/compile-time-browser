@@ -266,9 +266,7 @@ bool DOMSource::proveUnusedBody(ctjs::FuncOp function, unsigned depth) {
             }
             auto module = function->getParentOfType<mlir::ModuleOp>();
             if (!step(2 * uint64_t(operationCount))) { return mlir::WalkResult::interrupt(); }
-            if (!mlir::SymbolTable::symbolKnownUseEmpty(target, module.getOperation()) ||
-                !mlir::SymbolTable::symbolKnownUseEmpty(target, &module.getBodyRegion()) ||
-                !proveUnusedBody(target, depth + 1)) {
+            if (!symbolUnused(target, module) || !proveUnusedBody(target, depth + 1)) {
                 refuse("unused DOM helper child lacks a complete independent body proof");
                 return mlir::WalkResult::interrupt();
             }

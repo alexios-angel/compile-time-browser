@@ -31,6 +31,16 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return load ? load.getName() : llvm::StringRef{};
     };
     const auto undefined = dom_source_detail::DOMSource::undefined;
+    // Whether `closure` is the only creation of its function, within budget.
+    const auto uniqueCreation = [&](ctjs::CreateClosureOp closure) {
+        unsigned count = 0;
+        const auto counted = candidate.walk([&](ctjs::CreateClosureOp other) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            count += other.getFunction() == closure.getFunction();
+            return mlir::WalkResult::advance();
+        });
+        return !counted.wasInterrupted() && count == 1;
+    };
     bool custom = false, undefinedWritten = false;
     const auto census = candidate.walk([&](mlir::Operation * operation) {
         if (!work.step(uint64_t(1) + operation->getNumOperands())) {
@@ -730,7 +740,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return error("DOM Symbol.iterator must be a closed identity method");
     }
     if (!work.checkBody(identityBody, false, true)) { return error(work.reason); }
-    unsigned identityReturns = 0, creations = 0;
+    unsigned identityReturns = 0;
     for (mlir::Operation & operation : identityBody.getBody().front()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
@@ -744,14 +754,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM Symbol.iterator identity method has additional effects");
         }
     }
-    const auto identities = candidate.walk([&](ctjs::CreateClosureOp closure) {
-        if (!spend()) { return mlir::WalkResult::interrupt(); }
-        creations += closure.getFunction() == identity.getFunction();
-        return mlir::WalkResult::advance();
-    });
-    if (identities.wasInterrupted() || identityReturns != 1 || creations != 1 ||
-        !mlir::SymbolTable::symbolKnownUseEmpty(identityBody, candidate.getOperation()) ||
-        !mlir::SymbolTable::symbolKnownUseEmpty(identityBody, &candidate.getBodyRegion())) {
+    if (!uniqueCreation(identity) || identityReturns != 1 ||
+        !symbolUnused(identityBody, candidate)) {
         return error("DOM iterator identity method is shared or symbolically observed");
     }
     for (mlir::Operation * user : identity->getUsers()) {
@@ -1068,13 +1072,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                          llvm::any_of(indices.asArrayRef(), [](int32_t i) { return i != -1; })))) {
             return error("DOM iterator sibling helper requires an exact local leaf");
         }
-        unsigned count = 0;
-        const auto unique = candidate.walk([&](ctjs::CreateClosureOp other) {
-            if (!spend()) { return mlir::WalkResult::interrupt(); }
-            count += other.getFunction() == closure.getFunction();
-            return mlir::WalkResult::advance();
-        });
-        if (unique.wasInterrupted() || count != 1 || mlir::failed(mlir::verify(body))) {
+        if (!uniqueCreation(closure) || mlir::failed(mlir::verify(body))) {
             return error("DOM iterator sibling helper is shared or malformed");
         }
         // Prove loop-break continuations before the scalar leaf census, as for
@@ -1811,15 +1809,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         if (!stateInitials.empty() || thrown) {
             auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
-            unsigned count = 0;
-            const auto unique = candidate.walk([&](ctjs::CreateClosureOp other) {
-                if (!spend()) { return mlir::WalkResult::interrupt(); }
-                count += other.getFunction() == closure.getFunction();
-                return mlir::WalkResult::advance();
-            });
-            if (unique.wasInterrupted() || count != 1 || !undefined(closure.getEnclosingThis()) ||
-                !mlir::SymbolTable::symbolKnownUseEmpty(body, candidate.getOperation()) ||
-                !mlir::SymbolTable::symbolKnownUseEmpty(body, &candidate.getBodyRegion())) {
+            if (!uniqueCreation(closure) || !undefined(closure.getEnclosingThis()) ||
+                !symbolUnused(body, candidate)) {
                 return error("DOM iterator state method is shared or symbolically observed");
             }
             for (mlir::Operation * user : closure->getUsers()) {
