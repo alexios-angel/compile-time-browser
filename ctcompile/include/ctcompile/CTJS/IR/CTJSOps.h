@@ -97,4 +97,15 @@ inline bool ordinaryKey(mlir::Value key) {
     auto text = constantAttr<StringAttr>(key);
     return text && !reservedKey(text.getValue());
 }
+
+// Truthy, unary Not/TypeOf/Void and StrictEq: total on any operand, and none
+// converts an object or calls user code.
+inline bool nonCoercing(mlir::Operation * op) {
+    if (auto unary = llvm::dyn_cast<UnaryOp>(op)) {
+        return unary.getKind() == UnaryKind::Not || unary.getKind() == UnaryKind::TypeOf ||
+               unary.getKind() == UnaryKind::Void;
+    }
+    auto compare = llvm::dyn_cast<CompareOp>(op);
+    return llvm::isa<TruthyOp>(op) || (compare && compare.getKind() == CompareKind::StrictEq);
+}
 } // namespace ctcompile::ctjs

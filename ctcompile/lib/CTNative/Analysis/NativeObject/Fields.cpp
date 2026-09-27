@@ -340,19 +340,10 @@ struct fieldPresenceQuery {
                 op)) {
             return;
         }
-        if (llvm::isa<ctjs::ConstantOp, ctjs::LoadUpvalueOp, ctjs::CreateClosureOp, ctjs::TruthyOp,
+        if (ctjs::nonCoercing(op) ||
+            llvm::isa<ctjs::ConstantOp, ctjs::LoadUpvalueOp, ctjs::CreateClosureOp,
                       ctjs::FromBoolOp, ctjs::ReturnOp, mlir::scf::YieldOp>(op)) {
             return;
-        }
-        if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op)) {
-            if (unary.getKind() == ctjs::UnaryKind::Not ||
-                unary.getKind() == ctjs::UnaryKind::TypeOf ||
-                unary.getKind() == ctjs::UnaryKind::Void) {
-                return;
-            }
-        }
-        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op)) {
-            if (compare.getKind() == ctjs::CompareKind::StrictEq) { return; }
         }
         state.invalidate();
     }

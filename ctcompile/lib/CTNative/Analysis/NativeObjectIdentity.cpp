@@ -124,17 +124,13 @@ bool comparisonFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * 
                    (globals && globals->proved() && globals->lookup(set));
         } else if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
             safe = store.getName() != "Map" && store.getName() != "Object";
-        } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op)) {
-            safe = unary.getKind() == ctjs::UnaryKind::Not ||
-                   unary.getKind() == ctjs::UnaryKind::TypeOf ||
-                   unary.getKind() == ctjs::UnaryKind::Void;
         } else {
-            safe = strictComparison(op) ||
+            safe = ctjs::nonCoercing(op) ||
                    llvm::isa<mlir::ModuleOp, ctjs::FuncOp, ctjs::ConstantOp, ctjs::CreateObjectOp,
                              ctjs::CreateClosureOp, ctjs::LoadUpvalueOp, ctjs::FrameEnterOp,
-                             ctjs::FrameExitOp, ctjs::RootOp, ctjs::TruthyOp, ctjs::FromBoolOp,
-                             ctjs::ReturnOp, mlir::scf::IfOp, mlir::scf::YieldOp,
-                             mlir::arith::ConstantOp, mlir::arith::TruncIOp>(op);
+                             ctjs::FrameExitOp, ctjs::RootOp, ctjs::FromBoolOp, ctjs::ReturnOp,
+                             mlir::scf::IfOp, mlir::scf::YieldOp, mlir::arith::ConstantOp,
+                             mlir::arith::TruncIOp>(op);
         }
         return safe ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
     });

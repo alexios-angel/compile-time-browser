@@ -184,22 +184,12 @@ effectSummary effectQueries::summarize(ctjs::FuncOp function, unsigned & steps) 
             // A callee result may alias any argument or fresh allocation. Do
             // not manufacture a path for it from a return type or schema.
         } else {
-            bool safe = llvm::isa<ctjs::TruthyOp>(op);
-            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op)) {
-                safe = unary.getKind() == ctjs::UnaryKind::Not ||
-                       unary.getKind() == ctjs::UnaryKind::Void ||
-                       unary.getKind() == ctjs::UnaryKind::TypeOf;
-            }
-            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op)) {
-                safe = compare.getKind() == ctjs::CompareKind::StrictEq;
-            }
-            if (!safe) {
-                safe = llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp, ctjs::UnaryOp,
-                                 ctjs::CompareOp, mlir::arith::TruncIOp>(op) &&
-                       llvm::all_of(op.getOperands(), [&](mlir::Value value) {
-                           return values.lookup(value).tag == operand::kind::primitive;
-                       });
-            }
+            const bool safe = ctjs::nonCoercing(&op) ||
+                              (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp, ctjs::UnaryOp,
+                                         ctjs::CompareOp, mlir::arith::TruncIOp>(op) &&
+                               llvm::all_of(op.getOperands(), [&](mlir::Value value) {
+                                   return values.lookup(value).tag == operand::kind::primitive;
+                               }));
             if (!safe) { return {}; }
             output.tag = operand::kind::primitive;
         }
