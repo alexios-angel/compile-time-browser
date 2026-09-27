@@ -328,11 +328,6 @@ bool isScriptEntry(ctjs::FuncOp fn) {
     return fn.getSymName() == "_script_$0";
 }
 
-bool isUndefinedConstant(mlir::Value v) {
-    auto k = v.getDefiningOp<ctjs::ConstantOp>();
-    return k && llvm::isa<ctjs::UndefinedAttr>(k.getValue());
-}
-
 bool domBookkeeping(const DOMEntryAnalysis & entry, mlir::Operation * op) {
     if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
         return static_cast<bool>(entry.callback(closure));

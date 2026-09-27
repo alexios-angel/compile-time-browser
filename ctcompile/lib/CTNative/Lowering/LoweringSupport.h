@@ -167,7 +167,6 @@ bool isScriptEntry(ctjs::FuncOp fn);
 // Where a `ctjs.create_closure`'s captures start: after $enclosing_closure and
 // $enclosing_this, which are operands and not attributes.
 inline constexpr unsigned kFirstCapture = 2;
-bool isUndefinedConstant(mlir::Value value);
 // What a DOM entry reads only to reach its proved host calls: a callback
 // closure, the initial intrinsics, a prefix RegExp and method-like reads.
 bool domBookkeeping(const DOMEntryAnalysis & entry, mlir::Operation * op);

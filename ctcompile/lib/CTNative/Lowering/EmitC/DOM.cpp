@@ -109,9 +109,9 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             if (const auto * edge = entry.call(call)) {
                 domCalls[call] = *edge;
                 if (edge->returnsNumber() || edge->kind == HostDOMMethod::decodeURIComponent) {
-                    auto receiver = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
-                    if (receiver && llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) &&
-                        llvm::all_of(receiver.getResult().getUses(), [&](mlir::OpOperand & use) {
+                    mlir::Value receiver = call.getReceiver();
+                    if (ctjs::isUndefinedConstant(receiver) &&
+                        llvm::all_of(receiver.getUses(), [&](mlir::OpOperand & use) {
                             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { return true; }
                             auto user = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                             const auto * number = user ? entry.call(user) : nullptr;
@@ -122,7 +122,7 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
                         })) {
                         // The proved builtin does not observe its undefined receiver.
                         // Keep its source identity until calls and roots are erased.
-                        domReads.insert(receiver);
+                        domReads.insert(receiver.getDefiningOp());
                     }
                 }
             }

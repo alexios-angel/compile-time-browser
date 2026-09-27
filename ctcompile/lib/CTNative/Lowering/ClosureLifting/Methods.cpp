@@ -466,9 +466,9 @@ void closureLifter::argumentCensus() {
             for (auto * user : objectArgumentSymbolUsers.lookup(function.getSymName())) {
                 auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user);
                 if (!call || call.getTarget() != function ||
-                    !isUndefinedConstant(call.getCalleeValue()) ||
-                    !isUndefinedConstant(call.getReceiver()) ||
-                    !isUndefinedConstant(call.getNewTarget()) ||
+                    !ctjs::isUndefinedConstant(call.getCalleeValue()) ||
+                    !ctjs::isUndefinedConstant(call.getReceiver()) ||
+                    !ctjs::isUndefinedConstant(call.getNewTarget()) ||
                     call.getArgs().size() + ctjs::implicit_arguments != body.getNumArguments()) {
                     closed = false;
                     break;

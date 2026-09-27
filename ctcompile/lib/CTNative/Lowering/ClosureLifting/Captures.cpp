@@ -33,7 +33,7 @@ std::optional<std::string> closureLifter::whyTargetIsNotLiftable(ctjs::CreateClo
     // of it is a constant-key read that condition 3 admits, and lifting it
     // would silently rebind `this` to the literal. It is asked FIRST for
     // that reason, before any rule that admits a `this` use.
-    if (!isUndefinedConstant(c.getEnclosingThis()) && !entry.getArgument(0).use_empty()) {
+    if (!ctjs::isUndefinedConstant(c.getEnclosingThis()) && !entry.getArgument(0).use_empty()) {
         return "it is an arrow function that reads its lexical `this` - Stage 59B";
     }
     return std::nullopt;

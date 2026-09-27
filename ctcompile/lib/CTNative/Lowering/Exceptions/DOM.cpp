@@ -336,9 +336,9 @@ struct DOMURI {
                 // A dead importer epilogue may rejoin a live return block.
                 // Its source is unreachable; the destination does not change that.
                 if (llvm::isa<mlir::cf::BranchOp>(operation)) { continue; }
-                if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-                    auto value = returned.getValue().getDefiningOp<ctjs::ConstantOp>();
-                    if (value && llvm::isa<ctjs::UndefinedAttr>(value.getValue())) { continue; }
+                if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation);
+                    returned && ctjs::isUndefinedConstant(returned.getValue())) {
+                    continue;
                 }
                 return refuse("DOM URI source contains an unvisited non-epilogue operation");
             }
@@ -501,9 +501,8 @@ struct DOMAttributeProof {
     static bool numberCallee(ctjs::CallOp call) {
         if (!call) { return false; }
         auto callee = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-        auto receiver = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
-        return callee && callee.getName() == "Number" && receiver &&
-               llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) && call.getArgs().size() == 1;
+        return callee && callee.getName() == "Number" &&
+               ctjs::isUndefinedConstant(call.getReceiver()) && call.getArgs().size() == 1;
     }
     bool numberValue(mlir::Value value, unsigned depth = 0) {
         if (!remaining || depth == 64) { return false; }
