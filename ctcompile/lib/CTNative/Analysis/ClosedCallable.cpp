@@ -197,8 +197,7 @@ bool directCalleeUse(mlir::OpOperand & use, ctjs::FuncOp target) {
     // unused implicit slot of another private body. Recheck non-observation
     // structurally; provenance annotations cannot authorize this exception.
     auto body = direct.getTarget();
-    if (!body || body.getBody().empty() || body.getUpvalueCount() != 0 ||
-        mlir::SymbolTable::getSymbolVisibility(body) != mlir::SymbolTable::Visibility::Private) {
+    if (!body || body.getBody().empty() || body.getUpvalueCount() != 0 || !body.isPrivate()) {
         return false;
     }
     auto & entry = body.getBody().front();

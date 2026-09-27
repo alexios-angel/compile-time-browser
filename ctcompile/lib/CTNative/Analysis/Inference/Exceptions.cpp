@@ -38,8 +38,7 @@ struct invokeCompletions {
         auto target = call.getTarget();
         if (!target || target.getBody().empty() || target.getUpvalueCount() != 0 ||
             target.getBody().front().getNumArguments() != call.getNumOperands() ||
-            mlir::SymbolTable::getSymbolVisibility(target) !=
-                mlir::SymbolTable::Visibility::Private) {
+            !target.isPrivate()) {
             return false;
         }
         if (complete.contains(target)) { return true; }

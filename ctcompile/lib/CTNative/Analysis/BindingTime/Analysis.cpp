@@ -144,8 +144,7 @@ void BindingTimeAnalysis::Impl::seedArguments() {
         if (fn.getBody().empty()) { return; }
         auto & known = arguments[fn];
         known.resize(fn.getBody().front().getNumArguments());
-        if (opaque || callers[fn].empty() || fn.getUpvalueCount() != 0 ||
-            mlir::SymbolTable::getSymbolVisibility(fn) != mlir::SymbolTable::Visibility::Private ||
+        if (opaque || callers[fn].empty() || fn.getUpvalueCount() != 0 || !fn.isPrivate() ||
             !closedCallableProblem(fn, module).empty()) {
             return;
         }

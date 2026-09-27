@@ -24,8 +24,7 @@ std::optional<snapshot> evaluator::runPrefix(ctjs::FuncOp function, llvm::ArrayR
         return {};
     }
     if (!function || function.getBody().empty() || function.getUpvalueCount() != 0 ||
-        mlir::SymbolTable::getSymbolVisibility(function) !=
-            mlir::SymbolTable::Visibility::Private) {
+        !function.isPrivate()) {
         fail("prefix is not a closed capture-free function");
         return {};
     }

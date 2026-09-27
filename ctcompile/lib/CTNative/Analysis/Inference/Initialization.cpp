@@ -97,10 +97,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     });
     if (auto module = llvm::dyn_cast<mlir::ModuleOp>(top)) {
         top->walk([&](ctjs::FuncOp function) {
-            if (function.getBody().empty() || mlir::SymbolTable::getSymbolVisibility(function) !=
-                                                  mlir::SymbolTable::Visibility::Private) {
-                return;
-            }
+            if (function.getBody().empty() || !function.isPrivate()) { return; }
             llvm::SmallVector<mlir::Value> parameters;
             for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
                 const auto group = groups.find(argument);

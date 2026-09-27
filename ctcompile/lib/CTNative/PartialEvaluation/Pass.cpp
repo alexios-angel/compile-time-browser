@@ -138,11 +138,7 @@ struct CTNativePartialEvaluatePass
         std::vector<rewrite> rewrites;
         unsigned evaluated = 0, nodes = 0, declined = 0;
         for (ctjs::FuncOp fn : functions) {
-            if (fn.getBody().empty() || callers[fn].empty() ||
-                mlir::SymbolTable::getSymbolVisibility(fn) !=
-                    mlir::SymbolTable::Visibility::Private) {
-                continue;
-            }
+            if (fn.getBody().empty() || callers[fn].empty() || !fn.isPrivate()) { continue; }
             const auto decline = [&](llvm::StringRef why) {
                 fn->setAttr("ctnative.partial_eval_reason",
                             mlir::StringAttr::get(&getContext(), why));

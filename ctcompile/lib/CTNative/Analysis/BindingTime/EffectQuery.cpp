@@ -57,9 +57,8 @@ bool closedEffectEnvironment(mlir::ModuleOp module) {
                 return;
             }
             auto & entry = function.getBody().front();
-            if (entry.getNumArguments() < 3 || (mlir::SymbolTable::getSymbolVisibility(function) !=
-                                                    mlir::SymbolTable::Visibility::Private &&
-                                                entry.getNumArguments() != 3)) {
+            if (entry.getNumArguments() < 3 ||
+                (!function.isPrivate() && entry.getNumArguments() != 3)) {
                 safe = false;
                 return;
             }

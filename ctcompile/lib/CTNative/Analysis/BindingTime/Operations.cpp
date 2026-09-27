@@ -67,9 +67,7 @@ bool BindingTimeAnalysis::Impl::operation(mlir::Operation * op, flow & state, bo
         eligible = target && complete.lookup(target) &&
                    binding_time_detail::effectCalleeMatches(call, module) &&
                    !constructsClosures(target) && target.getUpvalueCount() == 0 &&
-                   mlir::SymbolTable::getSymbolVisibility(target) ==
-                       mlir::SymbolTable::Visibility::Private &&
-                   llvm::all_of(call.getArgs(), [&](mlir::Value arg) {
+                   target.isPrivate() && llvm::all_of(call.getArgs(), [&](mlir::Value arg) {
                        return state.values.lookup(arg).time == BindingTime::Static;
                    });
         if (eligible) {

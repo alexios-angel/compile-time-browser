@@ -90,9 +90,7 @@ private:
                 }
                 const auto index = functionIndex(function);
                 if (index) { indexed[*index].push_back(function); }
-                if (function.getBody().empty() || index == 0 ||
-                    mlir::SymbolTable::getSymbolVisibility(function) !=
-                        mlir::SymbolTable::Visibility::Private) {
+                if (function.getBody().empty() || index == 0 || !function.isPrivate()) {
                     mark(function);
                 }
             }

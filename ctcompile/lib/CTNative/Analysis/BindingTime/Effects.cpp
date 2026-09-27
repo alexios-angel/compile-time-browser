@@ -71,9 +71,7 @@ effectQueries::effectQueries(mlir::ModuleOp input) : module(input) {
 
 effectSummary effectQueries::summarize(ctjs::FuncOp function, unsigned & steps) const {
     if (!llvm::hasSingleElement(function.getBody()) || function->getParentOp() != module ||
-        function.getUpvalueCount() != 0 ||
-        mlir::SymbolTable::getSymbolVisibility(function) !=
-            mlir::SymbolTable::Visibility::Private ||
+        function.getUpvalueCount() != 0 || !function.isPrivate() ||
         !closedCallableProblem(function, module).empty()) {
         return {};
     }

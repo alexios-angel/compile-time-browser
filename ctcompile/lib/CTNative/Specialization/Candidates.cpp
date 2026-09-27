@@ -33,9 +33,7 @@ bool primitive(mlir::Attribute attr) {
 } // namespace
 
 std::string refusal(ctjs::FuncOp function, mlir::ModuleOp module) {
-    if (function.getBody().empty() || function->getParentOp() != module ||
-        mlir::SymbolTable::getSymbolVisibility(function) !=
-            mlir::SymbolTable::Visibility::Private) {
+    if (function.getBody().empty() || function->getParentOp() != module || !function.isPrivate()) {
         return "requires a private module function with a visible body";
     }
     auto & entry = function.getBody().front();

@@ -23,9 +23,7 @@ value evaluator::allocate(node::kind kind, mlir::Location location) {
 
 value evaluator::call(ctjs::FuncOp function, llvm::ArrayRef<value> args, unsigned depth) {
     if (depth >= maxDepth) { return fail("call-depth budget exhausted"); }
-    if (!function || function.getBody().empty() ||
-        mlir::SymbolTable::getSymbolVisibility(function) !=
-            mlir::SymbolTable::Visibility::Private ||
+    if (!function || function.getBody().empty() || !function.isPrivate() ||
         function.getUpvalueCount() != 0) {
         return fail("callee is not a closed capture-free function");
     }

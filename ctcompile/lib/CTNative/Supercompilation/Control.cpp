@@ -59,9 +59,7 @@ Bindings commonBindings(llvm::ArrayRef<mlir::Attribute> ancestor,
 }
 
 std::string refusal(ctjs::FuncOp function, mlir::ModuleOp module) {
-    if (!functionIndex(function) || function->getParentOp() != module ||
-        mlir::SymbolTable::getSymbolVisibility(function) !=
-            mlir::SymbolTable::Visibility::Private ||
+    if (!functionIndex(function) || function->getParentOp() != module || !function.isPrivate() ||
         !llvm::hasSingleElement(function.getBody()) || function.getUpvalueCount() != 0) {
         return "requires a private indexed capture-free kernel with one entry block";
     }

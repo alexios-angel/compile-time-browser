@@ -32,10 +32,7 @@ struct closedValueFlow {
     auto nodes() const {
         return llvm::map_range(classes, [](const auto * node) { return node->getData(); });
     }
-    static bool closed(ctjs::FuncOp fn) {
-        return fn && !fn.getBody().empty() &&
-               mlir::SymbolTable::getSymbolVisibility(fn) == mlir::SymbolTable::Visibility::Private;
-    }
+    static bool closed(ctjs::FuncOp fn) { return fn && !fn.getBody().empty() && fn.isPrivate(); }
     static bool exactCall(ctjs::CallDirectOp call, ctjs::FuncOp fn) {
         return closed(fn) && call->getNumOperands() == fn.getBody().front().getNumArguments();
     }
