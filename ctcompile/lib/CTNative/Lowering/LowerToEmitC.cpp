@@ -226,10 +226,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         if (!hostContract && optimize && (precompute || pruneUnreachable)) {
             mlir::OpPassManager defaults(mlir::ModuleOp::getOperationName());
             if (precompute) {
-                CTNativePrecomputeOptions options;
-                options.maxSteps = precomputeMaxSteps;
-                options.report = optimizationReport;
-                defaults.addPass(createCTNativePrecompute(options));
+                defaults.addPass(createCTNativePrecompute(
+                    {.maxSteps = precomputeMaxSteps, .report = optimizationReport}));
             }
             if (pruneUnreachable) {
                 CTNativePruneUnreachableOptions options;
@@ -317,10 +315,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // Reuse scalar guard folding before shape admission inspects dead arms.
         if (!hostContract && optimize && precompute && (lifted.calls || lifted.bound)) {
             mlir::OpPassManager guards(mlir::ModuleOp::getOperationName());
-            CTNativePrecomputeOptions options;
-            options.maxSteps = precomputeMaxSteps;
-            options.report = optimizationReport;
-            guards.addPass(createCTNativePrecompute(options));
+            guards.addPass(createCTNativePrecompute(
+                {.maxSteps = precomputeMaxSteps, .report = optimizationReport}));
             if (failed(runPipeline(guards, module))) { return signalPassFailure(); }
         }
         // Recovery/normalization is speculative until type/effect admission and the entire
@@ -396,17 +392,16 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             into << "ctnative census: " << lifter.censusOpenObjects
                  << " method-bearing literal(s) refused as open, holding "
                  << lifter.censusMethodFields << " method field(s); blocking uses:";
-            for (const auto & [label, count] : ordered(lifter.censusUses)) {
-                into << " " << label << "=" << count;
-            }
+            const auto counts = [&](const auto & census) {
+                for (const auto & [label, count] : ordered(census)) {
+                    into << " " << label << "=" << count;
+                }
+            };
+            counts(lifter.censusUses);
             into << "; sole blocker:";
-            for (const auto & [label, count] : ordered(lifter.censusSole)) {
-                into << " " << label << "=" << count;
-            }
+            counts(lifter.censusSole);
             into << "; sole blocker by method field:";
-            for (const auto & [label, count] : ordered(lifter.censusSoleFields)) {
-                into << " " << label << "=" << count;
-            }
+            counts(lifter.censusSoleFields);
             into << "; root of the nesting:";
             for (const auto & [label, count] : ordered(lifter.censusRoot)) {
                 into << " " << label << "=" << count;
@@ -414,9 +409,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 if (at != lifter.censusExample.end()) { into << "@" << at->second; }
             }
             into << "; nesting depth:";
-            for (const auto & [label, count] : ordered(lifter.censusDepth)) {
-                into << " " << label << "=" << count;
-            }
+            counts(lifter.censusDepth);
             module.emitRemark() << text;
         }
         if (report) {
@@ -553,48 +546,35 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             changed = false;
             for (ctjs::FuncOp fn : functions) {
                 const bool native = nativeSet.contains(fn.getOperation());
-                // Retained code is an edge too. A callable builder names its
-                // target even when the factory itself never invokes it.
-                fn.getBody().walk([&](ctjs::CreateClosureOp made) {
-                    if (environmentTarget(made).empty()) { return; }
-                    mlir::Operation * target = symbols.lookup(environmentTarget(made));
+                // A native end of an edge whose other end is not native stops
+                // being native; the reason names the other end.
+                const auto edge = [&](mlir::Operation * target, const llvm::Twine & forward,
+                                      const llvm::Twine & backward) {
                     const bool targetNative = target && nativeSet.contains(target);
                     if (native && !targetNative) {
-                        nativeSet.erase(fn);
+                        nativeSet.erase(fn.getOperation());
                         fn->setAttr("ctnative.not_native",
-                                    mlir::StringAttr::get(
-                                        &getContext(), "retains `" + environmentTarget(made).str() +
-                                                           "`, which is not native"));
+                                    mlir::StringAttr::get(&getContext(), forward));
                         changed = true;
                     } else if (!native && targetNative) {
                         nativeSet.erase(target);
                         target->setAttr("ctnative.not_native",
-                                        mlir::StringAttr::get(
-                                            &getContext(), "retained by `" + fn.getSymName().str() +
-                                                               "`, which is not native"));
+                                        mlir::StringAttr::get(&getContext(), backward));
                         changed = true;
                     }
+                };
+                // Retained code is an edge too. A callable builder names its
+                // target even when the factory itself never invokes it.
+                fn.getBody().walk([&](ctjs::CreateClosureOp made) {
+                    if (environmentTarget(made).empty()) { return; }
+                    edge(symbols.lookup(environmentTarget(made)),
+                         "retains `" + environmentTarget(made) + "`, which is not native",
+                         "retained by `" + fn.getSymName() + "`, which is not native");
                 });
                 fn.getBody().walk([&](ctjs::CallDirectOp call) {
-                    mlir::Operation * callee = symbols.lookup(call.getCallee());
-                    const bool calleeNative = callee != nullptr && nativeSet.contains(callee);
-                    if (native && !calleeNative) {
-                        nativeSet.erase(fn.getOperation());
-                        fn->setAttr(
-                            "ctnative.not_native",
-                            mlir::StringAttr::get(
-                                &getContext(),
-                                ("calls `" + call.getCallee() + "`, which is not native").str()));
-                        changed = true;
-                    } else if (!native && calleeNative) {
-                        nativeSet.erase(callee);
-                        callee->setAttr(
-                            "ctnative.not_native",
-                            mlir::StringAttr::get(&getContext(), ("called by `" + fn.getSymName() +
-                                                                  "`, which is not native")
-                                                                     .str()));
-                        changed = true;
-                    }
+                    edge(symbols.lookup(call.getCallee()),
+                         "calls `" + call.getCallee() + "`, which is not native",
+                         "called by `" + fn.getSymName() + "`, which is not native");
                 });
             }
         }
