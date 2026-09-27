@@ -2,6 +2,31 @@
 
 namespace ctcompile::ctnative::class_detail {
 
+namespace {
+
+// Replace a call with a direct call of `function`: undefined receiver, new.target
+// and callee, its arguments padded with undefined, then `extra` as the last formals.
+void callDirect(mlir::Operation * call, ctjs::FuncOp function, mlir::ValueRange extra = {}) {
+    mlir::OpBuilder at(call);
+    auto absent =
+        ctjs::ConstantOp::create(at, call->getLoc(), ctjs::UndefinedAttr::get(call->getContext()));
+    auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(call);
+    llvm::SmallVector<mlir::Value> arguments(direct ? direct.getArgs()
+                                                    : llvm::cast<ctjs::CallOp>(call).getArgs());
+    arguments.resize(function.getBody().front().getNumArguments() - ctjs::implicit_arguments -
+                         extra.size(),
+                     absent);
+    llvm::append_range(arguments, extra);
+    auto replacement =
+        ctjs::CallDirectOp::create(at, call->getLoc(), call->getResult(0).getType(),
+                                   mlir::FlatSymbolRefAttr::get(function.getSymNameAttr()), absent,
+                                   absent, absent, arguments, nullptr, nullptr);
+    call->getResult(0).replaceAllUsesWith(replacement.getResult());
+    call->erase();
+}
+
+} // namespace
+
 bool classInitialization::transportHelperMaps() {
     if (mapClosures.empty()) { return true; }
     // Keep helper bodies and frames, passing their exact Maps as ordinary
@@ -67,22 +92,22 @@ bool classInitialization::transportHelperMaps() {
     // A changed signature must cover every caller and cannot remain externally
     // observable. Check both symbol-attribute locations as well as value aliases.
     llvm::DenseSet<mlir::Operation *> referencedCalls;
-    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-        if (!uses) { return refuse("class Map helper symbol uses could not be enumerated"); }
-        for (const auto & use : *uses) {
-            if (!step()) { return false; }
-            auto function = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                use.getUser(), use.getSymbolRef());
-            if (helpers.contains(function) && needed.contains(function)) {
+    if (auto stop = host_detail::forEachSymbolUse(
+            module, true, [&] { return step(); },
+            [&](const mlir::SymbolTable::SymbolUse & use,
+                ctjs::FuncOp function) -> std::optional<bool> {
+                if (!helpers.contains(function) || !needed.contains(function)) {
+                    return std::nullopt;
+                }
                 auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
                 if (!direct || direct.getTarget() != function || edges.lookup(direct) != function ||
                     use.getSymbolRef() != direct.getCalleeAttr() ||
                     !referencedCalls.insert(direct).second) {
                     return refuse("class Map helper has an unproved symbol reference");
                 }
-            }
-        }
+                return std::nullopt;
+            })) {
+        return *stop ? refuse("class Map helper symbol uses could not be enumerated") : false;
     }
     for (const auto & [operation, values] : needed) {
         (void)values;
@@ -114,14 +139,14 @@ bool classInitialization::transportHelperMaps() {
         }
     }
     llvm::DenseMap<mlir::Operation *, llvm::DenseMap<mlir::Value, mlir::Value>> available;
-    llvm::DenseMap<mlir::Operation *, unsigned> originalParameters;
+    llvm::DenseSet<mlir::Operation *> transported;
     for (const auto & [operation, values] : needed) {
         if (!step()) { return false; }
         auto function = llvm::cast<ctjs::FuncOp>(operation);
         auto closure = closures.lookup(operation);
         auto & block = function.getBody().front();
         if (helpers.contains(operation)) {
-            originalParameters[operation] = block.getNumArguments() - ctjs::implicit_arguments;
+            transported.insert(operation);
             for (auto map : values) {
                 if (!step()) { return false; }
                 available[operation][map] = block.addArgument(map.getType(), function.getLoc());
@@ -190,23 +215,15 @@ bool classInitialization::transportHelperMaps() {
                                                     static_cast<uint32_t>(index));
             available[operation][map] = read;
         }
-        closure.getUpvaluesMutable().assign(captures);
-        closure.removeEnclosingIndicesAttr();
-        function.setUpvalueCount(static_cast<uint32_t>(captures.size()));
+        setCaptures(closure, function, captures);
         mapClosures.insert(closure);
         if (!llvm::is_contained(capturedClosures, closure)) { capturedClosures.push_back(closure); }
     }
     for (auto [op, function] : edges) {
         if (!step()) { return false; }
-        if (!originalParameters.contains(function)) { continue; }
-        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
-        auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+        if (!transported.contains(function)) { continue; }
         auto caller = op->getParentOfType<ctjs::FuncOp>();
-        mlir::OpBuilder at(op);
-        auto absent = ctjs::ConstantOp::create(at, op->getLoc(),
-                                               ctjs::UndefinedAttr::get(module.getContext()));
-        llvm::SmallVector<mlir::Value> arguments(direct ? direct.getArgs() : call.getArgs());
-        arguments.resize(originalParameters.lookup(function), absent);
+        llvm::SmallVector<mlir::Value> maps;
         for (auto map : needed.lookup(function)) {
             if (!step()) { return false; }
             if (map.getDefiningOp()->getParentOfType<ctjs::FuncOp>() == caller) {
@@ -214,17 +231,12 @@ bool classInitialization::transportHelperMaps() {
                 if (!dominance.properlyDominates(map, op)) {
                     return refuse("class helper Map does not reach its local call");
                 }
-                arguments.push_back(map);
+                maps.push_back(map);
             } else {
-                arguments.push_back(available[caller].lookup(map));
+                maps.push_back(available[caller].lookup(map));
             }
         }
-        auto replacement =
-            ctjs::CallDirectOp::create(at, op->getLoc(), op->getResult(0).getType(),
-                                       mlir::FlatSymbolRefAttr::get(function.getSymNameAttr()),
-                                       absent, absent, absent, arguments, nullptr, nullptr);
-        op->getResult(0).replaceAllUsesWith(replacement);
-        op->erase();
+        callDirect(op, function, maps);
     }
     return reason.empty();
 }
@@ -239,6 +251,29 @@ void classInitialization::eraseRooted(mlir::Operation * operation) {
     operation->erase();
 }
 
+void classInitialization::retireCell(mlir::Value cell) {
+    llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
+        if (read.getCell() != cell) { return false; }
+        cellOperations.erase(read);
+        eraseRooted(read);
+        return true;
+    });
+    for (mlir::Operation * user : llvm::make_early_inc_range(cell.getUsers())) {
+        cellOperations.erase(user);
+        user->erase();
+    }
+    cellOperations.erase(cell.getDefiningOp());
+    cells.erase(cell);
+    cell.getDefiningOp()->erase();
+}
+
+void classInitialization::retireHelper(ctjs::CreateClosureOp closure, ctjs::FuncOp function) {
+    earlyCaptures.erase(closure);
+    eraseRooted(closure);
+    functions.erase(*functionIndex(function));
+    function.erase();
+}
+
 llvm::SmallVector<ctjs::FuncOp> classInitialization::expandHolders() {
     // Every alias and implicit-argument use was checked before mutation.
     // Local DOM slots remain as functions until the complete invocation/type
@@ -250,22 +285,8 @@ llvm::SmallVector<ctjs::FuncOp> classInitialization::expandHolders() {
         for (auto [read, closure] : holder.reads) {
             auto function = target(closure);
             for (mlir::Operation * user : llvm::make_early_inc_range(read->getUsers())) {
-                auto call = llvm::dyn_cast<ctjs::CallOp>(user);
-                if (!call) { continue; } // Inert roots are removed below.
-                mlir::OpBuilder at(call);
-                auto undefined =
-                    ctjs::ConstantOp::create(at, call.getLoc(), call.getType(),
-                                             ctjs::UndefinedAttr::get(module.getContext()));
-                llvm::SmallVector<mlir::Value> arguments(call.getArgs());
-                arguments.resize(function.getBody().front().getNumArguments() -
-                                     ctjs::implicit_arguments,
-                                 undefined);
-                auto direct = ctjs::CallDirectOp::create(
-                    at, call.getLoc(), call.getType(),
-                    mlir::FlatSymbolRefAttr::get(function.getSymNameAttr()), undefined, undefined,
-                    undefined, arguments, nullptr, nullptr);
-                call.getResult().replaceAllUsesWith(direct.getResult());
-                call.erase();
+                // Inert roots are removed below.
+                if (llvm::isa<ctjs::CallOp>(user)) { callDirect(user, function); }
             }
             eraseRooted(read);
         }
@@ -347,30 +368,14 @@ void classInitialization::rewrite() {
     // Holder expansion erases its slot closures. Clear their proved capture
     // metadata first; the retained bodies still own all recorded reads.
     for (ctjs::CreateClosureOp closure : capturedClosures) {
-        if (mapClosures.contains(closure)) { continue; }
-        target(closure).setUpvalueCount(0);
-        closure.getUpvaluesMutable().clear();
-        closure.removeEnclosingIndicesAttr();
+        if (!mapClosures.contains(closure)) { setCaptures(closure, target(closure), {}); }
     }
     const auto holderTargets = expandHolders();
     for (auto [read, function] : staticMethodReads) {
         for (mlir::Operation * user : llvm::make_early_inc_range(read->getUsers())) {
-            auto call = llvm::dyn_cast<ctjs::CallOp>(user);
-            if (!call) { continue; }
-            mlir::OpBuilder at(call);
-            auto absent = ctjs::ConstantOp::create(at, call.getLoc(),
-                                                   ctjs::UndefinedAttr::get(module.getContext()));
-            llvm::SmallVector<mlir::Value> arguments(call.getArgs());
-            arguments.resize(
-                function.getBody().front().getNumArguments() - ctjs::implicit_arguments, absent);
             // Getter/capture expansion removes the proved implicit uses.
             // Keep the original body and frame rather than cloning its code.
-            auto direct =
-                ctjs::CallDirectOp::create(at, call.getLoc(), call.getType(),
-                                           mlir::FlatSymbolRefAttr::get(function.getSymNameAttr()),
-                                           absent, absent, absent, arguments, nullptr, nullptr);
-            call.getResult().replaceAllUsesWith(direct.getResult());
-            call.erase();
+            if (llvm::isa<ctjs::CallOp>(user)) { callDirect(user, function); }
         }
         eraseRooted(read);
     }
@@ -430,21 +435,8 @@ void classInitialization::rewrite() {
     for (ctjs::LoadUpvalueOp read : captureReads) {
         if (auto helper = callableCaptures.lookup(read)) {
             for (mlir::Operation * user : llvm::make_early_inc_range(read->getUsers())) {
-                auto call = llvm::dyn_cast<ctjs::CallOp>(user);
-                if (!call) { continue; } // Only inert roots remain below.
-                mlir::OpBuilder at(call);
-                auto absent =
-                    ctjs::ConstantOp::create(at, call.getLoc(), call.getType(),
-                                             ctjs::UndefinedAttr::get(module.getContext()));
-                llvm::SmallVector<mlir::Value> arguments(call.getArgs());
-                arguments.resize(
-                    helper.getBody().front().getNumArguments() - ctjs::implicit_arguments, absent);
-                auto direct = ctjs::CallDirectOp::create(
-                    at, call.getLoc(), call.getType(),
-                    mlir::FlatSymbolRefAttr::get(helper.getSymNameAttr()), absent, absent, absent,
-                    arguments, nullptr, nullptr);
-                call.getResult().replaceAllUsesWith(direct.getResult());
-                call.erase();
+                // Only inert roots remain below.
+                if (llvm::isa<ctjs::CallOp>(user)) { callDirect(user, helper); }
             }
         }
         for (mlir::Operation * root : llvm::make_early_inc_range(read->getUsers())) {
@@ -465,9 +457,7 @@ void classInitialization::rewrite() {
         target(closure).walk([&](ctjs::LoadUpvalueOp read) {
             read.setIndex(indices[static_cast<size_t>(read.getIndex())]);
         });
-        closure.getUpvaluesMutable().assign(retained);
-        closure.removeEnclosingIndicesAttr();
-        target(closure).setUpvalueCount(static_cast<uint32_t>(retained.size()));
+        setCaptures(closure, target(closure), retained);
     }
     for (ctjs::CellGetOp read : cellReads) {
         read.getResult().replaceAllUsesWith(cells.lookup(read.getCell()));
@@ -493,37 +483,20 @@ void classInitialization::rewrite() {
     for (mlir::Operation * operation : inertCalleeCalls) {
         // Entry-local calls survive method normalization. Their original
         // callee uses were proved to be only inert callback enclosures.
-        mlir::OpBuilder at(operation);
-        auto absent = ctjs::ConstantOp::create(at, operation->getLoc(),
-                                               ctjs::UndefinedAttr::get(module.getContext()));
         if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
-            direct.getCalleeValueMutable().assign(absent);
+            mlir::OpBuilder at(operation);
+            direct.getCalleeValueMutable().assign(ctjs::ConstantOp::create(
+                at, operation->getLoc(), ctjs::UndefinedAttr::get(module.getContext())));
             continue;
         }
         auto call = llvm::cast<ctjs::CallOp>(operation);
-        auto helper = target(call.getCallee().getDefiningOp<ctjs::CreateClosureOp>());
-        llvm::SmallVector<mlir::Value> arguments(call.getArgs());
-        arguments.resize(helper.getBody().front().getNumArguments() - ctjs::implicit_arguments,
-                         absent);
-        auto direct =
-            ctjs::CallDirectOp::create(at, call.getLoc(), call.getType(),
-                                       mlir::FlatSymbolRefAttr::get(helper.getSymNameAttr()),
-                                       absent, absent, absent, arguments, nullptr, nullptr);
-        call.getResult().replaceAllUsesWith(direct.getResult());
-        call.erase();
+        callDirect(call, target(call.getCallee().getDefiningOp<ctjs::CreateClosureOp>()));
     }
     for (mlir::Operation * operation : capturedHelpers) {
         auto closure = llvm::cast<ctjs::CreateClosureOp>(operation);
         mlir::SymbolTable::setSymbolVisibility(target(closure),
                                                mlir::SymbolTable::Visibility::Private);
-        if (llvm::any_of(closure->getUsers(),
-                         [](mlir::Operation * user) { return !llvm::isa<ctjs::RootOp>(user); })) {
-            continue;
-        }
-        for (mlir::Operation * root : llvm::make_early_inc_range(closure->getUsers())) {
-            root->erase();
-        }
-        closure.erase();
+        eraseIfRooted(closure);
     }
     // Captured reads have now been rewritten, including in unused slots.
     // DOM slots still need the complete typed invocation/effect proof.
@@ -570,8 +543,7 @@ void classInitialization::rewrite() {
         auto function = target(closure);
         if ((!baseClasses.contains(closure.getResult()) && !constructors.contains(function) &&
              !methods.contains(function)) ||
-            !llvm::all_of(closure->getUsers(),
-                          [](mlir::Operation * use) { return llvm::isa<ctjs::RootOp>(use); }) ||
+            !rootedOnly(closure) ||
             !mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation()) ||
             !mlir::SymbolTable::symbolKnownUseEmpty(function, &module.getBodyRegion())) {
             return;

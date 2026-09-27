@@ -4,6 +4,7 @@
 #include "../Analysis.h"
 #include "../Preparation.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -21,6 +22,55 @@ namespace ctcompile::ctnative::class_detail {
 inline bool closureMetadataKey(llvm::StringRef key) {
     static const llvm::StringSet<> names{"name", "length", "__home", "caller", "arguments"};
     return key.size() <= 9 && names.contains(key);
+}
+
+// The precharge for cloning an operation: itself, its operands and results.
+inline uint64_t cloneCost(mlir::Operation * op) {
+    return uint64_t(1) + op->getNumOperands() + op->getNumResults();
+}
+
+// The closed-source contract that proves only the class helper and Error bindings.
+inline HostContract classBindingContract(HostContract binding) {
+    binding.provider = HostContract::Provider::closedSource;
+    binding.elementParameters.clear();
+    binding.currentDocumentParameter.reset();
+    llvm::erase_if(binding.initialIntrinsics, [](const auto & name) {
+        return !host_detail::classIntrinsicArity(name) && name != "Error";
+    });
+    return binding;
+}
+
+// An explicit DOM Data entry input that the contract declares an element.
+inline bool declaredElementInput(const HostContract & contract, ctjs::FuncOp scope,
+                                 mlir::BlockArgument input) {
+    return contract.provider == HostContract::Provider::ctbrowserDOMDataSession && input &&
+           scope.getSymName() == contract.entry && input.getOwner() == &scope.getBody().front() &&
+           input.getArgNumber() >= ctjs::implicit_arguments &&
+           llvm::is_contained(contract.elementParameters,
+                              input.getArgNumber() - ctjs::implicit_arguments);
+}
+
+// A nonnegative enclosing index captures a slot of an outer activation.
+inline bool hasOuterCapture(ctjs::CreateClosureOp closure) {
+    auto indices = closure.getEnclosingIndicesAttr();
+    return indices && llvm::any_of(indices.asArrayRef(), [](int32_t index) { return index >= 0; });
+}
+
+// Replace a proved closure's capture slots; they are all local cells now.
+inline void setCaptures(ctjs::CreateClosureOp closure, ctjs::FuncOp function,
+                        mlir::ValueRange captures) {
+    closure.getUpvaluesMutable().assign(captures);
+    closure.removeEnclosingIndicesAttr();
+    function.setUpvalueCount(static_cast<uint32_t>(captures.size()));
+}
+
+inline bool rootedOnly(mlir::Operation * operation) {
+    return llvm::all_of(operation->getUsers(), llvm::IsaPred<ctjs::RootOp>);
+}
+
+// The precharge for closedDeclaration's operation and use scans.
+inline uint64_t declarationCost(mlir::Operation * op) {
+    return uint64_t(2) + op->getNumOperands();
 }
 
 struct classInitialization {
@@ -93,8 +143,12 @@ struct classInitialization {
     classInitialization(mlir::ModuleOp module, unsigned steps) : module(module), remaining(steps) {}
 
     bool step();
+    // `count` steps at once; one that does not fit spends the rest, as `count` steps would.
+    bool spend(uint64_t count);
+    // Precharges every operation `root` walks, keeping what was spent before a misfit.
+    bool spendWalk(mlir::Operation * root, llvm::function_ref<uint64_t(mlir::Operation *)> cost);
     bool refuse(llvm::StringRef message);
-    static bool undefined(mlir::Value value);
+    static bool undefined(mlir::Value value) { return ctjs::isUndefinedConstant(value); }
     ctjs::FuncOp target(ctjs::CreateClosureOp closure);
     bool proveCells(ctjs::FuncOp entry);
     bool proveMaps();
@@ -142,6 +196,18 @@ struct classInitialization {
     bool foldDecidedArms(ctjs::CreateClosureOp constructor,
                          llvm::ArrayRef<ctjs::ConstructOp> instances);
     bool freshFunctionIndex(unsigned & next);
+    // A copy of `fn` appended to the module as source function `index`.
+    ctjs::FuncOp cloneFunction(ctjs::FuncOp fn, unsigned index);
+    // The ancestor of `op` in `block` through Parents regions, one step each;
+    // where the chain leaves them or the budget stops, the operation reached.
+    template <class... Parents>
+    mlir::Operation * positionIn(mlir::Operation * op, mlir::Block * block) {
+        while (op->getBlock() != block && llvm::isa_and_nonnull<Parents...>(op->getParentOp())) {
+            if (!step()) { break; }
+            op = op->getParentOp();
+        }
+        return op;
+    }
     bool cloneReceiverMethods(ctjs::CreateClosureOp leaf, ctjs::CreateObjectOp prototype,
                               ctjs::CallOp helper, const llvm::StringSet<> & shadowed,
                               llvm::SmallVectorImpl<ctjs::SetPropertyOp> & selected,
@@ -164,6 +230,8 @@ struct classInitialization {
 
     bool normalizeSuperMethods(ctjs::FuncOp function,
                                llvm::ArrayRef<ctjs::SetPropertyOp> baseDefinitions);
+    // Drop the helper-call, Map and capture records of a replaced body.
+    void forgetRecords(mlir::Region & region);
 
     bool examine(ctjs::CallOp call, const HostContract & contract, bool domEntry);
 
@@ -177,6 +245,13 @@ struct classInitialization {
     bool transportHelperMaps();
 
     static void eraseRooted(mlir::Operation * operation);
+    static void eraseIfRooted(mlir::Operation * operation) {
+        if (rootedOnly(operation)) { eraseRooted(operation); }
+    }
+    // Erase a fixed cell with its recorded reads and remaining transport users.
+    void retireCell(mlir::Value cell);
+    // Erase a helper closure whose calls were all expanded, and its function.
+    void retireHelper(ctjs::CreateClosureOp closure, ctjs::FuncOp function);
     llvm::SmallVector<ctjs::FuncOp> expandHolders();
 
     void rewrite();

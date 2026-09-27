@@ -55,11 +55,7 @@ prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
                 return {};
             }
         } else if (auto construct = llvm::dyn_cast<ctjs::ConstructOp>(operation)) {
-            auto load = construct.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            if (!load || load.getName() != "Map" || construct.getNewTarget() != load.getResult() ||
-                !construct.getArgs().empty()) {
-                return {};
-            }
+            if (!plainMapConstruction(construct)) { return {}; }
             const auto id = static_cast<unsigned>(proof.resources.size());
             proof.resources.push_back(construct);
             values[construct.getResult()] = {prefixValue::Kind::resource, {}, {}, id};

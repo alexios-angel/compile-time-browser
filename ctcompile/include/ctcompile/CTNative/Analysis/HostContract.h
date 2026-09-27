@@ -126,6 +126,10 @@ struct HostContract {
 };
 
 llvm::Expected<HostContract> parseHostContract(llvm::StringRef json);
+// The manifest at `path`; an unreadable file fails as `unreadable` + the system reason.
+llvm::Expected<HostContract> readHostContract(llvm::StringRef path, llvm::StringRef unreadable);
+// The manifest spelling of `provider`.
+llvm::StringRef hostProviderName(HostContract::Provider provider);
 // Includes the whole driver/program IR. Presentation locations and previous
 // host-contract reports are excluded; all semantic operations remain bound.
 std::string hostContractFingerprint(mlir::ModuleOp module);

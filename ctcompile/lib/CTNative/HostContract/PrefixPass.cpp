@@ -6,7 +6,6 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
-#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace ctcompile::ctnative {
@@ -53,14 +52,7 @@ struct CTNativeSpecializeHostPrefixPass
     void runOnOperation() override {
         auto module = getOperation();
         clearHostContractReports(module);
-        auto buffer = llvm::MemoryBuffer::getFile(manifest);
-        if (!buffer) {
-            mlir::emitError(module.getLoc())
-                << "cannot read host prefix contract: " << buffer.getError().message();
-            signalPassFailure();
-            return;
-        }
-        auto contract = parseHostContract((*buffer)->getBuffer());
+        auto contract = readHostContract(manifest, "cannot read host prefix contract: ");
         if (!contract) {
             mlir::emitError(module.getLoc()) << llvm::toString(contract.takeError());
             signalPassFailure();
@@ -84,6 +76,11 @@ struct CTNativeSpecializeHostPrefixPass
                 signalPassFailure();
                 return;
             }
+            const auto factoryOf = [&](mlir::Operation * operation) {
+                return llvm::find_if(analysis.factories(), [&](const auto & candidate) {
+                    return candidate.operation == operation;
+                });
+            };
             llvm::json::Array targets;
             for (auto proof : calls) { targets.push_back(proof.target.getSymName().str()); }
             llvm::json::Array factories, publications, providerReads;
@@ -112,11 +109,7 @@ struct CTNativeSpecializeHostPrefixPass
                     {"captures", std::move(captures)}});
             }
             for (const auto & proof : analysis.publications()) {
-                const auto factory =
-                    llvm::find_if(analysis.factories(), [&](const auto & candidate) {
-                        return candidate.operation == proof.factory;
-                    });
-                auto target = factory->target;
+                auto target = factoryOf(proof.factory)->target;
                 publications.push_back(
                     llvm::json::Object{{"binding", proof.binding},
                                        {"property", proof.property},
@@ -124,10 +117,7 @@ struct CTNativeSpecializeHostPrefixPass
             }
             std::int64_t readCount = 0;
             for (auto proof : analysis.providerReads()) {
-                const auto factory =
-                    llvm::find_if(analysis.factories(), [&](const auto & candidate) {
-                        return candidate.operation == proof.factory;
-                    });
+                const auto factory = factoryOf(proof.factory);
                 llvm::json::Array operations;
                 for (const auto & read : proof.reads) {
                     operations.push_back(llvm::json::Object{
@@ -136,15 +126,12 @@ struct CTNativeSpecializeHostPrefixPass
                          static_cast<std::int64_t>(llvm::find(factory->resources, read.resource) -
                                                    factory->resources.begin())}});
                 }
-                std::string result;
-                llvm::raw_string_ostream resultStream(result);
-                proof.result.print(resultStream);
                 readCount += static_cast<std::int64_t>(proof.reads.size());
                 providerReads.push_back(llvm::json::Object{
                     {"target", proof.target.getSymName().str()},
                     {"factory_index",
                      static_cast<std::int64_t>(factory - analysis.factories().begin())},
-                    {"result", result},
+                    {"result", providerResult(proof.result)},
                     {"reads", std::move(operations)}});
             }
             llvm::json::Array providerCalls;
@@ -164,10 +151,7 @@ struct CTNativeSpecializeHostPrefixPass
                     {"invocation_operation", ordinals.lookup(allocation.invocation)}};
             };
             for (auto proof : analysis.providerCalls()) {
-                const auto factory =
-                    llvm::find_if(analysis.factories(), [&](const auto & candidate) {
-                        return candidate.operation == proof.factory;
-                    });
+                const auto factory = factoryOf(proof.factory);
                 llvm::json::Array allocations, operations;
                 for (auto allocation : proof.allocations) {
                     allocations.push_back(allocationRow(allocation));

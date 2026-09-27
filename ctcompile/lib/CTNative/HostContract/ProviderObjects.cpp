@@ -1,16 +1,6 @@
 #include "ProviderObjects.h"
 
-#include <limits>
-
 namespace ctcompile::ctnative::host_detail {
-namespace {
-
-bool textWork(prefixAnalysis & prefix, llvm::StringRef text) {
-    return text.size() <= std::numeric_limits<unsigned>::max() &&
-           prefix.spend(static_cast<unsigned>(text.size()));
-}
-
-} // namespace
 
 bool prefixPrimitive(prefixValue value) {
     return value.kind == prefixValue::Kind::primitive && value.literal &&
@@ -74,7 +64,7 @@ bool providerObjectState::initialize() {
     for (const auto & object : prefix.objects) {
         if (!prefix.step()) { return false; }
         for (const auto & field : object.fields) {
-            if (!prefix.step() || !textWork(prefix, field.first())) { return false; }
+            if (!prefix.step() || !prefix.spendText(field.first())) { return false; }
         }
     }
     objects = prefix.objects;
@@ -94,7 +84,7 @@ bool providerObjectState::accepts(unsigned id) {
     // Scalar own contents exclude object/Map/callable backedges and coercion.
     // Missing fields stay absent: no assumed prototype or undefined fallback.
     for (const auto & field : object.fields) {
-        if (!prefix.step() || !textWork(prefix, field.first()) ||
+        if (!prefix.step() || !prefix.spendText(field.first()) ||
             !ctjs::ordinaryKey(field.first()) || !prefixPrimitive(field.second)) {
             return false;
         }
@@ -104,7 +94,7 @@ bool providerObjectState::accepts(unsigned id) {
 
 bool providerObjectState::record(mlir::Operation * operation, unsigned id, llvm::StringRef member,
                                  llvm::StringRef action, mlir::Attribute result) {
-    if (!prefix.step() || !textWork(prefix, member)) { return false; }
+    if (!prefix.step() || !prefix.spendText(member)) { return false; }
     const auto & object = objects[id];
     proof.objectOperations.push_back({operation, object.allocation, object.invocation, id + 1,
                                       member.str(), action.str(), result});
@@ -138,7 +128,7 @@ prefixValue providerObjectState::operation(mlir::Operation * operation,
     auto named = llvm::dyn_cast<ctjs::DeleteNamedOp>(operation);
     const auto name = named ? named.getName() : ctjs::constantKey(key);
     if (owner.kind != prefixValue::Kind::object || !ctjs::ordinaryKey(name) ||
-        !textWork(prefix, name) || !accepts(owner.object)) {
+        !prefix.spendText(name) || !accepts(owner.object)) {
         return {};
     }
     auto & fields = objects[owner.object].fields;

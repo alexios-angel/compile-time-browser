@@ -93,8 +93,14 @@ struct prefixAnalysis {
                    bool followProviderDiagnostics, bool followProviderCallbacks,
                    bool followProviderObjects);
     bool step();
-    bool spend(unsigned count);
+    bool spend(uint64_t count);
+    // One step per character of a copied or compared name.
+    bool spendText(llvm::StringRef text);
     prefixValue stop(mlir::Operation * operation, llvm::StringRef reason);
+    // The capture of `factory` a summarized closure's upvalue `load` reads, one
+    // step per capture examined; null for another slot or on budget failure.
+    const HostPrefixCapture * capture(const HostPrefixFactory & factory, prefixValue closure,
+                                      ctjs::FuncOp function, ctjs::LoadUpvalueOp load);
     ctjs::FuncOp target(prefixValue value);
     bool uniqueContext(ctjs::FuncOp function, ctjs::CallDirectOp call,
                        ctjs::CreateClosureOp producer);
@@ -114,6 +120,10 @@ struct prefixAnalysis {
 };
 
 std::optional<bool> prefixTruth(prefixValue value);
+// A constant's value or a truth test's Boolean; nullopt for any other operation.
+std::optional<prefixValue> prefixScalar(mlir::Operation * operation,
+                                        const prefixAnalysis::environment & values,
+                                        mlir::MLIRContext * context);
 prefixValue prefixUnary(ctjs::UnaryKind kind, prefixValue operand, mlir::MLIRContext * context);
 prefixValue prefixCompare(ctjs::CompareKind kind, prefixValue left, prefixValue right,
                           mlir::MLIRContext * context);

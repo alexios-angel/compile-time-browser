@@ -92,8 +92,7 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
             !dominance.properlyDominates(callback.closure.getOperation(), callback.write)) {
             return false;
         }
-        auto enclosingThis = callback.closure.getEnclosingThis().getDefiningOp<ctjs::ConstantOp>();
-        if (!enclosingThis || !llvm::isa<ctjs::UndefinedAttr>(enclosingThis.getValue()) ||
+        if (!ctjs::isUndefinedConstant(callback.closure.getEnclosingThis()) ||
             (callback.closure.getEnclosingIndicesAttr() &&
              !callback.closure.getEnclosingIndicesAttr().empty())) {
             return false;
@@ -154,12 +153,9 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
                     !dominance.dominates(callee, use.getOwner())) {
                     return false;
                 }
-                if (direct) {
-                    auto newTarget = direct.getNewTarget().getDefiningOp<ctjs::ConstantOp>();
-                    if (direct.getTarget() != callback.function || !newTarget ||
-                        !llvm::isa<ctjs::UndefinedAttr>(newTarget.getValue())) {
-                        return false;
-                    }
+                if (direct && (direct.getTarget() != callback.function ||
+                               !ctjs::isUndefinedConstant(direct.getNewTarget()))) {
+                    return false;
                 }
                 for (mlir::Value operand : use.getOwner()->getOperands()) {
                     if (!step() || !dominance.dominates(operand, use.getOwner())) { return false; }

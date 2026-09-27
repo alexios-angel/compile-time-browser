@@ -79,17 +79,13 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             result.initialization ? result.initialization.getValue() : result.cell.getInitial();
     }
     result.allocation = resource.getDefiningOp<ctjs::ConstructOp>();
-    if (!result.allocation || !result.allocation.getArgs().empty() ||
-        result.allocation.getNewTarget() != result.allocation.getCallee() ||
+    if (!result.allocation || !plainMapConstruction(result.allocation) ||
         result.allocation->getBlock() != closure->getBlock() ||
         !result.allocation->isBeforeInBlock(closure)) {
         return {};
     }
     result.intrinsic = result.allocation.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-    if (!result.intrinsic || result.intrinsic.getName() != "Map" || !globals["Map"].empty() ||
-        !before(result.intrinsic, result.allocation)) {
-        return {};
-    }
+    if (!globals["Map"].empty() || !before(result.intrinsic, result.allocation)) { return {}; }
     if (prepared) {
         for (mlir::OpOperand & use : resource.getUses()) {
             if (!step()) { return {}; }
@@ -113,8 +109,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             return {};
         }
         if (result.initialization) {
-            auto initial = result.cell.getInitial().getDefiningOp<ctjs::ConstantOp>();
-            if (!initial || !llvm::isa<ctjs::UndefinedAttr>(initial.getValue()) ||
+            if (!ctjs::isUndefinedConstant(result.cell.getInitial()) ||
                 result.initialization.getValue() != resource ||
                 result.initialization->getBlock() != closure->getBlock() ||
                 !result.cell->isBeforeInBlock(result.initialization) ||
@@ -162,13 +157,12 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         auto made = llvm::cast<ctjs::CreateClosureOp>(operation);
         auto member = callable(made.getResult());
         const auto indices = made.getEnclosingIndicesAttr();
-        auto enclosingThis = made.getEnclosingThis().getDefiningOp<ctjs::ConstantOp>();
         if (!member || member == entry || member == factory ||
             !familyFunctions.insert(member).second || !llvm::hasSingleElement(member.getBody()) ||
             member.getUpvalueCount() != (prepared ? 0u : 1u) ||
             member.getBody().front().getNumArguments() < (prepared ? 4u : 3u) ||
-            (indices && (indices.size() != 1 || indices[0] >= 0)) || !enclosingThis ||
-            !llvm::isa<ctjs::UndefinedAttr>(enclosingThis.getValue()) ||
+            (indices && (indices.size() != 1 || indices[0] >= 0)) ||
+            !ctjs::isUndefinedConstant(made.getEnclosingThis()) ||
             !result.allocation->isBeforeInBlock(made) ||
             (result.cell && !result.cell->isBeforeInBlock(made)) ||
             (result.initialization && !result.initialization->isBeforeInBlock(made))) {
@@ -316,9 +310,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 return outer;
             }
             if (auto made = value.getDefiningOp<ctjs::ConstructOp>()) {
-                auto intrinsic = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-                if (intrinsic && intrinsic.getName() == "Map" && globals["Map"].empty() &&
-                    made.getNewTarget() == made.getCallee() && made.getArgs().empty() &&
+                if (plainMapConstruction(made) && globals["Map"].empty() &&
                     dominance.dominates(made.getCallee(), made)) {
                     return value;
                 }
@@ -440,6 +432,18 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     // invocation supplies result evidence; cycles cannot authorize themselves.
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> completedResults;
     llvm::DenseSet<mlir::Operation *> completed;
+    // Provisional reads/calls never escape into the family plan.
+    const auto provisional = [&] {
+        HostCapturedMap scratch;
+        scratch.childMapContents = result.childMapContents;
+        scratch.childEntries = result.childEntries;
+        scratch.childScalarContents = result.childScalarContents;
+        scratch.childLeafContents = result.childLeafContents;
+        scratch.outerStringKeys = result.outerStringKeys;
+        scratch.childStringKeys = result.childStringKeys;
+        scratch.scalarCallbacks = result.scalarCallbacks;
+        return scratch;
+    };
     while (completed.size() != familyInvocations.size()) {
         bool progress = false;
         for (unsigned index = 0; index < result.parameters.size(); ++index) {
@@ -453,15 +457,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                                            completedResults, parameters)) {
                     continue;
                 }
-                // Provisional reads/calls never escape into the family plan.
-                HostCapturedMap scratch;
-                scratch.childMapContents = result.childMapContents;
-                scratch.childEntries = result.childEntries;
-                scratch.childScalarContents = result.childScalarContents;
-                scratch.childLeafContents = result.childLeafContents;
-                scratch.outerStringKeys = result.outerStringKeys;
-                scratch.childStringKeys = result.childStringKeys;
-                scratch.scalarCallbacks = result.scalarCallbacks;
+                auto scratch = provisional();
                 PrimitiveAlternatives alternatives;
                 if (!capturedMapBody(member, prepared, primitiveContents, parameters, scratch,
                                      alternatives)) {
@@ -496,6 +492,20 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     // initialized own fields on that arm. The payload schema and return carrier
     // alone supply neither identity nor presence; every family effect and caller
     // leaf write above must have closed before this read is published.
+    // Whether a caller-leaf write to `made` initializes `read`'s field first, one
+    // step per write examined; nullopt when the budget runs out.
+    const auto initializedRead = [&](ctjs::CreateObjectOp made,
+                                     ctjs::GetPropertyOp read) -> std::optional<bool> {
+        for (ctjs::SetPropertyOp write : result.leafWrites) {
+            if (!step()) { return std::nullopt; }
+            if (write->getParentOp() == entry && object(write.getObject()) == made &&
+                ctjs::constantKey(write.getKey()) == ctjs::constantKey(read.getKey()) &&
+                dominance.properlyDominates(write.getOperation(), read)) {
+                return true;
+            }
+        }
+        return false;
+    };
     const auto guardedLeafRead = [&](ctjs::GetPropertyOp read) {
         const auto receiver = read.getObject();
         if (!familyInvocations.contains(receiver.getDefiningOp()) ||
@@ -533,20 +543,11 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 !dominance.dominates(other, compare)) {
                 continue;
             }
-            auto made = other.getDefiningOp<ctjs::CreateObjectOp>();
-            if (auto load = other.getDefiningOp<ctjs::LoadGlobalOp>()) {
-                const auto origin = objectGlobalRead(load);
-                if (!origin) { return false; }
-                made = origin->object;
-            }
+            auto made = namedObject(other);
+            if (!made && other.getDefiningOp<ctjs::LoadGlobalOp>()) { return false; }
             if (!made || made->getParentOp() != entry) { continue; }
-            for (ctjs::SetPropertyOp write : result.leafWrites) {
-                if (!step()) { return false; }
-                if (write->getParentOp() == entry && object(write.getObject()) == made &&
-                    ctjs::constantKey(write.getKey()) == ctjs::constantKey(read.getKey()) &&
-                    dominance.properlyDominates(write.getOperation(), read)) {
-                    return true;
-                }
+            if (auto initialized = initializedRead(made, read); !initialized || *initialized) {
+                return initialized.value_or(false);
             }
         }
         return false;
@@ -640,21 +641,10 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                      member.getBody().front().getArguments().drop_front(prepared ? 4u : 3u)) {
                     if (!step()) { return {}; }
                     auto actual = explicitArgument(&operation, parameter.getArgNumber());
-                    if (auto load = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
-                        if (auto object = objectGlobalRead(load)) {
-                            actual = object->object.getResult();
-                        }
-                    }
+                    if (auto object = namedObject(actual)) { actual = object.getResult(); }
                     invocation.arguments[parameter] = actual;
                 }
-                HostCapturedMap scratch;
-                scratch.childMapContents = result.childMapContents;
-                scratch.childEntries = result.childEntries;
-                scratch.childScalarContents = result.childScalarContents;
-                scratch.childLeafContents = result.childLeafContents;
-                scratch.outerStringKeys = result.outerStringKeys;
-                scratch.childStringKeys = result.childStringKeys;
-                scratch.scalarCallbacks = result.scalarCallbacks;
+                auto scratch = provisional();
                 PrimitiveAlternatives alternatives;
                 if (!capturedMapBody(member, prepared, primitiveContents, parameters, scratch,
                                      alternatives, &invocation)) {
@@ -730,16 +720,9 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 for (const auto & leaf : result.returnedLeaves) {
                     if (!step()) { return {}; }
                     if (leaf.call != read.getObject().getDefiningOp()) { continue; }
-                    for (ctjs::SetPropertyOp write : result.leafWrites) {
-                        if (!step()) { return {}; }
-                        if (write->getParentOp() == entry &&
-                            object(write.getObject()) == leaf.object &&
-                            ctjs::constantKey(write.getKey()) == ctjs::constantKey(read.getKey()) &&
-                            dominance.properlyDominates(write.getOperation(), read)) {
-                            result.leafReads.push_back(read);
-                            break;
-                        }
-                    }
+                    const auto initialized = initializedRead(leaf.object, read);
+                    if (!initialized) { return {}; }
+                    if (*initialized) { result.leafReads.push_back(read); }
                 }
             }
         }

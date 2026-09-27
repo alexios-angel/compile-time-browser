@@ -51,13 +51,10 @@ bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
     for (mlir::Operation & operation : region.front()) {
         if (!step()) { return false; }
         if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-            std::optional<bool> selected;
-            for (auto proof : branches) {
-                if (proof.operation == branch) {
-                    selected = proof.selected;
-                    break;
-                }
-            }
+            const auto proof = llvm::find_if(
+                branches, [&](const auto & candidate) { return candidate.operation == branch; });
+            const auto selected =
+                proof == branches.end() ? std::nullopt : std::optional(proof->selected);
             for (unsigned arm = 0; arm < 2; ++arm) {
                 if (selected && arm != (*selected ? 0u : 1u)) { continue; }
                 if (!identitySafeRegion(branch->getRegion(arm), stack)) { return false; }
@@ -66,12 +63,9 @@ bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
         }
         ctjs::FuncOp callee;
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation)) {
-            for (auto proof : calls) {
-                if (proof.operation == call) {
-                    callee = proof.target;
-                    break;
-                }
-            }
+            const auto proof = llvm::find_if(
+                calls, [&](const auto & candidate) { return candidate.operation == call; });
+            if (proof != calls.end()) { callee = proof->target; }
             if (!callee || !identitySafeFunction(callee, stack)) { return false; }
             continue;
         }
@@ -86,32 +80,21 @@ bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
             continue;
         }
         if (auto built = llvm::dyn_cast<ctjs::ConstructOp>(operation)) {
-            auto load = built.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            if (!load || load.getName() != "Map" ||
-                !llvm::is_contained(contract.initialIntrinsics, "Map") ||
-                built.getNewTarget() != load.getResult() || !built.getArgs().empty()) {
+            if (!plainMapConstruction(built) ||
+                !llvm::is_contained(contract.initialIntrinsics, "Map")) {
                 return false;
             }
             // Standard zero-argument Map construction cannot inspect the
             // caller or invoke JS. Allocation/throw behavior remains runtime.
             continue;
         }
-        mlir::Value receiver, propertyKey;
-        if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-            receiver = get.getObject();
-            propertyKey = get.getKey();
-        }
-        if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-            receiver = set.getObject();
-            propertyKey = set.getKey();
-        }
-        if (receiver) {
+        if (auto key = ctjs::propertyKey(&operation)) {
+            const auto receiver = operation.getOperand(0); // get/set_property's object
             // The realm is opaque and never joins the fresh-object heap.
             // Only the embedding's finite writable own-data slots exclude a
             // callback here. Their values and publication effects stay live.
             if (observedValues.lookup(receiver).kind == prefixValue::Kind::realm &&
-                llvm::is_contained(contract.realmOwnDataProperties,
-                                   ctjs::constantKey(propertyKey))) {
+                llvm::is_contained(contract.realmOwnDataProperties, ctjs::constantKey(key))) {
                 continue;
             }
             if (!receiver.getDefiningOp<ctjs::CreateObjectOp>() &&
