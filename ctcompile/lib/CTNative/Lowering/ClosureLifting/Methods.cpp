@@ -896,14 +896,9 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
     }
     const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
     for (methodCall at : calls->second) {
-        if (at.call.getArgs().size() > parameters) {
-            return "a call passes " + std::to_string(at.call.getArgs().size()) +
-                   " argument(s) to " + std::to_string(parameters) +
-                   " parameter(s) - the surplus has frame semantics";
-        }
-        auto caller = at.call->getParentOfType<ctjs::FuncOp>();
-        if (caller && passesNewTarget.contains(caller.getOperation())) {
-            return "a call of it sits in a function that passes new.target";
+        if (auto why =
+                whyCallSiteDoesNotLift(at.call, at.call.getArgs().size(), parameters, "a call")) {
+            return why;
         }
         // CONDITION 1 AT THE CALL SITE, not only at the literal: the
         // receiver is either a literal this proved closed, or the `%arg0`
@@ -924,13 +919,10 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
     // AND THE CAPTURED VALUES REACH THE SITES THIS LIFT IS ABOUT TO
     // REWRITE - which for a method are the calls through the object, not
     // the uses of the closure value.
-    for (methodCall at : calls->second) {
-        if (const std::optional<std::string> why = whyCapturesDoNotReach(c, at.call)) {
-            return why;
-        }
-    }
-    if (const std::optional<std::string> escapes = whyOwnClosureEscapes(target)) { return escapes; }
-    return whyUpvalueReadsDoNotLift(c, target);
+    return whyLiftTailFails(
+        c, target, llvm::map_range(calls->second, [](const methodCall & at) -> mlir::Operation * {
+            return at.call;
+        }));
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

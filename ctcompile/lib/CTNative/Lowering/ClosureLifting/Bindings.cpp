@@ -56,19 +56,14 @@ std::optional<std::string> closureLifter::whyReadIsNotACall(mlir::Value read, ct
         // CallDirectOp::verifySymbolUses holds the operand count equal to
         // the entry block's, so a surplus call has to be refused HERE; a
         // short one is padded, as VM_CASE(call) pads.
-        if (call.getArgs().size() > parameters) {
-            return "a call passes " + std::to_string(call.getArgs().size()) + " argument(s) to " +
-                   std::to_string(parameters) + " parameter(s) - the surplus has frame semantics";
-        }
         if (call.getArgs().size() < parameters && readsRawArguments(target)) {
             return "a call passes " + std::to_string(call.getArgs().size()) + " argument(s) to " +
                    std::to_string(parameters) +
                    " parameter(s) and the callee reads its raw argument window, which the "
                    "pad would lengthen";
         }
-        auto caller = call->getParentOfType<ctjs::FuncOp>();
-        if (caller && passesNewTarget.contains(caller.getOperation())) {
-            return std::string{"a call of it sits in a function that passes new.target"};
+        if (auto why = whyCallSiteDoesNotLift(call, call.getArgs().size(), parameters, "a call")) {
+            return why;
         }
         ++calls;
     }

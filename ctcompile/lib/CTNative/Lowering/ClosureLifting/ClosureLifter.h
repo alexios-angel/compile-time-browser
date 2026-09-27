@@ -585,6 +585,21 @@ struct closureLifter {
     std::optional<std::string> whyUpvalueReadsDoNotLift(ctjs::CreateClosureOp c,
                                                         ctjs::FuncOp target);
 
+    // A lift's last questions: captures reach each site, no escape, upvalue reads lift.
+    template <class Sites>
+    std::optional<std::string> whyLiftTailFails(ctjs::CreateClosureOp c, ctjs::FuncOp target,
+                                                Sites && sites) {
+        for (mlir::Operation * site : sites) {
+            if (std::optional<std::string> why = whyCapturesDoNotReach(c, site)) { return why; }
+        }
+        if (std::optional<std::string> escapes = whyOwnClosureEscapes(target)) { return escapes; }
+        return whyUpvalueReadsDoNotLift(c, target);
+    }
+
+    // Surplus arguments or a new.target-passing caller at "a call" or "a `new`".
+    std::optional<std::string> whyCallSiteDoesNotLift(mlir::Operation * site, size_t arguments,
+                                                      size_t parameters, llvm::StringRef noun);
+
     std::optional<std::string> whyNotLiftable(ctjs::CreateClosureOp c);
 
     bool closedAfterLift(mlir::Value object);
