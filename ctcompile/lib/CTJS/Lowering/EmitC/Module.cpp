@@ -26,23 +26,18 @@ void lowering::run(mlir::ModuleOp module, mlir::MLIRContext * context) {
         // needs: value::bits(), so no NaN-boxing pattern is written here.
         // <bit> for bit_cast and <cstdint> for UINT64_C, both of which a
         // number constant spells; value.hpp for value::bits().
-        ec::IncludeOp::create(build, module.getLoc(), build.getStringAttr("bit"),
-                              /*is_standard_include=*/build.getUnitAttr());
-        ec::IncludeOp::create(build, module.getLoc(), build.getStringAttr("cstdint"),
-                              /*is_standard_include=*/build.getUnitAttr());
-        ec::IncludeOp::create(build, module.getLoc(),
-                              build.getStringAttr("ctbrowser/script/value.hpp"),
-                              /*is_standard_include=*/build.getUnitAttr());
+        //
         // AND bytecode.hpp, because an opcode is spelled as an enumerator
         // of ctbrowser::script::op rather than as the number the ABI
         // actually passes. That is the whole point of spelling it: a
         // renumbering becomes a build error here instead of a call to a
         // different operator.
-        ec::IncludeOp::create(build, module.getLoc(),
-                              build.getStringAttr("ctbrowser/script/bytecode.hpp"),
-                              /*is_standard_include=*/build.getUnitAttr());
-        ec::IncludeOp::create(build, module.getLoc(), build.getStringAttr("ctbrowser/aot/aot.hpp"),
-                              /*is_standard_include=*/build.getUnitAttr());
+        for (const llvm::StringRef header :
+             {"bit", "cstdint", "ctbrowser/script/value.hpp", "ctbrowser/script/bytecode.hpp",
+              "ctbrowser/aot/aot.hpp"}) {
+            ec::IncludeOp::create(build, module.getLoc(), build.getStringAttr(header),
+                                  /*is_standard_include=*/build.getUnitAttr());
+        }
 
         // A SMALL PRELUDE OF SHIMS, AND WHY THE BACKEND EMITS ITS OWN.
         //

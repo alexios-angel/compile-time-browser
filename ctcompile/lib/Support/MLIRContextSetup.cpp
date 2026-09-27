@@ -14,8 +14,7 @@
 namespace ctcompile {
 
 void registerCTCompileDialects(mlir::DialectRegistry & registry) {
-    registry.insert<ctjs::CTJSDialect>();
-    // AND ctnative, WHICH IS WHAT THIS HEADER MEANT BY "the list is the
+    // ctjs, AND ctnative, WHICH IS WHAT THIS HEADER MEANT BY "the list is the
     // pipeline's, and it grows when a phase needs it to". Phase 53's dialect:
     // the static types that sit between CTJS and the C++ emitter.
     //
@@ -29,22 +28,17 @@ void registerCTCompileDialects(mlir::DialectRegistry & registry) {
     // instead is two additive lines, gives ctjs-opt the same round-trip the
     // plan wanted ctnative-opt for, and costs nothing: a driver that can parse
     // ctnative is the requirement, not a second executable.
-    registry.insert<ctnative::CTNativeDialect>();
     // THE THREE THE DIALECT DECLARES AS dependentDialects, and no more. A
     // compiled function is a func.func with cf branches between its blocks and
     // arith on the integers that are genuinely integers - shift counts, block
     // arguments, the ordering a comparison returns - and everything else is a
     // !ctjs.value.
-    registry.insert<mlir::func::FuncDialect>();
-    registry.insert<mlir::cf::ControlFlowDialect>();
-    registry.insert<mlir::arith::ArithDialect>();
     // AND EmitC, WHICH IS THE PRIMARY BACKEND'S OUTPUT. It is registered for
     // PARSING, not only for the pass that produces it: a pass declaring it as a
     // dependent dialect gets it loaded when the pass runs, which is too late
     // for ctjs-opt to read a file that already contains emitc operations. That
     // is exactly what a lit test of --emitc-eliminate-block-arguments does, and
     // without this it fails with "Dialect `emitc' not found".
-    registry.insert<mlir::emitc::EmitCDialect>();
 
     // AND THE TWO THE CFG LIFTING PASS CREATES.
     //
@@ -54,8 +48,9 @@ void registerCTCompileDialects(mlir::DialectRegistry & registry) {
     // project's own code, which is why they were absent - but a pass cannot
     // build an operation of a dialect the context has not loaded, and the
     // failure is a crash inside OperationName rather than a diagnostic.
-    registry.insert<mlir::scf::SCFDialect>();
-    registry.insert<mlir::ub::UBDialect>();
+    registry.insert<ctjs::CTJSDialect, ctnative::CTNativeDialect, mlir::func::FuncDialect,
+                    mlir::cf::ControlFlowDialect, mlir::arith::ArithDialect,
+                    mlir::emitc::EmitCDialect, mlir::scf::SCFDialect, mlir::ub::UBDialect>();
     // WHAT IS NOT HERE: the LLVM dialect and its translation registrations,
     // which Phase 7's deliverable list names. They belong to the SECOND backend
     // (Phases 11-12A), and registering them now would link LLVM's translation
