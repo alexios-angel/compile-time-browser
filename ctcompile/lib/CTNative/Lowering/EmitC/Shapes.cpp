@@ -11,7 +11,6 @@ std::string lowering::spelled(mlir::Type type) {
     if (auto pointer = llvm::dyn_cast_or_null<ec::PointerType>(type)) {
         return spelled(pointer.getPointee()) + " *";
     }
-    if (isNullableCarrier(type)) { return "ctnative::nullable_scalar"; }
     if (llvm::isa<mlir::Float64Type>(type)) { return "double"; }
     if (auto integer = llvm::dyn_cast_or_null<mlir::IntegerType>(type);
         integer && integer.getWidth() == 1) {

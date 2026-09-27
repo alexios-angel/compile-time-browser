@@ -87,23 +87,9 @@ std::string closureLifter::argumentDetail(mlir::Operation * call, unsigned j) {
 void closureLifter::blockingLabelsOf(mlir::Value object, llvm::StringSet<> & into,
                                      llvm::StringMap<unsigned> * tally) {
     for (mlir::OpOperand & use : object.getUses()) {
-        mlir::Operation * user = use.getOwner();
-        if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0 && !ctjs::constantKey(get.getKey()).empty()) {
-                continue;
-            }
-        } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0 && !ctjs::constantKey(set.getKey()).empty()) {
-                continue;
-            }
-        } else if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
-            if (use.getOperandNumber() == 1) {
-                auto load = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                if (load && load.getObject() == object &&
-                    !ctjs::constantKey(load.getKey()).empty()) {
-                    continue;
-                }
-            }
+        if (isConstantKeyAccess(use)) { continue; }
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner())) {
+            if (use.getOperandNumber() == 1 && methodCallOn(call, object)) { continue; }
             // AND THE ARM `closedAfterLift` GAINED, so that the two agree
             // about what "blocking" means. Without it a literal that is
             // open for some other reason but IS passed to a carried

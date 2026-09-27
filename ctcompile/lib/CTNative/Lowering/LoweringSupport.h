@@ -40,6 +40,10 @@
 #include <string>
 #include <vector>
 
+namespace ctcompile::ctnative {
+class DOMEntryAnalysis;
+}
+
 namespace ctcompile::ctnative::lowering_detail {
 
 namespace ec = mlir::emitc;
@@ -91,27 +95,51 @@ inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
 bool isScalarCarrier(carrier value);
 bool isStringUnionCarrier(carrier value);
 bool isPrimitiveCarrier(carrier value);
+// The carriers a stored callable's concrete signature may use.
+bool isCallableCarrier(carrier value);
 mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternatives alternatives);
-bool isNullableCarrier(mlir::Type type);
-bool isNumberCarrier(mlir::Type type);
-bool isBooleanCarrier(mlir::Type type);
-bool isNullableStringCarrier(mlir::Type type);
-bool isBooleanStringCarrier(mlir::Type type);
-bool isNullableBooleanStringCarrier(mlir::Type type);
-bool isNumberStringCarrier(mlir::Type type);
-bool isNullableNumberStringCarrier(mlir::Type type);
+// An emitc opaque type's spelling, through an lvalue; empty for anything else.
+llvm::StringRef opaqueSpelling(mlir::Type type);
+inline bool isNullableCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kNullableType;
+}
+inline bool isNumberCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kNumberType;
+}
+inline bool isBooleanCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kBooleanType;
+}
+inline bool isNullableStringCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kNullableStringType;
+}
+inline bool isBooleanStringCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kBooleanStringType;
+}
+inline bool isNullableBooleanStringCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kNullableBooleanStringType;
+}
+inline bool isNumberStringCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kNumberStringType;
+}
+inline bool isNullableNumberStringCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kNullableNumberStringType;
+}
 bool isStringCarrier(carrier value);
 bool isVectorCarrier(carrier value);
 bool stringConcatenation(mlir::Type left, mlir::Type right);
 bool stringEquality(mlir::Type left, mlir::Type right);
 bool isObjectCarrier(carrier value);
-bool isObjectValueCarrier(mlir::Type type);
-bool isIdentityCarrier(mlir::Type type);
+inline constexpr llvm::StringLiteral kObjectIdentityType =
+    "std::shared_ptr<ctnative::identity_object>";
+inline bool isObjectValueCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kObjectValueType;
+}
+inline bool isIdentityCarrier(mlir::Type type) {
+    return opaqueSpelling(type) == kObjectIdentityType;
+}
 bool isObjectValueType(mlir::Type type);
 bool identityOrAbsent(mlir::Type type);
 bool onlyAbsent(mlir::Type type);
-inline constexpr llvm::StringLiteral kObjectIdentityType =
-    "std::shared_ptr<ctnative::identity_object>";
 carrier carrierOf(mlir::Type type);
 mlir::Type vectorCarrierType(mlir::MLIRContext * context, bool strings = false);
 llvm::StringRef mixedMapSpelling(mlir::Type type);
@@ -139,6 +167,20 @@ bool isScriptEntry(ctjs::FuncOp fn);
 // Where a `ctjs.create_closure`'s captures start: after $enclosing_closure and
 // $enclosing_this, which are operands and not attributes.
 inline constexpr unsigned kFirstCapture = 2;
+// A FUNCTION DECLARATION IS A BINDING, NOT A VALUE. `function f() {}` at
+// any level is `create_closure` whose only use is `store_global "f"`; in
+// the closed world the function exists as an emitc.func and calls of it
+// are direct, so the pair lowers to nothing. A closure used as a VALUE -
+// passed, returned, stored anywhere else - is not native yet (Phase 59).
+bool isDeclarationClosure(mlir::Operation * o);
+// A get/set_property of a constant key on the object `use` supplies.
+inline bool isConstantKeyAccess(mlir::OpOperand & use) {
+    const auto key = ctjs::propertyKey(use.getOwner());
+    return key && use.getOperandNumber() == 0 && !ctjs::constantKey(key).empty();
+}
+// What a DOM entry reads only to reach its proved host calls: a callback
+// closure, the initial intrinsics, a prefix RegExp and method-like reads.
+bool domBookkeeping(const DOMEntryAnalysis & entry, mlir::Operation * op);
 // All source stores to each emitted identity member, before any retyping.
 // A read's narrower result never selects storage shared by other allocations.
 llvm::StringMap<mlir::Type> identityFieldStoreTypes(mlir::DataFlowSolver & solver,

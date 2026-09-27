@@ -89,19 +89,12 @@ std::string admission::whyOpen(mlir::Value object) {
             return "an object literal reached through the inherited Object.prototype.__proto__ "
                    "accessor";
         }
-        if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0) {
-                if (!ctjs::constantKey(get.getKey()).empty()) { continue; }
-                return "an object literal reached through a dynamic key";
-            }
-        } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            if (use.getOperandNumber() == 0) {
-                if (!ctjs::constantKey(set.getKey()).empty()) { continue; }
-                return "an object literal reached through a dynamic key";
-            }
-            if (use.getOperandNumber() == 2) {
-                return "an object literal that escapes - it is stored into another object";
-            }
+        if (isConstantKeyAccess(use)) { continue; }
+        if (ctjs::propertyKey(user) && use.getOperandNumber() == 0) {
+            return "an object literal reached through a dynamic key";
+        }
+        if (llvm::isa<ctjs::SetPropertyOp>(user) && use.getOperandNumber() == 2) {
+            return "an object literal that escapes - it is stored into another object";
         }
         if (llvm::isa<mlir::scf::WhileOp, mlir::scf::YieldOp, mlir::scf::ConditionOp>(user)) {
             return "an object literal that is loop-carried - more than one value reaches "

@@ -69,24 +69,14 @@ mlir::Value lowering::truthy(mlir::OpBuilder & builder, mlir::Location where, ml
     if (isBooleanCarrier(value.getType())) {
         return convertScalar(builder, where, value, builder.getI1Type());
     }
-    if (isNullableNumberStringCarrier(value.getType()) ||
-        isNullableBooleanStringCarrier(value.getType())) {
-        return callWithConstValueOperands(
-                   builder, where, mlir::TypeRange{mlir::IntegerType::get(context, 1)},
-                   builder.getStringAttr(isNullableNumberStringCarrier(value.getType())
-                                             ? "ctnative::nullable_number_string_truthy"
-                                             : "ctnative::nullable_boolean_string_truthy"),
-                   mlir::ValueRange{value})
-            .getResult(0);
-    }
-    if (isBooleanStringCarrier(value.getType()) || isNumberStringCarrier(value.getType())) {
-        return callWithConstValueOperands(
-                   builder, where, mlir::TypeRange{mlir::IntegerType::get(context, 1)},
-                   builder.getStringAttr(isNumberStringCarrier(value.getType())
-                                             ? "ctnative::number_string_truthy"
-                                             : "ctnative::boolean_string_truthy"),
-                   mlir::ValueRange{value})
-            .getResult(0);
+    static const llvm::StringMap<llvm::StringRef> unionTruthy{
+        {kNullableNumberStringType, "ctnative::nullable_number_string_truthy"},
+        {kNullableBooleanStringType, "ctnative::nullable_boolean_string_truthy"},
+        {kNumberStringType, "ctnative::number_string_truthy"},
+        {kBooleanStringType, "ctnative::boolean_string_truthy"}};
+    if (auto helper = unionTruthy.find(opaqueSpelling(value.getType()));
+        helper != unionTruthy.end()) {
+        return callValue(builder, where, mlir::IntegerType::get(context, 1), helper->second, value);
     }
     if (isIdentityCarrier(value.getType()) ||
         value.getType() == carrierType(context, carrier::symbol)) {
@@ -124,9 +114,7 @@ mlir::Value lowering::libmCall(mlir::OpBuilder & b, mlir::Location where, llvm::
                                mlir::ValueRange args) {
     llvm::SmallVector<mlir::Value> raw;
     for (mlir::Value arg : args) { raw.push_back(convertScalar(b, where, arg, b.getF64Type())); }
-    auto result = callWithConstValueOperands(b, where, mlir::TypeRange{b.getF64Type()},
-                                             b.getStringAttr(fn), raw)
-                      .getResult(0);
+    auto result = callValue(b, where, b.getF64Type(), fn, raw);
     return convertScalar(b, where, result, carrierType(context, carrier::number));
 }
 
@@ -148,10 +136,8 @@ mlir::Value lowering::exponentiate(mlir::OpBuilder & b, mlir::Location where, ml
     mlir::Value magnitude = libmCall(b, where, "std::fabs", {base});
     mlir::Value isOne = ec::CmpOp::create(b, where, i1, ec::CmpPredicate::eq, magnitude,
                                           numberConstant(b, where, 1.0));
-    mlir::Value finite = callWithConstValueOperands(
-                             b, where, mlir::TypeRange{i1}, b.getStringAttr("std::isfinite"),
-                             mlir::ValueRange{convertScalar(b, where, exponent, b.getF64Type())})
-                             .getResult(0);
+    mlir::Value finite =
+        callValue(b, where, i1, "std::isfinite", convertScalar(b, where, exponent, b.getF64Type()));
     mlir::Value notFinite = ec::LogicalNotOp::create(b, where, i1, finite);
     mlir::Value diverges = ec::LogicalAndOp::create(b, where, i1, isOne, notFinite);
     return ec::ConditionalOp::create(

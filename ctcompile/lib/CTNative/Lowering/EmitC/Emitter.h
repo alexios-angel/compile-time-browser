@@ -21,6 +21,21 @@ inline constexpr llvm::StringLiteral kDOMElementViewVectorType =
 ec::CallOpaqueOp callWithConstValueOperands(mlir::OpBuilder & builder, mlir::Location where,
                                             mlir::TypeRange results, mlir::StringAttr callee,
                                             mlir::ValueRange operands);
+// A default-constructed C++ class that is neither copied nor moved, `indent` deep.
+std::string nonmovable(llvm::StringRef name, llvm::StringRef indent);
+// A DOM session's invoke(): check each element's document, then call `entry`.
+void sessionInvoke(llvm::raw_ostream & out, llvm::StringRef entry, size_t count,
+                   llvm::StringRef extra);
+// The type SCF operand `index` flows into: a while's before argument, a for's
+// or condition's result, a yield's parent result or before argument. Null otherwise.
+mlir::Type edgeTarget(mlir::Operation * op, unsigned index);
+// The single result of callWithConstValueOperands.
+mlir::Value callValue(mlir::OpBuilder & builder, mlir::Location where, mlir::Type result,
+                      const llvm::Twine & callee, mlir::ValueRange operands);
+// The single result of `receiver.name(operands...)`.
+mlir::Value memberCall(mlir::OpBuilder & builder, mlir::Location where, mlir::Type result,
+                       mlir::Value receiver, const llvm::Twine & name,
+                       mlir::ValueRange operands = {});
 
 struct lowering {
     mlir::DataFlowSolver & solver;

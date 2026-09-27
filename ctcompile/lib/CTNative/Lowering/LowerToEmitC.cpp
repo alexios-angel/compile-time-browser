@@ -27,6 +27,7 @@
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
 #include "Exceptions/Recovery.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/PassManager.h"
@@ -47,16 +48,12 @@ using namespace lowering_detail;
 // writes never reach this path. Charge before mutation, then reprove the clone.
 bool materializeHostPrimitives(mlir::ModuleOp module, const HostContract & contract,
                                const OwnedGlobalRoots & owners, unsigned remaining) {
-    const auto spend = [&] {
-        if (!remaining) { return false; }
-        --remaining;
-        return true;
-    };
+    WorkBudget budget{remaining};
     llvm::SmallVector<ctjs::LoadGlobalOp> reads;
     llvm::SmallVector<ctjs::UnaryOp> objectTypes;
     const auto walked = module.walk<mlir::WalkOrder::PreOrder>(
         [&](mlir::Operation * operation) -> mlir::WalkResult {
-            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            if (!budget.spend()) { return mlir::WalkResult::interrupt(); }
             if (auto query = llvm::dyn_cast<ctjs::UnaryOp>(operation);
                 query && query.getKind() == ctjs::UnaryKind::TypeOf) {
                 auto * origin = query.getOperand().getDefiningOp();
@@ -64,10 +61,9 @@ bool materializeHostPrimitives(mlir::ModuleOp module, const HostContract & contr
                 // owner and its checked global loads are ordinary objects.
                 if (llvm::isa_and_nonnull<ctjs::CreateObjectOp, ctjs::LoadGlobalOp>(origin) &&
                     owners.lookup(origin)) {
-                    for ([[maybe_unused]] mlir::OpOperand & use : query.getResult().getUses()) {
-                        if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    if (!budget.spend(1 + llvm::range_size(query.getResult().getUses()))) {
+                        return mlir::WalkResult::interrupt();
                     }
-                    if (!spend()) { return mlir::WalkResult::interrupt(); }
                     objectTypes.push_back(query);
                 }
             }
@@ -76,12 +72,11 @@ bool materializeHostPrimitives(mlir::ModuleOp module, const HostContract & contr
             for (const auto * names : {&contract.undefinedBindings, &contract.absentBindings}) {
                 if (names == &contract.absentBindings && !load.getTypeofLookup()) { continue; }
                 for (const std::string & name : *names) {
-                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    if (!budget.spend()) { return mlir::WalkResult::interrupt(); }
                     if (load.getName() != name) { continue; }
-                    for ([[maybe_unused]] mlir::OpOperand & use : load.getResult().getUses()) {
-                        if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    if (!budget.spend(1 + llvm::range_size(load.getResult().getUses()))) {
+                        return mlir::WalkResult::interrupt();
                     }
-                    if (!spend()) { return mlir::WalkResult::interrupt(); }
                     reads.push_back(load);
                     return mlir::WalkResult::advance();
                 }
@@ -168,13 +163,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                     at, closure.getLoc(), ctjs::ValueType::get(candidate.getContext()),
                     ctjs::UndefinedAttr::get(candidate.getContext())));
             });
-            llvm::SmallVector<ctjs::CreateCellOp> dead;
-            candidate.walk([&](ctjs::CreateCellOp cell) {
-                if (cell->hasAttr("ctnative.unboxed") && cell.getResult().use_empty()) {
-                    dead.push_back(cell);
-                }
-            });
-            for (ctjs::CreateCellOp cell : dead) { cell.erase(); }
+            local.eraseUnusedUnboxedCells();
             return locals;
         };
         const bool domData = hostContract && hostContract->provider ==
@@ -231,10 +220,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         if (!hostContract && optimize && (precompute || pruneUnreachable)) {
             mlir::OpPassManager defaults(mlir::ModuleOp::getOperationName());
             if (precompute) {
-                CTNativePrecomputeOptions options;
-                options.maxSteps = precomputeMaxSteps;
-                options.report = optimizationReport;
-                defaults.addPass(createCTNativePrecompute(options));
+                defaults.addPass(createCTNativePrecompute(
+                    {.maxSteps = precomputeMaxSteps, .report = optimizationReport}));
             }
             if (pruneUnreachable) {
                 CTNativePruneUnreachableOptions options;
@@ -322,10 +309,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // Reuse scalar guard folding before shape admission inspects dead arms.
         if (!hostContract && optimize && precompute && (lifted.calls || lifted.bound)) {
             mlir::OpPassManager guards(mlir::ModuleOp::getOperationName());
-            CTNativePrecomputeOptions options;
-            options.maxSteps = precomputeMaxSteps;
-            options.report = optimizationReport;
-            guards.addPass(createCTNativePrecompute(options));
+            guards.addPass(createCTNativePrecompute(
+                {.maxSteps = precomputeMaxSteps, .report = optimizationReport}));
             if (failed(runPipeline(guards, module))) { return signalPassFailure(); }
         }
         // Recovery/normalization is speculative until type/effect admission and the entire
@@ -343,22 +328,19 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 bool switches = false;
                 fn.walk([&](mlir::scf::IndexSwitchOp) { switches = true; });
                 if (!switches) { return; }
-                unsigned remaining = structureMaxSteps;
                 // Reserve the copy's cost before allocating it, as class
                 // method normalization and exception recovery already do.
-                auto walked = fn.walk([&](mlir::Operation * op) {
-                    const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
-                    if (cost > remaining) { return mlir::WalkResult::interrupt(); }
-                    remaining -= static_cast<unsigned>(cost);
-                    return mlir::WalkResult::advance();
-                });
-                if (walked.wasInterrupted()) {
+                WorkBudget budget{structureMaxSteps};
+                if (!budget.spendWalk(fn, [](mlir::Operation * op) {
+                        return uint64_t(1) + op->getNumOperands() + op->getNumResults();
+                    })) {
                     fn->setAttr("ctnative.structure_refusal",
                                 mlir::StringAttr::get(
                                     &getContext(), "native structured-exit work budget exhausted"));
                     return;
                 }
                 mlir::OwningOpRef<ctjs::FuncOp> normalized(llvm::cast<ctjs::FuncOp>(fn->clone()));
+                auto remaining = static_cast<unsigned>(budget.remaining);
                 if (auto error = normalizeStructuredExits(*normalized, remaining)) {
                     fn->setAttr(
                         "ctnative.structure_refusal",
@@ -404,17 +386,16 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             into << "ctnative census: " << lifter.censusOpenObjects
                  << " method-bearing literal(s) refused as open, holding "
                  << lifter.censusMethodFields << " method field(s); blocking uses:";
-            for (const auto & [label, count] : ordered(lifter.censusUses)) {
-                into << " " << label << "=" << count;
-            }
+            const auto counts = [&](const auto & census) {
+                for (const auto & [label, count] : ordered(census)) {
+                    into << " " << label << "=" << count;
+                }
+            };
+            counts(lifter.censusUses);
             into << "; sole blocker:";
-            for (const auto & [label, count] : ordered(lifter.censusSole)) {
-                into << " " << label << "=" << count;
-            }
+            counts(lifter.censusSole);
             into << "; sole blocker by method field:";
-            for (const auto & [label, count] : ordered(lifter.censusSoleFields)) {
-                into << " " << label << "=" << count;
-            }
+            counts(lifter.censusSoleFields);
             into << "; root of the nesting:";
             for (const auto & [label, count] : ordered(lifter.censusRoot)) {
                 into << " " << label << "=" << count;
@@ -422,9 +403,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 if (at != lifter.censusExample.end()) { into << "@" << at->second; }
             }
             into << "; nesting depth:";
-            for (const auto & [label, count] : ordered(lifter.censusDepth)) {
-                into << " " << label << "=" << count;
-            }
+            counts(lifter.censusDepth);
             module.emitRemark() << text;
         }
         if (report) {
@@ -561,48 +540,35 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             changed = false;
             for (ctjs::FuncOp fn : functions) {
                 const bool native = nativeSet.contains(fn.getOperation());
-                // Retained code is an edge too. A callable builder names its
-                // target even when the factory itself never invokes it.
-                fn.getBody().walk([&](ctjs::CreateClosureOp made) {
-                    if (environmentTarget(made).empty()) { return; }
-                    mlir::Operation * target = symbols.lookup(environmentTarget(made));
+                // A native end of an edge whose other end is not native stops
+                // being native; the reason names the other end.
+                const auto edge = [&](mlir::Operation * target, const llvm::Twine & forward,
+                                      const llvm::Twine & backward) {
                     const bool targetNative = target && nativeSet.contains(target);
                     if (native && !targetNative) {
-                        nativeSet.erase(fn);
+                        nativeSet.erase(fn.getOperation());
                         fn->setAttr("ctnative.not_native",
-                                    mlir::StringAttr::get(
-                                        &getContext(), "retains `" + environmentTarget(made).str() +
-                                                           "`, which is not native"));
+                                    mlir::StringAttr::get(&getContext(), forward));
                         changed = true;
                     } else if (!native && targetNative) {
                         nativeSet.erase(target);
                         target->setAttr("ctnative.not_native",
-                                        mlir::StringAttr::get(
-                                            &getContext(), "retained by `" + fn.getSymName().str() +
-                                                               "`, which is not native"));
+                                        mlir::StringAttr::get(&getContext(), backward));
                         changed = true;
                     }
+                };
+                // Retained code is an edge too. A callable builder names its
+                // target even when the factory itself never invokes it.
+                fn.getBody().walk([&](ctjs::CreateClosureOp made) {
+                    if (environmentTarget(made).empty()) { return; }
+                    edge(symbols.lookup(environmentTarget(made)),
+                         "retains `" + environmentTarget(made) + "`, which is not native",
+                         "retained by `" + fn.getSymName() + "`, which is not native");
                 });
                 fn.getBody().walk([&](ctjs::CallDirectOp call) {
-                    mlir::Operation * callee = symbols.lookup(call.getCallee());
-                    const bool calleeNative = callee != nullptr && nativeSet.contains(callee);
-                    if (native && !calleeNative) {
-                        nativeSet.erase(fn.getOperation());
-                        fn->setAttr(
-                            "ctnative.not_native",
-                            mlir::StringAttr::get(
-                                &getContext(),
-                                ("calls `" + call.getCallee() + "`, which is not native").str()));
-                        changed = true;
-                    } else if (!native && calleeNative) {
-                        nativeSet.erase(callee);
-                        callee->setAttr(
-                            "ctnative.not_native",
-                            mlir::StringAttr::get(&getContext(), ("called by `" + fn.getSymName() +
-                                                                  "`, which is not native")
-                                                                     .str()));
-                        changed = true;
-                    }
+                    edge(symbols.lookup(call.getCallee()),
+                         "calls `" + call.getCallee() + "`, which is not native",
+                         "called by `" + fn.getSymName() + "`, which is not native");
                 });
             }
         }
@@ -691,10 +657,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 }
                 llvm::StringRef name;
                 if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
-                    if (admittedDOM && (admittedDOM->isInitialIntrinsic(load) ||
-                                        admittedDOM->isCurrentDocument(load))) {
-                        return;
-                    }
+                    if (admittedDOM && domBookkeeping(*admittedDOM, load)) { return; }
                     if (callsOnly(load) || isNativeMapBookkeeping(load)) { return; }
                     name = load.getName();
                 }

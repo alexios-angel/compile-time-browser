@@ -59,12 +59,10 @@ bool lowering::replaceOwnedGlobal(mlir::Operation * operation) {
     const auto where = operation->getLoc();
     mlir::Value result;
     if (llvm::isa<ctjs::CreateObjectOp>(operation)) {
-        result = callWithConstValueOperands(
-                     at, where, mlir::TypeRange{storage.type},
-                     at.getStringAttr(memberRoot ? "reset_g_" + storage.binding
-                                                 : "std::make_shared<" + storage.className + ">"),
-                     mlir::ValueRange{})
-                     .getResult(0);
+        result = callValue(at, where, storage.type,
+                           memberRoot ? "reset_g_" + storage.binding
+                                      : "std::make_shared<" + storage.className + ">",
+                           mlir::ValueRange{});
     } else if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
         if (!memberRoot) {
             ec::AssignOp::create(at, where, lvalueOfGlobal(at, where, storage.binding),
@@ -80,11 +78,8 @@ bool lowering::replaceOwnedGlobal(mlir::Operation * operation) {
     } else {
         const auto member = "<&" + storage.className + "::" + storage.field + ">";
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-            result =
-                callWithConstValueOperands(at, where, mlir::TypeRange{storage.fieldType},
-                                           at.getStringAttr("ctnative::owned_global_get" + member),
-                                           mlir::ValueRange{read.getObject()})
-                    .getResult(0);
+            result = callValue(at, where, storage.fieldType, "ctnative::owned_global_get" + member,
+                               read.getObject());
         } else {
             auto write = llvm::cast<ctjs::SetPropertyOp>(operation);
             callWithConstValueOperands(at, where, mlir::TypeRange{},

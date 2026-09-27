@@ -32,17 +32,6 @@ bool admission::printable(mlir::Value v, llvm::StringRef where) {
     return true;
 }
 
-// A FUNCTION DECLARATION IS A BINDING, NOT A VALUE. `function f() {}` at
-// any level is `create_closure` whose only use is `store_global "f"`; in
-// the closed world the function exists as an emitc.func and calls of it
-// are direct, so the pair lowers to nothing. A closure used as a VALUE -
-// passed, returned, stored anywhere else - is not native yet (Phase 59).
-bool admission::isDeclarationClosure(mlir::Operation * o) {
-    auto closure = llvm::dyn_cast_or_null<ctjs::CreateClosureOp>(o);
-    if (!closure || !closure.getResult().hasOneUse()) { return false; }
-    return llvm::isa<ctjs::StoreGlobalOp>(*closure.getResult().getUsers().begin());
-}
-
 bool admission::isDeclarationStore(mlir::Operation * o) {
     auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(o);
     return store && isDeclarationClosure(store.getValue().getDefiningOp());

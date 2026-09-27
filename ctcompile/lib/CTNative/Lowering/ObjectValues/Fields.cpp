@@ -97,12 +97,9 @@ bool lowering::replaceIdentityField(mlir::Operation * op) {
     const mlir::Location where = op->getLoc();
     const auto storage = identityFieldTypes.lookup(found->second);
     if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-        auto loaded =
-            callWithConstValueOperands(b, where, mlir::TypeRange{storage},
-                                       b.getStringAttr("ctnative::object_get_" + found->second),
-                                       mlir::ValueRange{get.getObject()});
+        mlir::Value value =
+            callValue(b, where, storage, "ctnative::object_get_" + found->second, get.getObject());
         const auto target = get.getResult().getType();
-        mlir::Value value = loaded.getResult(0);
         // Shared member storage can be wider than this allocation's field.
         // Narrow with exact tag checks, never JavaScript string coercion.
         if (isNullableStringCarrier(storage) && target != storage) {
@@ -111,9 +108,7 @@ bool lowering::replaceIdentityField(mlir::Operation * op) {
             const auto resultType = isNullableCarrier(target)
                                         ? mlir::Type(target)
                                         : ec::OpaqueType::get(context, kRawStringType);
-            value = callWithConstValueOperands(b, where, mlir::TypeRange{resultType},
-                                               b.getStringAttr(helper), mlir::ValueRange{value})
-                        .getResult(0);
+            value = callValue(b, where, resultType, helper, value);
             value = convertScalar(b, where, value, target);
         } else {
             value = convertScalar(b, where, value, target);

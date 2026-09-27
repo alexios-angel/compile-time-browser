@@ -18,7 +18,7 @@ void closureLifter::returnedClosureCensus() {
     for (ctjs::CreateClosureOp c : closures) { ++creations[targetOf(c)]; }
     for (ctjs::CreateClosureOp c : closures) {
         if (c->hasAttr("ctnative.lifted") || !environmentTarget(c).empty() ||
-            admissionIsDeclaration(c)) {
+            isDeclarationClosure(c)) {
             continue;
         }
         const auto root = flow.find(c.getResult());
@@ -147,14 +147,12 @@ void closureLifter::liftReturnedClosure(ctjs::CreateClosureOp c, ctjs::FuncOp ta
             if (stored) { read->setAttr(kNativeStoredRead, mlir::UnitAttr::get(context)); }
             args.push_back(read.getResult());
         }
-        llvm::append_range(args, argsOfCallSite(site));
-        while (args.size() < captures + parameters) { args.push_back(undefined); }
-        auto call = ctjs::CallDirectOp::create(
-            at, site->getLoc(), valueType, mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
-            preserveReceiver
-                ? (direct ? direct.getReceiver() : llvm::cast<ctjs::CallOp>(site).getReceiver())
-                : undefined,
-            undefined, closure, args, nullptr, nullptr);
+        auto call =
+            directCall(at, site->getLoc(), target,
+                       preserveReceiver ? (direct ? direct.getReceiver()
+                                                  : llvm::cast<ctjs::CallOp>(site).getReceiver())
+                                        : undefined,
+                       closure, undefined, args, argsOfCallSite(site), captures + parameters);
         if (stored) {
             call->setAttr(kNativeStoredCall, at.getI32IntegerAttr(static_cast<int32_t>(captures)));
         }

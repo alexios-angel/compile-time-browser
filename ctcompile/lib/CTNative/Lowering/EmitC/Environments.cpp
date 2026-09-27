@@ -36,28 +36,14 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                         continue;
                     }
                 }
+                // The stored-callable carriers, less nullable Strings and Elements.
                 const auto type = typeOf(captured);
-                switch (carrierOf(type)) {
-                case carrier::nullable: definition += kNullableType; break;
-                case carrier::number: definition += "ctnative::js_num"; break;
-                case carrier::boolean: definition += kBooleanType; break;
-                case carrier::string: definition += "ctnative::js_string"; break;
-                case carrier::objectValue:
-                    needsObjectValue = true;
-                    definition += kObjectValueType;
-                    break;
-                case carrier::objectIdentity:
-                    needsObjectIdentity = true;
-                    definition += kObjectIdentityType;
-                    break;
-                case carrier::map: {
-                    const auto map = llvm::cast<MapType>(type);
-                    needsObjectValue |= mapNeedsObjectValues(map);
-                    definition += llvm::cast<ec::OpaqueType>(mapCarrierType(map)).getValue();
-                    break;
+                const auto c = carrierOf(type);
+                if (!isCallableCarrier(c) || c == carrier::nullableString ||
+                    c == carrier::domElement) {
+                    llvm::report_fatal_error("native environment has an unowned capture");
                 }
-                default: llvm::report_fatal_error("native environment has an unowned capture");
-                }
+                definition += callableTypeSpelling(type);
             }
             environments.push_back(definition + ">;\n}\n");
         });
@@ -101,10 +87,8 @@ bool lowering::replaceEnvironment(mlir::Operation * op) {
             made->hasAttr(kNativeStoredCallable) && !sessionTargets.contains(target)
                 ? "ctn_bind_" + cIdentifier(target)
                 : "std::make_tuple";
-        result = callWithConstValueOperands(at, op->getLoc(),
-                                            mlir::TypeRange{made.getResult().getType()},
-                                            at.getStringAttr(builder), made.getUpvalues())
-                     .getResult(0);
+        result =
+            callValue(at, op->getLoc(), made.getResult().getType(), builder, made.getUpvalues());
         if (const auto name = names.lookup(target); callableBodies.contains(name)) {
             result.getDefiningOp()->setAttr("ctnative.callable_create",
                                             mlir::FlatSymbolRefAttr::get(context, name));
@@ -112,10 +96,7 @@ bool lowering::replaceEnvironment(mlir::Operation * op) {
     } else if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op);
                read && op->hasAttr(kNativeEnvironmentRead)) {
         const auto callee = "std::get<" + std::to_string(read.getIndex()) + ">";
-        result = callWithConstValueOperands(
-                     at, op->getLoc(), mlir::TypeRange{read.getResult().getType()},
-                     at.getStringAttr(callee), mlir::ValueRange{read.getClosure()})
-                     .getResult(0);
+        result = callValue(at, op->getLoc(), read.getResult().getType(), callee, read.getClosure());
     } else {
         return false;
     }

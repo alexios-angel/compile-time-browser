@@ -9,6 +9,14 @@
 #include "Attempt.h"
 
 namespace ctcompile::ctnative::lowering_detail {
+namespace {
+// Pure alone is not a substitute for CTJS's exception/reentry traits.
+bool effectFree(mlir::Operation * operation) {
+    return mlir::isPure(operation) && !operation->hasTrait<ctjs::CTJSMayThrow>() &&
+           !operation->hasTrait<ctjs::CTJSMayReenterJS>() &&
+           !operation->hasTrait<ctjs::CTJSMaySuspend>();
+}
+} // namespace
 
 std::optional<unsigned> recovery::contextFor(ctjs::CallDirectOp call, unsigned parent,
                                              primitiveContexts & contexts) {
@@ -82,10 +90,7 @@ bool recovery::completionInputs(ctjs::CallDirectOp call, bool thrown, unsigned p
                 } else if (operation.getNumRegions() != 0 ||
                            (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
                                        mlir::cf::BranchOp, mlir::cf::CondBranchOp>(operation) &&
-                            (!mlir::isPure(&operation) ||
-                             operation.hasTrait<ctjs::CTJSMayThrow>() ||
-                             operation.hasTrait<ctjs::CTJSMayReenterJS>() ||
-                             operation.hasTrait<ctjs::CTJSMaySuspend>()))) {
+                            !effectFree(&operation))) {
                     return false;
                 }
             }
@@ -200,13 +205,8 @@ bool recovery::nonthrowing(mlir::Operation * operation) {
                   mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(operation)) {
         return true;
     }
-    // Pure alone is not a substitute for CTJS's exception/reentry traits.
     // Unknown operations have neither an effect proof nor a special case.
-    if (mlir::isPure(operation) && !operation->hasTrait<ctjs::CTJSMayThrow>() &&
-        !operation->hasTrait<ctjs::CTJSMayReenterJS>() &&
-        !operation->hasTrait<ctjs::CTJSMaySuspend>()) {
-        return true;
-    }
+    if (effectFree(operation)) { return true; }
     if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
         if (unary.getKind() == ctjs::UnaryKind::Not || unary.getKind() == ctjs::UnaryKind::TypeOf ||
             unary.getKind() == ctjs::UnaryKind::Void) {

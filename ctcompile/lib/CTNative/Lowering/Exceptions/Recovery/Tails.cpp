@@ -122,6 +122,14 @@ bool recovery::acyclic(tail & plan) {
 }
 
 bool recovery::cloneTail(const tail & plan, mlir::Region & destination, bool isCatch) {
+    const auto type = ctjs::ValueType::get(function.getContext());
+    // The CTJS terminators this builds are created by name from their operands.
+    const auto named = [](mlir::OpBuilder & at, mlir::Location where, llvm::StringRef name,
+                          mlir::ValueRange values) {
+        mlir::OperationState state(where, name);
+        state.addOperands(values);
+        return at.create(state);
+    };
     mlir::IRMapping mapping;
     auto * start = plan.blocks.front();
     for (mlir::Block * block : plan.blocks) {
@@ -136,9 +144,7 @@ bool recovery::cloneTail(const tail & plan, mlir::Region & destination, bool isC
             }
             continue;
         }
-        if (block == start) {
-            copy->addArgument(ctjs::ValueType::get(function.getContext()), landing.getLoc());
-        }
+        if (block == start) { copy->addArgument(type, landing.getLoc()); }
         for (mlir::BlockArgument argument : block->getArguments()) {
             mapping.map(argument, copy->addArgument(argument.getType(), argument.getLoc()));
         }
@@ -165,7 +171,6 @@ bool recovery::cloneTail(const tail & plan, mlir::Region & destination, bool isC
                 // Convert the boolean only after leaving the invocation;
                 // try_exit's i1 never crosses a CTJS value region edge.
                 if (!spend(uint64_t(20) + width * uint64_t(4))) { return false; }
-                auto type = ctjs::ValueType::get(function.getContext());
                 mlir::OperationState state(operation.getLoc(), "ctjs.invoke");
                 llvm::SmallVector<mlir::Type> types(width + 3, type);
                 state.addTypes(types);
@@ -184,9 +189,9 @@ bool recovery::cloneTail(const tail & plan, mlir::Region & destination, bool isC
                 auto check = llvm::cast<ctjs::CheckOp>(block->getTerminator());
                 llvm::SmallVector<mlir::Value> stateValues{copied->getResult(0)};
                 llvm::append_range(stateValues, check.getHandlerOperands());
-                mlir::OperationState dispatch(operation.getLoc(), "ctjs.invoke_exit");
-                dispatch.addOperands(stateValues);
-                operands.push_back({callBuilder.create(dispatch), std::move(stateValues)});
+                auto * dispatch =
+                    named(callBuilder, operation.getLoc(), "ctjs.invoke_exit", stateValues);
+                operands.push_back({dispatch, std::move(stateValues)});
                 mapping.map(operation.getResult(0), invocation.getResult(1));
                 for (auto [continuation, failed] :
                      {std::pair{&normal, false}, std::pair{&unwind, true}}) {
@@ -203,50 +208,37 @@ bool recovery::cloneTail(const tail & plan, mlir::Region & destination, bool isC
                         completion.push_back(normal.getArgument(0));
                         completion.append(width + 1, poison.getResult());
                     }
-                    mlir::OperationState yield(operation.getLoc(), "ctjs.invoke_yield");
-                    yield.addOperands(completion);
-                    at.create(yield);
+                    named(at, operation.getLoc(), "ctjs.invoke_yield", completion);
                 }
             } else if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-                mlir::OperationState state(operation.getLoc(),
-                                           isCatch ? "ctjs.try_yield" : "ctjs.try_exit");
                 if (!isCatch) {
                     sources.push_back(
                         mlir::arith::ConstantIntOp::create(builder, operation.getLoc(), 0, 1));
                 }
                 sources.push_back(returned.getValue());
                 if (!isCatch) {
-                    auto poison = mlir::ub::PoisonOp::create(
-                        builder, operation.getLoc(), ctjs::ValueType::get(function.getContext()));
+                    auto poison = mlir::ub::PoisonOp::create(builder, operation.getLoc(), type);
                     sources.append(width + 1, poison.getResult());
                 }
-                state.addOperands(sources);
-                copied = builder.create(state);
+                copied = named(builder, operation.getLoc(),
+                               isCatch ? "ctjs.try_yield" : "ctjs.try_exit", sources);
             } else if (auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(operation)) {
                 sources.push_back(
                     mlir::arith::ConstantIntOp::create(builder, operation.getLoc(), 1, 1));
-                sources.push_back(
-                    mlir::ub::PoisonOp::create(builder, operation.getLoc(),
-                                               ctjs::ValueType::get(function.getContext()))
-                        .getResult());
+                sources.push_back(mlir::ub::PoisonOp::create(builder, operation.getLoc(), type));
                 sources.push_back(thrown.getValue());
                 llvm::append_range(sources, block->getArguments());
-                mlir::OperationState state(operation.getLoc(), "ctjs.try_exit");
-                state.addOperands(sources);
-                copied = builder.create(state);
+                copied = named(builder, operation.getLoc(), "ctjs.try_exit", sources);
             } else if (auto check = llvm::dyn_cast<ctjs::CheckOp>(operation)) {
                 if (invocation) {
                     auto * thrown = new mlir::Block;
                     destination.push_back(thrown);
                     mlir::OpBuilder at = mlir::OpBuilder::atBlockEnd(thrown);
                     auto flag = mlir::arith::ConstantIntOp::create(at, operation.getLoc(), 1, 1);
-                    auto poison = mlir::ub::PoisonOp::create(
-                        at, operation.getLoc(), ctjs::ValueType::get(function.getContext()));
+                    auto poison = mlir::ub::PoisonOp::create(at, operation.getLoc(), type);
                     llvm::SmallVector<mlir::Value> completion{flag.getResult(), poison.getResult()};
                     llvm::append_range(completion, invocation.getResults().drop_front(2));
-                    mlir::OperationState exit(operation.getLoc(), "ctjs.try_exit");
-                    exit.addOperands(completion);
-                    at.create(exit);
+                    named(at, operation.getLoc(), "ctjs.try_exit", completion);
                     auto failed = ctjs::TruthyOp::create(
                         builder, operation.getLoc(), builder.getI1Type(), invocation.getResult(0));
                     llvm::append_range(sources, check.getContOperands());

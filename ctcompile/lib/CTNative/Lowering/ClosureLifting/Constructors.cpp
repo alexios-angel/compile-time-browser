@@ -294,23 +294,14 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
         // for a literal. Removing it, `unwritten-key.js` compiles with no
         // refusal at all and agrees with the interpreter; the clause was
         // strictly narrowing the tier for nothing.
-        if (made.getArgs().size() > parameters) {
-            return "a `new` passes " + std::to_string(made.getArgs().size()) + " argument(s) to " +
-                   std::to_string(parameters) + " parameter(s) - the surplus has frame semantics";
-        }
-        auto caller = made->getParentOfType<ctjs::FuncOp>();
-        if (caller && passesNewTarget.contains(caller.getOperation())) {
-            return "a `new` of it sits in a function that passes new.target";
+        if (auto why = whyCallSiteDoesNotLift(made, made.getArgs().size(), parameters, "a `new`")) {
+            return why;
         }
     }
     if (const std::optional<std::string> why = whyCapturesDoNotLift(c)) { return why; }
     // AND THE CAPTURED VALUES REACH EVERY `new` SITE, which the clause
     // above has just established are the only users of the closure value.
-    for (mlir::Operation * user : c.getResult().getUsers()) {
-        if (const std::optional<std::string> why = whyCapturesDoNotReach(c, user)) { return why; }
-    }
-    if (const std::optional<std::string> escapes = whyOwnClosureEscapes(target)) { return escapes; }
-    return whyUpvalueReadsDoNotLift(c, target);
+    return whyLiftTailFails(c, target, c.getResult().getUsers());
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

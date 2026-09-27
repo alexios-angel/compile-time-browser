@@ -9,6 +9,7 @@
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/ADT/DenseSet.h"
 
@@ -336,9 +337,9 @@ struct DOMURI {
                 // A dead importer epilogue may rejoin a live return block.
                 // Its source is unreachable; the destination does not change that.
                 if (llvm::isa<mlir::cf::BranchOp>(operation)) { continue; }
-                if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-                    auto value = returned.getValue().getDefiningOp<ctjs::ConstantOp>();
-                    if (value && llvm::isa<ctjs::UndefinedAttr>(value.getValue())) { continue; }
+                if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation);
+                    returned && ctjs::isUndefinedConstant(returned.getValue())) {
+                    continue;
                 }
                 return refuse("DOM URI source contains an unvisited non-epilogue operation");
             }
@@ -380,6 +381,52 @@ struct DOMURI {
 
 namespace {
 
+// One step of a proof's budget; false once it is spent.
+bool step(unsigned & remaining) {
+    if (!remaining) { return false; }
+    --remaining;
+    return true;
+}
+
+// Whether every arm of the scf.if defining `value` yields a slot `proved`
+// accepts; nullopt when `value` is not an scf.if result.
+template <class Proof> std::optional<bool> allArms(mlir::Value value, Proof && proved) {
+    auto result = llvm::dyn_cast<mlir::OpResult>(value);
+    auto branch = result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+    if (!branch) { return std::nullopt; }
+    for (auto & region : branch->getRegions()) {
+        if (!region.hasOneBlock()) { return false; }
+        auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+        if (!yield || yield.getNumOperands() != branch.getNumResults() ||
+            !proved(yield.getOperand(result.getResultNumber()))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Exact Boolean truthiness and integer casts/comparisons of completion
+// dispatch, folded with operands read through `mapping`. Null otherwise.
+mlir::Value foldDispatch(mlir::OpBuilder & at, mlir::Operation & operation,
+                         const mlir::IRMapping & mapping) {
+    if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
+        auto flag =
+            ctjs::constantAttr<ctjs::BooleanAttr>(mapping.lookupOrDefault(truth.getValue()));
+        if (!flag) { return {}; }
+        return mlir::arith::ConstantIntOp::create(at, truth.getLoc(), flag.getValue(), 1);
+    }
+    if (auto cast = llvm::dyn_cast<mlir::arith::IndexCastUIOp>(operation)) {
+        return at.createOrFold<mlir::arith::IndexCastUIOp>(cast.getLoc(), cast.getType(),
+                                                           mapping.lookupOrDefault(cast.getIn()));
+    }
+    if (auto compare = llvm::dyn_cast<mlir::arith::CmpIOp>(operation)) {
+        return at.createOrFold<mlir::arith::CmpIOp>(compare.getLoc(), compare.getPredicate(),
+                                                    mapping.lookupOrDefault(compare.getLhs()),
+                                                    mapping.lookupOrDefault(compare.getRhs()));
+    }
+    return {};
+}
+
 struct DOMAttributeProof {
     ctjs::FuncOp function;
     llvm::ArrayRef<unsigned> elementParameters;
@@ -399,11 +446,10 @@ struct DOMAttributeProof {
             auto branch =
                 result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
             if (!branch) { break; }
-            if (!remaining || !branch.getThenRegion().hasOneBlock() ||
-                !branch.getElseRegion().hasOneBlock()) {
+            if (!branch.getThenRegion().hasOneBlock() || !branch.getElseRegion().hasOneBlock() ||
+                !step(remaining)) {
                 return false;
             }
-            --remaining;
             auto yes = llvm::dyn_cast<mlir::scf::YieldOp>(branch.getThenRegion().front().back());
             auto no = llvm::dyn_cast<mlir::scf::YieldOp>(branch.getElseRegion().front().back());
             if (!yes || !no || yes.getNumOperands() != branch.getNumResults() ||
@@ -420,8 +466,7 @@ struct DOMAttributeProof {
             return false;
         }
         for (unsigned index : elementParameters) {
-            if (!remaining) { return false; }
-            --remaining;
+            if (!step(remaining)) { return false; }
             if (index == receiver.getArgNumber() - ctjs::implicit_arguments) { return true; }
         }
         return false;
@@ -432,8 +477,7 @@ struct DOMAttributeProof {
     llvm::DenseSet<mlir::Value> stringReads;
     llvm::DenseSet<mlir::Value> numberReads;
     bool booleanValue(mlir::Value value, unsigned depth = 0) {
-        if (!remaining || depth == 64) { return false; }
-        --remaining;
+        if (depth == 64 || !step(remaining)) { return false; }
         if (auto compare = value.getDefiningOp<ctjs::CompareOp>()) {
             return compare.getKind() == ctjs::CompareKind::StrictEq;
         }
@@ -450,23 +494,11 @@ struct DOMAttributeProof {
             (call && attributeRead(call) && attributeCall(call))) {
             return true;
         }
-        auto result = llvm::dyn_cast<mlir::OpResult>(value);
-        auto branch =
-            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
-        if (!branch) { return false; }
-        for (auto & region : branch->getRegions()) {
-            if (!region.hasOneBlock()) { return false; }
-            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-            if (!yield || yield.getNumOperands() != branch.getNumResults() ||
-                !booleanValue(yield.getOperand(result.getResultNumber()), depth + 1)) {
-                return false;
-            }
-        }
-        return true;
+        return allArms(value, [&](mlir::Value arm) { return booleanValue(arm, depth + 1); })
+            .value_or(false);
     }
     bool stringValue(mlir::Value value, unsigned depth = 0) {
-        if (!remaining || depth == 64) { return false; }
-        --remaining;
+        if (depth == 64 || !step(remaining)) { return false; }
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
         auto call = value.getDefiningOp<ctjs::CallOp>();
         auto method =
@@ -484,30 +516,17 @@ struct DOMAttributeProof {
         // A saved prefix selection carries the selected owning String/null value.
         // Prove the same result slot in every arm; this grants no effect authority
         // to the condition or producers, which remain in the final DOM source.
-        auto result = llvm::dyn_cast<mlir::OpResult>(value);
-        auto branch =
-            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
-        if (!branch) { return false; }
-        for (auto & region : branch->getRegions()) {
-            if (!region.hasOneBlock()) { return false; }
-            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-            if (!yield || yield.getNumOperands() != branch.getNumResults() ||
-                !stringValue(yield.getOperand(result.getResultNumber()), depth + 1)) {
-                return false;
-            }
-        }
-        return true;
+        return allArms(value, [&](mlir::Value arm) { return stringValue(arm, depth + 1); })
+            .value_or(false);
     }
     static bool numberCallee(ctjs::CallOp call) {
         if (!call) { return false; }
         auto callee = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-        auto receiver = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
-        return callee && callee.getName() == "Number" && receiver &&
-               llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) && call.getArgs().size() == 1;
+        return callee && callee.getName() == "Number" &&
+               ctjs::isUndefinedConstant(call.getReceiver()) && call.getArgs().size() == 1;
     }
     bool numberValue(mlir::Value value, unsigned depth = 0) {
-        if (!remaining || depth == 64) { return false; }
-        --remaining;
+        if (depth == 64 || !step(remaining)) { return false; }
         if (numberReads.contains(value)) { return true; }
         if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
             return llvm::isa<ctjs::NumberAttr>(constant.getValue());
@@ -549,40 +568,20 @@ struct DOMAttributeProof {
         if (auto binary = value.getDefiningOp<ctjs::BinaryStaticOp>()) {
             return numericBinary(binary);
         }
-        auto result = llvm::dyn_cast<mlir::OpResult>(value);
-        auto branch =
-            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
-        if (!branch) { return false; }
-        for (auto & region : branch->getRegions()) {
-            if (!region.hasOneBlock()) { return false; }
-            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-            if (!yield || yield.getNumOperands() != branch.getNumResults() ||
-                !numberValue(yield.getOperand(result.getResultNumber()), depth + 1)) {
-                return false;
-            }
-        }
-        return true;
+        return allArms(value, [&](mlir::Value arm) { return numberValue(arm, depth + 1); })
+            .value_or(false);
     }
     // Attribute conversion of a Number/null selection cannot invoke user code.
     // Null stays out of numberValue: that proof also authorizes Number methods.
     bool nullableNumberValue(mlir::Value value, unsigned depth = 0) {
-        if (!remaining || depth == 64) { return false; }
-        --remaining;
+        if (depth == 64 || !step(remaining)) { return false; }
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
         if (constant && llvm::isa<ctjs::NullAttr>(constant.getValue())) { return true; }
-        auto result = llvm::dyn_cast<mlir::OpResult>(value);
-        auto branch =
-            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
-        if (!branch) { return numberValue(value, depth + 1); }
-        for (auto & region : branch->getRegions()) {
-            if (!region.hasOneBlock()) { return false; }
-            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-            if (!yield || yield.getNumOperands() != branch.getNumResults() ||
-                !nullableNumberValue(yield.getOperand(result.getResultNumber()), depth + 1)) {
-                return false;
-            }
+        if (auto arms = allArms(
+                value, [&](mlir::Value arm) { return nullableNumberValue(arm, depth + 1); })) {
+            return *arms;
         }
-        return true;
+        return numberValue(value, depth + 1);
     }
     static bool attributeRead(ctjs::CallOp call) {
         auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -690,25 +689,12 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
     auto exit = llvm::dyn_cast<ctjs::TryExitOp>(body.getTerminator());
     auto yield = llvm::dyn_cast<ctjs::TryYieldOp>(caught.getTerminator());
     const auto alwaysThrows = [&](auto && self, mlir::Value flag, unsigned depth) -> bool {
-        if (!remaining || depth == 64) { return false; }
-        --remaining;
-        if (auto constant = flag.getDefiningOp<mlir::arith::ConstantOp>()) {
-            auto literal = llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue());
-            return flag.getType().isInteger(1) && literal && literal.getValue().isOne();
+        if (depth == 64 || !step(remaining)) { return false; }
+        if (flag.getDefiningOp<mlir::arith::ConstantOp>()) {
+            return flag.getType().isInteger(1) && mlir::matchPattern(flag, mlir::m_One());
         }
-        auto result = llvm::dyn_cast<mlir::OpResult>(flag);
-        auto branch =
-            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
-        if (!branch) { return false; }
-        for (auto & region : branch->getRegions()) {
-            if (!region.hasOneBlock()) { return false; }
-            auto incoming = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-            if (!incoming || incoming.getNumOperands() != branch.getNumResults() ||
-                !self(self, incoming.getOperand(result.getResultNumber()), depth + 1)) {
-                return false;
-            }
-        }
-        return true;
+        return allArms(flag, [&](mlir::Value arm) { return self(self, arm, depth + 1); })
+            .value_or(false);
     };
     if (!exit || !yield || exit.getCaughtValues().size() != caught.getNumArguments()) {
         return refuse("DOM caught throw lost its local completion correspondence");
@@ -718,8 +704,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
     const auto effects = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
         if (depth == 64) { return false; }
         for (mlir::Operation & operation : llvm::make_early_inc_range(block.without_terminator())) {
-            if (!remaining) { return false; }
-            --remaining;
+            if (!step(remaining)) { return false; }
             if (auto poison = llvm::dyn_cast<mlir::ub::PoisonOp>(operation);
                 poison && (!unconditional || (poison.getResult() == exit.getNormalResult() &&
                                               poison.getResult().hasOneUse()))) {
@@ -730,28 +715,12 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
             // Project exact completion dispatch before a later call needs its
             // saved callee or receiver. Source truthiness still runs normally.
             mlir::OpBuilder at(&operation);
-            if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
-                auto value = truth.getValue().getDefiningOp<ctjs::ConstantOp>();
-                auto flag = value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue())
-                                  : ctjs::BooleanAttr{};
-                if (flag) {
-                    truth.replaceAllUsesWith(
-                        mlir::arith::ConstantIntOp::create(at, truth.getLoc(), flag.getValue(), 1)
-                            .getResult());
-                    truth.erase();
+            if (llvm::isa<ctjs::TruthyOp, mlir::arith::IndexCastUIOp, mlir::arith::CmpIOp>(
+                    operation)) {
+                if (auto folded = foldDispatch(at, operation, {})) {
+                    operation.getResult(0).replaceAllUsesWith(folded);
+                    operation.erase();
                 }
-                continue;
-            }
-            if (auto cast = llvm::dyn_cast<mlir::arith::IndexCastUIOp>(operation)) {
-                cast.replaceAllUsesWith(at.createOrFold<mlir::arith::IndexCastUIOp>(
-                    cast.getLoc(), cast.getType(), cast.getIn()));
-                cast.erase();
-                continue;
-            }
-            if (auto compare = llvm::dyn_cast<mlir::arith::CmpIOp>(operation)) {
-                compare.replaceAllUsesWith(at.createOrFold<mlir::arith::CmpIOp>(
-                    compare.getLoc(), compare.getPredicate(), compare.getLhs(), compare.getRhs()));
-                compare.erase();
                 continue;
             }
             if (llvm::isa<ctjs::RootOp, ctjs::ConstantOp, mlir::arith::ConstantOp>(operation)) {
@@ -806,8 +775,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 // Recovery's normal tuple contains only its tag, inactive padding
                 // and original saved values. Never infer effects from result types.
                 for (auto & projection : normal.without_terminator()) {
-                    if (!remaining) { return false; }
-                    --remaining;
+                    if (!step(remaining)) { return false; }
                     if (!llvm::isa<ctjs::ConstantOp, mlir::arith::ConstantOp, mlir::ub::PoisonOp>(
                             projection)) {
                         return false;
@@ -837,25 +805,22 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 }
                 auto yes = llvm::cast<mlir::scf::YieldOp>(branch.getThenRegion().front().back());
                 auto no = llvm::cast<mlir::scf::YieldOp>(branch.getElseRegion().front().back());
-                auto condition = branch.getCondition().getDefiningOp<mlir::arith::ConstantOp>();
-                auto literal = condition ? llvm::dyn_cast<mlir::IntegerAttr>(condition.getValue())
-                                         : mlir::IntegerAttr{};
-                if (literal && branch.getCondition().getType().isInteger(1)) {
+                llvm::APInt literal;
+                if (branch.getCondition().getType().isInteger(1) &&
+                    mlir::matchPattern(branch.getCondition(), mlir::m_ConstantInt(&literal))) {
                     // Both arms passed effects. Move the selected definitions
                     // before forwarding their values, preserving dominance and
                     // order without treating inactive poison as an origin.
-                    auto selected = literal.getValue().isZero() ? no : yes;
+                    auto selected = literal.isZero() ? no : yes;
                     for (auto & next :
                          llvm::make_early_inc_range(selected->getBlock()->without_terminator())) {
-                        if (!remaining) { return false; }
-                        --remaining;
+                        if (!step(remaining)) { return false; }
                         next.moveBefore(branch);
                     }
                     for (auto [result, value] :
                          llvm::zip(branch.getResults(), selected.getOperands())) {
                         for (auto & use : llvm::make_early_inc_range(result.getUses())) {
-                            if (!remaining) { return false; }
-                            --remaining;
+                            if (!step(remaining)) { return false; }
                             use.set(value);
                         }
                     }
@@ -878,8 +843,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 }
                 for (auto [result, left, right] :
                      llvm::zip(branch.getResults(), yes.getOperands(), no.getOperands())) {
-                    if (!remaining) { return false; }
-                    --remaining;
+                    if (!step(remaining)) { return false; }
                     attributes.join(result, left, right);
                     // Both arms have complete effect proofs. Forward only the
                     // identical saved SSA value, retaining the branch and its
@@ -887,8 +851,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                     // proof; equal callable kinds or names supply no identity.
                     if (left != right) { continue; }
                     for (auto & use : llvm::make_early_inc_range(result.getUses())) {
-                        if (!remaining) { return false; }
-                        --remaining;
+                        if (!step(remaining)) { return false; }
                         use.set(left);
                     }
                 }
@@ -929,12 +892,13 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 if (!spend(uint64_t(1) + next->getNumOperands())) { return {}; }
                 if (auto returned = llvm::dyn_cast<ctjs::TryExitOp>(next)) {
                     if (!pending.empty() || returned != exit) { return {}; }
-                    auto flag = mapping.lookupOrDefault(returned.getIsThrow())
-                                    .getDefiningOp<mlir::arith::ConstantOp>();
-                    auto literal = flag ? llvm::dyn_cast<mlir::IntegerAttr>(flag.getValue())
-                                        : mlir::IntegerAttr{};
-                    if (!literal || !flag.getType().isInteger(1)) { return {}; }
-                    if (literal.getValue().isZero()) {
+                    const auto flag = mapping.lookupOrDefault(returned.getIsThrow());
+                    llvm::APInt literal;
+                    if (!flag.getType().isInteger(1) ||
+                        !mlir::matchPattern(flag, mlir::m_ConstantInt(&literal))) {
+                        return {};
+                    }
+                    if (literal.isZero()) {
                         return mapping.lookupOrDefault(returned.getNormalResult());
                     }
                     for (auto [argument, value] :
@@ -963,12 +927,11 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(next)) {
                     auto condition = mapping.lookupOrDefault(branch.getCondition());
                     pending.push_back(branch);
-                    auto constant = condition.getDefiningOp<mlir::arith::ConstantOp>();
-                    auto literal = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                            : mlir::IntegerAttr{};
-                    if (literal && condition.getType().isInteger(1)) {
-                        auto & selected = literal.getValue().isZero() ? branch.getElseRegion()
-                                                                      : branch.getThenRegion();
+                    llvm::APInt literal;
+                    if (condition.getType().isInteger(1) &&
+                        mlir::matchPattern(condition, mlir::m_ConstantInt(&literal))) {
+                        auto & selected =
+                            literal.isZero() ? branch.getElseRegion() : branch.getThenRegion();
                         return self(self, &selected.front().front(), mapping, at,
                                     std::move(pending), depth + 1);
                     }
@@ -994,27 +957,8 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 }
                 // Fold exact Boolean/integer completion dispatch. Other source
                 // truthiness and comparisons still execute in their original order.
-                if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(next)) {
-                    auto value =
-                        mapping.lookupOrDefault(truth.getValue()).getDefiningOp<ctjs::ConstantOp>();
-                    auto flag = value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue())
-                                      : ctjs::BooleanAttr{};
-                    if (flag) {
-                        mapping.map(truth.getResult(), mlir::arith::ConstantIntOp::create(
-                                                           at, truth.getLoc(), flag.getValue(), 1));
-                        continue;
-                    }
-                }
-                if (auto cast = llvm::dyn_cast<mlir::arith::IndexCastUIOp>(next)) {
-                    mapping.map(cast.getResult(), at.createOrFold<mlir::arith::IndexCastUIOp>(
-                                                      cast.getLoc(), cast.getType(),
-                                                      mapping.lookupOrDefault(cast.getIn())));
-                } else if (auto compare = llvm::dyn_cast<mlir::arith::CmpIOp>(next)) {
-                    mapping.map(compare.getResult(),
-                                at.createOrFold<mlir::arith::CmpIOp>(
-                                    compare.getLoc(), compare.getPredicate(),
-                                    mapping.lookupOrDefault(compare.getLhs()),
-                                    mapping.lookupOrDefault(compare.getRhs())));
+                if (auto folded = foldDispatch(at, *next, mapping)) {
+                    mapping.map(next->getResult(0), folded);
                 } else if (!clone(*next, mapping, at)) {
                     return {};
                 }
@@ -1109,8 +1053,7 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
     const auto normalize = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
         if (depth == 64) { return false; }
         for (auto & operation : llvm::make_early_inc_range(block)) {
-            if (!remaining) { return false; }
-            --remaining;
+            if (!step(remaining)) { return false; }
             if (auto attempt = llvm::dyn_cast<ctjs::TryOp>(operation)) {
                 for (auto & region : attempt->getRegions()) {
                     if (!region.hasOneBlock() || !self(self, region.front(), depth + 1)) {
@@ -1131,8 +1074,7 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
                 auto no = llvm::cast<mlir::scf::YieldOp>(branch.getElseRegion().front().back());
                 for (auto [result, left, right] :
                      llvm::zip(branch.getResults(), yes.getOperands(), no.getOperands())) {
-                    if (!remaining) { return false; }
-                    --remaining;
+                    if (!step(remaining)) { return false; }
                     attributes.join(result, left, right);
                 }
                 continue;
@@ -1169,8 +1111,7 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
             if (!self(self, normal, depth + 1)) { return false; }
             auto yield = llvm::cast<ctjs::InvokeYieldOp>(normal.back());
             for (auto & next : llvm::make_early_inc_range(normal.without_terminator())) {
-                if (!remaining) { return false; }
-                --remaining;
+                if (!step(remaining)) { return false; }
                 next.moveBefore(invocation);
             }
             invocation.replaceAllUsesWith(yield.getValues());

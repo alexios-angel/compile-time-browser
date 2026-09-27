@@ -21,9 +21,7 @@ struct nonthrowingPrimitives {
 
     bool primitive(mlir::Value value) const {
         const auto type = admitted.typeOf(value);
-        return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type) ||
-               (llvm::isa_and_nonnull<OptType>(type) &&
-                llvm::isa<BottomType>(llvm::cast<OptType>(type).getElementType()));
+        return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type) || onlyAbsent(type);
     }
 
     bool call(ctjs::CallDirectOp direct) {
