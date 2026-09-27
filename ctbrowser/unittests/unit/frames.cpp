@@ -50,6 +50,7 @@ constexpr const char * inner_xml = "<?xml version=\"1.0\"?><root viewBox=\"0 0 1
     page.set_location("file:///pages/the-page.html");
     page.assets().add("inner.html", bytes_of(inner_html));
     page.assets().add("inner.xml", bytes_of(inner_xml));
+    page.assets().add("self.html", bytes_of("<p>self</p><iframe id=s src=self.html></iframe>"));
     // A `setTimeout` INSIDE the window's load handler. One tick does, in
     // order: reconcile the frames, settle the frame and sheet loads, dispatch
     // the page's own `load`, then run the timers - so the timer is a moment at
@@ -599,7 +600,47 @@ void test_a_javascript_source_is_its_string_result() {
     if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"js|0"}); }
 }
 
+// A FRAME IN A FRAME'S DOCUMENT LOADS ON THE TICK, not only when its
+// `contentWindow` is read: the tick reconciles the page's frames and each
+// frame document's own (html-forms/test-003.html waited for such a `load`).
+void test_a_frame_inside_a_frame_document_loads() {
+    is("<iframe id=b></iframe><script>var d = document.getElementById('b').contentDocument;"
+       " var n = d.createElement('iframe'); n.src = 'inner.html'; window.nested = 'none';"
+       " n.onload = function () { window.nested = n.contentDocument.title; };"
+       " d.body.appendChild(n);</script>",
+       "window.nested", "inner");
+}
+
+// THE ANIMATION FRAME CALLBACKS DOCUMENT BY DOCUMENT: the page's, then its
+// frames' in tree order, whatever order they were asked for in
+// (child-document-raf-order.html) - and a removed frame's never.
+void test_animation_frames_run_in_document_order() {
+    is("<iframe id=f1 src=inner.html></iframe><iframe id=f2 src=inner.html></iframe>"
+       "<iframe id=f3 src=inner.html></iframe><script>var order = [];"
+       " addEventListener('load', function () {"
+       " var w = function (id) { return document.getElementById(id).contentWindow; };"
+       " var gone = w('f3'); document.getElementById('f3').remove();"
+       " gone.requestAnimationFrame(function () { order.push('removed'); });"
+       " w('f2').requestAnimationFrame(function () { order.push('second');"
+       " setTimeout(function () { console.log(order.join()); }, 0); });"
+       " w('f1').requestAnimationFrame(function () { order.push('first'); });"
+       " requestAnimationFrame(function () { order.push('page'); }); });</script>",
+       "'unused'", "page,first,second");
+}
+
+// A PAGE THAT EMBEDS ITSELF STOPS AT ONE COPY (HTML 4.8.5: an ancestor
+// navigable's document already has the URL, so the frame gets no navigable).
+// Before the guard each copy's frame loaded the next, in one tick, until the
+// native stack ran out.
+void test_a_frame_that_embeds_itself_stops() {
+    is("<iframe id=f src=self.html></iframe>",
+       "document.getElementById('f').contentDocument.getElementById('s').contentDocument", "null");
+}
+
 int main() {
+    test_a_frame_that_embeds_itself_stops();
+    test_animation_frames_run_in_document_order();
+    test_a_frame_inside_a_frame_document_loads();
     test_a_frame_document_is_laid_out_at_the_size_of_its_box();
     test_the_frames_are_indexed_on_the_window();
     test_a_frame_loaded_at_a_fragment_has_a_target();

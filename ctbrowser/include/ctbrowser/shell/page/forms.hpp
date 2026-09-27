@@ -283,10 +283,11 @@ public:
                !txn.has_attribute(id, atoms.intern("commandfor"));
     }
 
-    // A control's FORM OWNER (HTML 4.10.18.3): with a `form` attribute, the
-    // first element in its tree whose id is the value - when that is an HTML
-    // <form>, and none at all otherwise - else its nearest ancestor HTML
-    // <form>. A button outside its form that names it submits it. THE ONE
+    // A control's FORM OWNER (HTML 4.10.18.3): connected with a `form`
+    // attribute, the first element in its tree whose id is the value - when that is an HTML
+    // <form>, and none at all otherwise - else the form the parser associated
+    // it with, else its nearest ancestor HTML <form>. A button outside its
+    // form that names it submits it. THE ONE
     // ALGORITHM: the browser's default actions and every binding that asks
     // for a form owner (control_helpers::form_owner) come here.
     [[nodiscard]] static node_id owning_form(const read_txn & txn, atom_table & atoms,
@@ -295,7 +296,14 @@ public:
         const auto is_form = [&](node_id at) {
             return txn.element_ns(at) == node_ns::html && txn.tag(at).value_or(atom{}) == form_tag;
         };
-        if (const atom named = atoms.intern("form"); txn.has_attribute(from, named)) {
+        // ONLY A CONNECTED control's `form` attribute names its owner (step 4);
+        // a disconnected one falls through to its nearest form ancestor, which
+        // is how the one inside a removed form keeps it and the one beside a
+        // removed form loses its (form_attribute.html, form_owner_and_table).
+        const node_id top = txn.root_of_tree(from, true);
+        const bool connected =
+            top == txn.root() || txn.kind(top).value_or(node_kind::element) == node_kind::document;
+        if (const atom named = atoms.intern("form"); connected && txn.has_attribute(from, named)) {
             const std::string_view id = txn.attribute_value(from, named);
             if (id.empty()) { return node_id{}; }
             const atom id_attribute = atoms.intern("id");
@@ -311,6 +319,13 @@ public:
             }
             return node_id{};
         }
+        // THE FORM ELEMENT POINTER'S ASSOCIATION, which outlives the parse:
+        // `<table><form><tr><td><input>` pops the form at once and the input
+        // is still its control, with the form nowhere above it. The parser
+        // inserted flag keeps that until a "reset the form owner" - a removal
+        // that parts the two trees, or a `form` attribute - and the document
+        // drops the pair at exactly those two (document::parser_form).
+        if (const node_id parsed = txn.parser_form(from)) { return parsed; }
         for (node_id at = txn.parent(from); at; at = txn.parent(at)) {
             if (is_form(at)) { return at; }
         }

@@ -26,6 +26,7 @@ struct performance_entry {
 struct animation_frame_callback {
     std::uint32_t id = 0;
     value callback;
+    const dom_bindings * document = nullptr; // whose window asked; null when none is
 };
 
 // Every boundary of every live range that is a node of THIS document:

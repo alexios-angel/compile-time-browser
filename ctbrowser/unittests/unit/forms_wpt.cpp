@@ -328,8 +328,11 @@ void test_output_and_textarea() {
 // --- the form owner, HTML 4.10.17.3 ----------------------------------------------------
 
 void test_form_owner_attribute() {
-    // form_attribute.html: `form=""` names nothing, a detached form holding
-    // the control is its tree, a non-form with the id earlier wins nothing.
+    // form_attribute.html: `form=""` names nothing; a DISCONNECTED control's
+    // `form` attribute names nothing either - its owner is its nearest form
+    // ancestor (4.10.18.3 step 4 is for a connected one), so a non-form with
+    // the id earlier in a detached tree changes nothing; connected, the
+    // non-form with the id earlier wins nothing.
     is("(function () { var f = document.getElementById('f'); var b = "
        "document.createElement('button');"
        " f.appendChild(b); var o = [b.form === f]; b.setAttribute('form', ''); o.push(b.form);"
@@ -338,8 +341,9 @@ void test_form_owner_attribute() {
        " f2.id = 'f2'; d.appendChild(f2); var c = document.createElement('input');"
        " c.setAttribute('form', 'f2'); f2.appendChild(c); o.push(c.form === f2);"
        " var s = document.createElement('span'); s.id = 'f2'; d.insertBefore(s, f2);"
+       " o.push(c.form === f2); document.body.appendChild(d);"
        " o.push(c.form); return o.join(); })()",
-       "true,,true,true,");
+       "true,,true,true,true,");
 }
 
 // --- the selection across a value change, HTML 4.10.5.3 ------------------------------

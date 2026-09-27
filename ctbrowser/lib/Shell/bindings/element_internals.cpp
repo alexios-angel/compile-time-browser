@@ -124,30 +124,10 @@ constexpr std::string_view aria_elements[] = {"ariaActiveDescendantElement", "ar
 
 // --- the form-association facts ------------------------------------------------
 
+// A form-associated custom element's owner is any listed element's: the one
+// algorithm (form_store::owning_form).
 node_id dom_bindings::form_owner_of(const read_txn & txn, node_id id) const {
-    const auto is_form = [&](node_id at) {
-        return txn.kind(at).value_or(node_kind::text) == node_kind::element &&
-               txn.element_ns(at) == node_ns::html && txn.local_name(at) == "form";
-    };
-    // A `form` attribute names a form by id, in the element's own tree - and
-    // names nothing when no such form is there.
-    const std::string_view named = txn.attribute_value(id, atoms_->intern("form"));
-    if (txn.has_attribute(id, atoms_->intern("form"))) {
-        const atom id_name = atoms_->intern("id");
-        std::vector<node_id> pending{txn.root_of_tree(id, false)};
-        while (!pending.empty()) {
-            const node_id at = pending.back();
-            pending.pop_back();
-            if (is_form(at) && txn.attribute_value(at, id_name) == named) { return at; }
-            const std::span<const node_id> children = txn.children(at);
-            for (std::size_t i = children.size(); i-- > 0;) { pending.push_back(children[i]); }
-        }
-        return node_id{};
-    }
-    for (node_id at = txn.parent(id); at; at = txn.parent(at)) {
-        if (is_form(at)) { return at; }
-    }
-    return node_id{};
+    return form_store::owning_form(txn, *atoms_, id);
 }
 
 bool dom_bindings::form_control_disabled(const read_txn & txn, node_id id) const {

@@ -1,5 +1,7 @@
 #include "helpers.hpp"
 
+#include <ctbrowser/script/regex.hpp>
+
 namespace ctbrowser::shell::detail {
 using namespace input_types;
 
@@ -84,38 +86,24 @@ bool control_helpers::will_validate(const read_txn & txn, dom_bindings * b, node
 // HTML 4.10.5.3.6's "compiled pattern regular expression": the attribute
 // ALONE must compile with the v flag - no u fallback, and a pattern such as
 // `a)(b` that only parses once wrapped is as invalid as `[(]` - and then the
-// anchored `^(?:` pattern `)$`, with v again. Null means no constraint.
-value control_helpers::compile_pattern(context & c, const std::string & pattern) const {
-    const auto helpers = *this;
-    auto * on = helpers.proto("ValidityState");
-    if (on == nullptr) { return value::null(); }
-    value compiler = value::undefined();
-    if (const value * held = on->find("__compile"); held != nullptr) { compiler = *held; }
-    if (!compiler.is_callable()) {
-        script::program compiled = script::compiler::compile(
-            "return (function (p) {\n"
-            "    try { new RegExp(p, 'v'); } catch (e) { return null; }\n"
-            "    try { return new RegExp('^(?:' + p + ')$', 'v'); } catch (e) {}\n"
-            "    return null;\n"
-            "});\n");
-        if (!compiled.ok) { return value::null(); }
-        compiler = c.run_nested(c.own_program(std::move(compiled)));
-        if (!compiler.is_callable()) { return value::null(); }
-        on->define("__compile", compiler, script::attr_none);
-    }
-    const value text = c.string(pattern);
-    return c.call(compiler, std::span<const value>{&text, 1});
-}
-
-bool control_helpers::matches_pattern(context & c, const std::string & pattern,
-                                      const std::string & text) const {
-    const auto helpers = *this;
-    const value re = helpers.compile_pattern(c, pattern);
-    if (!re.is_object_like()) { return true; }
-    const value test = c.lookup_property(re, "test");
-    if (!test.is_callable()) { return true; }
-    const value subject = c.string(text);
-    return context::truthy(c.call(test, std::span<const value>{&subject, 1}, re));
+// anchored `^(?:` pattern `)$`, with v again; a pattern that does neither is
+// no constraint. The ENGINE'S OWN MATCHER, with RegExp's own checks (the
+// early-error scan, then the compile), rather than a RegExp made in script:
+// the selector engine asks `:invalid` outside any script, where there is no
+// frame for a call to return into.
+bool control_helpers::matches_pattern(const std::string & pattern, const std::string & text) const {
+    namespace rx = script::rx;
+    const auto compiled = [](const std::string & source) -> std::optional<rx::rx_prog> {
+        if (rx::rx_pattern_error(source, "v")) { return std::nullopt; }
+        rx::rx_prog program = rx::rx_compile(source, "v");
+        if (!program.ok) { return std::nullopt; }
+        return program;
+    };
+    if (!compiled(pattern)) { return true; }
+    const std::optional<rx::rx_prog> anchored = compiled("^(?:" + pattern + ")$");
+    if (!anchored) { return true; }
+    rx::rx_match match;
+    return rx::rx_search(*anchored, text, 0, match);
 }
 
 unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id id) const {
@@ -229,15 +217,14 @@ unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id 
             std::size_t start = 0;
             while (ok) {
                 const std::size_t comma = text.find(',', start);
-                ok = helpers.matches_pattern(c, pattern,
-                                             text.substr(start, comma == std::string::npos
-                                                                    ? std::string::npos
-                                                                    : comma - start));
+                ok = helpers.matches_pattern(pattern, text.substr(start, comma == std::string::npos
+                                                                             ? std::string::npos
+                                                                             : comma - start));
                 if (comma == std::string::npos) { break; }
                 start = comma + 1;
             }
         } else {
-            ok = helpers.matches_pattern(c, pattern, text);
+            ok = helpers.matches_pattern(pattern, text);
         }
         if (!ok) { flags |= pattern_mismatch; }
     }

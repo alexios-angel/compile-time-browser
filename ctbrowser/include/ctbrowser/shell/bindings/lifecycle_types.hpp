@@ -31,6 +31,7 @@ struct timer {
     // A FRAME'S window it was set on, or undefined: a timer of a frame that has
     // since been removed never fires (its document is not fully active).
     value window = value::undefined();
+    bool page_timer = false; // setTimeout/setInterval's, not a task the host queued
 };
 
 // WHICH EVENT TARGET A LISTENER IS ON. The document and the window are not

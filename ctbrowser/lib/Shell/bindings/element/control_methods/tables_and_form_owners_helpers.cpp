@@ -90,19 +90,29 @@ value control_helpers::slot_of(context & c, dom_bindings * b, node_id id,
     return held == nullptr ? value::undefined() : *held;
 }
 
+// AN OPTION'S SELECTEDNESS IS A SLOT, not a node, so the document's version
+// does not see it move - and `select.selectedOptions` is one live collection
+// ([SameObject]) that refreshes on that version. A change to the slot says so.
 void control_helpers::set_slot(context & c, dom_bindings * b, node_id id, std::string_view key,
                                value v) const {
     const value w = b->wrap(c, id);
     if (w.is_object()) {
-        static_cast<script::object_object *>(w.as_heap())
-            ->define(std::string{key}, v, script::attr_none);
+        auto * obj = static_cast<script::object_object *>(w.as_heap());
+        if (key == selected_slot) {
+            const value * was = obj->find(key);
+            if (was == nullptr || was->bits() != v.bits()) { b->doc_->note_unversioned_change(); }
+        }
+        obj->define(std::string{key}, v, script::attr_none);
     }
 }
 
 void control_helpers::erase_slot(context & c, dom_bindings * b, node_id id,
                                  std::string_view key) const {
     const value w = b->wrap(c, id);
-    if (w.is_object()) { (void)static_cast<script::object_object *>(w.as_heap())->erase(key); }
+    if (!w.is_object()) { return; }
+    if (static_cast<script::object_object *>(w.as_heap())->erase(key) && key == selected_slot) {
+        b->doc_->note_unversioned_change();
+    }
 }
 
 std::string control_helpers::attribute_of(const read_txn & txn, dom_bindings * b, node_id id,
