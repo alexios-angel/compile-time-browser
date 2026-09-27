@@ -165,16 +165,8 @@ probe(first, first); var traceRepeat = traceAfter;
             ):
                 raise RuntimeError(f"{suffix}: unused input retained forged provider proof")
             refusals += 1
-            for optimize in (False, True):
-                dom.lower(
-                    args,
-                    path,
-                    fresh,
-                    f"{name}-{suffix}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                refusals += 1
+            dom.refuse(args, path, fresh, f"{name}-{suffix}")
+            refusals += 2
         for suffix, request, options in (
             ("stale", dict(contract, module_sha256="0" * 64), ""),
             ("no-second-input", dict(contract, element_parameters=[0]), ""),
@@ -187,11 +179,8 @@ probe(first, first); var traceRepeat = traceAfter;
                 args, name + "-" + suffix, ir, request, success=False, options=options
             )
             refusals += 1
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, contract, f"{name}-raw-{optimize}", optimize=optimize, success=False
-            )
-            refusals += 1
+        dom.refuse(args, ir, contract, f"{name}-raw")
+        refusals += 2
 
     # These are the unchanged handoff witnesses. Distinct inputs reach a null
     # field read, so accepting their equal-input answer would erase a TypeError.

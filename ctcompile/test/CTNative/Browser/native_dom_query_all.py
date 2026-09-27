@@ -217,15 +217,7 @@ def main():
     for name, body in REFUSALS.items():
         source = f"function bad(element) {{ {body} }}\n"
         refused, manifest = dom.prepare(args, name, source, 1, entry_name="bad")
-        for optimize in (False, True):
-            dom.lower(
-                args,
-                refused,
-                manifest,
-                f"refused-{name}-{optimize}",
-                optimize=optimize,
-                success=False,
-            )
+        dom.refuse(args, refused, manifest, f"refused-{name}")
     print(
         f"Element.querySelectorAll: 16 native executions, {2 * len(REFUSALS) + 4} refusals; "
         "DOM/Core/Style only"

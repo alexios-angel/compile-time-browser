@@ -483,7 +483,7 @@ def main():
     ]
     for optimize in (False, True):
         modules = []
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             owned = "session" in provider
             for name, ir, contract in prepared:
                 label = f"{name}-{owned}-{optimize}"
@@ -575,25 +575,22 @@ def main():
             1,
             entry_name=name,
         )
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                dom.lower(
-                    args,
-                    ir,
-                    dict(
-                        contract,
-                        provider=provider,
-                        initial_intrinsics=intrinsics,
-                        dataset_parameters=[0],
-                    ),
-                    f"refuse-{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                refusals += 1
+        for provider in dom.PROVIDERS:
+            dom.refuse(
+                args,
+                ir,
+                dict(
+                    contract,
+                    provider=provider,
+                    initial_intrinsics=intrinsics,
+                    dataset_parameters=[0],
+                ),
+                f"refuse-{name}-{provider}",
+            )
+            refusals += 2
     for name in ("assign_loop", "loop_dynamic_key", "prefix_result", "normalized_result"):
         _, ir, contract = next(row for row in prepared if row[0] == name)
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 for budget in (0, 64, 256):
                     dom.lower(

@@ -2,6 +2,7 @@
 """Execute confined Bootstrap R.find and NodeList spread/concat counts."""
 
 from CTNative.Browser import native_dom as dom
+from CTNative.harness import without_intrinsic
 
 FIND = (
     "find: (t, e = document.documentElement) => "
@@ -179,12 +180,7 @@ def main():
                 dom.lower(
                     args,
                     ir,
-                    dict(
-                        manifest,
-                        initial_intrinsics=[
-                            item for item in manifest["initial_intrinsics"] if item != missing
-                        ],
-                    ),
+                    without_intrinsic(manifest, missing),
                     f"{case}-missing-{missing}",
                     optimize=optimize,
                     success=False,
@@ -195,10 +191,7 @@ def main():
         )
         ir, contract = dom.prepare(args, name, source, 1, entry_name="bad")
         contract["initial_intrinsics"] = ["Array", "Element", "Function"]
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, contract, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
+        dom.refuse(args, ir, contract, f"refused-{name}")
     print(
         f"DOM spread/concat counts: 32 native executions, {24 + 2 * len(REFUSALS)} refusals; DOM/Core/Style only"
     )

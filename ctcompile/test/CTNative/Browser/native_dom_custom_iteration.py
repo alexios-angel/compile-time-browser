@@ -8370,11 +8370,8 @@ def main():
             continue  # Executed above, with the original source unchanged.
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, contract, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
-            refused += 1
+        dom.refuse(args, ir, contract, f"refused-{name}")
+        refused += 2
     print(
         f"Closed custom DOM iteration: {executions} native executions, {refused} refusals; "
         f"{admitted} nonexecuted source admissions; "

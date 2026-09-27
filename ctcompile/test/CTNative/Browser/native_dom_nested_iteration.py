@@ -319,11 +319,8 @@ def main():
     for name, text in bad_sources.items():
         ir, manifest = dom.prepare(args, name, text, 2, entry_name="bad")
         manifest.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, manifest, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
-            refusals += 1
+        dom.refuse(args, ir, manifest, f"refused-{name}")
+        refusals += 2
     print(
         f"Nested element for-of: {executions} native executions, 2 previous-source lowering checks, "
         f"{refusals} refusals; DOM/Core/Style only"

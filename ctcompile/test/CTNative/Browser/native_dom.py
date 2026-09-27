@@ -582,6 +582,16 @@ def lower(args, ir, contract, name, *, optimize=False, success=True, max_steps=N
     return text
 
 
+def refuse(args, ir, manifest, label, reason=None):
+    """Lower `ir` under both policies as `label`-False/-True; each must refuse,
+    naming `reason` when one is given."""
+    for optimize in (False, True):
+        name = f"{label}-{optimize}"
+        diagnostic = lower(args, ir, manifest, name, optimize=optimize, success=False)
+        if reason is not None and reason not in diagnostic:
+            raise RuntimeError(f"{name}: the refusal does not name {reason!r}\n{diagnostic}")
+
+
 def link_options(args, *, selectors=False, core_only=False):
     cache = dict(
         re.findall(
@@ -767,17 +777,7 @@ def main():
     written = args.work / "raw-written-undefined.mlir"
     written.write_text(text)
     manifest = dict(manifest, module_sha256=fingerprint(args.opt, written))
-    for optimize in (False, True):
-        diagnostic = lower(
-            args,
-            written,
-            manifest,
-            f"raw-written-undefined-{optimize}",
-            optimize=optimize,
-            success=False,
-        )
-        if "DOM" not in diagnostic:
-            raise RuntimeError(f"raw undefined store lost its DOM refusal\n{diagnostic}")
+    refuse(args, written, manifest, "raw-written-undefined", "DOM")
 
     action, contract = prepared["action"]
     raw = run([args.opt, str(action), "--ctnative-lower-to-emitc=optimize=false"]).stdout
@@ -906,12 +906,7 @@ def main():
                 )
     for name, source, reason in refusals:
         ir, manifest = prepare(args, name, source, 1)
-        for optimize in (False, True):
-            diagnostic = lower(
-                args, ir, manifest, f"{name}-{optimize}", optimize=optimize, success=False
-            )
-            if reason not in diagnostic:
-                raise RuntimeError(f"{name}: missing intended proof refusal\n{diagnostic}")
+        refuse(args, ir, manifest, name, reason)
         if name == "unknown-receiver":
             forged = args.work / "forged.mlir"
             forged.write_text(

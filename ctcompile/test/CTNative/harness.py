@@ -80,6 +80,12 @@ def run(command, *, success=True, environment=None, input_text=None):
     return result
 
 
+def without_intrinsic(manifest, name):
+    """`manifest` with the intrinsic `name` withheld from its initial_intrinsics."""
+    kept = [item for item in manifest["initial_intrinsics"] if item != name]
+    return dict(manifest, initial_intrinsics=kept)
+
+
 def native_args(description, *paths):
     """The usual driver command line, every option required: the four tools,
     then --work (created) and `paths` as Paths."""

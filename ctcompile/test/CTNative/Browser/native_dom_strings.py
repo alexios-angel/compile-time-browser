@@ -107,7 +107,7 @@ function makeElement(value) {
     prepared.extend(nullable_uri.prepare(args))
     for optimize in (False, True):
         modules = {}
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             owned = "session" in provider
             for name, ir, contract in prepared:
                 label = f"{name}-{owned}-{optimize}"
@@ -231,17 +231,7 @@ function makeElement(value) {
         )
         for owned in (False, True):
             provider = "ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    ir,
-                    dict(contract, provider=provider),
-                    f"{name}-{owned}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if "DOM" not in diagnostic:
-                    raise RuntimeError(f"{name}: missing intended DOM proof refusal\n{diagnostic}")
+            dom.refuse(args, ir, dict(contract, provider=provider), f"{name}-{owned}", "DOM")
     for name, source in HOST_REFUSALS.items():
         ir, contract = dom.prepare(
             args, name, "{\n" + source + "\n}\n", 1, entry_name="host_refusal"
@@ -249,18 +239,8 @@ function makeElement(value) {
         if name == "host_duplicate_export":
             raw = (args.work / f"{name}.raw.mlir").read_text()
             assert raw.count('ctjs.store_global "host_refusal"') == 2, raw
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    ir,
-                    dict(contract, provider=provider),
-                    f"{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if "DOM" not in diagnostic:
-                    raise RuntimeError(f"{name}: missing intended DOM proof refusal\n{diagnostic}")
+        for provider in dom.PROVIDERS:
+            dom.refuse(args, ir, dict(contract, provider=provider), f"{name}-{provider}", "DOM")
     _, completion_ir, completion_contract = next(
         row for row in prepared if row[0] == "helper_branch_completion_dispatch"
     )
@@ -312,7 +292,7 @@ function makeElement(value) {
                 1,
                 entry_name="branchDepth" if kind == "entry" else "branchHelper",
             )
-            for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for provider in dom.PROVIDERS:
                 for optimize in (False, True):
                     result = dom.lower(
                         args,
@@ -380,7 +360,7 @@ function makeElement(value) {
         ("replacement-captured", REGEXP_CAPTURED_SOURCE),
     ):
         ir, contract = dom.prepare(args, prefix, source, 1, entry_name="invalid")
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 label = f"{prefix}-{provider}-{optimize}"
                 native = dom.lower(

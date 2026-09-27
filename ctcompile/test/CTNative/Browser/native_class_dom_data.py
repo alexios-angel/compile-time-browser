@@ -384,15 +384,7 @@ def published_provider(args, name, prepared, contract, *, adversarial=False):
                 f"{label}: forged success survived live provider reproof: {rejected}"
             )
         if label in ("constructor-callee", "constructor-new-target", "constructor-program"):
-            for optimize in (False, True):
-                dom.lower(
-                    args,
-                    path,
-                    fresh,
-                    f"{name}-provider-{label}-native-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
+            dom.refuse(args, path, fresh, f"{name}-provider-{label}-native")
     for label, request, options, reason in (
         ("stale", dict(contract, module_sha256="0" * 64), "", "fingerprint mismatch"),
         ("budget", contract, "max-steps=0", "budget"),
@@ -738,11 +730,8 @@ def published_composite_results(args):
             ):
                 raise RuntimeError(f"{label}: composite retained forged provider proof: {rejected}")
             refusals += 1
-            for optimize in (False, True):
-                dom.lower(
-                    args, path, fresh, f"{variant}-{optimize}", optimize=optimize, success=False
-                )
-                refusals += 1
+            dom.refuse(args, path, fresh, variant)
+            refusals += 2
     print(
         "original composite DOM Data: three Node/VM observations, three preparations, "
         f"three provider proofs, {executions} native executions, {refusals} refusals"
@@ -1128,9 +1117,8 @@ def published_records(args):
     for label, text in controls.items():
         name = "record-refused-" + label
         ir, contract = published_prepare(args, name, text)
-        for optimize in (False, True):
-            dom.lower(args, ir, contract, f"{name}-{optimize}", optimize=optimize, success=False)
-            refusals += 1
+        dom.refuse(args, ir, contract, name)
+        refusals += 2
     print(
         f"published DOM Data: {len(sources)} Node/VM observations, {executions} native record executions, {refusals} refusals"
     )
@@ -1305,18 +1293,8 @@ def main():
         ):
             raise RuntimeError(f"{name}: a DOM input escaped its discharged key uses")
         checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
-        for optimize in (False, True):
-            result = dom.lower(
-                args,
-                prepared,
-                checked,
-                f"{name}-owner-{optimize}",
-                optimize=optimize,
-                success=False,
-            )
-            if "native DOM Data" not in result:
-                raise RuntimeError("local class Data acquired an unproved session owner")
-            native_refusals += 1
+        dom.refuse(args, prepared, checked, f"{name}-owner", "native DOM Data")
+        native_refusals += 2
         for label, requested, options in (
             ("stale", dict(contract, module_sha256="0" * 64), ""),
             ("no-map", dict(contract, initial_intrinsics=["__ctbrowser_class_defined"]), ""),

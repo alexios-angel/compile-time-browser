@@ -239,11 +239,8 @@ def main():
             args, name, f"function bad(element, expected) {{ {body} }}\n", 2, entry_name="bad"
         )
         manifest["current_document_parameter"] = 0
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, manifest, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
-            refusals += 1
+        dom.refuse(args, ir, manifest, f"refused-{name}")
+        refusals += 2
     print(
         f"Document.querySelectorAll: 32 native executions, {refusals} refusals; DOM/Core/Style only"
     )

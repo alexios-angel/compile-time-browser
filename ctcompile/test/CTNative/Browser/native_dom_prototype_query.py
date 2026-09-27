@@ -2,6 +2,7 @@
 """Execute original Element.prototype selector calls against public DOM/Style."""
 
 from CTNative.Browser import native_dom as dom
+from CTNative.harness import without_intrinsic
 from CTNative.Browser import native_dom_query as query
 from CTNative.Browser import native_dom_query_all as query_all
 
@@ -165,14 +166,7 @@ def main():
                 dom.lower(
                     args,
                     ir,
-                    dict(
-                        manifest,
-                        initial_intrinsics=[
-                            intrinsic
-                            for intrinsic in manifest["initial_intrinsics"]
-                            if intrinsic != missing
-                        ],
-                    ),
+                    without_intrinsic(manifest, missing),
                     f"{name}-missing-{missing}",
                     optimize=optimize,
                     success=False,
@@ -181,10 +175,7 @@ def main():
         source = f"function bad(element) {{ {body} }}\n"
         ir, manifest = dom.prepare(args, name, source, 1, entry_name="bad")
         manifest["initial_intrinsics"] = ["Element", "Function"]
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, manifest, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
+        dom.refuse(args, ir, manifest, f"refused-{name}")
     print(
         f"Element.prototype selectors: {16 * len(cases)} native executions, "
         f"{2 * len(REFUSALS) + 8 * len(cases)} refusals; "

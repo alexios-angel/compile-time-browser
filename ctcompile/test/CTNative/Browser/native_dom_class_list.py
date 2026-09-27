@@ -181,15 +181,7 @@ def main():
     for index, body in enumerate(REFUSALS):
         source = f"function bad(element) {{ {body} }}\n"
         refused, manifest = dom.prepare(args, f"refused-{index}", source, 1)
-        for optimize in (False, True):
-            dom.lower(
-                args,
-                refused,
-                manifest,
-                f"refused-{index}-{optimize}",
-                optimize=optimize,
-                success=False,
-            )
+        dom.refuse(args, refused, manifest, f"refused-{index}")
     # Even no-argument writes invalidate saved dataset views. A membership
     # query leaves the same source epoch intact.
     for method in ("add", "remove", "contains"):

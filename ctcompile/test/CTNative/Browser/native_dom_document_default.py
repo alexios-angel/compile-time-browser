@@ -2,6 +2,7 @@
 """Execute original Bootstrap R.find defaults with checked document-root receivers."""
 
 from CTNative.Browser import native_dom as dom
+from CTNative.harness import without_intrinsic
 from CTNative.Browser.native_dom_document import CURRENT_DOCUMENT_CHECKS, INPUT_CHECKS
 from CTNative.Browser.native_dom_spread_length import FIND
 
@@ -384,12 +385,7 @@ def main():
                 controls.append(
                     (
                         f"missing-{intrinsic}",
-                        dict(
-                            manifest,
-                            initial_intrinsics=[
-                                item for item in manifest["initial_intrinsics"] if item != intrinsic
-                            ],
-                        ),
+                        without_intrinsic(manifest, intrinsic),
                         None,
                     )
                 )
@@ -410,11 +406,8 @@ def main():
         manifest.update(
             current_document_parameter=0, initial_intrinsics=["Array", "Element", "Function"]
         )
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, manifest, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
-            refusals += 1
+        dom.refuse(args, ir, manifest, f"refused-{name}")
+        refusals += 2
     print(
         f"Bootstrap checked default root: {executions} native executions, {refusals} refusals; DOM/Core/Style only"
     )

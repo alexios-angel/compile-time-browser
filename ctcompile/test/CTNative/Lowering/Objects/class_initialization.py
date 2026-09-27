@@ -3,7 +3,7 @@
 
 from CTNative.Lowering.Objects.class_initialization_inputs import *
 
-from CTNative.harness import native_args
+from CTNative.harness import native_args, without_intrinsic
 
 # The standalone reference has no console binding; actual conflicts throw there.
 CONFLICT_OBSERVATIONS = {
@@ -814,12 +814,7 @@ def main():
                 args,
                 name + "-no-map-identity",
                 structured,
-                dict(
-                    manifest,
-                    initial_intrinsics=[
-                        identity for identity in manifest["initial_intrinsics"] if identity != "Map"
-                    ],
-                ),
+                without_intrinsic(manifest, "Map"),
                 success=False,
             )
             preparation_refusals += 1
@@ -828,12 +823,7 @@ def main():
                 args,
                 name + "-no-object-identity",
                 structured,
-                dict(
-                    manifest,
-                    initial_intrinsics=[
-                        item for item in manifest["initial_intrinsics"] if item != "Object"
-                    ],
-                ),
+                without_intrinsic(manifest, "Object"),
                 success=False,
                 diagnostic="class own-key snapshot needs declared Object identity",
             )
@@ -849,12 +839,7 @@ def main():
                     args,
                     "loop-without-" + identity,
                     structured,
-                    dict(
-                        manifest,
-                        initial_intrinsics=[
-                            item for item in manifest["initial_intrinsics"] if item != identity
-                        ],
-                    ),
+                    without_intrinsic(manifest, identity),
                     success=False,
                     diagnostic="class own-key loop requires original Array iterator identities",
                 )

@@ -980,7 +980,7 @@ def main():
                 .replace("                };", "                } };", 1)
             )
         checks += " (void)pressed; (void)alias;"
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 label = f"caught-node-{name}-{provider}-{optimize}"
                 native = dom.lower(
@@ -1450,7 +1450,7 @@ def main():
             1,
             entry_name="customElements",
         )
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 manifest = dict(
                     contract, provider=provider, initial_intrinsics=["decodeURIComponent"]
@@ -1882,7 +1882,7 @@ var outcome0 = observe(false), outcome1 = observe(true);
         native = dom.lower(args, raw, raw_manifest, raw_label, max_steps=raw_steps)
         dom.standalone(args, native, raw_label, checks, compilers, includes, libraries)
         dom.lower(args, raw, raw_manifest, raw_label + "-zero-budget", success=False, max_steps=0)
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 label = f"{name}-{provider}-{optimize}"
                 manifest = dict(contract, provider=provider, initial_intrinsics=INTRINSICS)

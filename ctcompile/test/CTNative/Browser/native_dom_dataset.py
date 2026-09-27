@@ -617,7 +617,7 @@ def main():
     for optimize in (False, True):
         for layout in ("explicit", "deduced"):
             headers, bodies, clients, wanted = set(), [], [], []
-            for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for provider in dom.PROVIDERS:
                 owned = "session" in provider
                 for name, ir, contract in prepared:
                     label = f"{name}-{owned}-{optimize}-{layout}"
@@ -731,24 +731,21 @@ def main():
     )
     for name, source, parameters in refused_sources:
         ir, contract = dom.prepare(args, name, source, parameters, entry_name=name)
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                dom.lower(
-                    args,
-                    ir,
-                    dict(
-                        contract,
-                        provider=provider,
-                        initial_intrinsics=PREFIX_INTRINSICS,
-                        dataset_parameters=list(range(parameters)),
-                    ),
-                    f"refuse-{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                refusals += 1
+        for provider in dom.PROVIDERS:
+            dom.refuse(
+                args,
+                ir,
+                dict(
+                    contract,
+                    provider=provider,
+                    initial_intrinsics=PREFIX_INTRINSICS,
+                    dataset_parameters=list(range(parameters)),
+                ),
+                f"refuse-{name}-{provider}",
+            )
+            refusals += 2
     _, ir, contract = next(item for item in prepared if item[0] == "dataset_guarded_values")
-    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+    for provider in dom.PROVIDERS:
         for optimize in (False, True):
             for changes in ({"element_parameters": []}, {"dataset_parameters": []}):
                 dom.lower(
@@ -783,7 +780,7 @@ def main():
                 )
                 refusals += 1
     _, ir, contract = next(item for item in prepared if item[0] == "dataset_values")
-    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+    for provider in dom.PROVIDERS:
         for optimize in (False, True):
             for missing in ITERATION_INTRINSICS:
                 dom.lower(
@@ -830,7 +827,7 @@ def main():
         dom.lower(args, ir, dict(contract, **changes), f"premise-{refusals}", success=False)
         refusals += 1
     _, ir, contract = next(item for item in prepared if item[0] == "dataset_filter")
-    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+    for provider in dom.PROVIDERS:
         for optimize in (False, True):
             for intrinsics in (
                 ["Object"],
@@ -866,7 +863,7 @@ def main():
             )
             refusals += 1
     for missing in ITERATION_INTRINSICS:
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 dom.lower(
                     args,
@@ -886,7 +883,7 @@ def main():
                 refusals += 1
     _, ir, contract = next(item for item in prepared if item[0] == "dataset_loop_prefix")
     for missing in ("String", "RegExp", "__ctbrowser_regexp"):
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 dom.lower(
                     args,

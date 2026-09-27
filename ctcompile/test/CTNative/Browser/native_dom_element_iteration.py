@@ -2,6 +2,7 @@
 """Execute proved element for-of loops through typed public browser snapshots."""
 
 from CTNative.Browser import native_dom as dom
+from CTNative.harness import without_intrinsic
 from CTNative.Browser import native_dom_find_elements as indexed
 from CTNative.Browser.native_dom_document import CURRENT_DOCUMENT_CHECKS, INPUT_CHECKS
 
@@ -100,14 +101,10 @@ def main():
             )
             refusals += 1
             for intrinsic in INTRINSICS[4:] + ["Array", "Element"]:
-                bad = dict(
-                    manifest,
-                    initial_intrinsics=[item for item in INTRINSICS if item != intrinsic],
-                )
                 dom.lower(
                     args,
                     ir,
-                    bad,
+                    without_intrinsic(manifest, intrinsic),
                     name + "-missing-" + intrinsic,
                     optimize=optimize,
                     success=False,
@@ -117,11 +114,8 @@ def main():
         text = f"function bad(anchor, expected) {{ const R={{{indexed.FIND}}}; {body} }}\n"
         ir, manifest = dom.prepare(args, name, text, 2, entry_name="bad")
         manifest.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, manifest, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
-            refusals += 1
+        dom.refuse(args, ir, manifest, f"refused-{name}")
+        refusals += 2
     print(f"Element for-of: 64 native executions, {refusals} refusals; DOM/Core/Style only")
 
 

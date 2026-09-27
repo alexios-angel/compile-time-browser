@@ -485,7 +485,7 @@ def main():
     ]
     for optimize in (False, True):
         modules = []
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             owned = "session" in provider
             for name, ir, contract in prepared:
                 label = f"{name}-{owned}-{optimize}"
@@ -567,19 +567,15 @@ def main():
             1,
             entry_name="invalid",
         )
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    ir,
-                    dict(contract, provider=provider, initial_intrinsics=intrinsics),
-                    f"{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if "DOM" not in diagnostic:
-                    raise RuntimeError(f"{name}: missing JSON source refusal\n{diagnostic}")
-                refusals += 1
+        for provider in dom.PROVIDERS:
+            dom.refuse(
+                args,
+                ir,
+                dict(contract, provider=provider, initial_intrinsics=intrinsics),
+                f"{name}-{provider}",
+                "DOM",
+            )
+            refusals += 2
     premises = {
         "json_object": (
             None,
@@ -609,7 +605,7 @@ def main():
                 del premise["initial_intrinsics"]
             else:
                 premise["initial_intrinsics"] = names
-            for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for provider in dom.PROVIDERS:
                 for optimize in (False, True):
                     diagnostic = dom.lower(
                         args,

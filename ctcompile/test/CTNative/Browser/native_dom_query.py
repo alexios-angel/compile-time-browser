@@ -115,15 +115,7 @@ def main():
     for index, body in enumerate(refusals):
         source = f"function bad(element, expected) {{ {body} }}\n"
         refused, manifest = dom.prepare(args, f"refused-{index}", source, 2)
-        for optimize in (False, True):
-            dom.lower(
-                args,
-                refused,
-                manifest,
-                f"refused-{index}-{optimize}",
-                optimize=optimize,
-                success=False,
-            )
+        dom.refuse(args, refused, manifest, f"refused-{index}")
     print("Element.querySelector: 16 native executions, 14 refusals; DOM/Core/Style only")
 
 

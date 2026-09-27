@@ -9,7 +9,7 @@ import subprocess
 
 from CTNative.Exports.boundary import FUNCTION, NATIVE, REFUSAL
 from CTNative.HostContract import contract as host
-from CTNative.harness import CLEANUP, FLAGS, find_compilers, run, threshold
+from CTNative.harness import CLEANUP, FLAGS, find_compilers, run, threshold, without_intrinsic
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_mutable_helper, check_native
 
 # The implementation hook and function metadata retain separate Node/VM
@@ -1292,12 +1292,7 @@ def check_super_inputs(args, source, manifest):
             args,
             f"super-undeclared-{name}",
             source,
-            dict(
-                manifest,
-                initial_intrinsics=[
-                    item for item in manifest["initial_intrinsics"] if item != name
-                ],
-            ),
+            without_intrinsic(manifest, name),
             success=False,
             diagnostic="super initialization requires declared helper identities",
         )

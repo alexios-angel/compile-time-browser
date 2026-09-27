@@ -266,11 +266,8 @@ def main():
     for name, source in sources.items():
         ir, manifest = dom.prepare(args, name, source, 2)
         manifest["current_document_parameter"] = 0
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, manifest, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
-            refusals += 1
+        dom.refuse(args, ir, manifest, f"refused-{name}")
+        refusals += 2
     print(
         f"Bound document root/query: {16 * len(cases)} native executions, {refusals} refusals; DOM/Core/Style only"
     )
