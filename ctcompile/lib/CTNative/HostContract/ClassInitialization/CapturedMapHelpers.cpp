@@ -98,11 +98,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
     // Overlapping DOM key lifetimes need alias partitions, not distinct SSA identities.
     auto & entry = scope.getBody().front();
     const auto entryPosition = [&](mlir::Operation * op) {
-        while (op->getBlock() != &entry && llvm::isa<mlir::scf::IfOp>(op->getParentOp())) {
-            if (!step()) { break; }
-            op = op->getParentOp();
-        }
-        return op;
+        return positionIn<mlir::scf::IfOp>(op, &entry);
     };
     const auto localMap = [&](mlir::Value value) {
         auto made = sourceValue(value).getDefiningOp<ctjs::ConstructOp>();
@@ -160,6 +156,14 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
         });
         llvm::DenseSet<mlir::Operation *> operations;
         llvm::DenseSet<mlir::Operation *> conditional;
+        // Record `op` and its ancestors below the scope as conditional.
+        const auto enclose = [&](mlir::Operation * op) {
+            for (; op != scope; op = op->getParentOp()) {
+                if (!step()) { return false; }
+                conditional.insert(op);
+            }
+            return true;
+        };
         llvm::SmallVector<ctjs::GetPropertyOp> selections;
         for (mlir::OpOperand * use : sourceUses(map.getResult())) {
             if (!step()) { return false; }
@@ -169,11 +173,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
             if (position->getBlock() != &entry || !map->isBeforeInBlock(position)) {
                 return refuse("class nested Map requires ordered entry operations");
             }
-            for (auto * parent = op->getParentOp(); parent != scope;
-                 parent = parent->getParentOp()) {
-                if (!step()) { return false; }
-                conditional.insert(parent);
-            }
+            if (!enclose(op->getParentOp())) { return false; }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(op);
                 call && use->getOperandNumber() == 1) {
                 auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -289,11 +289,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
             if (ctjs::constantKey(read.getKey()) == "get") {
                 observations.push_back(read.getResult());
             }
-            for (auto * parent = read->getParentOp(); parent != scope;
-                 parent = parent->getParentOp()) {
-                if (!step()) { return mlir::WalkResult::interrupt(); }
-                conditional.insert(parent);
-            }
+            if (!enclose(read->getParentOp())) { return mlir::WalkResult::interrupt(); }
             return mlir::WalkResult::advance();
         });
         if (childBranches.wasInterrupted() || !reason.empty()) { return false; }
@@ -325,11 +321,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                     if (entryPosition(branch)->getBlock() != &entry) {
                         return refuse("class nested Map result requires ordered entry branches");
                     }
-                    for (auto * parent = branch.getOperation(); parent != scope;
-                         parent = parent->getParentOp()) {
-                        if (!step()) { return false; }
-                        conditional.insert(parent);
-                    }
+                    if (!enclose(branch)) { return false; }
                     llvm::append_range(observations, branch.getResults());
                 }
             }

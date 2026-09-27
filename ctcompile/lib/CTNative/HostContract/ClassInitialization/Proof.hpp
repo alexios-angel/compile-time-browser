@@ -175,6 +175,18 @@ struct classInitialization {
     bool foldDecidedArms(ctjs::CreateClosureOp constructor,
                          llvm::ArrayRef<ctjs::ConstructOp> instances);
     bool freshFunctionIndex(unsigned & next);
+    // A copy of `fn` appended to the module as source function `index`.
+    ctjs::FuncOp cloneFunction(ctjs::FuncOp fn, unsigned index);
+    // The ancestor of `op` in `block` through Parents regions, one step each;
+    // where the chain leaves them or the budget stops, the operation reached.
+    template <class... Parents>
+    mlir::Operation * positionIn(mlir::Operation * op, mlir::Block * block) {
+        while (op->getBlock() != block && llvm::isa_and_nonnull<Parents...>(op->getParentOp())) {
+            if (!step()) { break; }
+            op = op->getParentOp();
+        }
+        return op;
+    }
     bool cloneReceiverMethods(ctjs::CreateClosureOp leaf, ctjs::CreateObjectOp prototype,
                               ctjs::CallOp helper, const llvm::StringSet<> & shadowed,
                               llvm::SmallVectorImpl<ctjs::SetPropertyOp> & selected,

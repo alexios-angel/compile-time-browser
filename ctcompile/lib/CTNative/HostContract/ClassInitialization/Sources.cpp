@@ -56,15 +56,10 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
         if (cells.count(cell.getResult())) { continue; }
         ctjs::CellSetOp first;
         const auto readPosition = [&](mlir::Operation * op) {
-            if (llvm::isa<ctjs::CellGetOp>(op)) {
-                while (op->getBlock() != cell->getBlock() &&
-                       llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp,
-                                             mlir::scf::IndexSwitchOp>(op->getParentOp())) {
-                    if (!step()) { break; }
-                    op = op->getParentOp();
-                }
-            }
-            return op;
+            return llvm::isa<ctjs::CellGetOp>(op)
+                       ? positionIn<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::IndexSwitchOp>(
+                             op, cell->getBlock())
+                       : op;
         };
         for (mlir::OpOperand & use : cell.getResult().getUses()) {
             if (!step()) { return false; }
@@ -1181,6 +1176,13 @@ bool classInitialization::freshFunctionIndex(unsigned & next) {
     return true;
 }
 
+ctjs::FuncOp classInitialization::cloneFunction(ctjs::FuncOp fn, unsigned index) {
+    auto copy = llvm::cast<ctjs::FuncOp>(fn->clone());
+    copy.setSymName((fn.getSymName().rsplit('$').first + "$" + llvm::Twine(index)).str());
+    module.getBody()->push_back(copy);
+    return functions[index] = copy;
+}
+
 bool classInitialization::cloneReceiverMethods(
     ctjs::CreateClosureOp leaf, ctjs::CreateObjectOp prototype, ctjs::CallOp helper,
     const llvm::StringSet<> & shadowed, llvm::SmallVectorImpl<ctjs::SetPropertyOp> & selected,
@@ -1220,10 +1222,7 @@ bool classInitialization::cloneReceiverMethods(
         }
         unsigned index = 0;
         if (!freshFunctionIndex(index)) { return false; }
-        auto copy = llvm::cast<ctjs::FuncOp>(fn->clone());
-        copy.setSymName((fn.getSymName().rsplit('$').first + "$" + llvm::Twine(index)).str());
-        module.getBody()->push_back(copy);
-        functions[index] = copy;
+        cloneFunction(fn, index);
         mlir::OpBuilder at(helper);
         auto made = ctjs::CreateClosureOp::create(
             at, closure.getLoc(), closure.getType(), closure.getEnclosingClosure(),
@@ -1280,11 +1279,7 @@ bool classInitialization::cloneReceiverGetters(
         const bool reached = depends(depends, key, 0);
         if (!reason.empty()) { return false; }
         if (!reached) { continue; }
-        auto copy = llvm::cast<ctjs::FuncOp>(source->clone());
-        copy.setSymName((source.getSymName().rsplit('$').first + "$" + llvm::Twine(next)).str());
-        module.getBody()->push_back(copy);
-        functions[next++] = copy;
-        clones[key] = copy;
+        clones[key] = cloneFunction(source, next++);
     }
     return true;
 }
