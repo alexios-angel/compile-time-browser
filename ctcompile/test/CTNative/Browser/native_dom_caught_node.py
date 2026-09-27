@@ -321,6 +321,77 @@ SOURCES = {
   } catch (error) { return error === anchor; }
 }
 """,
+    "write-boolean-read-conditional-prefix-return": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : false;
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-boolean-read-conditional-prefix-snapshot": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : false;
+  try {
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-boolean-read-conditional-prefix-nullable-return": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : null;
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-boolean-read-conditional-prefix-nullable-forwarded-null": """function customElements(anchor) {
+  const flag = anchor.hasAttribute('flag');
+  const empty = flag ? null : null;
+  const saved = flag ? anchor.hasAttribute('data-number') : empty;
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-boolean-read-conditional-prefix-nullable-snapshot": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : null;
+  try {
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-nullable-number-conditional-prefix-return": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? 42 : null;
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-nullable-number-conditional-prefix-forwarded-null": """function customElements(anchor) {
+  const flag = anchor.hasAttribute('flag');
+  const empty = flag ? null : null;
+  const saved = flag ? 42 : empty;
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
+    "write-nullable-number-conditional-prefix-snapshot": """function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? 42 : null;
+  try {
+    anchor.setAttribute('data-number', '99');
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+""",
     "helper-next-record": """function customElements(anchor) {
   function next() {
     const done = anchor.hasAttribute('data-yielded');
@@ -427,6 +498,14 @@ NUMBER_CONDITIONAL_READS = {
     "write-number-read-arithmetic-conditional-callee": ("data-closed", "1"),
     "write-string-read-conditional-prefix-return": ("flag", "null"),
     "write-string-read-conditional-prefix-snapshot": ("flag", "null"),
+    "write-boolean-read-conditional-prefix-return": ("flag", "false"),
+    "write-boolean-read-conditional-prefix-snapshot": ("flag", "false"),
+    "write-boolean-read-conditional-prefix-nullable-return": ("flag", "null"),
+    "write-boolean-read-conditional-prefix-nullable-forwarded-null": ("flag", "null"),
+    "write-boolean-read-conditional-prefix-nullable-snapshot": ("flag", "null"),
+    "write-nullable-number-conditional-prefix-return": ("flag", "null"),
+    "write-nullable-number-conditional-prefix-forwarded-null": ("flag", "null"),
+    "write-nullable-number-conditional-prefix-snapshot": ("flag", "null"),
 }
 
 
@@ -550,6 +629,9 @@ def main():
     includes, libraries = dom.link_options(args)
     for name, source in SOURCES.items():
         string_read = name.startswith("write-string-read-")
+        boolean_read = name.startswith("write-boolean-read-conditional-prefix-")
+        nullable_number = name.startswith("write-nullable-number-conditional-prefix-")
+        attribute_read = string_read or boolean_read or nullable_number
         number_inputs = (
             tuple(
                 zip(
@@ -565,6 +647,10 @@ def main():
             number_inputs = tuple(
                 (value, "null" if value is None else value) for value, _ in NUMBER_READ_INPUTS
             )
+        if boolean_read:
+            number_inputs = ((None, "false"), ("", "true"))
+        if nullable_number:
+            number_inputs = ((None, "42"), ("", "42"))
         script = (
             source
             + "function observe(closed) { let reads = 0; "
@@ -574,7 +660,7 @@ def main():
         )
         if name.startswith("write-"):
             script = source + WRITE_OBSERVER
-        if name.startswith("write-number-") or string_read:
+        if name.startswith("write-number-") or attribute_read:
             script = source + NUMBER_WRITE_OBSERVER
         number_boolean = name.startswith("write-number-boolean-")
         if number_boolean:
@@ -585,13 +671,13 @@ def main():
                 "saved['data-closed'] = 'yes'", f"saved[{condition[0]!r}] = 'yes'"
             )
         number_read = name.startswith("write-number-read")
-        if number_read or string_read:
+        if number_read or attribute_read:
             script = script.replace(
                 "var result0 = observe(false), result1 = observe(true);",
                 "\n".join(
                     f"var result{index} = ["
                     + ", ".join(
-                        f"observe({closed}, {json.dumps(value)})" for value, _ in NUMBER_READ_INPUTS
+                        f"observe({closed}, {json.dumps(value)})" for value, _ in number_inputs
                     )
                     + "].join('|');"
                     for index, closed in enumerate(("false", "true"))
@@ -658,15 +744,18 @@ def main():
                 )
         if name in WRITE_EXPECTED:
             expected = WRITE_EXPECTED[name]
-        if number_read or string_read:
+        if number_read or attribute_read:
             expected = ""
             for index in (0, 1):
                 trace = "|".join(
                     "true:"
                     + (f"read:{condition[0]}={'true' if index else 'false'};" if condition else "")
                     + (
-                        "get:data-number=" + ("null" if value is None else value) + ";"
-                        if not condition or index
+                        ("read" if boolean_read else "get")
+                        + ":data-number="
+                        + (result if boolean_read else ("null" if value is None else value))
+                        + ";"
+                        if (not condition or index) and not nullable_number
                         else ""
                     )
                     + ("write:data-number=99;" if name.endswith("-snapshot") else "")
@@ -844,7 +933,7 @@ def main():
             )
             if number_boolean:
                 checks = checks.replace('"data-closed"', '"flag"')
-        if number_read or string_read:
+        if number_read or attribute_read:
             inputs = ",\n".join(
                 "{"
                 + ("nullptr" if value is None else json.dumps(value, ensure_ascii=False))
@@ -915,8 +1004,22 @@ def main():
                 )
                 if "throw " in source_cpp or "catch (" in source_cpp:
                     raise RuntimeError("confined node escaped into a native exception")
-                dom.standalone(args, native, label, checks, compilers, includes, libraries)
-                if name == "helper-next-record" or name.startswith("write-number-") or string_read:
+                dom.standalone(
+                    args,
+                    native,
+                    label,
+                    checks,
+                    compilers,
+                    includes,
+                    libraries,
+                    allow_nullable_scalar=nullable_number
+                    or name.startswith("write-boolean-read-conditional-prefix-nullable-"),
+                )
+                if (
+                    name == "helper-next-record"
+                    or name.startswith("write-number-")
+                    or attribute_read
+                ):
                     dom.lower(
                         args,
                         ir,
@@ -1242,6 +1345,97 @@ def main():
             )
         }
     )
+    conditional_boolean_body = (
+        SOURCES["write-boolean-read-conditional-prefix-return"].split("{", 1)[1].rsplit("}", 1)[0]
+    )
+    refusals.update(
+        {
+            "write-boolean-read-conditional-prefix-"
+            + name: conditional_boolean_body.replace(before, after)
+            for name, before, after in (
+                ("unknown-condition", "anchor.hasAttribute('flag')", "anchor.unknown"),
+                (
+                    "condition-effect",
+                    "anchor.hasAttribute('flag')",
+                    "(anchor.unknown(), anchor.hasAttribute('flag'))",
+                ),
+                (
+                    "then-effect",
+                    "anchor.hasAttribute('data-number')",
+                    "(anchor.unknown(), anchor.hasAttribute('data-number'))",
+                ),
+                ("else-effect", ": false;", ": (anchor.unknown(), false);"),
+                ("then-coercion", "anchor.hasAttribute('data-number')", "anchor"),
+                ("else-coercion", ": false;", ": anchor;"),
+                (
+                    "wrong-receiver",
+                    "anchor.hasAttribute('data-number')",
+                    "(0, anchor.hasAttribute)('data-number')",
+                ),
+                (
+                    "rebound-predicate",
+                    "const saved =",
+                    "anchor.hasAttribute = anchor.setAttribute; const saved =",
+                ),
+                ("missing-argument", "hasAttribute('data-number')", "hasAttribute()"),
+                (
+                    "extra-argument",
+                    "hasAttribute('data-number')",
+                    "hasAttribute('data-number', 'extra')",
+                ),
+                ("coercing-name", "hasAttribute('data-number')", "hasAttribute(anchor)"),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
+    refusals.update(
+        {
+            name.replace("prefix-", "prefix-nullable-", 1): body.replace(
+                ": false;", ": null;"
+            ).replace("(anchor.unknown(), false)", "(anchor.unknown(), null)")
+            for name, body in refusals.items()
+            if name.startswith("write-boolean-read-conditional-prefix-")
+        }
+    )
+    # Null never authorizes a Number method; undefined and String arms are not
+    # Number/null alternatives.
+    nullable_number_body = (
+        SOURCES["write-nullable-number-conditional-prefix-return"]
+        .split("{", 1)[1]
+        .rsplit("}", 1)[0]
+    )
+    refusals.update(
+        {
+            "write-nullable-number-conditional-prefix-"
+            + name: nullable_number_body.replace(before, after)
+            for name, before, after in (
+                ("unknown-condition", "anchor.hasAttribute('flag')", "anchor.unknown"),
+                (
+                    "condition-effect",
+                    "anchor.hasAttribute('flag')",
+                    "(anchor.unknown(), anchor.hasAttribute('flag'))",
+                ),
+                ("then-effect", "? 42 :", "? (anchor.unknown(), 42) :"),
+                ("else-effect", ": null;", ": (anchor.unknown(), null);"),
+                ("then-coercion", "? 42 :", "? -anchor :"),
+                ("else-coercion", ": null;", ": anchor;"),
+                ("else-undefined", ": null;", ": undefined;"),
+                ("else-string", ": null;", ": 'text';"),
+                ("number-method", "'data-written', saved)", "'data-written', saved.toString())"),
+                (
+                    "wrong-receiver",
+                    "anchor.hasAttribute('flag')",
+                    "(0, anchor.hasAttribute)('flag')",
+                ),
+                (
+                    "rebound-predicate",
+                    "const saved =",
+                    "anchor.hasAttribute = anchor.setAttribute; const saved =",
+                ),
+                ("invalid-name", "'data-written'", "'bad name'"),
+            )
+        }
+    )
     nested_body = SOURCES["mixed-node-nested-state"].split("{", 1)[1].rsplit("}", 1)[0]
     refusals["nested-protected-throw-call"] = nested_body.replace(
         "throw anchor;", "decodeURIComponent('%'); throw anchor;"
@@ -1468,6 +1662,14 @@ RAW_HELPER_SOURCES |= {
     )
     .replace("throw anchor;", "throw (true ? 'a\\0' : '') > 'a' ? anchor : null;")
     for name, source in OUTER_SOURCES.items()
+}
+# Canonical Strings whose UTF-16 order differs from their WTF-8 byte order.
+RAW_HELPER_SOURCES |= {
+    name.replace("-helper-string-order", "-helper-unicode-order"): source.replace(
+        "'10' < '2'", "'\\uD800\\uDC00' < '\\uE000'"
+    )
+    for name, source in RAW_HELPER_SOURCES.items()
+    if name.endswith("-helper-string-order")
 }
 
 
@@ -1718,47 +1920,6 @@ var outcome0 = observe(false), outcome1 = observe(true);
                     success=False,
                     max_steps=0,
                 )
-        if name.endswith("-helper-string-order"):
-            # Preserve the complete witness at the VM's known byte/UTF-16
-            # disagreement. A larger proof budget must not admit it.
-            label = name + "-unicode-disagreement"
-            refused_source = source.replace("'10' < '2'", "'\\uD800\\uDC00' < '\\uE000'")
-            refused_oracle = args.work / f"{label}.oracle.js"
-            refused_node = args.work / f"{label}.node.js"
-            refused_oracle.write_text(script.replace(source, refused_source, 1))
-            refused_node.write_text(node.read_text().replace(source, refused_source, 1))
-            if run([args.node, str(refused_node)]).stdout != expected:
-                raise RuntimeError(f"{label}: JavaScript UTF-16 ordering changed")
-            vm_expected = 'outcome0="return:false:"\noutcome1="return:false:"\n'
-            if unquote(run([args.reference, str(refused_oracle)]).stdout) != vm_expected:
-                raise RuntimeError(f"{label}: revisit the VM String-order refusal")
-            refused_ir, refused_contract = dom.prepare(
-                args, label, refused_source, 1, entry_name="customElements"
-            )
-            for stage, input_ir in (
-                ("raw", args.work / f"{label}.raw.mlir"),
-                ("structured", refused_ir),
-            ):
-                manifest = dict(
-                    refused_contract,
-                    module_sha256=dom.fingerprint(args.opt, input_ir),
-                    initial_intrinsics=INTRINSICS,
-                )
-                diagnostic = dom.lower(
-                    args,
-                    input_ir,
-                    manifest,
-                    label + "-" + stage,
-                    success=False,
-                    max_steps=1_000_000,
-                )
-                expected_reason = (
-                    "DOM Symbol.iterator must be a closed identity method"
-                    if stage == "raw"
-                    else "DOM Symbol.iterator identity method has additional effects"
-                )
-                if expected_reason not in diagnostic:
-                    raise RuntimeError(f"{label}: lost String-order refusal: {diagnostic}")
 
 
 if __name__ == "__main__":

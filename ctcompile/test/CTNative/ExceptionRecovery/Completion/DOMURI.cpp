@@ -4,6 +4,7 @@
 #include "../../../../lib/CTNative/HostContract/Preparation.h"
 #include "ClassTransactions.hpp"
 #include "DOMObservedState.hpp"
+#include "ctbrowser/core/symbol.hpp"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
@@ -1337,8 +1338,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::CompareKind::Gt, 62, 61, true},
         {ctjs::CompareKind::Lt, 56, 54, true}, // literal replacement character is canonical
         {ctjs::CompareKind::Le, 7, 7, true},   // equality includes embedded NUL
-        // Canonical inputs whose UTF-16 ordering disagrees with the current VM
-        // byte ordering cannot authorize either selected branch.
+        // Canonical inputs whose UTF-16 ordering disagrees with their byte order.
         {ctjs::CompareKind::Lt, 59, 54, true},
         {ctjs::CompareKind::Le, 59, 54, true},
         {ctjs::CompareKind::Gt, 59, 54, false},
@@ -2332,7 +2332,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                   (power && index == 18))) ||
                 (numericUnary && (index < 15 || (!coercingUnary && index == 18))) ||
                 (equality &&
-                 ((stringComparison ? stringIndex < 40 || (index >= 27 && index < 31)
+                 ((stringComparison ? stringIndex < 48 || (index >= 27 && index < 31)
                                     : index < 31) ||
                   (!stringComparison && (convertedComparison ? index == 37 || index == 38
                                                              : index >= 37 && index <= 44))))) {
@@ -2776,7 +2776,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             (control >= 644 && control < 708) || control == 218 || control == 219 ||
             (control >= 508 && control < 516) || (control >= 720 && control < 736) ||
             (control >= 748 && control < 828) || (control >= 848 && control < 856) ||
-            (control >= 868 && control < 872) || (control >= 896 && control < 976) ||
+            (control >= 868 && control < 872) || (control >= 896 && control < 992) ||
             (control >= 1016 && control < 1024) || (control >= 1048 && control < 1072) ||
             (control >= 1080 && control < 1088) || (control >= 1096 && control < 1136) ||
             (control >= 1148 && control < 1154) || control == 316 || control == 317 ||
@@ -3076,8 +3076,9 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                 ctjs::StoreGlobalOp::create(at, call.getLoc(), "holder", escaped);
             } else if (control == 9) {
                 at.setInsertionPoint(attempt);
-                auto key = ctjs::ConstantOp::create(at, call.getLoc(),
-                                                    ctjs::StringAttr::get(&context, "@@iterator"));
+                auto key = ctjs::ConstantOp::create(
+                    at, call.getLoc(),
+                    ctjs::StringAttr::get(&context, CTBROWSER_SYMBOL_KEY("iterator")));
                 auto number =
                     ctjs::ConstantOp::create(at, call.getLoc(), ctjs::NumberAttr::get(&context, 0));
                 ctjs::SetPropertyOp::create(at, call.getLoc(), holder, key, number);
@@ -5011,7 +5012,188 @@ static void testSelectedAttributeStrings(mlir::MLIRContext & context) {
     }
 }
 
+enum class SavedSelection {
+    boolean,
+    nullableBoolean,
+    nullableNumber
+};
+
+static void testSavedAttributePredicates(mlir::MLIRContext & context, SavedSelection mode) {
+    using namespace ctcompile::ctnative;
+    const bool nullable = mode != SavedSelection::boolean;
+    const bool number = mode == SavedSelection::nullableNumber;
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < (number ? 36u : 30u); ++control) {
+            if (nullable && (control == 1 || control == 4)) { continue; }
+            // Number mode replaces the data-number producer with 42; 9, 18 and 19
+            // already replaced it, so they would repeat the null mode's sources.
+            if (number && (control == 9 || control == 18 || control == 19)) { continue; }
+            std::string source = R"js(function guarded(anchor) {
+                const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : false;
+                try {
+                    anchor.setAttribute('data-written', saved);
+                    return true;
+                } catch (error) { return error === anchor; }
+            })js";
+            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
+                source.replace(source.find(from.str()), from.size(), to.str());
+            };
+            if (control == 1) {
+                replace("anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : false",
+                        "anchor.hasAttribute('data-number')");
+            }
+            if (control == 2) {
+                replace("anchor.hasAttribute('data-number') : false",
+                        "false : anchor.hasAttribute('data-number')");
+            }
+            if (control == 3 || control == 11) {
+                replace(
+                    "anchor.hasAttribute('data-number')",
+                    "(anchor.hasAttribute('inner') ? anchor.hasAttribute('data-number') : false)");
+                if (control == 11) { replace(": false)", ": anchor)"); }
+            }
+            if (control == 4) { replace(": false", ": anchor.hasAttribute('other')"); }
+            if (control == 5) {
+                replace("try {", "try { anchor.setAttribute('data-number', '99');");
+            }
+            if (control == 6) {
+                replace("try {", "anchor.setAttribute('data-number', '99'); try {");
+            }
+            if (control == 7) {
+                replace("try {", "const alias = anchor; "
+                                 "alias.setAttribute('data-number', '99'); try {");
+            }
+            if (control == 8) { replace("return true;", "throw anchor;"); }
+            if (control == 9) { replace("anchor.hasAttribute('data-number')", "anchor"); }
+            if (control == 10) { replace(": false", ": anchor"); }
+            if (control == 12) { replace("anchor.hasAttribute('flag')", "unknown()"); }
+            if (control == 13) {
+                replace("anchor.hasAttribute('data-number')",
+                        "(unknown(), anchor.hasAttribute('data-number'))");
+            }
+            if (control == 14) { replace(": false", ": (unknown(), false)"); }
+            if (control == 15) { replace("try {", "try { unknown();"); }
+            if (control == 16) {
+                replace("const saved =", "anchor.hasAttribute = anchor; const saved =");
+            }
+            if (control == 17) { replace("data-written", "bad name"); }
+            if (control == 18) {
+                replace("anchor.hasAttribute('data-number')", "anchor.unknown('data-number')");
+            }
+            if (control == 19) {
+                replace("anchor.hasAttribute('data-number')", "anchor.hasAttribute(anchor)");
+            }
+            if (control == 28) { replace(": false", ": (anchor = false, false)"); }
+            if (control == 29) { replace("const saved =", "unknown(); const saved ="); }
+            if (nullable) {
+                for (auto offset = source.find("false"); offset != std::string::npos;
+                     offset = source.find("false", offset + 4)) {
+                    source.replace(offset, 5, "null");
+                }
+            }
+            if (number) {
+                replace("anchor.hasAttribute('data-number')", "42");
+                if (control == 30) { replace("? 42", "? (40 + 2)"); }
+                if (control == 31) {
+                    replace(": null", ": (anchor.hasAttribute('inner') ? null : -7)");
+                }
+                if (control == 32) {
+                    replace("'data-written', saved", "'data-written', saved.toString()");
+                }
+                if (control == 33) { replace("? 42", "? -anchor"); }
+                if (control == 34) { replace(": null", ": 'text'"); }
+                if (control == 35) { replace(": null", ": undefined"); }
+            }
+            auto candidate = import(context, source, true);
+            if (!candidate) { continue; }
+            auto function = guarded(*candidate);
+            llvm::SmallVector<ctjs::CallOp> calls;
+            function.walk([&](ctjs::CallOp call) { calls.push_back(call); });
+            if (!check(calls.size() >= 2, "saved predicate source retains producer and write")) {
+                continue;
+            }
+            auto anchor = function.getBody().front().getArgument(ctjs::implicit_arguments);
+            if (control == 20) {
+                calls[1].getReceiverMutable().assign(function.getBody().front().getArgument(0));
+            }
+            if (control == 21) { calls[1].getCalleeMutable().assign(anchor); }
+            if (control == 22) { calls[1].getArgsMutable().append(anchor); }
+            if (control == 23) { calls[1].getArgsMutable().clear(); }
+            mlir::Builder builder(&context);
+            for (auto call : calls) {
+                call->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+            }
+            HostContract request;
+            request.provider = provider;
+            request.entry = function.getSymName().str();
+            if (control != 24) { request.elementParameters = {0}; }
+            // With the initial Number.prototype.toString, only the null arm refuses.
+            if (control == 32) { request.initialIntrinsics = {"Number"}; }
+            request.moduleSha256 = hostContractFingerprint(*candidate);
+            if (control == 25) { request.moduleSha256 = "stale"; }
+            const auto originalContract = request;
+            const auto original = printed(*candidate);
+            auto error = prepareDOMEntry(*candidate, request,
+                                         control == 26   ? 0
+                                         : control == 27 ? 500
+                                                         : 100000);
+            if (control >= 9 && control != 30 && control != 31) {
+                check(static_cast<bool>(error) && printed(*candidate) == original &&
+                          request.moduleSha256 == originalContract.moduleSha256 &&
+                          request.initialIntrinsics == originalContract.initialIntrinsics &&
+                          request.elementParameters == originalContract.elementParameters &&
+                          request.provider == originalContract.provider &&
+                          request.entry == originalContract.entry,
+                      "saved predicate refusal preserves both arms and the whole transaction");
+                if (error) { llvm::consumeError(std::move(error)); }
+                continue;
+            }
+            if (!check(!error, "saved Boolean predicate completes its protected write")) {
+                llvm::errs() << "saved predicate control " << control << " nullable=" << nullable
+                             << " number=" << number << ": " << llvm::toString(std::move(error))
+                             << '\n';
+                continue;
+            }
+            DOMEntryAnalysis proof(*candidate, request);
+            check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                  "saved predicate requires fresh complete DOM proof");
+            llvm::SmallVector<ctjs::CallOp> predicates, writes;
+            guarded(*candidate).walk([&](ctjs::CallOp call) {
+                const auto * method = proof.call(call);
+                if (!check(method != nullptr, "every retained predicate call has DOM proof")) {
+                    return;
+                }
+                if (method->kind == HostDOMMethod::hasAttribute) { predicates.push_back(call); }
+                if (method->kind == HostDOMMethod::setAttribute) { writes.push_back(call); }
+            });
+            const bool mutation = control >= 5 && control <= 7;
+            // Number mode's 42 stands where the data-number predicate was.
+            const unsigned expected = (control == 1                                    ? 1u
+                                       : control == 3 || control == 4 || control == 31 ? 3u
+                                                                                       : 2u) -
+                                      (number ? 1u : 0u);
+            if (!check(predicates.size() == expected && writes.size() == (mutation ? 2u : 1u),
+                       "each predicate and ordered write occurs exactly once")) {
+                continue;
+            }
+            auto saved = writes.back().getArgs()[1];
+            auto selected = saved.getDefiningOp<mlir::scf::IfOp>();
+            auto * origin =
+                control == 1 ? predicates.front().getOperation() : selected.getOperation();
+            check((control == 1 ? saved == predicates.front().getResult() : bool(selected)) &&
+                      origin && origin->getBlock() == writes.front()->getBlock() &&
+                      origin->isBeforeInBlock(writes.front()) &&
+                      (!mutation || writes.front()->isBeforeInBlock(writes.back())),
+                  "write consumes the saved Boolean before direct and alias DOM mutations");
+        }
+    }
+}
+
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    testSavedAttributePredicates(context, SavedSelection::boolean);
+    testSavedAttributePredicates(context, SavedSelection::nullableBoolean);
+    testSavedAttributePredicates(context, SavedSelection::nullableNumber);
     testSelectedAttributeStrings(context);
     testSavedAttributeStrings(context);
     testProtectedNumberStrings(context);

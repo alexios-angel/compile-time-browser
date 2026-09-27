@@ -597,7 +597,16 @@ def link_options(args, *, selectors=False, core_only=False):
 
 
 def standalone(
-    args, native, name, checks, compilers, includes, libraries, *, allow_undefined=False
+    args,
+    native,
+    name,
+    checks,
+    compilers,
+    includes,
+    libraries,
+    *,
+    allow_undefined=False,
+    allow_nullable_scalar=False,
 ):
     text = native.read_text()
     entries = NATIVE.findall(text)
@@ -610,6 +619,13 @@ def standalone(
         raise RuntimeError(f"{name}: expected exactly the typed entry without a launcher\n{text}")
     deduced = args.work / f"{name}.deduced.mlir"
     run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
+    if allow_nullable_scalar:
+        # The entry still returns a Boolean; only a proved local Boolean/null or
+        # Number/null selection uses the existing native tagged scalar.
+        checks = (
+            "static_assert(std::is_same_v<decltype(@ENTRY@(element)), ctnative::js_boolean_t>);"
+            + checks
+        )
     client = (
         CLIENT.replace("@CHECKS@", checks).replace("@ENTRY@", entries[0]).replace("@NAME@", name)
     )
@@ -627,7 +643,7 @@ def standalone(
                 "",
                 cpp,
             )
-        if "nullable_scalar" in scalar_uses:
+        if "nullable_scalar" in scalar_uses and not allow_nullable_scalar:
             raise RuntimeError(f"{name}/{mode}: Boolean DOM entry carries a scalar value model")
         # The runtime header's helpers are the shared browser API's callers
         # (toggle_class -> ctbrowser::toggle_token, and so on); the program

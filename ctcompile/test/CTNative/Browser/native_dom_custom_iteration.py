@@ -715,6 +715,16 @@ POSITIVES = (
     ),
     ("mutable-receiver-counter", RECEIVER_SOURCE, True, ("1", "1", "1"), True, "yes"),
     (
+        "mutable-receiver-string-iterator-key",
+        RECEIVER_SOURCE.replace("emitted: 0,", "'@@iterator': 0,").replace(
+            "this.emitted", "this['@@iterator']"
+        ),
+        True,
+        ("1", "1", "1"),
+        True,
+        "yes",
+    ),
+    (
         # The close hook sees both fields after next(), in source update order.
         "mutable-receiver-return-state",
         RECEIVER_SOURCE.replace("emitted: 0,", "emitted: 0,\n    closed: 1,")

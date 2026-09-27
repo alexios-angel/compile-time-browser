@@ -827,7 +827,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         const bool sets = hasKind(invoke.getCallee(), Kind::attribute);
         if ((sets && arguments.size() == 2 && hasKind(arguments[0], Kind::string) &&
              (hasKind(arguments[1], Kind::string) || hasKind(arguments[1], Kind::boolean) ||
-              hasKind(arguments[1], Kind::number) ||
+              hasKind(arguments[1], Kind::optionalBoolean) || hasKind(arguments[1], Kind::number) ||
+              hasKind(arguments[1], Kind::optionalNumber) ||
               hasKind(arguments[1], Kind::optionalString))) ||
             (hasKind(invoke.getCallee(), Kind::removeAttribute) && arguments.size() == 1 &&
              hasKind(arguments[0], Kind::string))) {

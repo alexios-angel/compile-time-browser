@@ -1,6 +1,7 @@
 #include "../../../Analysis/StringNumber.h"
 #include "../../Prefix.h"
 #include "../Source/Proof.hpp"
+#include "ctbrowser/core/symbol.hpp"
 #include "ctcompile/CTNative/Runtime/String.hpp"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Verifier.h"
@@ -297,9 +298,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return std::nullopt;
             }
             const auto order = left <=> right;
-            // ponytail: the VM still orders bytes. Refuse disagreements until
-            // its String ordering follows UTF-16 too; never alter the oracle.
-            if (order != (a <=> b)) { return std::nullopt; }
             switch (comparison.getKind()) {
             case ctjs::CompareKind::Lt: return order < 0;
             case ctjs::CompareKind::Le: return order <= 0;
@@ -690,7 +688,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto constant = store.getValue().getDefiningOp<ctjs::ConstantOp>();
             auto name = ctjs::constantKey(store.getKey());
             // The interpreter's well-known Symbol spelling shares this slot.
-            if (name == "@@iterator") {
+            if (name == CTBROWSER_SYMBOL_KEY("iterator")) {
                 return error("DOM custom iterator state aliases its iterator method");
             }
             if (!constant || !llvm::isa<ctjs::NumberAttr>(constant.getValue()) ||

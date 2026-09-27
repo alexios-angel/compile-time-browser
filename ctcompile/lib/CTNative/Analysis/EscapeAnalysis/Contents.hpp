@@ -111,6 +111,35 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
                     value = common;
                     continue;
                 }
+                // Nested selections may forward one saved SSA leaf through
+                // different immediate results. Keep exact identity only; every
+                // arm's producers and effects still require census and replay.
+                llvm::SmallVector<mlir::Value, 4> pending{value};
+                while (!pending.empty()) {
+                    if (!spend(1)) { return {}; }
+                    auto current = pending.pop_back_val();
+                    auto nested = current.getDefiningOp<mlir::scf::IfOp>();
+                    if (!nested) {
+                        if (common && common != current) { return value; }
+                        common = current;
+                        continue;
+                    }
+                    const auto slot = llvm::cast<mlir::OpResult>(current).getResultNumber();
+                    for (mlir::Region & region : nested->getRegions()) {
+                        if (!spend(1)) { return {}; }
+                        if (!llvm::hasSingleElement(region) || region.front().empty() ||
+                            region.front().getNumArguments() != 0) {
+                            return value;
+                        }
+                        auto yield =
+                            llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                        if (!yield || yield.getNumOperands() != nested.getNumResults()) {
+                            return value;
+                        }
+                        pending.push_back(yield.getOperand(slot));
+                    }
+                }
+                if (common) { return common; }
             }
             return value;
         }

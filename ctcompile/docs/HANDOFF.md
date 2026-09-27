@@ -22,6 +22,216 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved nullable Boolean snapshots and nested truthiness, 2026-09-26 UTC
+
+Continued **00685566** and the exact saved Boolean/null source refusal. The
+checkout began clean and earlier work was fully landed. Work saved by interrupted
+source, transaction and escape agents was resumed; completed local checks were
+retained. Claude's Linux loop was running; Windows process inspection succeeded
+with 342 processes and no Claude identity. Concurrent rules applied throughout.
+
+**2d5c5a44** admits null leaves in the existing Boolean-origin proof used
+only for nonthrowing primitive conversion. Existing charged all-arm traversal,
+producer effects, method/receiver identity, saved snapshots and complete private
+DOM admission remain required. The shared harness adds 56 nullable transactions:
+14 admissions and 42 rollback refusals across both providers, preserving all
+previous Boolean bodies. The final private DOM proof now has a Boolean/null
+kind accepted only by compatible conditional joins and attribute writes.
+Emission preserves exact null in the existing finite scalar carrier and uses
+its existing String conversion before calling the public DOM helper; no runtime
+API or browser implementation changed. **907a48ec** adds the exact complete
+witness, a later-mutation snapshot, a null-only intermediate selection and twelve
+refusal bodies; all 68 prior direct, two outer and 44 raw-helper sources,
+156 literal entries and 163 generated refusal bodies remain unchanged.
+
+Six explicit devbox targets: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference` and `ctcompile-test-escape-analysis-arrays`.
+Exact CTests each passed 1/1 (total elapsed):
+`ctcompile_exception_recovery` 20.86 s, `ctcompile_host_contract` 2.79 s and
+unchanged-production `ctcompile_escape_analysis_arrays` baseline 5.96 s.
+
+The three selected complete programs passed **24 generated C++ files, 48 GCC/Clang executions,
+12 admissions and 76 refusals**, including 12 zero-budget refusals. Node/VM
+observations retain read/write order; native checks cover two documents and
+16 lifetimes. The first source gate stopped before C++ execution on the
+harness's old blanket nullable-scalar ban. The helper now permits the local
+carrier only for opted-in Boolean/null fixtures, checks the exact Boolean entry
+return type and retains all source/linked-symbol Script/AOT exclusions. The next
+attempt exposed an invalid optional-String-to-scalar call for exact null. Branch
+edges are converted before ctjs constants become EmitC constants; the shared
+conversion now recognizes both exact representations. A transported null-only
+join is identified by intersecting the host String/null proof with the existing
+absent-only type lattice, excluding both undefined and String. Its complete
+source is retained as the third persistent native fixture. Only `ctjs-opt` and
+`ctjs-translate` were rebuilt for that correction; the three completed CTests
+were retained and the previously uncompleted source checks resumed. The
+two-target rebuild completed in three incremental steps. Eleven final frozen source hashes
+matched locally and on the devbox. All 24 generated files were retrieved.
+Inspected explicit/deduced output preserves the selected Boolean/null value
+before later mutation, converts it through the existing finite scalar/String
+operations and calls public DOM helpers. The null-only intermediate selection
+folds to an exact null; the session owns its document by value. No Script/AOT
+source or linked-symbol dependency appeared.
+
+**3fbf9ca2** completes the separately measured nested-truthiness refusal.
+The original three-level selection body is preserved, now admitted only when
+every corresponding leaf is the same saved SSA value. The 29-line fallback
+shares the existing work budget and returns no partial key on exhaustion;
+census and replay still check both arms, producer effects and mutable snapshots.
+The baseline passed with 653 rows, 318 live states and 277,471 budget cutoffs
+before any production escape edit. Six further static rows and eight live
+mutation states cover Not polarity, tuple slots, differing reads, arm effects,
+guard changes, stale solver state and forged completion markers.
+
+Two explicit targets, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`, built in seven incremental steps.
+Both final source hashes matched locally and on the devbox. Exact CTests each
+passed 1/1 (total elapsed): arrays **5.93 s**, completion **0.02 s**. Arrays
+reported **659 rows, 326 live states and 286,394 budget cutoffs**; completion
+reported 66 rows. Independent review found no remaining blocker. No allocation,
+raw lifetime-oracle or performance improvement is claimed.
+
+Local checks passed: twelve ordered Node observations, 19 JavaScript syntax
+checks, Python syntax, Black, scoped pinned C++ formatting and diff checks.
+Accidental default-width Black reflow was removed with Python AST equivalence
+checked. `tools/format.sh --check` completed with ten existing diagnostics in
+untouched browser `events/handler_names.hpp`; no changed-file diagnostics remain.
+
+Full CTest/compiler lit, other source fixtures, broad corpus/matrices, raw escape
+allocation/lifetime oracles, full Bootstrap, WPT/test262, sanitizers, Windows/macOS
+and performance checks were skipped. No browser/shared implementation edits,
+local C++ builds, pushes or history rewrites occurred.
+
+**Next measured boundary:** this complete saved Number/null program still refuses:
+
+```javascript
+function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? 42 : null;
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+```
+
+With `ctbrowser-dom-v1`, no initial intrinsics and optimization disabled, the
+measured diagnostic remains `native DOM source: DOM URI requires its
+fingerprinted initial provider binding`. Do not add URI intrinsics or remove
+the catch to bypass this boundary.
+
+For that follow-up, keep Number method receivers exact. The current
+`numberValue()` also authorizes Number `toString()` calls; simply adding null to
+that predicate would be unsound. Prove nonthrowing attribute conversion
+separately, preserving the complete handler, both arms, saved read order and
+fresh private DOM admission.
+
+A parallel read-only integration audit also found that the preserved UTF-16
+String-order witnesses still assert an old VM disagreement, although integrated
+browser commit **2b710a0d** now uses `script::utf16::compare`. The next bounded
+integration step is to measure those two complete witnesses against Node and
+VM, then remove the obsolete private DOM compatibility restriction and promote
+the existing transaction controls. This was code-inspected, not executed here;
+no runtime change is called for.
+
+The native application driver, full Bootstrap and broader escape plan remain
+unfinished. Evidence: `../ctcompile-plan/evidence/2026-09-26-nullable-boolean-truthiness/`.
+
+## Saved Boolean snapshots and iterator Symbol-key integration, 2026-09-26 UTC
+
+Continued **bbf421ba** and its measured saved conditional Boolean predicate
+refusal. The checkout began clean; previous native work was landed and the old
+WIP branch was already an ancestor. Parallel source/transaction and integration
+review work was preserved through service interruptions. The queued focused
+workflow committed each completed concern separately.
+
+**4b6580b8** extends the existing charged Boolean-origin proof to exact saved
+`hasAttribute` calls and the corresponding result slot of every conditional arm.
+Traversal shares the work budget and stops at depth 64. Conditions, producers,
+method/receiver identity, original call order and complete private final DOM
+admission remain required. Sixty new transaction controls cover 18 admissions
+and 42 unchanged refusals across both providers, including forged metadata,
+malformed calls, mutations, fingerprints and insufficient budgets.
+**7f46a171** adds the unchanged complete witness, a mutation snapshot and twelve
+refusal bodies; all 66 prior direct, two outer and 44 raw-helper bodies, 154
+literal entries and 151 generated refusal bodies are preserved.
+
+Five explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate` and
+`ctcompile-test-native-reference`. Exact CTests each passed 1/1 (total elapsed):
+`ctcompile_exception_recovery` **20.66 s** and `ctcompile_host_contract`
+**2.80 s**. All three frozen source hashes matched locally and on the devbox.
+
+The two selected complete sources passed **16 generated C++ files, 32 GCC/Clang
+executions, eight admissions and 72 refusals**, including eight zero-budget
+refusals. Ordered Node/interpreter observations cover absent/present attributes
+and both flag states. Native checks exercise two documents and 16 lifetimes,
+with source and linked-symbol Script/AOT exclusions. All 16 files were retrieved.
+Inspected output selects an ordinary `js_boolean_t` before mutation and calls
+public DOM helpers; the session owns its document by value.
+
+**64459bae** updates custom iterator state validation to the current
+public `CTBROWSER_SYMBOL_KEY("iterator")` encoding introduced by browser round 13,
+already integrated at **d3fb5b19**. Ordinary `"@@iterator"` String state is
+distinct from the Symbol. Raw compiler-minted keys still refuse at the alias
+guard without publishing source or contract changes. Real Symbol provenance,
+ordered setup, confinement and fresh final DOM admission remain unchanged.
+Four raw spelling/provider controls and one complete source use existing state,
+close, ownership and refusal checks. No browser implementation changed.
+
+The first integration build caught a test helper mismatch: this suite's
+`check()` returns void. An explicit check followed by `if (failure)` corrected
+it. The five explicit targets then passed (five incremental build steps), with
+all four frozen source hashes matching the devbox. Exact CTests each passed 1/1:
+`ctcompile_exception_recovery` **20.85 s** and `ctcompile_host_contract`
+**2.86 s** total elapsed. The one selected complete source passed **eight
+generated C++ files, 16 GCC/Clang executions, four admissions and 32 refusals**,
+including four zero-budget refusals, and eight Node/VM source-double
+observations. The Boolean source checks were not repeated.
+All eight iterator outputs were retrieved. Inspected explicit/session and
+deduced output carries numeric state in local scalars through an ordinary loop,
+calls public DOM helpers and owns the session document by value. Existing
+ordered-write, close/reset, two-document, 16-lifetime and Script/AOT exclusion
+checks passed.
+
+Independent review found no further correctness issues. Local checks passed:
+eight ordered Node observations, 18 JavaScript syntax checks, Python syntax,
+Black, scoped pinned C++ formatting and diff checks. The first repository
+formatter also caught six new transaction layouts, corrected before the native
+build. The final `tools/format.sh --check` completed with only ten existing
+diagnostics in untouched browser `events/handler_names.hpp`.
+
+Full CTest/compiler lit, other source fixtures, broad corpus/matrices, raw escape
+allocation/lifetime oracles, full Bootstrap, WPT/test262, sanitizers, Windows/macOS
+and performance checks were skipped. Claude's Linux loop was running; Windows
+Get-CimInstance succeeded with 344 processes and no Claude identity. Concurrent
+rules were followed; no browser/shared implementation edits, local C++ builds,
+pushes or history rewrites occurred.
+
+**Next measured boundary:** a saved Boolean/null selection still refuses:
+
+```javascript
+function customElements(anchor) {
+  const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : null;
+  try {
+    anchor.setAttribute('data-written', saved);
+    return true;
+  } catch (error) { return error === anchor; }
+}
+```
+
+The complete source was imported with `ctbrowser-dom-v1`, no initial intrinsics
+and optimization disabled. It refuses with
+`native DOM source: DOM URI requires its fingerprinted initial provider binding`.
+Continue finite primitive-origin proof across the nullable Boolean selection,
+preserving both arms, snapshots, effects and the original handler; do not add URI
+intrinsics or remove the catch. The independent escape review identified nested
+selections of one saved SSA value used directly for truthiness as a possible next
+baseline; it was not measured or implemented. The native application driver,
+full Bootstrap and broader escape plan remain unfinished.
+
+Evidence: `../ctcompile-plan/evidence/2026-09-26-saved-boolean-predicates/`.
+
 ## Conditional nullable snapshots and nested operand identity, 2026-09-26 UTC
 
 Continued **27687128** and its measured conditional nullable String saved before

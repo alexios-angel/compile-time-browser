@@ -426,10 +426,14 @@ struct DOMAttributeProof {
         }
         return false;
     }
+    // Boolean/String origins may include null: these sets prove nonthrowing
+    // primitive conversion, not an exact runtime tag.
     llvm::DenseSet<mlir::Value> booleanReads;
     llvm::DenseSet<mlir::Value> stringReads;
     llvm::DenseSet<mlir::Value> numberReads;
-    bool booleanValue(mlir::Value value) const {
+    bool booleanValue(mlir::Value value, unsigned depth = 0) {
+        if (!remaining || depth == 64) { return false; }
+        --remaining;
         if (auto compare = value.getDefiningOp<ctjs::CompareOp>()) {
             return compare.getKind() == ctjs::CompareKind::StrictEq;
         }
@@ -437,8 +441,28 @@ struct DOMAttributeProof {
             return unary.getKind() == ctjs::UnaryKind::Not;
         }
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        return booleanReads.contains(value) ||
-               (constant && llvm::isa<ctjs::BooleanAttr>(constant.getValue()));
+        auto call = value.getDefiningOp<ctjs::CallOp>();
+        // A saved predicate retains its Boolean value across later DOM writes.
+        // Prove the exact read, leaving producer effects and initial method
+        // identity to the complete final DOM proof.
+        if (booleanReads.contains(value) ||
+            (constant && llvm::isa<ctjs::BooleanAttr, ctjs::NullAttr>(constant.getValue())) ||
+            (call && attributeRead(call) && attributeCall(call))) {
+            return true;
+        }
+        auto result = llvm::dyn_cast<mlir::OpResult>(value);
+        auto branch =
+            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+        if (!branch) { return false; }
+        for (auto & region : branch->getRegions()) {
+            if (!region.hasOneBlock()) { return false; }
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+            if (!yield || yield.getNumOperands() != branch.getNumResults() ||
+                !booleanValue(yield.getOperand(result.getResultNumber()), depth + 1)) {
+                return false;
+            }
+        }
+        return true;
     }
     bool stringValue(mlir::Value value, unsigned depth = 0) {
         if (!remaining || depth == 64) { return false; }
@@ -539,6 +563,27 @@ struct DOMAttributeProof {
         }
         return true;
     }
+    // Attribute conversion of a Number/null selection cannot invoke user code.
+    // Null stays out of numberValue: that proof also authorizes Number methods.
+    bool nullableNumberValue(mlir::Value value, unsigned depth = 0) {
+        if (!remaining || depth == 64) { return false; }
+        --remaining;
+        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+        if (constant && llvm::isa<ctjs::NullAttr>(constant.getValue())) { return true; }
+        auto result = llvm::dyn_cast<mlir::OpResult>(value);
+        auto branch =
+            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+        if (!branch) { return numberValue(value, depth + 1); }
+        for (auto & region : branch->getRegions()) {
+            if (!region.hasOneBlock()) { return false; }
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+            if (!yield || yield.getNumOperands() != branch.getNumResults() ||
+                !nullableNumberValue(yield.getOperand(result.getResultNumber()), depth + 1)) {
+                return false;
+            }
+        }
+        return true;
+    }
     static bool attributeRead(ctjs::CallOp call) {
         auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
         return method && ctjs::constantKey(method.getKey()) == "hasAttribute";
@@ -563,7 +608,7 @@ struct DOMAttributeProof {
         if (!name) { return false; }
         if (!writes) { return true; }
         if (!stringValue(call.getArgs()[1]) && !booleanValue(call.getArgs()[1]) &&
-            !numberValue(call.getArgs()[1])) {
+            !nullableNumberValue(call.getArgs()[1])) {
             return false;
         }
         if (name.getValue().size() > remaining) { return false; }
