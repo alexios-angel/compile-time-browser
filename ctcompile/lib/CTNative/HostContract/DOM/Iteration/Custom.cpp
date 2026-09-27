@@ -31,6 +31,24 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return load ? load.getName() : llvm::StringRef{};
     };
     const auto undefined = dom_source_detail::DOMSource::undefined;
+    // The value a tuple yield or invoke edge forwards `use` to, or null: an
+    // if/switch or invoke result, or an invoke continuation's argument.
+    const auto forwarded = [](mlir::OpOperand & use) -> mlir::Value {
+        auto * user = use.getOwner();
+        const unsigned index = use.getOperandNumber();
+        if ((llvm::isa<mlir::scf::YieldOp>(user) &&
+             llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(user->getParentOp())) ||
+            llvm::isa<ctjs::InvokeYieldOp>(user)) {
+            return user->getParentOp()->getResult(index);
+        }
+        auto invocation = llvm::isa<ctjs::InvokeExitOp>(user)
+                              ? llvm::cast<ctjs::InvokeOp>(user->getParentOp())
+                              : ctjs::InvokeOp{};
+        if (!invocation) { return {}; }
+        return (index ? invocation.getUnwindBody() : invocation.getNormalBody())
+            .front()
+            .getArgument(index);
+    };
     // Whether `closure` is the only creation of its function, within budget.
     const auto uniqueCreation = [&](ctjs::CreateClosureOp closure) {
         unsigned count = 0;
@@ -2007,21 +2025,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         (llvm::isa<ctjs::RootOp>(observer) && use.getOperandNumber() == 1)) {
                         continue;
                     }
-                    if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(observer);
-                        yield && llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(
-                                     yield->getParentOp())) {
-                        pending.push_back(yield->getParentOp()->getResult(use.getOperandNumber()));
-                        continue;
-                    }
-                    if (auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(observer);
-                        exit && use.getOperandNumber() > 0) {
-                        auto call = llvm::cast<ctjs::InvokeOp>(exit->getParentOp());
-                        pending.push_back(
-                            call.getUnwindBody().front().getArgument(use.getOperandNumber()));
-                        continue;
-                    }
-                    if (auto yield = llvm::dyn_cast<ctjs::InvokeYieldOp>(observer)) {
-                        pending.push_back(yield->getParentOp()->getResult(use.getOperandNumber()));
+                    // Every transport edge but an invoke's normal payload.
+                    if (auto value = forwarded(use);
+                        value &&
+                        !(llvm::isa<ctjs::InvokeExitOp>(observer) && use.getOperandNumber() == 0)) {
+                        pending.push_back(value);
                         continue;
                     }
                     return error("DOM iterator done field requires truth-only observations");
@@ -2314,22 +2322,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
             auto * user = use.getOwner();
             if (llvm::isa<ctjs::RootOp>(user) && use.getOperandNumber() == 1) { continue; }
-            if (auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(user)) {
-                auto invocation = llvm::cast<ctjs::InvokeOp>(exit->getParentOp());
-                if (observedNext && observedInvocations.contains(invocation)) {
-                    pendingItems.push_back(use.getOperandNumber() == 0
-                                               ? invocation.getNormalBody().front().getArgument(0)
-                                               : invocation.getUnwindBody().front().getArgument(
-                                                     use.getOperandNumber()));
-                    continue;
-                }
-            }
-            if (observedNext &&
-                ((llvm::isa<mlir::scf::YieldOp>(user) &&
-                  llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(user->getParentOp())) ||
-                 (llvm::isa<ctjs::InvokeYieldOp>(user) &&
-                  observedInvocations.contains(user->getParentOp())))) {
-                pendingItems.push_back(user->getParentOp()->getResult(use.getOperandNumber()));
+            const bool invoke = llvm::isa<ctjs::InvokeExitOp, ctjs::InvokeYieldOp>(user);
+            if (auto value = forwarded(use);
+                value && observedNext &&
+                (!invoke || observedInvocations.contains(user->getParentOp()))) {
+                pendingItems.push_back(value);
                 continue;
             }
             bool guarded = false;
@@ -2409,23 +2406,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     // A proved custom open cannot select the eager-array arm.
                     // Keep its source operations for completion normalization.
                     if (inactive) { continue; }
-                    if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(user);
-                        yield && llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(
-                                     yield->getParentOp())) {
-                        pending.push_back(yield->getParentOp()->getResult(use.getOperandNumber()));
-                        continue;
-                    }
-                    if (auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(user);
-                        exit && use.getOperandNumber() > 0 &&
-                        observedInvocations.contains(exit->getParentOp())) {
-                        auto invocation = llvm::cast<ctjs::InvokeOp>(exit->getParentOp());
-                        pending.push_back(
-                            invocation.getUnwindBody().front().getArgument(use.getOperandNumber()));
-                        continue;
-                    }
-                    if (llvm::isa<ctjs::InvokeYieldOp>(user) &&
-                        observedInvocations.contains(user->getParentOp())) {
-                        pending.push_back(user->getParentOp()->getResult(use.getOperandNumber()));
+                    // Only observed invocations carry state, never as a normal payload.
+                    const bool invoke = llvm::isa<ctjs::InvokeExitOp, ctjs::InvokeYieldOp>(user);
+                    if (auto value = forwarded(use);
+                        value &&
+                        !(llvm::isa<ctjs::InvokeExitOp>(user) && use.getOperandNumber() == 0) &&
+                        (!invoke || observedInvocations.contains(user->getParentOp()))) {
+                        pending.push_back(value);
                         continue;
                     }
                     if (seed == object.getResult()) {
