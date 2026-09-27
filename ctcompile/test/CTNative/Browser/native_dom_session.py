@@ -2,13 +2,12 @@
 """Gate owned synchronous DOM entries; retained Data keys remain outside this contract."""
 
 import argparse
-import os
 from pathlib import Path
 import re
 import shutil
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers, forge_module, run
+from CTNative.harness import build_and_run, find_compilers, forge_module, run
 from CTNative.HostContract.contract import fingerprint
 from Target.Cpp.harness import FLAGS
 
@@ -183,51 +182,29 @@ def main():
                 )
                 path = args.work / f"{label}.{mode}.cpp"
                 path.write_text(cpp + client)
+                flags = [*FLAGS, *includes]
                 for index, compiler in enumerate(compilers):
                     binary = path.with_suffix(f".{index}")
-                    built = run(
-                        [
-                            compiler,
-                            *FLAGS,
-                            *includes,
-                            str(path),
-                            *libraries,
-                            "-o",
-                            str(binary),
-                        ]
+                    result = build_and_run(
+                        compiler,
+                        path,
+                        binary,
+                        flags=flags,
+                        libraries=libraries,
+                        nm=args.nm,
+                        vm=dom.VM,
+                        clean=True,
                     )
-                    if built.stdout or built.stderr:
-                        raise RuntimeError("owned DOM did not compile cleanly")
-                    if dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
-                        raise RuntimeError("owned DOM links Script/AOT")
-                    if run([str(binary)]).stdout != "owned DOM passed\n":
+                    if result.stdout != "owned DOM passed\n":
                         raise RuntimeError("owned DOM observations incomplete")
                 if mode == "explicit":
-                    sanitized = path.with_suffix(".sanitized")
-                    run(
-                        [
-                            compilers[1],
-                            *FLAGS,
-                            "-O1",
-                            "-g",
-                            "-fno-omit-frame-pointer",
-                            "-fsanitize=address,undefined",
-                            "-fsanitize-address-use-after-scope",
-                            "-DCTCOMPILE_TEST_DANGLING=1",
-                            *includes,
-                            str(path),
-                            *libraries,
-                            "-o",
-                            str(sanitized),
-                        ]
-                    )
-                    result = run(
-                        [str(sanitized)],
-                        environment=dict(
-                            os.environ,
-                            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-                        ),
+                    result = build_and_run(
+                        compilers[1],
+                        path,
+                        path.with_suffix(".sanitized"),
+                        flags=[*flags, "-DCTCOMPILE_TEST_DANGLING=1"],
+                        libraries=libraries,
+                        sanitize=True,
                     )
                     if result.stdout != "owned DOM passed\n" or result.stderr:
                         raise RuntimeError("owned DOM lifetime check failed")

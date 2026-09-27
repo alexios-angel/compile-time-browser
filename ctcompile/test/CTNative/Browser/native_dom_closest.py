@@ -4,7 +4,7 @@
 import re
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers, forge_module, run
+from CTNative.harness import build_and_run, find_compilers, forge_module, run
 from CTNative.HostContract.contract import fingerprint
 from Target.Cpp.harness import FLAGS
 
@@ -189,14 +189,20 @@ def main():
                 )
                 path = args.work / f"{name}.{mode}.cpp"
                 path.write_text(cpp + client)
+                flags = [*FLAGS, *includes]
                 for index, compiler in enumerate(compilers):
                     binary = path.with_suffix(f".{index}")
-                    compiled = run(
-                        [compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)]
+                    result = build_and_run(
+                        compiler,
+                        path,
+                        binary,
+                        flags=flags,
+                        libraries=libraries,
+                        nm=args.nm,
+                        vm=dom.VM,
+                        clean=True,
                     )
-                    if compiled.stderr or dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
-                        raise RuntimeError("closest did not compile cleanly without Script/AOT")
-                    if run([str(binary)]).stdout != "guarded closest passed\n":
+                    if result.stdout != "guarded closest passed\n":
                         raise RuntimeError("closest client did not complete")
                     executions += 1
     for name, body in REFUSALS.items():

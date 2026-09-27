@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 
-from CTNative.harness import CLEANUP, CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers, prepare_js, run
+from CTNative.harness import CLEANUP, build_and_run, find_compilers, prepare_js, run
 
 FUNCTION = re.compile(r"ctjs\.func (?:private )?@([^ (]+)\(.*?(?=\n  ctjs\.func |\n})", re.S)
 NATIVE_PIPELINE = f"builtin.module(ctnative-lower-to-emitc{{optimize=false}},{CLEANUP})"
@@ -182,25 +182,7 @@ def main():
             file.write_text(cpp)
             for index, compiler in enumerate(compilers):
                 binary = (args.work / f"{name}.{mode}.{index}").resolve()
-                run(
-                    [
-                        compiler,
-                        "-std=c++23",
-                        RUNTIME_INCLUDE,
-                        CORE_INCLUDE,
-                        "-O2",
-                        "-Wall",
-                        "-Wextra",
-                        "-Werror",
-                        "-Wconversion",
-                        "-pedantic",
-                        "-ffp-contract=off",
-                        str(file),
-                        "-o",
-                        str(binary),
-                    ]
-                )
-                observed = run([str(binary)]).stdout
+                observed = build_and_run(compiler, file, binary).stdout
                 if observed != expected:
                     raise RuntimeError(f"{name}/{mode}: {observed!r} != {expected!r}")
 

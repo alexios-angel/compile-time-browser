@@ -6,7 +6,7 @@ import re
 
 from CTNative.Browser import native_dom as dom
 from CTNative.HostContract.contract import fingerprint
-from CTNative.harness import find_compilers, forge_module, run
+from CTNative.harness import build_and_run, find_compilers, forge_module, run
 from Target.Cpp.harness import FLAGS
 
 STATE = """function state() {
@@ -3270,20 +3270,11 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
         source.write_text(cpp + client)
         for index, compiler in enumerate(compilers):
             binary = args.work / f"{name}.{mode}.{index}"
-            run(
-                [
-                    compiler,
-                    *FLAGS,
-                    *includes,
-                    str(source),
-                    *libraries,
-                    "-o",
-                    str(binary),
-                ]
+            flags = [*FLAGS, *includes]
+            observed = build_and_run(
+                compiler, source, binary, flags=flags, libraries=libraries, nm=args.nm, vm=FORBIDDEN
             )
-            if FORBIDDEN.search(run([args.nm, "-C", str(binary)]).stdout):
-                raise RuntimeError(f"{name}/{mode}: intrinsic binary links DOM/Script/AOT")
-            if run([str(binary)]).stdout != expected:
+            if observed.stdout != expected:
                 raise RuntimeError(f"{name}/{mode}: native Symbol observations differ")
             if name == "absent-description-False" and mode == "explicit" and index == 0:
                 mutant, count = re.subn(r"ctnative::undefined_t\{\}", "ctnative::js_null_t{}", cpp)

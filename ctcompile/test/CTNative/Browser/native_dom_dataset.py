@@ -3,14 +3,13 @@
 
 import argparse
 import json
-import os
 from pathlib import Path
 import re
 import shutil
 
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser.native_dom_json import BOOTSTRAP_M, quote
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, find_compilers, run
 from Target.Cpp.harness import FLAGS
 
 BODIES = {
@@ -713,36 +712,17 @@ def main():
                 + "".join(clients)
                 + "}\n"
             )
+            flags = [*FLAGS, *includes]
             for index, compiler in enumerate(compilers):
                 binary = path.with_suffix(f".{index}")
-                run([compiler, *FLAGS, *includes, path, *libraries, "-o", binary])
-                assert not dom.VM.search(run([args.nm, "-C", binary]).stdout)
-                assert run([binary]).stdout.splitlines() == wanted
+                result = build_and_run(
+                    compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
+                )
+                assert result.stdout.splitlines() == wanted
             if optimize and layout == "explicit":
                 binary = path.with_suffix(".sanitized")
-                run(
-                    [
-                        compilers[1],
-                        *FLAGS,
-                        "-O1",
-                        "-g",
-                        "-fsanitize=address,undefined",
-                        "-fsanitize-address-use-after-scope",
-                        "-fno-omit-frame-pointer",
-                        *includes,
-                        path,
-                        *libraries,
-                        "-o",
-                        binary,
-                    ]
-                )
-                result = run(
-                    [binary],
-                    environment=dict(
-                        os.environ,
-                        ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                        UBSAN_OPTIONS="halt_on_error=1",
-                    ),
+                result = build_and_run(
+                    compilers[1], path, binary, flags=flags, libraries=libraries, sanitize=True
                 )
                 assert result.stdout.splitlines() == wanted and not result.stderr, result.stderr
     refusals = 0

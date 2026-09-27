@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Check associative lookup, ordered fallback, aliases, and owning Map values."""
 
-import os
 from pathlib import Path
 import re
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, native_args, native_tools, run
+from CTNative.harness import build_and_run, native_args, native_tools, run
 from CTNative.Exports import boundary
 
 NODE_GLOBALS = r"""const fs = require('node:fs');
@@ -176,57 +175,11 @@ def main():
             )
             for index, compiler in enumerate(compilers):
                 binary = (args.work / f"{name}-{label}-{index}").resolve()
-                run(
-                    [
-                        compiler,
-                        "-std=c++23",
-                        RUNTIME_INCLUDE,
-                        CORE_INCLUDE,
-                        "-O2",
-                        "-Wall",
-                        "-Wextra",
-                        "-Werror",
-                        "-Wconversion",
-                        "-pedantic",
-                        "-ffp-contract=off",
-                        str(source),
-                        "-o",
-                        str(binary),
-                    ]
-                )
-                actual = run([str(binary)]).stdout
+                actual = build_and_run(compiler, source, binary, nm=nm).stdout
                 assert actual == expected, (name, label, actual, expected)
-                assert "ctbrowser::script::" not in run([nm, "-C", str(binary)]).stdout
             if label == "plain":
-                environment = dict(
-                    os.environ,
-                    ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                    UBSAN_OPTIONS="halt_on_error=1",
-                )
                 binary = source.with_suffix(".sanitized").resolve()
-                run(
-                    [
-                        compilers[1],
-                        "-std=c++23",
-                        RUNTIME_INCLUDE,
-                        CORE_INCLUDE,
-                        "-O1",
-                        "-g",
-                        "-Wall",
-                        "-Wextra",
-                        "-Werror",
-                        "-Wconversion",
-                        "-pedantic",
-                        "-ffp-contract=off",
-                        "-fno-omit-frame-pointer",
-                        "-fsanitize=address,undefined",
-                        "-fsanitize-address-use-after-scope",
-                        str(source),
-                        "-o",
-                        str(binary),
-                    ]
-                )
-                assert run([str(binary)], environment=environment).stdout == expected
+                assert build_and_run(compilers[1], source, binary, sanitize=True).stdout == expected
     for fixture in ["boolean-values"]:
         source = (args.fixtures / (fixture + ".js")).read_text()
         _, prepared, count = boundary.prepare(args, fixture, source)

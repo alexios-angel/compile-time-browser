@@ -8,7 +8,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "Ownership"))
 from native_owned_global_maps.driver_common import boundary, host, owned
 
-from CTNative.harness import native_args, native_tools, node_globals
+from CTNative.harness import build_and_run, native_args, native_tools, node_globals
 
 SOURCE = r"""function scalar(which) {
     return which === 0 ? void 0 : which === 1 ? null : which === 2 ? -0 :
@@ -135,9 +135,7 @@ def main():
             source.write_text(cpp)
             for index, compiler in enumerate(compilers):
                 binary = source.with_suffix(f".{index}").resolve()
-                host.run([compiler, *owned.FLAGS, str(source), "-o", str(binary)])
-                assert not owned.VM.search(host.run([nm, "-C", str(binary)]).stdout)
-                assert normalized(host.run([str(binary)]).stdout) == expected
+                assert normalized(build_and_run(compiler, source, binary, nm=nm).stdout) == expected
     print(
         "nullable globals: 21 typed observations, Null/Undefined guards, mixed stores, "
         "forged reports, default/disabled, explicit/deduced, GCC/Clang and no VM"

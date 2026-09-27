@@ -9,7 +9,7 @@ import shutil
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_data_session as session
 from CTNative.Exports import boundary
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, find_compilers, run
 from CTNative.HostContract import contract as host
 from CTNative.Lowering.Objects import class_initialization_inputs as classes
 from Target.Cpp.harness import FLAGS
@@ -197,16 +197,20 @@ def check_record_executable(
             raise RuntimeError(f"{name}: document outlives its atoms")
         path = args.work / f"{name}.{mode}.cpp"
         path.write_text(cpp + client.replace("@OWNER@", owner[0]))
+        flags = [*FLAGS, *includes]
         for index, compiler in enumerate(compilers):
             binary = path.with_suffix(f".{index}")
-            result = run([compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)])
-            if (
-                result.stdout
-                or result.stderr
-                or dom.VM.search(run([args.nm, "-C", str(binary)]).stdout)
-            ):
-                raise RuntimeError(f"{name}: native compilation/symbol gate failed")
-            if run([str(binary)]).stdout != "DOM record Data passed\n":
+            result = build_and_run(
+                compiler,
+                path,
+                binary,
+                flags=flags,
+                libraries=libraries,
+                nm=args.nm,
+                vm=dom.VM,
+                clean=True,
+            )
+            if result.stdout != "DOM record Data passed\n":
                 raise RuntimeError(f"{name}: real document observations incomplete")
             executions += 1
     return executions

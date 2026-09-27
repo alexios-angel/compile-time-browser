@@ -3,7 +3,6 @@
 
 import argparse
 import json
-import os
 from pathlib import Path
 import re
 import shutil
@@ -12,7 +11,7 @@ from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_json as values
 from CTNative.Browser import native_dom_numbers as numbers
 from CTNative.Browser.native_dom_dataset import BOOTSTRAP_FILTER, PREFIX_INTRINSICS
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, find_compilers, run
 from Target.Cpp.harness import FLAGS
 
 GET = "M(t.getAttribute('data-bs-config'))"
@@ -558,38 +557,22 @@ def main():
                 + "".join(bodies)
                 + values.CLIENT.replace("@RUNS@", "\n".join(clients))
             )
+            flags = [*FLAGS, *includes]
             for index, compiler in enumerate(compilers):
                 binary = path.with_suffix(f".{index}")
-                run([compiler, *FLAGS, *includes, path, *libraries, "-o", binary])
-                assert not dom.VM.search(run([args.nm, "-C", binary]).stdout)
-                check_output(args, run([binary]).stdout, expected * 2)
-            if optimize and layout == "explicit":
-                binary = path.with_suffix(".sanitized")
-                run(
-                    [
-                        compilers[1],
-                        *FLAGS,
-                        "-O1",
-                        "-g",
-                        "-fsanitize=address,undefined",
-                        "-fsanitize-address-use-after-scope",
-                        "-fno-omit-frame-pointer",
-                        # Avoid inlining every fixture into the combined lifetime check.
-                        "-fno-inline-functions",
-                        *includes,
-                        path,
-                        *libraries,
-                        "-o",
-                        binary,
-                    ]
+                result = build_and_run(
+                    compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
                 )
-                result = run(
-                    [binary],
-                    environment=dict(
-                        os.environ,
-                        ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                        UBSAN_OPTIONS="halt_on_error=1",
-                    ),
+                check_output(args, result.stdout, expected * 2)
+            if optimize and layout == "explicit":
+                result = build_and_run(
+                    compilers[1],
+                    path,
+                    path.with_suffix(".sanitized"),
+                    # Avoid inlining every fixture into the combined lifetime check.
+                    flags=[*flags, "-fno-inline-functions"],
+                    libraries=libraries,
+                    sanitize=True,
                 )
                 assert not result.stderr, result.stderr
                 check_output(args, result.stdout, expected * 2)

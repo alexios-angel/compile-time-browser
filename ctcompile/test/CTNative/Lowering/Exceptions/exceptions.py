@@ -3,11 +3,18 @@
 
 import argparse
 import json
-import os
 from pathlib import Path
 import re
 
-from CTNative.harness import CLEANUP, CORE_INCLUDE, FLAGS, REFUSAL, VM_SYMBOL, native_tools, run
+from CTNative.harness import (
+    CLEANUP,
+    CORE_INCLUDE,
+    REFUSAL,
+    VM_SYMBOL,
+    build_and_run,
+    native_tools,
+    run,
+)
 from CTNative.Browser.native_dom import link_options
 
 PROGRAMS = {
@@ -485,10 +492,7 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
         for index, compiler in enumerate(compilers):
             binary = (args.work / f"{name}.{mode}.{index}").resolve()
             binary.unlink(missing_ok=True)
-            run([compiler, *FLAGS, str(source), *libraries, "-o", str(binary)])
-            if VM_SYMBOL.search(run([nm, "-C", str(binary)]).stdout):
-                raise RuntimeError(f"{name}/{mode}: compiled binary reaches the VM")
-            observed = run([str(binary)]).stdout
+            observed = build_and_run(compiler, source, binary, libraries=libraries, nm=nm).stdout
             compare(observed, expected_text(expected), f"{name}/{mode}/{compiler}")
             if wrong_state:
                 try:
@@ -504,28 +508,10 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
                     raise RuntimeError("executed wrong-state binary escaped result checking")
         if name in STRING_LIFETIMES:
             sanitized = (args.work / f"{name}.{mode}.sanitized").resolve()
-            environment = dict(
-                os.environ,
-                ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-            )
-            run(
-                [
-                    compilers[1],
-                    *FLAGS,
-                    "-O1",
-                    "-g",
-                    "-fno-omit-frame-pointer",
-                    "-fsanitize=address,undefined",
-                    "-fsanitize-address-use-after-scope",
-                    str(source),
-                    *libraries,
-                    "-o",
-                    str(sanitized),
-                ]
-            )
             compare(
-                run([str(sanitized)], environment=environment).stdout,
+                build_and_run(
+                    compilers[1], source, sanitized, libraries=libraries, sanitize=True
+                ).stdout,
                 expected_text(expected),
                 f"{name}/{mode}/ASan-UBSan",
             )

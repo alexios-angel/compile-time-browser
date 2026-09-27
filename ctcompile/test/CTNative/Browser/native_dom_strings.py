@@ -220,13 +220,14 @@ function makeElement(value) {
                 + nullable_uri.CLIENT
                 + CLIENT.replace("@RUNS@", "\n".join(runs))
             )
+            flags = [*FLAGS, *includes]
             for index, compiler in enumerate(compilers):
                 binary = path.with_suffix(f".{index}")
-                run([compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)])
-                if dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
-                    raise RuntimeError("native DOM optional Strings link Script/AOT")
+                result = build_and_run(
+                    compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
+                )
                 if (
-                    run([str(binary)]).stdout
+                    result.stdout
                     != (expected + numbers.EXPECTED + uri.EXPECTED + nullable_uri.EXPECTED) * 2
                 ):
                     raise RuntimeError("native optional String observations disagree with source")

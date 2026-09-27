@@ -171,6 +171,32 @@ SANITIZER_ENVIRONMENT = {
 }
 
 
+def build_and_run(
+    compiler,
+    source,
+    binary,
+    *,
+    flags=FLAGS,
+    libraries=(),
+    nm=None,
+    vm=VM_SYMBOL,
+    sanitize=False,
+    clean=False,
+):
+    """Compile `source` into `binary` (plus SANITIZE when asked; with `clean` the
+    compiler must say nothing), refuse a binary in whose `nm` symbols `vm` is
+    found, and run it: the checked result, under SANITIZER_ENVIRONMENT when
+    sanitized."""
+    extra = SANITIZE if sanitize else []
+    built = run([compiler, *flags, *extra, str(source), *libraries, "-o", str(binary)])
+    if clean and (built.stdout or built.stderr):
+        raise RuntimeError(f"{source} did not compile silently\n{built.stdout}{built.stderr}")
+    if nm and vm.search(run([nm, "-C", str(binary)]).stdout):
+        raise RuntimeError(f"{binary} links what it must not ({vm.pattern})")
+    environment = dict(os.environ, **SANITIZER_ENVIRONMENT) if sanitize else None
+    return run([str(binary)], environment=environment)
+
+
 def run_sanitized(compiler, source, binary, flags):
     """Build `source` with `flags` plus SANITIZE, run it, and return the result unchecked."""
     run([compiler, *flags, *SANITIZE, str(source), "-o", str(binary)])

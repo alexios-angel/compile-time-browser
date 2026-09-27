@@ -753,10 +753,10 @@ def check_regexp_matching(args):
         )
         for index, compiler in enumerate(compilers):
             binary = path.with_suffix(f".{index}")
-            run([compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)])
-            if dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
-                raise RuntimeError("original replacement output links Script/AOT")
-            run([str(binary)])
+            flags = [*FLAGS, *includes]
+            build_and_run(
+                compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
+            )
     refusals = 0
     if args.regexp_only:
         for name, body in REGEXP_REFUSALS.items():

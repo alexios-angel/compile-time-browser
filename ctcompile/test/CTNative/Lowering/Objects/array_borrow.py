@@ -4,7 +4,15 @@
 import hashlib
 import re
 
-from CTNative.harness import CLEANUP, FLAGS, find_compilers, native_args, node_globals, run
+from CTNative.harness import (
+    CLEANUP,
+    FLAGS,
+    build_and_run,
+    find_compilers,
+    native_args,
+    node_globals,
+    run,
+)
 from Target.Cpp.harness import function_body
 
 ORIGINAL_SHA256 = "ac17441800c02afebc9c0f2ca529984c3fd21653ba676eff991ade6028daf490"
@@ -115,9 +123,8 @@ def main():
                 file = args.work / f"{prefix}.{layout}.cpp"
                 file.write_text(cpp)
                 for index, compiler in enumerate(compilers):
-                    binary = args.work / f"{prefix}.{layout}.{index}"
-                    run([compiler, *FLAGS, str(file), "-o", str(binary)])
-                    actual = run([str(binary.resolve())]).stdout
+                    binary = (args.work / f"{prefix}.{layout}.{index}").resolve()
+                    actual = build_and_run(compiler, file, binary).stdout
                     if actual != expected:
                         raise RuntimeError(f"{prefix}/{layout}: {actual!r} != {expected!r}")
                     checked += 1

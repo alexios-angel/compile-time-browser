@@ -12,7 +12,16 @@ import re
 import shutil
 import subprocess
 
-from CTNative.harness import CLEANUP, FLAGS, FUNCTION, find_compilers, forge_module, prepare_js, run
+from CTNative.harness import (
+    CLEANUP,
+    FLAGS,
+    FUNCTION,
+    build_and_run,
+    find_compilers,
+    forge_module,
+    prepare_js,
+    run,
+)
 from CTNative.HostContract.contract import fingerprint
 
 ACTION = """function toggle(element) {
@@ -649,10 +658,11 @@ def standalone(
         source.write_text(cpp + client)
         for index, compiler in enumerate(compilers):
             binary = args.work / f"{name}.{mode}.{index}"
-            run([compiler, *FLAGS, *includes, str(source), *libraries, "-o", str(binary)])
-            if VM.search(run([args.nm, "-C", str(binary)]).stdout):
-                raise RuntimeError(f"{name}/{mode}: binary links Script/AOT")
-            if run([str(binary)]).stdout != f"native DOM {name}: passed\n":
+            flags = [*FLAGS, *includes]
+            result = build_and_run(
+                compiler, source, binary, flags=flags, libraries=libraries, nm=args.nm, vm=VM
+            )
+            if result.stdout != f"native DOM {name}: passed\n":
                 raise RuntimeError(f"{name}/{mode}: real DOM observations were not completed")
 
 

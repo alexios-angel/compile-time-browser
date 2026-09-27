@@ -8,7 +8,6 @@ typeof and guarded spreads are compared against Node and the VM.
 
 import argparse
 import json
-import os
 from pathlib import Path
 import re
 import shutil
@@ -17,7 +16,7 @@ from urllib.parse import quote_from_bytes
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_numbers as numbers
 from CTNative.Browser import native_dom_strings as strings
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, find_compilers, run
 from Target.Cpp.harness import FLAGS
 
 BODY = "try { return JSON.parse(decodeURIComponent(text)); } catch (ignored) { return text; }"
@@ -550,40 +549,20 @@ def main():
                 + "\n".join(bodies)
                 + CLIENT.replace("@RUNS@", "\n".join(runs))
             )
+            flags = [*FLAGS, *includes]
             for index, compiler in enumerate(compilers):
                 binary = path.with_suffix(f".{index}")
-                run([compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)])
-                if dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
-                    raise RuntimeError("native JSON entries link Script/AOT")
-                if run([str(binary)]).stdout.splitlines() != expected * 2:
+                result = build_and_run(
+                    compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
+                )
+                if result.stdout.splitlines() != expected * 2:
                     raise RuntimeError(
                         f"{path.name}/{index}: native JSON observations disagree with Node"
                     )
             if optimize and layout == "explicit":
                 sanitized = path.with_suffix(".sanitized")
-                run(
-                    [
-                        compilers[1],
-                        *FLAGS,
-                        "-O1",
-                        "-g",
-                        "-fno-omit-frame-pointer",
-                        "-fsanitize=address,undefined",
-                        "-fsanitize-address-use-after-scope",
-                        *includes,
-                        str(path),
-                        *libraries,
-                        "-o",
-                        str(sanitized),
-                    ]
-                )
-                result = run(
-                    [str(sanitized)],
-                    environment=dict(
-                        os.environ,
-                        ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-                    ),
+                result = build_and_run(
+                    compilers[1], path, sanitized, flags=flags, libraries=libraries, sanitize=True
                 )
                 if result.stdout.splitlines() != expected * 2 or result.stderr:
                     raise RuntimeError("native JSON lifetime sanitizer check failed")

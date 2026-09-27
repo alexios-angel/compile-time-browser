@@ -2,11 +2,10 @@
 """Check confined owning table slots, lifetime, admission and refusal boundaries."""
 
 import argparse
-import os
 from pathlib import Path
 import re
 
-from CTNative.harness import CORE_INCLUDE, REFUSAL, RUNTIME_INCLUDE, native_tools, prepare_js, run
+from CTNative.harness import REFUSAL, build_and_run, native_tools, prepare_js, run
 
 CTJS_FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE_FUNCTION = re.compile(r"^\s*emitc\.func\b", re.M)
@@ -153,22 +152,6 @@ def main():
         ),
         ("families", args.fixtures / "families.js", 10, "families4223=4223\n", []),
     ]
-    flags = [
-        "-std=c++23",
-        RUNTIME_INCLUDE,
-        CORE_INCLUDE,
-        "-Wall",
-        "-Wextra",
-        "-Werror",
-        "-Wconversion",
-        "-pedantic",
-        "-ffp-contract=off",
-    ]
-    sanitizer_environment = dict(
-        os.environ,
-        ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-        UBSAN_OPTIONS="halt_on_error=1",
-    )
     for name, js, denominator, expected, fields in programs:
         _, imported = prepare(args, js, name)
         if imported != denominator:
@@ -240,29 +223,11 @@ def main():
             source.write_text(cpp)
             for index, compiler in enumerate(compilers):
                 binary = (args.work / f"{name}.{mode}.{index}").resolve()
-                run([compiler, *flags, "-O2", str(source), "-o", str(binary)])
-                if VM_SYMBOL.search(run([nm, "-C", str(binary)]).stdout):
-                    raise RuntimeError(f"{name}/{mode}: compiled binary reaches the VM")
-                observed = run([str(binary)]).stdout
+                observed = build_and_run(compiler, source, binary, nm=nm).stdout
                 if observed != expected:
                     raise RuntimeError(f"{name}/{mode}/{compiler}: {observed!r} != {expected!r}")
             sanitized = (args.work / f"{name}.{mode}.sanitized").resolve()
-            run(
-                [
-                    compilers[1],
-                    *flags,
-                    "-O1",
-                    "-g",
-                    "-fno-omit-frame-pointer",
-                    "-fsanitize=address,undefined",
-                    "-fsanitize-address-use-after-scope",
-                    str(source),
-                    "-o",
-                    str(sanitized),
-                ]
-            )
-            observed = run([str(sanitized)], environment=sanitizer_environment).stdout
-            if observed != expected:
+            if build_and_run(compilers[1], source, sanitized, sanitize=True).stdout != expected:
                 raise RuntimeError(f"{name}/{mode}: lifetime/sanitizer execution changed output")
 
     specimen = args.specimen.read_text()
