@@ -78,6 +78,13 @@ OWN_FIELDS = {
 }
 OBSERVATIONS.update(OWN_FIELDS)
 OBSERVATIONS["bootstrap-base-data"] = (7, 7)
+# An exact class's always-throwing static read ends its constructor arm.
+THROWING_ARMS = {
+    "inherited-own-fields-iterate-throwing-arm" + suffix: (7, 7)
+    for suffix in ("", "-subclass", "-static-shadow", "-returning", "-escape-before")
+}
+OBSERVATIONS.update(THROWING_ARMS)
+PREPARED_ONLY.add("inherited-own-fields-iterate-throwing-arm")
 POSITIVES.update(
     {
         "own-fields-length",
@@ -472,7 +479,7 @@ def main():
             "inherited-own-fields-loop",
             "class-map-record-alias-snapshot-dispose",
             "class-map-record-constructor-snapshot-dispose",
-        ) or name.startswith("inherited-own-fields-iterate-"):
+        ) or name.startswith(("inherited-own-fields-iterate-", "bootstrap-base")):
             manifest["initial_intrinsics"] += [
                 "Array",
                 "__ctbrowser_for_of_open",
@@ -501,7 +508,9 @@ def main():
                 "__ctbrowser_init_fields",
                 "__ctbrowser_super_get",
             ]
-        if name.startswith(("static-throw-", "static-error-")) or name in (
+        if name.startswith(
+            ("static-throw-", "static-error-", "inherited-own-fields-iterate-throwing-arm")
+        ) or name in (
             "bootstrap-base",
             "bootstrap-base-data",
             "bootstrap-config-defaults",
@@ -548,6 +557,10 @@ def main():
             "class-map-record-alias-snapshot-method-added": "class own-key snapshot field set changes",
             "class-map-record-alias-snapshot-deleted": "class receiver escapes or observes a prototype/descriptor",
             "class-map-record-alias-snapshot-constructor-publication": "class own-key snapshot constructor observes its receiver",
+            "inherited-own-fields-iterate-throwing-arm-subclass": "class own-key snapshot branches change ordered fields",
+            "inherited-own-fields-iterate-throwing-arm-static-shadow": "class own-key snapshot branches change ordered fields",
+            "inherited-own-fields-iterate-throwing-arm-returning": "class own-key snapshot branches change ordered fields",
+            "inherited-own-fields-iterate-throwing-arm-escape-before": "class own-key snapshot constructor observes its receiver",
             "inherited-own-fields-iterate-forward-missing": "class construction helper requires an existing own field",
             "inherited-own-fields-iterate-forward-recursive": "class construction helper proof exceeds its depth bound",
             "inherited-own-fields-iterate-forward-unused-effects": "unknown call, binding or reflective effect",
@@ -619,8 +632,8 @@ def main():
             "inherited-method-base-shadow": "class method is observed or shadowed",
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": "class own-key snapshot constructor observes its receiver",
-            "bootstrap-base-data": "class own-key snapshot constructor observes its receiver",
+            "bootstrap-base": "declared intrinsic identity escapes, is reflected or is mutated",
+            "bootstrap-base-data": "declared intrinsic identity escapes, is reflected or is mutated",
             "class-map-record-nested-nullable-raw-undefined": "class retained Map get requires a present record",
             "class-map-inherited-early-snapshot": "class construction method observes an own-key snapshot",
             "method-counter-ambient": "unknown call, binding or reflective effect",
@@ -900,6 +913,17 @@ def main():
             elif name == "class-map-inherited":
                 # Super guard Error constructions disappear during normalization.
                 operations = ("ctjs.load_upvalue",)
+            elif name == "inherited-own-fields-iterate-throwing-arm":
+                # Super normalization drops the guard's throw. The getter's stays,
+                # the dead arm keeps its writes, and dispose clears only `n`.
+                operations = ()
+                if (
+                    after.count("ctjs.throw") != 1
+                    or '#ctjs.string<"NAME required">' not in after
+                    or '#ctjs.string<"y">' not in after
+                    or 'ctjs.load_global "Object"' in after
+                ):
+                    raise RuntimeError(f"{name}: dead arm or folded snapshot changed")
             elif name == "class-map-inherited-base-string":
                 operations = ()
                 if after.count("ctjs.construct") != 2 or "ctjs.load_upvalue" in after:

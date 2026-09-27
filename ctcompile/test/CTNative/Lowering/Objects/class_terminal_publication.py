@@ -18,7 +18,7 @@ SELECTED = {
     "class-map-inherited-constructor",
     "bootstrap-base",
     "bootstrap-base-data",
-}
+} | set(check.THROWING_ARMS)
 assert SELECTED <= check.OBSERVATIONS.keys()
 check.OBSERVATIONS = {
     name: value
