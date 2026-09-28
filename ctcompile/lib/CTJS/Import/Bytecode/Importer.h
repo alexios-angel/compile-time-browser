@@ -139,7 +139,9 @@ struct function_importer {
         return constant(where, ctjs::UndefinedAttr::get(context));
     }
 
-    // THE HANDLERS OPEN AT THIS POINT IN THE WALK, innermost last.
+    // THE HANDLERS OPEN AT THIS POINT IN THE WALK, innermost last. Reset at
+    // every reachable leader from the control-flow dataflow in import_program;
+    // within a block, push_handler and pop_handler keep it.
     //
     // A `pad` is the block the unwinder transfers to and `slot` is the register
     // the thrown value lands in - which is bytecode's choice, not ours:
@@ -148,6 +150,7 @@ struct function_importer {
     struct open_handler {
         mlir::Block * pad;
         std::uint16_t slot;
+        bool operator==(const open_handler &) const = default;
     };
     llvm::SmallVector<open_handler> handlers{};
 

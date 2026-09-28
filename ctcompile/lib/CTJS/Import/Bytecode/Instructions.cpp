@@ -335,12 +335,12 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         break;
     }
     case op::pop_handler:
-        if (state.handlers.empty()) {
-            state.give_up(at, in.code, "pop_handler with no open handler in this function");
-            break;
-        }
+        // NOTHING OPEN MEANS UNREACHED: import_program's handler dataflow
+        // refused every reachable pop with no open handler. The usual one is
+        // the normal-path pop after a try body that always returns through a
+        // finally, whose return popped the handler first.
         ctjs::PopHandlerOp::create(into, where);
-        state.handlers.pop_back();
+        if (!state.handlers.empty()) { state.handlers.pop_back(); }
         break;
     case op::make_arguments:
         set(in.a, ctjs::MakeArgumentsOp::create(into, where, value_type));
