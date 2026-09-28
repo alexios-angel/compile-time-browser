@@ -107,6 +107,8 @@ inline constexpr std::string_view array_holes_name = "__ctbrowser_array_holes";
 // RequireObjectCoercible (7.2.1) for an object pattern that reads nothing
 // (`{} = null`, `{...r} = undefined`): TypeError on null or undefined.
 inline constexpr std::string_view require_object_name = "__ctbrowser_require_object";
+// `in` requires an object RHS before ToPropertyKey runs on its LHS (13.10.1).
+inline constexpr std::string_view in_object_name = "__ctbrowser_in_object";
 // An accessor under a COMPUTED key - `get [k]() {}` in a class or a literal:
 // (target, key, getter, setter), the halves undefined when absent.
 // define_getter/define_setter take a name index, so a key that is only known

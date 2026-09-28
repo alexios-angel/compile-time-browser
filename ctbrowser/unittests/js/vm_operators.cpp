@@ -511,6 +511,51 @@ void test_delete_in_instanceof() {
     expect_result("return 3 instanceof Object;", "false");
 }
 
+void test_in_operator_validation_and_keys() {
+    expect_result("let caught = 0, coerced = 0;"
+                  "const key = { [Symbol.toPrimitive]() { coerced++; return 'x'; } };"
+                  "for (const rhs of [undefined, null, false, 1, 'x', Symbol(), 1n]) {"
+                  "  try { key in rhs; } catch (e) { if (e instanceof TypeError) caught++; }"
+                  "} return caught + ',' + coerced;",
+                  "7,0");
+    expect_result(
+        "let log = '';"
+        "function left() { log += 'L'; return { toString() { log += 'K'; return 'x'; } }; }"
+        "function right() { log += 'R'; return 0; }"
+        "try { left() in right(); } catch (e) { log += e.name; } return log;",
+        "LRTypeError");
+    expect_result("const intrinsic = TypeError; TypeError = function Fake() {};"
+                  "try { 'x' in 1; } catch (e) { return e instanceof intrinsic; }",
+                  "true");
+    expect_result("const symbol = Symbol('key'); let log = '';"
+                  "const key = { [Symbol.toPrimitive](hint) { log += hint; return symbol; } };"
+                  "const target = new Proxy({ [symbol]: 1 }, {"
+                  "  get has() { log += ',trap'; return function(t, k) {"
+                  "    log += ',' + (k === symbol); return k in t; }; }"
+                  "}); return (key in target) + ',' + log;",
+                  "true,string,trap,true");
+    expect_result("let log = ''; const target = new Proxy({}, {"
+                  "  has(t, k) { log += typeof k + ':' + k + ','; return true; }"
+                  "}); null in target; false in target; 1n in target; return log;",
+                  "string:null,string:false,string:1,");
+    expect_result("let traps = 0; const sentinel = {};"
+                  "const key = { [Symbol.toPrimitive]() { throw sentinel; } };"
+                  "const target = new Proxy({}, { get has() { traps++; return () => true; } });"
+                  "try { key in target; } catch (e) { return (e === sentinel) + ',' + traps; }",
+                  "true,0");
+    expect_result("let coerced = 0; const revoked = Proxy.revocable({}, {}); revoked.revoke();"
+                  "const key = { toString() { coerced++; return 'x'; } };"
+                  "try { key in revoked.proxy; } catch (e) { return e.name + ',' + coerced; }",
+                  "TypeError,1");
+    expect_result("const target = Object.create({ get x() { throw 1; } });"
+                  "return ['x' in target, 'length' in function() {}, 'length' in Object('x'),"
+                  "        0 in new Uint8Array(1)].join();",
+                  "true,true,true,true");
+    // Generic HasProperty still sees a primitive receiver's string indices.
+    expect_result("let outer = 9; with ('abc') { return length + ',' + outer; }", "3,9");
+    expect_result("return Array.prototype.map.call('ab', x => x.toUpperCase()).join('');", "AB");
+}
+
 void test_string_identity() {
     // `===` on strings compares CONTENT. Comparing the values bit for bit is
     // right for objects and for the singletons, and wrong for strings - two
@@ -597,6 +642,7 @@ int main() {
     test_string_identity();
     test_bitwise_and_friends();
     test_delete_in_instanceof();
+    test_in_operator_validation_and_keys();
     test_to_primitive();
     test_type_identification();
     test_type_tags();

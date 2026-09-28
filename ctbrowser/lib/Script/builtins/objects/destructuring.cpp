@@ -250,6 +250,14 @@ void install_destructuring_iteration(context & cx) {
         }
         return value::undefined();
     });
+    cx.define_native(std::string{in_object_name}, [](context & c, std::span<value> a) {
+        const value target = a.empty() ? value::undefined() : a[0];
+        if (!target.is_object_like()) {
+            c.throw_error("TypeError", "Right-hand side of 'in' must be an object");
+            return value::undefined();
+        }
+        return target;
+    });
     install_using(cx);
     cx.define_native(std::string{define_own_name}, [](context & c, std::span<value> a) {
         if (a.size() < 3 || !a[0].is_object_like()) { return value::undefined(); }
