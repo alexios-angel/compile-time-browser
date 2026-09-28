@@ -865,6 +865,9 @@ private:
         // The realm this body runs in: its closure's, or for a top level the
         // realm current when it was entered. Never null once pushed.
         realm_record * realm = nullptr;
+        // A derived constructor's mutable this binding, allocated only when
+        // an arrow captures it. Constructors cannot suspend into a coroutine.
+        value receiver_cell = value::undefined();
     };
 
     // The realm a frame for `callee` runs in - see call_frame::realm.

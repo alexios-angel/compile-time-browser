@@ -137,6 +137,33 @@ void test_derived_constructors() {
     expect_result("class A {} class B extends A { constructor() { const f = () => super(); f();"
                   " this.x = 3; } } return new B().x;",
                   "3");
+    // Arrows share the binding, including captures made before super() and
+    // calls made after the constructor has returned a different object.
+    for (const char * call : {"super()", "(() => super())()", "(() => () => super(...[]))()()"}) {
+        expect_result(std::string{"const out = []; class A { constructor(v) { return {v: 7}; } }"
+                                  "class B extends A { field = 9; constructor() {"
+                                  " const read = () => this; const result = "} +
+                          call +
+                          "; out.push(result === this, read() === this, this.v, this.field);"
+                          " this.read = read; } } const b = new B();"
+                          "out.push(b.read() === b); return out.join();",
+                      "true,true,7,9,true");
+    }
+    expect_result("const pending = []; class A { constructor(v) { return {v}; } }"
+                  "class B extends A { constructor() { const read = () => this;"
+                  " pending.push({read, finish: v => { const result = super(v);"
+                  " return result === this && read() === this; }}); return {}; } }"
+                  "new B(); new B(); const out = [];"
+                  "try { pending[0].read(); } catch (e) { out.push(e.name); }"
+                  "out.push(pending[0].finish(1), pending[1].finish(2),"
+                  " pending[0].read().v, pending[1].read().v);"
+                  "try { pending[0].finish(3); } catch (e) { out.push(e.name); }"
+                  "return out.join();",
+                  "ReferenceError,true,true,1,2,ReferenceError");
+    expect_result("class B extends Array { constructor() { const read = () => this;"
+                  " (() => super(...[1, 2]))(); this.same = read() === this; } }"
+                  "const b = new B(); return [Array.isArray(b), b.length, b.same].join();",
+                  "true,2,true");
     // Bare super() forwards the enclosing constructor's new.target even
     // through escaped/nested arrows and bound or proxy superclass calls.
     expect_result("let finish; class A { constructor() { return {target: new.target}; } }"

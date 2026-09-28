@@ -12,10 +12,12 @@ namespace ctbrowser::script {
 // `load_this` and the closure builder go through here, which is what makes
 // an arrow nested inside an arrow inside a method still resolve correctly.
 [[nodiscard]] inline auto context::effective_this(const call_frame & f) -> value {
+    value receiver = f.receiver_cell.is_undefined() ? f.receiver : f.receiver_cell;
     if (f.closure != nullptr && f.closure->proto != nullptr && f.closure->proto->is_arrow) {
-        return f.closure->captured_this;
+        receiver = f.closure->captured_this;
     }
-    return f.receiver;
+    return receiver.is_kind(heap_kind::cell) ? static_cast<cell_object *>(receiver.as_heap())->slot
+                                             : receiver;
 }
 
 // A FAILURE COMES WITH THE STACK IT HAPPENED ON.
@@ -156,6 +158,7 @@ inline auto context::each_root(std::size_t register_limit, std::size_t frame_lim
         const call_frame & f = frames_[k];
         if (f.closure != nullptr) { visit(root_label::frame_closure, value::object(f.closure)); }
         visit(root_label::frame_receiver, f.receiver);
+        visit(root_label::frame_receiver, f.receiver_cell);
         visit(root_label::frame_arguments, f.arguments_object);
         visit(root_label::frame_async_promise, f.async_promise);
         visit(root_label::frame_new_target, f.new_target);

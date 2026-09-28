@@ -98,6 +98,18 @@ value context::make_closure(closure_object * enclosing, std::uint32_t function_i
     // still see the method's object. The caller reads the EFFECTIVE receiver.
     if (target.is_arrow) {
         made->captured_this = enclosing_this;
+        if (enclosing != nullptr && enclosing->proto != nullptr && enclosing->proto->is_arrow) {
+            made->captured_this = enclosing->captured_this;
+        } else if (enclosing != nullptr && enclosing->derived_constructor && !frames_.empty() &&
+                   frames_.back().closure == enclosing) {
+            // Captures from one constructor invocation share its binding;
+            // keeping it on the class closure would mix separate instances.
+            value & cell = frames_.back().receiver_cell;
+            if (cell.is_undefined()) {
+                cell = value::object(allocate<cell_object>(enclosing_this));
+            }
+            made->captured_this = cell;
+        }
         // Bare super() also needs the lexical new.target, even when no
         // explicit new.target expression made the compiler capture it.
         value new_target = frames_.empty() ? value::undefined() : frames_.back().new_target;

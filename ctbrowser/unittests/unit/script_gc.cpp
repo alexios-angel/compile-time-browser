@@ -87,6 +87,35 @@ void test_argument_list_survives_a_collection() {
 }
 
 void test_constructor_prototype_survives_a_collection() {
+    expect_gc("escaped super arrows share a rooted receiver", R"(
+        let finish, read;
+        class A { constructor() { return {answer: 42}; } }
+        class B extends A {
+            constructor() {
+                read = () => this;
+                finish = () => super();
+                return {};
+            }
+        }
+        new B();
+        gc();
+        finish();
+        finish = null;
+        gc();
+        return read().answer;
+    )",
+              "42");
+    expect_gc("constructor keeps shared receiver after arrow returns", R"(
+        class A { constructor() { return {answer: 42}; } }
+        class B extends A {
+            constructor() {
+                (() => super())();
+                gc();
+            }
+        }
+        return new B().answer;
+    )",
+              "42");
     expect_gc("escaped super arrow retains new.target", R"(
         let finish;
         class A { constructor() { return {target: new.target}; } }

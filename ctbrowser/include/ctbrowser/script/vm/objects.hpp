@@ -320,6 +320,7 @@ struct closure_object final : heap_object {
     // Only meaningful when proto->is_arrow: the `this` in scope where the arrow
     // was written, captured when the closure was made. An arrow has no receiver
     // of its own, so this is the only place its `this` can come from.
+    // In a derived constructor this is a shared cell, since super() binds it later.
     value captured_this = value::undefined();
     // [[Realm]] (10.2.3 OrdinaryFunctionCreate step 4): the realm current when
     // this closure was made, which is the one its body resolves free names in.
