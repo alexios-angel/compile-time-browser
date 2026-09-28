@@ -41,7 +41,8 @@ def source(kind):
 
 
 REFUSALS = {
-    "unguarded-default": "for (const node of R.find('*')) node.matches('*'); return 0;",
+    "unguarded-root-use": "for (const node of R.find('*')) node.matches('*'); "
+    "return document.documentElement.matches('*');",
     "escaped-member": "for (const node of R.find('*',anchor)) return node; return false;",
     "stored-member": "for (const node of R.find('*',anchor)) anchor.saved=node; return 0;",
     "mutated-snapshot": "const nodes=R.find('*',anchor); nodes[0]=anchor; "
@@ -58,6 +59,17 @@ REFUSALS = {
     "for (const node of R.find('*',anchor)) node.matches('*'); return 0;",
     "replaced-query": "Element.prototype.querySelectorAll=anchor; "
     "for (const node of R.find('*',anchor)) node.matches('*'); return 0;",
+}
+
+# Admitted since b4aa79b57; see native_dom_find_elements.UNGUARDED_DEFAULT.
+UNGUARDED_DEFAULT = {
+    "unguarded-default": (
+        "for (const node of R.find('*')) node.matches('*'); return 0;",
+        r"""
+        assert(invoke(alias).value() == 0);
+        assert(doc.take_writes().empty());
+""",
+    )
 }
 
 
@@ -116,7 +128,8 @@ def main():
         manifest.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
         dom.refuse(args, ir, manifest, f"refused-{name}")
         refusals += 2
-    print(f"Element for-of: 64 native executions, {refusals} refusals; DOM/Core/Style only")
+    indexed.unguarded_default(args, UNGUARDED_DEFAULT, INTRINSICS, compilers, includes, libraries)
+    print(f"Element for-of: 72 native executions, {refusals} refusals; DOM/Core/Style only")
 
 
 if __name__ == "__main__":

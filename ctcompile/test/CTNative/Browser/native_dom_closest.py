@@ -137,10 +137,32 @@ REFUSALS = {
     "if(a) return a.closest('.missing').matches(':hover'); return false;",
     "returned": "const a=first.closest('button'); if(a) return a; return first;",
     "retained": "const a=first.closest('button'); if(a) first.saved=a; return false;",
-    "joined": "const a=first.closest('button'); const b=a ? a : first; return b.matches(':hover');",
+    "joined-nullable": "const a=first.closest('button'); "
+    "const b=a ? a : second.closest('button'); return b.matches(':hover');",
     "null-comparison": "return first.closest('button') === null;",
     "dataset": "const a=first.closest('button'); if(a) return Object.keys(a.dataset).length; return 0;",
 }
+
+# A former refusal: both arms of the join are Elements, so `b` is never null.
+# jsdom (with :hover by state) answers false, true, false, true and writes nothing.
+JOINED = "const a=first.closest('button'); const b=a ? a : first; return b.matches(':hover');"
+JOINED_CHECKS = r"""
+        (void)pressed;
+        (void)foreign;
+        style::engine selectors{atoms};
+        const element_ref inner{&doc, child};
+        const auto lone = doc.create_element(atoms.intern("div"));
+        assert(doc.append_child(doc.root(), lone));
+        const element_ref outside{&doc, lone};
+        (void)doc.take_writes();
+        assert(!@ENTRY@(inner, alias, selectors));
+        assert(selectors.set_state(button, style::engine::state_hover, true));
+        assert(@ENTRY@(inner, alias, selectors)); // b is the closest button.
+        assert(!@ENTRY@(outside, alias, selectors));
+        assert(selectors.set_state(lone, style::engine::state_hover, true));
+        assert(@ENTRY@(outside, alias, selectors)); // b is first itself.
+        assert(doc.take_writes().empty());
+"""
 
 
 def main():
@@ -200,6 +222,14 @@ def main():
                 if result.stdout != "guarded closest passed\n":
                     raise RuntimeError("closest client did not complete")
                 executions += 1
+    joined, manifest = dom.prepare(
+        args, "joined", f"function joined(first, second) {{ {JOINED} }}\n", 2
+    )
+    for optimize in (False, True):
+        label = f"joined-{optimize}"
+        native = dom.lower(args, joined, manifest, label, optimize=optimize)
+        dom.standalone(args, native, label, JOINED_CHECKS, compilers, includes, libraries)
+        executions += 2 * len(compilers)
     for name, body in REFUSALS.items():
         source = f"function refused(first, second) {{ {body} }}\n"
         refused, manifest = dom.prepare(args, name, source, 2)
