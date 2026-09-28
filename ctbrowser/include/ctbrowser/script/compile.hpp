@@ -115,7 +115,8 @@ public:
     // `new.target` is a SyntaxError. compile() admits both - a program's
     // top-level `return` is how it hands an embedder a value
     // (run_result::returned) - so a caller whose source is a real Script, a
-    // test262 test, says so here.
+    // test262 test, says so here. Script also parses `await` as an identifier;
+    // compile() admits top-level await for embedding async bodies and modules.
     [[nodiscard]] static program compile_script(std::string_view source);
     // `eval`'s shape: the program RETURNS the value of a trailing expression
     // statement (its completion value, 16.1.6 step 12 for the common case),

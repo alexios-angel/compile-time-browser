@@ -123,6 +123,42 @@ void answers(std::string_view source, std::string_view expected) {
 } // namespace
 
 int main() {
+    // Script and eval use [~Await]; the embedding API and modules use [+Await].
+    for (const std::string_view source :
+         {"function await(n) { return n + 1; } if (await(41) !== 42) throw 0;",
+          "'use strict'; function await() { return 42; } if (await() !== 42) throw 0;",
+          "var await = 41; await += 1; if (await !== 42) throw 0;",
+          "class await {} if (!(new await() instanceof await)) throw 0;",
+          "async function await() {} if (typeof await !== 'function') throw 0;"}) {
+        using namespace ctbrowser::script;
+        const program prog = compiler::compile_script(source);
+        check(prog.ok, source);
+        if (prog.ok) {
+            context cx;
+            install_builtins(cx);
+            check(cx.run(prog).ok, source);
+        }
+        module_refused(source);
+    }
+    for (const std::string_view source : {"await 1;", "await Promise.resolve(1);"}) {
+        using namespace ctbrowser::script;
+        const program script = compiler::compile_script(source);
+        check(!script.ok && script.error.starts_with("parse error:"), source);
+        const program eval = compiler::compile_for_eval(source);
+        check(!eval.ok && eval.error.starts_with("parse error:"), source);
+        accepted(source);
+        module_accepted(source);
+    }
+    answers("return eval('function await(n) { return n + 1; } await(41);');", "42");
+    answers("return (0, eval)('function await() { return 42; } await();');", "42");
+    answers("return await (async function() {"
+            " return eval('function await() { return 42; } await();'); })();",
+            "42");
+    answers("try { eval('await 1;'); } catch (e) { return e.name; }", "SyntaxError");
+    answers("try { (0, eval)('await 1;'); } catch (e) { return e.name; }", "SyntaxError");
+    answers("async function f() { return (await /x/).test('x'); } return await f();", "true");
+    module_accepted("const r = await /x/;");
+
     // A statement body may be `let` followed by a newline - the identifier -
     // but never `let [` (14.5's lookahead), newline or comment between.
     refused("if (false) let\n[a] = 0;");
