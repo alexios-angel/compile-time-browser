@@ -425,9 +425,10 @@ static void check_values(auto invoke, document & doc, element_ref element, bool 
         if (saved) {
             assert(!doc.read().has_attribute(element.id, state));
             assert(doc.version() == version + 2);
-            // The existing write log records sets, not removals.
-            assert(writes.size() == 1);
-            assert(writes[0].node == element.id && writes[0].name == state);
+            // The write log records the set and then the removal.
+            assert(writes.size() == 2);
+            assert(writes[0].node == element.id && writes[0].name == state && !writes[0].removal);
+            assert(writes[1].node == element.id && writes[1].name == state && writes[1].removal);
         } else { assert(writes.empty() && doc.version() == version); }
         assert(doc.set_attribute(element.id, state, "later"));
         assert(result == answer); // The returned String owns its bytes.

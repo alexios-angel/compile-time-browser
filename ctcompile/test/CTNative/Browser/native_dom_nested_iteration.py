@@ -138,6 +138,7 @@ CHECKS = r"""
             assert(invoke(alias, foreign, selectors).value() == 0);
             assert(doc.take_writes().empty());
             doc.set_document_element(button);
+            (void)doc.take_writes(); // The Document's own child insertion is noted too.
         }
         assert(invoke(alias, foreign, selectors).value() == 1);
         assert(doc.take_writes().size() == 5);
