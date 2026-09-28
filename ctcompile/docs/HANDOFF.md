@@ -107,10 +107,14 @@ skipping.
   exception_recovery controls 424/425 proved since e6babb265. Gate: lit 2/2 +
   CTJS/Import 9/9, CTest 1/1, and ctjs-translate output identical to the
   previous importer on 986 JS sources.
-- triage-lit branch `worktree-agent-a865a5bd213e19007` (escape-claims refresh,
-  fractional Number keys name properties in `vec_at`/`map_snapshot_at`,
-  intrinsic-symbol VM pins): 21/23 of its lit selection pass; a subagent is
-  finishing `Provider/diagnostics` and `native-intrinsic-symbols`. NOT MERGED.
+- `f38794856` (triage-lit): 16 escape-claims tests prove noncanonical numeric
+  strings exactly (oracle 0 violations); `vec_at`/`map_snapshot_at` follow
+  ECMA-262 fractional Number keys as the VM does since 91e7c17ff (ND-8
+  fractional is a guard again); intrinsic-symbol and Map-iterator diagnostics
+  pins dropped (VM == Node since 8f61dcf9c, 2b710a0d2, 55ff045ad); thirty
+  Number escape refusal controls, unreached behind the Symbol pin, lower since
+  847718fbd and are native witnesses with Node's results (replacement control
+  `signed-slice-primitive-negation-escape`). Gate: 23/23 lit.
 - Open: F (native-dom-custom-iteration saved-throw-number, suspected
   41c9f87de's LiftToSCF preserve list), G (SIGABRT write-log asserts in
   native-dom and -nested-iteration clients), H (native-dom-strings g++ timeout
