@@ -962,18 +962,38 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
         if (!reason.empty()) { return false; }
         if (risky.wasInterrupted()) { continue; }
         // The dropped arm loses its records, as a replaced super body does.
+        // Its captured helper and holder slot calls were source calls: their
+        // targets may have lost their last one.
+        dropped.walk([&](ctjs::CallOp made) {
+            if (auto helper = callableCaptures.lookup(made.getCallee().getDefiningOp())) {
+                decidedHelpers.insert(helper);
+                return;
+            }
+            if (auto read = made.getCallee().getDefiningOp<ctjs::GetPropertyOp>()) {
+                decideSlot(holderCaptures.lookup(read.getObject()), read);
+            }
+        });
         forgetRecords(dropped);
         if (kept.empty()) {
             if (branch->getNumResults()) { continue; }
             branch.erase();
-            continue;
+        } else {
+            auto & block = kept.front();
+            auto yield = llvm::cast<mlir::scf::YieldOp>(block.getTerminator());
+            branch.getResults().replaceAllUsesWith(yield.getOperands());
+            entry.getOperations().splice(branch->getIterator(), block.getOperations(),
+                                         block.begin(), yield->getIterator());
+            branch.erase();
         }
-        auto & block = kept.front();
-        auto yield = llvm::cast<mlir::scf::YieldOp>(block.getTerminator());
-        branch.getResults().replaceAllUsesWith(yield.getOperands());
-        entry.getOperations().splice(branch->getIterator(), block.getOperations(), block.begin(),
-                                     yield->getIterator());
-        branch.erase();
+        // Every construction ran the helper on a pure primitive path, so a
+        // call whose result died with the arm does nothing: erase it.
+        if (!helper || domEntryHelpers.contains(helper)) { continue; }
+        if (truth->use_empty()) { truth.erase(); }
+        if (rootedOnly(call)) {
+            helperCalls.erase(call);
+            eraseRooted(call);
+            decidedHelpers.insert(helper);
+        }
     }
     return true;
 }
@@ -1338,6 +1358,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     // super copies, and each leaf proves its own receiver across that copy.
     // The original still records every use for the census; rewrite erases it.
     const bool leafConstructed = instances.empty() && baseClasses.contains(closure.getResult());
+    if (leafConstructed) { leafBuilt.insert(function); }
     if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
         (closure.getUpvalues().empty() && !entry.getArgument(ctjs::arg_callee).use_empty()) ||
         !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true,

@@ -552,6 +552,25 @@ void classInitialization::rewrite() {
     });
     for (auto & callable : unusedCallables) { eraseRooted(callable.first); }
     for (auto & callable : unusedCallables) { callable.second.erase(); }
+    // These bodies skipped the census and never run. Erase each once the
+    // leafBuilt originals and uncalled callers that named it are gone; native
+    // admission checks any that remain like every other body.
+    for (bool erased = true; erased;) {
+        erased = false;
+        for (auto function : llvm::make_early_inc_range(module.getOps<ctjs::FuncOp>())) {
+            if (!uncalledHelpers.contains(function)) { continue; }
+            const auto named = module.walk([&](ctjs::CreateClosureOp closure) {
+                return target(closure) == function ? mlir::WalkResult::interrupt()
+                                                   : mlir::WalkResult::advance();
+            });
+            if (!named.wasInterrupted() &&
+                mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation())) {
+                functions.erase(*functionIndex(function));
+                function.erase();
+                erased = true;
+            }
+        }
+    }
     module.walk([&](ctjs::LoadGlobalOp load) {
         if ((load.getName() == host_detail::classDefinedIntrinsic ||
              load.getName() == "__ctbrowser_class_heritage") &&

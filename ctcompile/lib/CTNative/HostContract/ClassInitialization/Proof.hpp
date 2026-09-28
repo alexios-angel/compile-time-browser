@@ -111,6 +111,12 @@ struct classInitialization {
     bool needsDOMMethodProof = false;
     llvm::DenseSet<mlir::Operation *> helpers;
     llvm::DenseSet<mlir::Operation *> helperCalls;
+    // Helpers and holder slots a decided arm's dropped or erased call named,
+    // and those no running body calls: no census, and rewrite erases them.
+    llvm::SetVector<mlir::Operation *> decidedHelpers;
+    llvm::DenseSet<mlir::Operation *> uncalledHelpers;
+    // Constructors of bases only leaves' super copies build: never run.
+    llvm::DenseSet<mlir::Operation *> leafBuilt;
     llvm::DenseSet<mlir::Operation *> domEntryHelpers;
     llvm::DenseSet<mlir::Operation *> domDataOperations;
     llvm::DenseMap<mlir::Value, mlir::Value> retainedRecordOrigins;
@@ -231,6 +237,8 @@ struct classInitialization {
     bool proveHeritage(const HostContract & contract);
     // Static methods no read reaches never run; remove them before any proof.
     bool dropUnreadStatics();
+    // A dropped source call `holder.key(...)`: its slot may have lost its last call.
+    void decideSlot(mlir::Value holder, ctjs::GetPropertyOp read);
     bool proveInstanceOf(const HostContract & contract);
 
     bool heritageUse(mlir::OpOperand & use, mlir::Value constructor);

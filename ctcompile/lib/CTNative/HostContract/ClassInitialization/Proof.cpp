@@ -71,6 +71,19 @@ bool classInitialization::proveInstanceOf(const HostContract & contract) {
     return !walked.wasInterrupted();
 }
 
+void classInitialization::decideSlot(mlir::Value holder, ctjs::GetPropertyOp read) {
+    const auto key = ctjs::constantKey(read.getKey());
+    if (!holder || key.empty()) { return; }
+    for (mlir::Operation * user : holder.getUsers()) {
+        auto slot = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+        if (slot && slot.getObject() == holder && ctjs::constantKey(slot.getKey()) == key) {
+            if (auto fn = target(slot.getValue().getDefiningOp<ctjs::CreateClosureOp>())) {
+                decidedHelpers.insert(fn);
+            }
+        }
+    }
+}
+
 bool classInitialization::dropUnreadStatics() {
     // A static method runs only through a read of its key: `C.k`, `this.k` in
     // a static body, `this.constructor.k`, or a read on a subclass. One that no
@@ -191,6 +204,39 @@ bool classInitialization::dropUnreadStatics() {
             !mlir::SymbolTable::symbolKnownUseEmpty(fn, module.getOperation())) {
             return refuse("unread static method declares, publishes or is named");
         }
+    }
+    // Their calls were source calls: a captured helper or holder slot one
+    // named may have lost its last call. No capture proof has run yet, so
+    // follow each capture to its cell's initial value.
+    llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> creators;
+    module.walk([&](ctjs::CreateClosureOp closure) {
+        if (auto fn = target(closure)) { creators[fn] = closure; }
+    });
+    const auto captured = [&](mlir::Value value) -> mlir::Value {
+        auto load = value.getDefiningOp<ctjs::LoadUpvalueOp>();
+        auto closure =
+            load ? creators.lookup(load->getParentOfType<ctjs::FuncOp>()) : ctjs::CreateClosureOp{};
+        if (!closure || load.getIndex() < 0 ||
+            static_cast<size_t>(load.getIndex()) >= closure.getUpvalues().size()) {
+            return {};
+        }
+        auto initial = cells.lookup(closure.getUpvalues()[static_cast<size_t>(load.getIndex())]);
+        return initial ? sourceValue(initial) : mlir::Value{};
+    };
+    for (mlir::Operation * fn : dead) {
+        const auto noted = fn->walk([&](ctjs::CallOp call) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (read) {
+                decideSlot(captured(read.getObject()), read);
+            } else if (auto callee = captured(call.getCallee())) {
+                if (auto helper = target(callee.getDefiningOp<ctjs::CreateClosureOp>())) {
+                    decidedHelpers.insert(helper);
+                }
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (noted.wasInterrupted()) { return false; }
     }
     for (mlir::Operation * home : homes) { home->erase(); }
     for (auto [write, key] : statics) {
@@ -491,6 +537,49 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
         if (!proveDOMDataFamily(contract)) { return false; }
     }
+    // Every invocation the census below admits is a recorded call. A helper
+    // or holder slot called in the source whose calls all sit in bodies that
+    // never run - dropped or erased with a decided arm, in a leafBuilt original
+    // or in another such helper - never runs either. One never called keeps
+    // its census (the -unused-ambient controls).
+    llvm::SmallVector<std::pair<mlir::Operation *, mlir::Operation *>> edges;
+    llvm::SetVector<mlir::Operation *> uncalled = decidedHelpers;
+    walked = module.walk([&](mlir::Operation * op) {
+        if (!step()) { return mlir::WalkResult::interrupt(); }
+        if (!helperCalls.contains(op)) { return mlir::WalkResult::advance(); }
+        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
+        auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+        auto callee = direct ? direct.getCalleeValue() : call.getCallee();
+        auto fn = direct ? direct.getTarget() : callableCaptures.lookup(callee.getDefiningOp());
+        if (!fn) { fn = target(sourceClosure(callee)); }
+        if (!fn) {
+            uncalled.clear();
+            return mlir::WalkResult::interrupt();
+        }
+        uncalled.insert(fn);
+        edges.emplace_back(op->getParentOfType<ctjs::FuncOp>(), fn);
+        return mlir::WalkResult::advance();
+    });
+    if (!reason.empty()) { return false; }
+    // DOM entries admit calls the typed proof checks later, without records.
+    if (domEntry || contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
+        uncalled.clear();
+    }
+    uncalled.remove_if([&](mlir::Operation * fn) {
+        return methods.contains(fn) || constructors.contains(fn) || getters.contains(fn);
+    });
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (auto [caller, callee] : edges) {
+            if (!step()) { return false; }
+            if (uncalled.contains(callee) && !leafBuilt.contains(caller) &&
+                !uncalled.contains(caller)) {
+                uncalled.remove(callee);
+                changed = true;
+            }
+        }
+    }
+    uncalledHelpers.insert(uncalled.begin(), uncalled.end());
     // No ambient object, unknown callee, accessor, dynamic key or reflective
     // instruction can replace the fixed helper between entry and any call.
     // Reject the whole module, including suffixes and uncalled bodies.
@@ -500,6 +589,9 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         // entry provider, which separately decides whether it can be erased.
         if (declaration &&
             (op == declaration || op->getParentOfType<ctjs::FuncOp>() == declaration)) {
+            return mlir::WalkResult::advance();
+        }
+        if (uncalledHelpers.contains(op->getParentOfType<ctjs::FuncOp>())) {
             return mlir::WalkResult::advance();
         }
         if (domDataOperations.contains(op) || mapOperations.contains(op) || setup.contains(op) ||
@@ -569,6 +661,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             const bool receiverUnused = unusedReceiver(fn);
             if (!reason.empty()) { return mlir::WalkResult::interrupt(); }
             accepted = methods.contains(fn) || helpers.contains(fn) ||
+                       uncalledHelpers.contains(fn) ||
                        (llvm::hasSingleElement(fn.getBody()) &&
                         (constructors.contains(fn) || getters.contains(fn) ||
                          (((declaration && fn == entry) || block.getNumArguments() == 3) &&
