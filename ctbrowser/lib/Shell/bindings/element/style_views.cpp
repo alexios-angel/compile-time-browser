@@ -284,6 +284,31 @@ value dom_bindings::make_style_view(context & cx, node_id id) {
             expandos_of(*store, c).find(name) != nullptr ||
             (store->prototype.is_object() && c.has_property(store->prototype, name)));
     });
+    // Live indices and expandos have descriptors alongside the target's stored
+    // properties, so reflection and hasOwnProperty use the same lookup.
+    set_method(
+        cx, *handler, "getOwnPropertyDescriptor", [reseed](context & c, std::span<value> args) {
+            if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
+            auto * store = static_cast<script::object_object *>(args[0].as_heap());
+            reseed(c, *store);
+            const std::string name = c.to_string(args[1]);
+            context::property_descriptor own;
+            if (c.own_property(args[0], name, own)) { return c.from_property_descriptor(own); }
+            std::uint32_t at = 0;
+            if (script::object_object::array_index_key(name, at)) {
+                for (const auto & [key, v] : store->props) {
+                    if (is_declaration(v) && at-- == 0) {
+                        return c.from_property_descriptor(context::property_descriptor::data(
+                            c.string(key), script::attr_enumerable | script::attr_configurable));
+                    }
+                }
+                return value::undefined();
+            }
+            if (c.own_property(value::object(&expandos_of(*store, c)), name, own)) {
+                return c.from_property_descriptor(own);
+            }
+            return value::undefined();
+        });
     const value style_view =
         value::object(cx.allocate<script::proxy_object>(target, value::object(handler)));
 
