@@ -70,6 +70,32 @@ void expect_gc(std::string_view what, const std::string & source, std::string_vi
     }
 }
 
+void test_await_constructor_survives_a_collection() {
+    expect_gc("await constructor getter collects", R"(
+        async function f() {
+            const kept = {answer: 42};
+            const p = Promise.resolve(kept);
+            Object.defineProperty(p, 'constructor', {get() { gc(); return Promise; }});
+            return (await p).answer;
+        }
+        return await f();
+    )",
+              "42");
+    expect_gc("await adoption getter collects", R"(
+        async function f() {
+            const kept = {answer: 42};
+            const p = Promise.resolve(0);
+            p.constructor = function Other() {};
+            Object.defineProperty(p, 'then', {get() {
+                gc(); return resolve => { gc(); resolve(kept); };
+            }});
+            return (await p).answer;
+        }
+        return await f();
+    )",
+              "42");
+}
+
 void test_argument_list_survives_a_collection() {
     for (const std::string_view invoke :
          {"target.apply(null, args)", "Reflect.apply(target, null, args)",
@@ -411,6 +437,7 @@ int main(int argc, char ** argv) {
     };
     run("bind", &test_bind_captures_survive_a_collection);
     run("argument-list", &test_argument_list_survives_a_collection);
+    run("await-constructor", &test_await_constructor_survives_a_collection);
     run("constructor-prototype", &test_constructor_prototype_survives_a_collection);
     run("private-brand", &test_private_brand_survives_a_collection);
     run("symbol", &test_symbol_registry_survives_a_collection);
