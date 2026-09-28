@@ -41,8 +41,7 @@
 # Phase 63 Step 5: the EMITTED half of docs/native-divergences.md - `**` and
 # its guard, `%` as fmod, -0, undefined as NaN, an out-of-range index as NaN.
 ctcompile_native_fixture(divergence Scalars/divergence.js)
-# ND-8's defect witness, kept as a passing differential now the reference
-# truncates indices before bounds checks.
+# ND-8: fractional Number keys name properties, integral ones (and -0) elements.
 ctcompile_native_fixture(index_truncation Objects/index-truncation.js)
 
 # Phase 59 slice 1: closures carried by lifting. Twenty functions claimed: the

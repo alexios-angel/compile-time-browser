@@ -10,11 +10,10 @@
 # A trailing global on a RUN line under `not` is the off-by-one negative proof:
 # the mutation must fail naming that global, so the gate's teeth stay in the suite.
 
-# ND-8's defect witness, kept as a passing differential now the reference
-# truncates indices before bounds checks.
+# ND-8: fractional Number keys name properties, integral ones (and -0) elements.
 # RUN: %compilation_unit --module %{obj}/index_truncation.pipeline.emitc.mlir --js %S/index-truncation.js --work %t --name index_truncation
-# RUN: not %compilation_unit --module %{obj}/index_truncation.pipeline.emitc.mlir --js %S/index-truncation.js --work %t --name index_truncation_off_by_one --mutate idx_fractional 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
-# OFF-BY-ONE: global 'idx_fractional' differs
+# RUN: not %compilation_unit --module %{obj}/index_truncation.pipeline.emitc.mlir --js %S/index-truncation.js --work %t --name index_truncation_off_by_one --mutate idx_integral 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# OFF-BY-ONE: global 'idx_integral' differs
 # RUN: %compilation_unit --module %{obj}/index_truncation.pipeline.deduced.emitc.mlir --js %S/index-truncation.js --work %t --name index_truncation_deduced
 # RUN: %compile_clean --module %{obj}/index_truncation.pipeline.emitc.mlir --work %t --name index_truncation
 # RUN: %compile_clean --module %{obj}/index_truncation.pipeline.deduced.emitc.mlir --work %t --name index_truncation_deduced

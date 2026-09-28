@@ -348,7 +348,7 @@ The distinction is the whole design, so it is the first column:
 | ND-7 | `o.later + 1`, `o.later < 1`, `if (o.later)` | `NaN`, `false`, falsy | NaN arithmetic, the same | **emitted, exact** |
 | ND-7 | `o.later === 5`, `typeof o.later`, printing it | `false`, `"undefined"`, `undefined` | tagged absence | **exact internally; optional output refused** |
 | ND-8 | `[10,20,30][7]`, the same `[-1]`, `[NaN]`, `[Infinity]` | `undefined` | `v[i]` is undefined behaviour | **guard** (`ctnative::vec_at`) |
-| ND-8 truncation | `[10,20,30][0.5]` | `10` — the engine truncates | — | **emitted, exact** (fixed 2026-09-05) |
+| ND-8 fractional | `[10,20,30][0.5]`, `[-0.5]` | `undefined` — the key names a property | `trunc` gives `10` | **guard** (`ctnative::vec_at`, 2026-09-28) |
 | ND-9 | `2147483648 \| 0` | `-2147483648` | `static_cast<int32_t>` is UB | **refused** |
 | ND-10 | `({x:1}).constructor` | a function, truthy | an uninitialised field | **refused** |
 | ND-11 | `({class:1}).class`, `({NAN:1}).NAN` | `1` | does not compile | **refused** |
@@ -365,7 +365,7 @@ The distinction is the whole design, so it is the first column:
 | ND-6 | `ctcompile/test/CTNative/Fixtures/Scalars/divergence.js` (`negzero*`, `poszero*`) | — |
 | ND-7 | `ctcompile/test/CTNative/Fixtures/Scalars/divergence.js` (`u_*`, `b_*`); `ctcompile/test/CTNative/Fixtures/Objects/struct.js` | `CTNative/Lowering/Admission/divergence-refusals.mlir` (EQUALITY, TYPEOF); `global-undefined.mlir` (HOISTED, PICK, OUTERSTORE, READBEFORE, ONEPATH — the printing row, and DOMINATES / FIELD for the narrowing that pays for it) |
 | ND-8 | `ctcompile/test/CTNative/Fixtures/Scalars/divergence.js` (`idx_*`) | — |
-| ND-8 truncation | `ctcompile/test/CTNative/Fixtures/Objects/index-truncation.js`, `ctcompile/test/CTNative/Fixtures/Maps/map.js` | — |
+| ND-8 fractional | `ctcompile/test/CTNative/Fixtures/Objects/index-truncation.js`, `ctcompile/test/CTNative/Fixtures/Maps/map.js` | — |
 | ND-9 | — | `divergence-refusals.mlir` (BITWISE) |
 | ND-10 | `ctcompile/test/CTNative/Fixtures/Objects/struct.js`, the shadowed case | `CTNative/Lowering/Objects/shape-field-names.mlir` (INHERITED) |
 | ND-11 | — | `shape-field-names.mlir` (KEYWORD, MACRO) |
@@ -559,8 +559,8 @@ The older arithmetic, ordering and truthiness witnesses in
 `[10, 20, 30][7]` is `undefined` in JavaScript. The obvious lowering,
 `v[static_cast<size_t>(i)]` on a `std::vector<double>`, is **undefined
 behaviour** — not a different number, an unbounded one. The same is true of a
-negative index. Fractional numeric indices need special care: this
-interpreter truncates them toward zero, unlike ECMAScript property lookup.
+negative index. A fractional Number key is not an index at all: `a[0.5]` names
+the property `"0.5"`, which a proved dense array does not have.
 
 ### What the tier does about it
 
@@ -568,15 +568,18 @@ interpreter truncates them toward zero, unlike ECMAScript property lookup.
 `LowerToEmitC.cpp`:
 
 ```c++
-inline nullable_scalar vec_at(const std::vector<double> & v, nullable_scalar key) {
-  if (key.tag != nullable_scalar::kind::number) { return {}; }
-  double i = std::trunc(key.value);
-  if (!(i >= 0.0) || i >= static_cast<double>(v.size())) { return {}; }
-  return v[static_cast<std::vector<double>::size_type>(i)];
+inline bool element_index(nullable_scalar key, std::size_t size, std::size_t & index) {
+    if (key.tag != nullable_scalar::kind::number || !(key.value >= 0.0) ||
+        key.value >= static_cast<double>(size) || std::trunc(key.value) != key.value) {
+        return false;
+    }
+    index = static_cast<std::size_t>(key.value);
+    return true;
 }
 ```
 
-`!(i >= 0.0)` rather than `i < 0.0`, so a NaN index takes the guard too. The
+`!(key.value >= 0.0)` rather than `< 0.0`, so a NaN index takes the guard too;
+`-0` passes it and selects element zero, as `"0"` does. The
 element type's join starts at `undefined` for exactly this reason
 (`TypeInference::elementTypeOf`), so the undefined tag returned on a miss is part of the inferred type. A
 present NaN instead retains its number tag.
@@ -594,34 +597,19 @@ and the reference would skip it (ND-7's printing row).
 `ctcompile/test/CTNative/Fixtures/Objects/array.js` says in its own header why it omits this case; this
 fixture is where it is covered.
 
-### Fractional indices: fixed 2026-09-05
+### Fractional indices: truncated 2026-09-05, spec again 2026-09-28
 
-The previous helper rejected every non-integral index. The reference truncates
-first: `[10,20,30][0.5]` is `10`, `[1.5]` is `20`, `[2.9]` is `30`, and
-`[-0.5]` is `10` because truncation produces negative zero. `[3.1]` and
-`[-1.5]` still miss. ECMAScript engines treat these as non-index properties;
-the native backend follows this project's interpreter.
+On 2026-09-05 the helper began truncating toward zero (`[0.5]` was `10`,
+`[-0.5]` was `10`) because the interpreter did, and Map snapshots inherited
+that through `map_snapshot_at`. Since `91e7c17ff` (2026-09-25) the interpreter
+follows ECMA-262: a Number key reaches the element path only when it is an
+integral index, and every other Number names the property its ToString spells.
+`element_index` now does the same for `vec_at` and `map_snapshot_at`.
 
-When that correction was measured, Map `keys()` and `values()` returned array
-snapshots in the interpreter. Adding their native lowering made the old defect
-a dependency of the new feature. The shared helper calls `std::trunc` before
-testing its bounds;
-NaN and infinity still fail the guard before any integer conversion.
-
-Runtime commit `e6c77fc` now returns iterators. Native array indexing therefore
-requires explicit `Array.from(map.keys())` or `Array.from(map.values())`, with
-one immediate proved consumption in the same block. Only constants, root
-bookkeeping and proved Array builtin lookups may intervene. Direct iterator
-indexing, mutation, publication, delayed consumption and reuse are refused;
-the eager internal vector is permitted only by this proof. Fractional indexing
-of the materialized array still follows the interpreter behavior above.
-
-`ctcompile/test/CTNative/Fixtures/Objects/index-truncation.js` is retained as a passing differential
-regression, with GCC/Clang, deduced-type and off-by-one controls. The Map fixture
-also checks fractional reads through both numeric snapshots, including a
-negative fractional index and a computed parameter. This fixes the original
-2026-09-02 witness rather than preserving a known wrong answer as the
-comparison gate's negative control.
+`ctcompile/test/CTNative/Fixtures/Objects/index-truncation.js` witnesses fractional, negative
+fractional, `-0` and integral keys, with GCC/Clang, deduced-type and an
+off-by-one control on the integral read (a NaN cannot carry one). The Map
+fixture reads both numeric snapshots at `-0`, `1`, `1.9` and `-0.5`.
 
 ### The comparison gate's mutation anchor: fixed 2026-09-03
 

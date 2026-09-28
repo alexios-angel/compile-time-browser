@@ -37,14 +37,14 @@ METHODS = {
 RECORDER = (
     "callCount = callCount + 1; lastMatch = message === " + json.dumps(MESSAGE) + " ? 41 : 99;"
 )
-# The interpreter truncates fractional numeric array indices. (Map.keys is a
-# live one-use iterator whose `next` is looked up, and Map.prototype carries
-# its @@toStringTag, since 2026-09-12, as in Node: iterator_reuse,
-# iterator_override and object_coercion agree with Node now.)
+# (Map.keys is a live one-use iterator whose `next` is looked up, and
+# Map.prototype carries its @@toStringTag, since 2026-09-12, as in Node:
+# iterator_reuse, iterator_override and object_coercion agree with Node now; a
+# fractional Number key names a property since 91e7c17ff, so fractional_index
+# does too.)
 # Pin these separate expectations only on refused diagnostic paths. Supported
 # immediate snapshots and recorder callbacks must agree with Node exactly.
 INTERPRETER_DIVERGENCES = {
-    "fractional_index": {"trace1": "alpha"},
     "iterator_mutation": {"trace1": mutations.UNDEFINED},
 }
 
