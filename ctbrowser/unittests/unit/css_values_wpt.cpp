@@ -479,6 +479,22 @@ void test_what_a_page_reads_back() {
                     cs.getPropertyValue('--x') + '|' + cs.backgroundPosition + '|' + cs.tabSize);
         document.getElementById('t').style.opacity = 'calc(log(0))';
         console.log('clamped=' + cs.opacity);
+        document.documentElement.style.fontSize = '20px';
+        const t = document.getElementById('t');
+        t.style.fontSize = '40px';
+        t.style.backgroundPosition = '1em 2rem';
+        console.log('background-lengths=' + cs.backgroundPosition);
+        const child = document.createElement('div');
+        child.style.cssText = 'font-size:10px; background-position:inherit';
+        t.appendChild(child);
+        console.log('background-inherited=' + getComputedStyle(child).backgroundPosition);
+        t.style.backgroundPosition = 'right 1em bottom 2rem';
+        console.log('background-offsets=' + cs.backgroundPosition);
+        t.style.backgroundPosition = '1em 2rem, center';
+        console.log('background-layers=' + cs.backgroundPosition);
+        t.style.maskPosition = '1em 2rem';
+        child.style.maskPosition = 'inherit';
+        console.log('mask-inherited=' + getComputedStyle(child).maskPosition);
         // `vi`/`vb` follow the ELEMENT'S writing mode (the root's does not
         // matter): a 400x200 viewport.
         const v = document.createElement('div');
@@ -495,6 +511,13 @@ void test_what_a_page_reads_back() {
     CHECK_EQ(logged(page, "read="),
              std::string{"read=100% 50%|0.9|10px 11px|calc(0% + 320px) 50%|0"});
     CHECK_EQ(logged(page, "clamped="), std::string{"clamped=0"});
+    CHECK_EQ(logged(page, "background-lengths="), std::string{"background-lengths=40px 40px"});
+    CHECK_EQ(logged(page, "background-inherited="), std::string{"background-inherited=40px 40px"});
+    CHECK_EQ(logged(page, "background-offsets="),
+             std::string{"background-offsets=calc(100% - 40px) calc(100% - 40px)"});
+    CHECK_EQ(logged(page, "background-layers="),
+             std::string{"background-layers=40px 40px, 50% 50%"});
+    CHECK_EQ(logged(page, "mask-inherited="), std::string{"mask-inherited=40px 40px"});
     CHECK_EQ(logged(page, "vi="), std::string{"vi=400px 200px|400px 200px|200px 400px"});
 }
 

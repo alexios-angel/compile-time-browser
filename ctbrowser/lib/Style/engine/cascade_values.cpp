@@ -81,6 +81,19 @@ std::string fold_value(std::string text, std::string_view name,
             css::canonical_dimension_text(part, lengths).value_or(std::string{part});
         return known != nullptr && known->nonnegative ? css::non_negative(value) : value;
     };
+    if (name == "background-position" || name == "background-position-x" ||
+        name == "background-position-y" || name == "mask-position") {
+        // Lengths compute before inheritance, including offsets and comma lists.
+        // Keep logical keywords for the resolver that knows the writing mode.
+        const css::token_stream ts = css::tokenize(text);
+        std::string result;
+        for (const css::css_token & t : ts.tokens) {
+            if (t.type == css::token_type::eof) { break; }
+            const std::string_view part = ts.text_of(t);
+            result += t.type == css::token_type::dimension ? component(part) : std::string{part};
+        }
+        return result;
+    }
     const bool radius = name.starts_with("border-") && name.ends_with("-radius");
     if (radius || name == "border-image-width" || name == "border-image-outset" ||
         name == "border-image-slice" || name == "text-decoration-inset" || name == "text-indent" ||
