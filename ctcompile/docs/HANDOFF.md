@@ -79,7 +79,8 @@ so the Data holder needs the Data-session provider's Map support in the class
 path. With a real element the arm `(t = a(t)) && (...)` is LIVE, and R1b cannot
 decide it: `evaluateHelper` takes primitive actuals only.
 
-**Next boundary: element facts.** Give `partial_eval` an element-parameter
+**Next boundary: element facts** (design and options:
+`bootstrap-native-next/06-element-facts-design.md`). Give `partial_eval` an element-parameter
 value (truthy, `typeof` "object", `nodeType` defined, an absent expando such as
 `jquery` undefined when no source writes that key on an element and no
 prototype is mutated - the census already refuses prototype writes) so
