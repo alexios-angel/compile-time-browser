@@ -285,6 +285,7 @@ void install_destructuring_iteration(context & cx) {
     cx.define_native(std::string{class_heritage_name}, [](context & c, std::span<value> a) {
         if (a.size() < 3 || !a[0].is_kind(heap_kind::function)) { return value::undefined(); }
         auto * ctor = static_cast<closure_object *>(a[0].as_heap());
+        ctor->derived_constructor = true;
         const value parent = a[1];
         if (parent.is_null()) {
             // `extends null`: the prototype has no [[Prototype]], the

@@ -86,6 +86,24 @@ void test_argument_list_survives_a_collection() {
     }
 }
 
+void test_constructor_prototype_survives_a_collection() {
+    expect_gc("constructor prototype getter collects", R"(
+        const handle = Proxy.revocable(function () { this.answer = 42; }, {
+            get(target, key) {
+                if (key === 'prototype') {
+                    handle.revoke();
+                    gc();
+                    return {marker: 7};
+                }
+                return target[key];
+            }
+        });
+        const made = new handle.proxy();
+        return made.answer + ',' + made.marker;
+    )",
+              "42,7");
+}
+
 // --- native lambda captures ------------------------------------------------
 //
 // A `value` captured by a C++ lambda inside a native is invisible to the
@@ -329,6 +347,7 @@ int main(int argc, char ** argv) {
     };
     run("bind", &test_bind_captures_survive_a_collection);
     run("argument-list", &test_argument_list_survives_a_collection);
+    run("constructor-prototype", &test_constructor_prototype_survives_a_collection);
     run("symbol", &test_symbol_registry_survives_a_collection);
     run("native-accessors", &test_native_accessors_survive_a_collection);
     run("map", &test_map_result_survives_a_collection);

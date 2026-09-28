@@ -159,6 +159,21 @@ value context::construct(value callee, std::span<const value> args, value new_ta
         throw_error("TypeError", describe_new_target(callee) + " is not a constructor");
         return value::undefined();
     }
+    // A proxy's prototype getter can revoke it, dropping the only other root
+    // of the target constructor while this call is still using it.
+    const rooted keep_callee{*this, callee};
+    if (callee.is_kind(heap_kind::native)) {
+        auto * nat = static_cast<native_object *>(callee.as_heap());
+        // Bound [[Construct]] forwards before reading any prototype (10.4.1.2).
+        if (const value * target = nat->find(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"));
+            target != nullptr && nat->retained.size() >= 3) {
+            std::vector<value> all{nat->retained.begin() + 3, nat->retained.end()};
+            all.insert(all.end(), args.begin(), args.end());
+            const rooted_values keep_all{*this, all};
+            return construct(*target, all,
+                             new_target.strict_equals(callee) ? value::undefined() : new_target);
+        }
+    }
     // OrdinaryCreateFromConstructor off NEW.TARGET (10.1.13 / 10.1.14
     // GetPrototypeFromConstructor): for a plain `new` that is the callee's own
     // `prototype`; for another new.target - Reflect.construct's, a proxy's
@@ -166,35 +181,43 @@ value context::construct(value callee, std::span<const value> args, value new_ta
     // (an accessor runs and may throw, a proxy answers for its target), and
     // one that is not an object falls back to the callee's intrinsic.
     value self = make_instance(callee);
+    // The prototype getter, field initialisers and body can all collect.
+    const rooted keep_instance{*this, self};
     if (!new_target.strict_equals(callee)) {
         const std::size_t before = unwinds();
         const value proto = lookup_property(new_target, "prototype");
         if (throw_pending() || unwinds() != before) { return value::undefined(); }
         if (proto.is_object_like()) {
             static_cast<object_object *>(self.as_heap())->prototype = proto;
+        } else if (!callee.is_kind(heap_kind::function) ||
+                   !static_cast<closure_object *>(callee.as_heap())->derived_constructor) {
+            // GetFunctionRealm (7.3.24) unwraps bound functions and proxies
+            // without invoking traps; a revoked proxy throws at this step.
+            // ponytail: super() still calls its base on the existing receiver;
+            // move derived prototype lookup there when it uses Construct.
+            value target = new_target;
+            for (;;) {
+                if (target.is_kind(heap_kind::proxy)) {
+                    const auto * proxy = static_cast<const proxy_object *>(target.as_heap());
+                    if (proxy->handler.is_null()) {
+                        throw_error("TypeError", "Cannot get the realm of a revoked proxy");
+                        return value::undefined();
+                    }
+                    target = proxy->target;
+                } else if (target.is_kind(heap_kind::native)) {
+                    const value * bound = static_cast<native_object *>(target.as_heap())
+                                              ->find(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"));
+                    if (bound == nullptr) { break; }
+                    target = *bound;
+                } else {
+                    break;
+                }
+            }
         }
     }
-    // THE INSTANCE IS IN A C++ LOCAL FOR THE REST OF THIS FUNCTION, across a
-    // field-initialiser run and a constructor body - both of which run user
-    // JavaScript and can collect. Nothing rooted it, and under gc_stress that
-    // is a heap-use-after-free on the object `new` is building.
-    const rooted keep_instance{*this, self};
     run_field_initialisers(callee, self);
     if (callee.is_kind(heap_kind::native)) {
         auto * nat = static_cast<native_object *>(callee.as_heap());
-        // A BOUND FUNCTION (Function.prototype.bind, which says how `retained`
-        // is laid out): [[Construct]] is the target's, with the bound
-        // arguments in front and the bound `this` ignored (10.4.1.2).
-        if (const value * target = nat->find(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"));
-            target != nullptr && target->is_callable() && nat->retained.size() >= 3) {
-            std::vector<value> all{nat->retained.begin() + 3, nat->retained.end()};
-            all.insert(all.end(), args.begin(), args.end());
-            const rooted_values keep_all{*this, all};
-            // 10.4.1.2 step 5: a newTarget that was the bound function itself
-            // becomes the target; any other one is passed along.
-            return construct(*target, all,
-                             new_target.strict_equals(callee) ? value::undefined() : new_target);
-        }
         std::vector<value> copy{args.begin(), args.end()};
         // Rooted for the same reason invoke() roots a native's arguments: from
         // C++ they live in the caller's span alone.

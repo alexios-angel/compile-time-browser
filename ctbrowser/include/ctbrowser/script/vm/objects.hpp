@@ -308,6 +308,8 @@ struct closure_object final : heap_object {
     // by the class_defined native once the class exists: it has no [[Call]]
     // (10.2.1 step 2), which context::refuse_class_call enforces.
     bool class_constructor = false;
+    // [[ConstructorKind]] stays derived even if its prototype link changes.
+    bool derived_constructor = false;
 
     const function_proto * proto = nullptr;
     // WHICH PROGRAM ITS NESTED FUNCTIONS LIVE IN. `op::closure` names a
