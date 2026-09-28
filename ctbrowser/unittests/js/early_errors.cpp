@@ -629,10 +629,17 @@ int main() {
     accepted("var a = [1], b = { p: 1 }; var c = [...a, 2]; var d = { ...b, q: 2 };");
 
     // A QUOTED `__proto__` NAMES THE SAME THING a plain one does, and a
-    // COMPUTED one does not - the difference survives only in the source, since
-    // the parser gives both the same shape.
+    // COMPUTED one does not, including when comments separate it from `[`. The
+    // parser's quoted-name bit preserves the distinction; escaped names are cooked.
     refused("({ __proto__: 1, '__proto__': 2 });");
+    refused("({ __proto__: null, '\\x5f_proto__': null });");
+    refused("({ '\\u005f_proto__': null, '__proto__': null });");
+    refused("({ '__proto__': null, '\\u{5f}_proto__': null });");
     accepted("var o = { ['__proto__']: 1, __proto__: null };");
+    accepted("({ [/* name */ '__proto__']: 1, __proto__: null });");
+    accepted("({ [// name\n '__proto__']: 1, '__proto__': null });");
+    accepted("({ [/* name */ '\\x5f_proto__']: 1, __proto__: null });");
+    accepted("({ ['__proto__']: 1, ['__proto__']: 2, __proto__: null });");
 
     // ================================================================
     // 16. A NUMERIC LITERAL'S OWN GRAMMAR - 12.9.3

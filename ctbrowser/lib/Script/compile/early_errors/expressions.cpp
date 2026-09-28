@@ -11,6 +11,7 @@
 #include "checker.hpp"
 
 #include "../child_slots.hpp"
+#include "../compiler_impl.hpp"
 
 namespace ctbrowser::script::detail::early {
 
@@ -121,41 +122,13 @@ void checker::check_update(std::int32_t idx) {
 // `__proto__` properties, because each of them would set the prototype.
 // A shorthand, a method, an accessor and a computed key are all excluded -
 // none of them is the prototype-setting form.
-// IS THIS PROPERTY'S NAME `__proto__`? Written plainly, or QUOTED: the rule
-// is about the PropName, and `'__proto__': null` names the same thing that
-// `__proto__: null` does. Only a COMPUTED key is exempt, because its name is
-// not known until it is evaluated.
-//
-// The parser routes a quoted key down the same slot a computed one uses -
-// `d` bit 0 set, `a` holding the literal - so the two are told apart by
-// what is in `a`. A key with an escape in it is left alone rather than
-// cooked here: missing one is a miss, and cooking it wrongly would be a
-// refusal of source nobody wrote.
+// The parser marks unbracketed quoted names with bit 1. Cook them with the
+// same decoder as emission; computed names never set the prototype.
 [[nodiscard]] bool checker::names_proto(const vp::node & prop) const {
     if ((prop.d & 1) == 0) { return prop.text == "__proto__"; }
+    if ((prop.d & 2) == 0) { return false; }
     const vp::node & key = at(prop.a);
-    if (key.kind != nk::str || key.text.size() < 2) { return false; }
-    if (bracketed(prop.a)) { return false; }
-    const std::string_view inner = key.text.substr(1, key.text.size() - 2);
-    return inner == "__proto__";
-}
-
-// IS THIS KEY IN BRACKETS? The parser gives a QUOTED key and a COMPUTED one
-// the same shape - `d` bit 0 set and `a` holding the expression - and for a
-// computed key that happens to be a string literal the two are identical in
-// the tree. `{ '__proto__': null }` sets the prototype and
-// `{ ['__proto__']: null }` defines an ordinary property, so the difference
-// decides whether the duplicate rule applies at all, and the only place it
-// survives is the source.
-[[nodiscard]] bool checker::bracketed(std::int32_t key) const {
-    const std::size_t where = offset_of(key);
-    if (where == early_error::nowhere) { return false; }
-    for (std::size_t i = where; i-- > 0;) {
-        const char c = source_[i];
-        if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f') { continue; }
-        return c == '[';
-    }
-    return false;
+    return key.kind == nk::str && compiler_impl::decode_string_literal(key.text) == "__proto__";
 }
 
 void checker::check_proto_duplicates(std::int32_t idx) {
