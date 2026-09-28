@@ -153,6 +153,50 @@ int main() {
     })())",
               "true,true,true,true,2,true,true");
 
+    // The colon form sets [[Prototype]] directly, independently of the legacy
+    // accessor. Its value is evaluated once; primitives other than null do nothing.
+    js_expect(R"((function(){
+        Object.defineProperty(Object.prototype, '__proto__', {
+            get() { throw 1; }, set() { throw 2; }
+        });
+        var parent = {}, calls = 0;
+        var a = {__proto__: (calls++, parent)}, b = {'__proto__': null};
+        return [Object.getPrototypeOf(a) === parent, Object.getPrototypeOf(b) === null,
+                Object.hasOwn(a, '__proto__'), Object.hasOwn(b, '__proto__'), calls].join();
+    })())",
+              "true,true,false,false,1");
+    js_expect(R"((function(){
+        delete Object.prototype.__proto__;
+        var parent = [], a = {__proto__: parent}, b = {__proto__: null};
+        return [Object.getPrototypeOf(a) === parent, Object.getPrototypeOf(b) === null,
+                Object.hasOwn(a, '__proto__'), Object.hasOwn(b, '__proto__')].join();
+    })())",
+              "true,true,false,false");
+    js_expect(R"((function(){
+        Object.defineProperty(Object.prototype, '__proto__', {value: 1});
+        var parent = function() {}, a = {__proto__: parent};
+        var ignored = [undefined, true, 0, 'x', Symbol(), 1n];
+        return Object.getPrototypeOf(a) === parent && ignored.every(function(value) {
+            var o = {__proto__: value};
+            return Object.getPrototypeOf(o) === Object.prototype && !Object.hasOwn(o, '__proto__');
+        });
+    })())",
+              "true");
+    js_expect(R"((function(){
+        var calls = 0, parent = new Proxy({}, {get() { calls++; throw 1; }});
+        var o = {__proto__: parent};
+        return [Object.getPrototypeOf(o) === parent, calls].join();
+    })())",
+              "true,0");
+    js_expect(R"((function(){
+        var calls = 0, parent = {};
+        var a = {set __proto__(v) { calls++; }, __proto__: parent};
+        var b = {['__proto__']: 1, __proto__: parent};
+        return [Object.getPrototypeOf(a) === parent, Object.getPrototypeOf(b) === parent,
+                calls, b.__proto__].join();
+    })())",
+              "true,true,0,1");
+
     // Object literals also work in embeddings that install no standard library,
     // including a fresh realm created from the bare context's template.
     {
@@ -162,6 +206,11 @@ int main() {
         const run_result first = cx.run(p);
         CHECK(first.ok);
         CHECK_EQ(cx.to_string(first.returned), std::string{"7"});
+        const program linked =
+            compiler::compile("var parent = {x: 9}; return ({__proto__: parent}).x;");
+        const run_result inherited = cx.run(linked);
+        CHECK(inherited.ok);
+        CHECK_EQ(cx.to_string(inherited.returned), std::string{"9"});
         realm_record & other = cx.create_realm();
         const context::realm_scope in_other{cx, other};
         const run_result second = cx.run(p);

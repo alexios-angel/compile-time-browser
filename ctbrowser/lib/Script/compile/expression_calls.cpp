@@ -955,7 +955,23 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
         if (homed) { emit_define_own(v, "__home", dst, false); }
         if (named_at_run_time) { emit_set_function_name(v, key); }
         if (sets_prototype) {
-            proto().emit(instruction{op::set_prop, dst, name_operand("__proto__"), v});
+            // 13.2.5.5 sets the internal link, without consulting an accessor.
+            // Only objects and null apply; null is stored as the explicit-null
+            // sentinel used by set_proto, while primitive values are ignored.
+            const std::uint16_t type = alloc_reg(), kind = alloc_reg(), test = alloc_reg();
+            proto().emit(instruction{op::type_of, type, v});
+            emit_string(kind, "object");
+            proto().emit(instruction{op::equal, test, type, kind});
+            const std::size_t object = proto().emit(instruction{op::jump_if_true, test});
+            emit_string(kind, "function");
+            proto().emit(instruction{op::equal, test, type, kind});
+            const std::size_t primitive = proto().emit(instruction{op::jump_if_false, test});
+            patch_here(object);
+            const std::size_t nonnull = proto().emit(instruction{op::jump_if_not_nullish, v});
+            proto().emit(instruction{op::load_undef, v});
+            patch_here(nonnull);
+            proto().emit(instruction{op::set_proto, dst, v});
+            patch_here(primitive);
         } else if ((prop.d & 1) != 0) {
             emit_define_own_key(dst, key, v, true);
         } else {
