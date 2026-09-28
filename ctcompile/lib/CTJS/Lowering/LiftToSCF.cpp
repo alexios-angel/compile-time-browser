@@ -155,6 +155,26 @@ unsigned dropSelfCarriedArguments(mlir::RewriterBase & rewriter, mlir::Region & 
     return dropped;
 }
 
+// Whether a catch reads what was thrown. The importer copies the landing's
+// value into the register vector whether or not anything reads that register,
+// so follow it through successor operands to a use that is not another copy.
+bool observesThrown(CatchLandOp landing) {
+    llvm::SmallVector<mlir::Value> work{landing.getThrown()};
+    llvm::DenseSet<mlir::Value> seen;
+    while (!work.empty()) {
+        const mlir::Value value = work.pop_back_val();
+        if (!seen.insert(value).second) { continue; }
+        for (mlir::OpOperand & use : value.getUses()) {
+            auto branch = llvm::dyn_cast<mlir::BranchOpInterface>(use.getOwner());
+            const auto copy =
+                branch ? branch.getSuccessorBlockArgument(use.getOperandNumber()) : std::nullopt;
+            if (!copy) { return true; }
+            work.push_back(*copy);
+        }
+    }
+    return false;
+}
+
 // WhileMoveIfDown replaces all uses while visiting condition operands. A
 // repeated if result would hide its later occurrences, leaving those body
 // arguments carrying the else value. Other rewrites can introduce aliases or
@@ -314,14 +334,25 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                 // Other handler functions keep legacy simplification, which
                 // exposes the value flow needed by closure/callback lifting.
                 mlir::Operation * handler = nullptr;
-                bool exceptionCandidate = true;
+                bool exceptionCandidate = true, holder = false;
+                llvm::SmallVector<CatchLandOp> landings;
                 body.getFunctionBody().walk([&](mlir::Operation * operation) {
-                    // Captured helpers and local iterator holders also need
-                    // their original saved registers. This proves no effects.
-                    if (llvm::isa<BinaryStaticOp, CreateClosureOp, CreateCellOp, CellGetOp,
-                                  CreateObjectOp, SetPropertyOp, DefineAccessorOp, IterableOp>(
-                            operation)) {
+                    // Captured helpers also need their original saved
+                    // registers. This proves no effects.
+                    if (llvm::isa<CreateClosureOp, CreateCellOp, CellGetOp>(operation)) {
                         return mlir::WalkResult::advance();
+                    }
+                    // So do local iterator holders, but only for a catch that
+                    // observes the exception (41c9f87de). A landing that only
+                    // suppresses an iterator close is represented by the DOM
+                    // close normalizer, which needs the simplified CFG.
+                    if (llvm::isa<BinaryStaticOp, CreateObjectOp, SetPropertyOp, DefineAccessorOp,
+                                  IterableOp>(operation)) {
+                        holder = true;
+                        return mlir::WalkResult::advance();
+                    }
+                    if (auto landing = llvm::dyn_cast<CatchLandOp>(operation)) {
+                        landings.push_back(landing);
                     }
                     if (!llvm::isa<FrameEnterOp, FrameExitOp, RootOp, ConstantOp, BinaryOp, UnaryOp,
                                    CompareOp, TruthyOp, FromBoolOp, PushHandlerOp, PopHandlerOp,
@@ -336,7 +367,8 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                     }
                     return mlir::WalkResult::advance();
                 });
-                if (handler && exceptionCandidate) {
+                if (handler && exceptionCandidate &&
+                    (!holder || llvm::any_of(landings, observesThrown))) {
                     body->setAttr(
                         "ctjs.not_structured",
                         mlir::StringAttr::get(
