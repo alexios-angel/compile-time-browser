@@ -120,3 +120,12 @@ decides the arm R1b folded). The census deliberately checks uncalled bodies
 (`inherited-method-ambient` pins it); the next rung makes it reach bodies from
 the proof's own call records instead, and erases a decided pure helper call
 whose result dies with the fold. HANDOFF.md has the detail.
+
+## Landed, 2026-09-28 afternoon: helpers no running body calls
+
+`6eef7d4bc`: a decided arm's pure helper call goes, and a helper or holder slot
+whose source calls all sit in bodies that never run skips the census and is
+erased. `bootstrap-base` now stops on `H` in W's `_mergeConfigObj`, `-data` and
+`-button` on the Data holder's `remove` (from B's `dispose`): method bodies real
+Bootstrap runs. With a real element (DOM provider) B's arm is live and needs
+element facts in `evaluateHelper`; see HANDOFF.md.

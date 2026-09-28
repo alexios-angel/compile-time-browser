@@ -22,6 +22,106 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Uncalled helpers, the outage landing gated and the pre-existing failures, 2026-09-28 UTC (afternoon)
+
+Claude compiler worker (`claude-ctcompile`), sole agent in the repository by the
+user's 2026-09-27/28 grant. Resumed thread: the drvfs-outage landing plan
+(`~/ctcompile-staging/ctcompile-triage/main/TODO-outage.md`; the `/tmp` copy was
+wiped by the WSL restart). The restart also killed `~/.ssh/build-agent.sock`, so
+the devbox was unreachable until the user restored it at ~13:29 UTC; the
+landing commits were made before that on their pre-outage gates and re-gated
+afterwards (below).
+
+**Bootstrap rung: helpers no running body calls** (`6eef7d4bc`, fixtures `a2d6281ae`).
+
+- `foldDecidedArms` erases the decided helper call when its result dies with the
+  arm: every construction ran the helper on a pure primitive path
+  (`evaluateHelper`), so the call does nothing.
+- A helper or holder slot that the source calls, but whose every call sits in a
+  body that never runs, is not censused and rewrite erases it. Never-running
+  bodies: calls dropped or erased with a decided arm, calls in the unconstructed
+  original of a base only leaves build (`leafBuilt`), calls in unread static
+  methods (`dropUnreadStatics` now notes their targets) and calls in other such
+  helpers (a fixpoint over the recorded call edges, so Bootstrap's `r`, called
+  only from `a`, goes too). A helper never called in the source keeps its
+  census (the `-unused-ambient` controls are unchanged), as do methods,
+  constructors and getters, and DOM providers skip the analysis (their entry
+  calls are admitted without records).
+- Soundness: every invocation the census admits is a recorded call
+  (`helperCalls`, `methodCalls`, class calls, constructors, getters), so a
+  function with no recorded call from a body that runs cannot run. Rewrite
+  erases each such function once nothing names it (a fixpoint, so nested
+  helpers go after their callers); one still named stays for native admission.
+- Fixtures `60.mlir` (Node agrees on all): `helper-decided-uncalled`,
+  `-nested-uncalled` (element/isElement), `inherited-helper-decided-leaf-built`,
+  `-holder-slot` (positives); `-live-result`, `-other-call` (controls: global
+  "ambient"). `own-fields-branch-helper-nested` and
+  `inherited-own-fields-iterate-deferred-helper` moved from PREPARED_ONLY to
+  POSITIVES: their helpers are erased and the leaf program lowers completely.
+- **Measured Bootstrap frontier** (`bootstrap-base*`, authentic W/B/U/Data):
+  `bootstrap-base` now stops on global "H" in W's `_mergeConfigObj` (was
+  "document" in the element helper `a`); `-data` and `-button` on the Data
+  holder's `remove` (`n.delete(i)` on a child Map, "op ctjs.call"), reached only
+  from B's `dispose` (was "Map" in `set`). Probes: stubbing `remove` takes
+  `-data` to "H" as well. Every remaining refusal is now in a METHOD body the
+  fixture never runs but real Bootstrap does (`_mergeConfigObj`, `dispose`,
+  `toggle`, `_queueCallback`).
+
+**Measured DOM-mode frontier** (new probe: `-button`'s source with
+`function bootstrapDom(element)` and `new U(element, null)`, through the
+class-dom preparation - `--mlir-print-op-generic` is REQUIRED, the custom
+printer cannot reparse the super guards' `cf.switch` operands - and
+`ctnative-lower-to-emitc{host-manifest=...}` with provider `ctbrowser-dom-v1`):
+with the heritage helpers, `Object` and `Error` declared, `native DOM class:
+class own-key snapshot requires fixed constructor fields`; `Map` is not an
+accepted DOM initial intrinsic (`unsupported DOM initial intrinsic identity`),
+so the Data holder needs the Data-session provider's Map support in the class
+path. With a real element the arm `(t = a(t)) && (...)` is LIVE, and R1b cannot
+decide it: `evaluateHelper` takes primitive actuals only.
+
+**Next boundary: element facts.** Give `partial_eval` an element-parameter
+value (truthy, `typeof` "object", `nodeType` defined, an absent expando such as
+`jquery` undefined when no source writes that key on an element and no
+prototype is mutated - the census already refuses prototype writes) so
+`r(element)` is true and `a(element)` returns its argument; then fold the arm
+taken and replace the pure call's result by the actual. B's own-key snapshot
+then sees fixed fields. Behind it: `_getConfig`/`_mergeConfigObj` need the real
+`H` (Manipulator) in the fixture, and the Data holder's Maps in the DOM
+provider. The method-census policy (`inherited-method-ambient`) stays: the
+remaining bodies are ones real Bootstrap runs, so they need proofs, not
+skipping.
+
+**Pre-existing failures triaged** (subagents, each branch gated then merged):
+
+- `debdce505` (triage-dom): stale VM pins dropped (native-dom-assignment,
+  class-dom UTF-16 bits, constructor-refusals arrow TypeError); native String
+  `.length` counts UTF-16 units (`ctnative::string_length`, ND-1 closed);
+  lift-to-scf guarded_allocation CHECK refreshed (41c9f87de is right);
+  closest/find/iterate controls admitted since b4aa79b57 with replacement
+  controls; and the class_static_shared_dom_* controls now call their static,
+  because 8b60703a6 removes an unread static before the proof (class-dom.mlir
+  had started emitting). Gate: 2/2 CTest, 9/9 lit.
+- `6ff62c4fa` (triage-exc): the importer tracks open handlers by control flow
+  (VM 380ee61d5 pops a try's handler on a return routed into its finally);
+  exception_recovery controls 424/425 proved since e6babb265. Gate: lit 2/2 +
+  CTJS/Import 9/9, CTest 1/1, and ctjs-translate output identical to the
+  previous importer on 986 JS sources.
+- triage-lit branch `worktree-agent-a865a5bd213e19007` (escape-claims refresh,
+  fractional Number keys name properties in `vec_at`/`map_snapshot_at`,
+  intrinsic-symbol VM pins): 21/23 of its lit selection pass; a subagent is
+  finishing `Provider/diagnostics` and `native-intrinsic-symbols`. NOT MERGED.
+- Open: F (native-dom-custom-iteration saved-throw-number, suspected
+  41c9f87de's LiftToSCF preserve list), G (SIGABRT write-log asserts in
+  native-dom and -nested-iteration clients), H (native-dom-strings g++ timeout
+  under load); a subagent is on them.
+
+Checks (devbox, focused): class_initialization subset 562/562 (1500 s: last
+session's 386 plus every unused/helper/captured control and fixture 60) on the
+merged tree; lit class-entry, class-instanceof, native-class-dom-alias,
+class-terminal-publication, native-class-dom-data, class-dom 6/6 (540.8 s);
+native-bootstrap-button-probe and -dom-data-session 2/2; `tools/format.sh
+--check` clean. Full CTest/lit, WPT/test262 and sanitizers were not run.
+
 ## Bootstrap base classes built by their leaves, implicit super and helper arms, 2026-09-28 UTC
 
 Claude compiler worker (`claude-ctcompile`). The browser worker was stopped all
@@ -123,9 +223,9 @@ arguments): the combined tree 386/386 fixtures (`ctjs-opt.dead3`), rungs 1-3 +
 R1b 371/371, the `Object.entries` subagent's 40-fixture subset. After landing:
 local `clang++ -fsyntax-only -Werror` on the five changed C++ files and
 `tools/format.sh --check` only - the WSL restart killed the build ssh-agent
-(its key has a passphrase), so the landed tree has NOT been rebuilt on the
-devbox yet. First thing next session: `ctjs-opt` + the subset of fixtures
-55-59 and `bootstrap-base*`. `12af22af0` formats a ctbrowser table the
+(its key has a passphrase), so the landed tree was rebuilt only after the
+user restored it: re-gated in the afternoon inside the 562-fixture subset
+(562/562, see the section above). `12af22af0` formats a ctbrowser table the
 browser worker left unformatted (whitespace only).
 
 ## Ponytail shrink pass, 2026-09-27 UTC
