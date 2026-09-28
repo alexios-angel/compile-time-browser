@@ -70,6 +70,30 @@ void test_derived_constructors() {
     expect_result("class B extends Object { constructor() { try { return null; }"
                   " finally { return {x: 7}; } } } return new B().x;",
                   "7");
+    // [[Construct]] validates the completed body, beyond its catch clauses.
+    expect_result("const results = []; for (const value of [null, 1, undefined]) {"
+                  " class B extends Object { constructor() { try { return value; }"
+                  " catch (e) { results.push('caught'); return {}; } } }"
+                  " try { new B(); results.push('no throw'); } catch (e) { results.push(e.name); }"
+                  " } return results.join();",
+                  "TypeError,TypeError,ReferenceError");
+    expect_result("const log = []; function* items() { try { yield 0; }"
+                  " finally { log.push('close'); } }"
+                  "class B extends Object { constructor() { try { for (const x of items()) {"
+                  " try { return null; } finally { log.push('finally'); } } }"
+                  " catch (e) { log.push('caught'); return {}; } } }"
+                  "try { new B(); } catch (e) { log.push(e.name); } return log.join();",
+                  "finally,close,TypeError");
+    // Errors evaluating the return expression or closing its iterator still
+    // belong to the body and can be handled there.
+    expect_result("function fail() { throw 'expression'; }"
+                  "function* items() { try { yield 0; } finally { throw 'close'; } }"
+                  "class A extends Object { constructor() { try { return fail(); }"
+                  " catch (e) { return {kind: e}; } } }"
+                  "class B extends Object { constructor() { try { for (const x of items()) {"
+                  " return null; } } catch (e) { return {kind: e}; } } }"
+                  "return new A().kind + ',' + new B().kind;",
+                  "expression,close");
     expect_result("class A { constructor() { this.x = 3; return null; } }"
                   "class B extends A { constructor() { super(); return undefined; } }"
                   "return new A().x + ',' + new B().x;",

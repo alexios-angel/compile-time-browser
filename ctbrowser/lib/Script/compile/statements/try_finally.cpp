@@ -305,7 +305,12 @@ bool compiler_impl::route_return_through_finally(std::uint16_t value_reg) {
         patch_here(done);
         release_to(mark);
     }
-    if (finallies_.empty()) { return false; }
+    if (finallies_.empty()) {
+        // The body is complete: its catches cannot intercept [[Construct]]'s
+        // derived-return validation, emitted by the caller before op::ret.
+        pop_to(0);
+        return false;
+    }
     finally_context & open = finallies_.back();
     pop_to(open.handler_depth);
     proto().emit(instruction{op::move, open.value_reg, value_reg});
