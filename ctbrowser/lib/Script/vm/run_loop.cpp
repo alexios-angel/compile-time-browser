@@ -651,7 +651,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
             {
                 value returned = in.code == op::ret ? reg(in.a) : value::undefined();
                 if (vm_frame->constructing && !returned.is_object_like()) {
-                    returned = vm_frame->receiver;
+                    returned = effective_this(*vm_frame);
                 }
                 const std::uint16_t slot = vm_frame->result_reg;
                 // Handlers this (*vm_frame) installed die with it: a `return` out of a

@@ -36,24 +36,21 @@ std::optional<value> context::execute_await(instruction in, call_frame *& vm_fra
             // callee just queued. Draining re-enters the VM, so the
             // frame and its window are re-derived afterwards.
             const bool top_level = vm_frame->closure == nullptr;
-            // 27.7.5.3 step 2, PromiseResolve(%Promise%, value): an object
-            // that is not a promise is resolved INTO one - which is where a
-            // thenable's `then` is called (NewPromiseResolveThenableJob), so
-            // `await { then(_, reject) { reject(e) } }` throws e. A promise
-            // is awaited as itself and a primitive keeps the fast path below.
-            if (awaited_raw.is_object_like() && pending_promise_factory_ && promise_settler_ &&
-                !(awaited_raw.is_object() &&
-                  static_cast<object_object *>(awaited_raw.as_heap())->find("__settled") !=
-                      nullptr)) {
-                // The object stays rooted through the register until the
-                // wrapper is in it; the wrapper is rooted by the register
-                // from then on, and resolving allocates the thenable job.
+            // PromiseResolve(%Promise%, value) reads a promise's constructor
+            // before deciding whether to adopt it. The installed factory owns
+            // that algorithm, including thenable assimilation. Its getter
+            // errors must reach this await before the frame suspends, and its
+            // callbacks may grow the register stack or collect temporary values.
+            if (awaited_raw.is_object_like() && promise_factory_) {
                 const rooted keep{*this, awaited_raw};
-                reg(in.b) = pending_promise_factory_(*this);
-                promise_settler_(*this, reg(in.b), awaited_raw, false);
-                if (failed_) { break; }
+                const value resolved = [&] {
+                    const native_scope pinned{*this};
+                    return make_promise(awaited_raw, false);
+                }();
+                if (rethrow_pending() || failed_) { break; }
                 vm_frame = &frames_.back();
                 base = vm_frame->base;
+                reg(in.b) = resolved;
             }
             const value awaited = reg(in.b);
             if (top_level && is_pending_promise(awaited)) {

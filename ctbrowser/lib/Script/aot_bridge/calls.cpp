@@ -16,11 +16,8 @@ namespace ctbrowser::script {
 // ct_aot_construct. op::construct's own dispatch through the shared
 // context::construct_new.
 //
-// NOT context::construct WHOLESALE, which the row is emphatic about and is
-// right: construct() tests !is_callable() FIRST and raise()s, which no
-// try/catch can see, while the opcode allocates, runs the field
-// initialisers and only then throws a CATCHABLE TypeError. Delegating
-// wholesale turns `try { new obj() } catch` into an engine fault.
+// This preserves the plain opcode's pending-new-target handling and diagnostic.
+// Both construction paths reject non-constructors with a catchable TypeError.
 //
 // `site` IS THIS FRAME'S OWN function_proto, which is what names the
 // function in that TypeError. There is no origin scan to go with it -

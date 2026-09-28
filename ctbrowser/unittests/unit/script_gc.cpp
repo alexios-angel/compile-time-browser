@@ -70,6 +70,154 @@ void expect_gc(std::string_view what, const std::string & source, std::string_vi
     }
 }
 
+void test_await_constructor_survives_a_collection() {
+    expect_gc("await constructor getter collects", R"(
+        async function f() {
+            const kept = {answer: 42};
+            const p = Promise.resolve(kept);
+            Object.defineProperty(p, 'constructor', {get() { gc(); return Promise; }});
+            return (await p).answer;
+        }
+        return await f();
+    )",
+              "42");
+    expect_gc("await adoption getter collects", R"(
+        async function f() {
+            const kept = {answer: 42};
+            const p = Promise.resolve(0);
+            p.constructor = function Other() {};
+            Object.defineProperty(p, 'then', {get() {
+                gc(); return resolve => { gc(); resolve(kept); };
+            }});
+            return (await p).answer;
+        }
+        return await f();
+    )",
+              "42");
+}
+
+void test_argument_list_survives_a_collection() {
+    for (const std::string_view invoke :
+         {"target.apply(null, args)", "Reflect.apply(target, null, args)",
+          "Reflect.construct(target, args)"}) {
+        expect_gc(invoke,
+                  R"(
+            function target(x) { return x; }
+            var args = {length: 2, 0: {answer: 42},
+                        get 1() { delete this[0]; gc(); return 0; }};
+            return ()" +
+                      std::string{invoke} + R"().answer;
+        )",
+                  "42");
+    }
+}
+
+void test_constructor_prototype_survives_a_collection() {
+    expect_gc("escaped super arrows share a rooted receiver", R"(
+        let finish, read;
+        class A { constructor() { return {answer: 42}; } }
+        class B extends A {
+            constructor() {
+                read = () => this;
+                finish = () => super();
+                return {};
+            }
+        }
+        new B();
+        gc();
+        finish();
+        finish = null;
+        gc();
+        return read().answer;
+    )",
+              "42");
+    expect_gc("constructor keeps shared receiver after arrow returns", R"(
+        class A { constructor() { return {answer: 42}; } }
+        class B extends A {
+            constructor() {
+                (() => super())();
+                gc();
+            }
+        }
+        return new B().answer;
+    )",
+              "42");
+    expect_gc("escaped super arrow retains new.target", R"(
+        let finish;
+        class A { constructor() { return {target: new.target}; } }
+        class B extends A { constructor() { finish = () => super(); return {}; } }
+        (function () {
+            function Other() {}
+            Other.prototype = null;
+            Reflect.construct(B, [], Other);
+        })();
+        gc();
+        return finish().target.name;
+    )",
+              "Other");
+    expect_gc("constructor prototype getter collects", R"(
+        const handle = Proxy.revocable(function () { this.answer = 42; }, {
+            get(target, key) {
+                if (key === 'prototype') {
+                    handle.revoke();
+                    gc();
+                    return {marker: 7};
+                }
+                return target[key];
+            }
+        });
+        const made = new handle.proxy();
+        return made.answer + ',' + made.marker;
+    )",
+              "42,7");
+}
+
+void test_private_brand_survives_a_collection() {
+    expect_gc("stamped receiver retains private method home", R"(
+        const pair = (function () {
+            class B { constructor(o) { return o; } }
+            class C extends B {
+                #method() { return 42; }
+                get #value() { return this.#method(); }
+                static reader() { return function (o) { return o.#value; }; }
+            }
+            const o = {};
+            new C(o);
+            return [o, C.reader()];
+        })();
+        gc();
+        const filler = [];
+        for (let i = 0; i < 400; i++) { filler.push({answer: i}); }
+        gc();
+        return pair[1](pair[0]);
+    )",
+              "42");
+}
+
+void test_private_proxy_survives_a_collection() {
+    expect_gc("revoked proxy retains private fields and method home", R"(
+        const pair = (function () {
+            class B { constructor(o) { return o; } }
+            class C extends B {
+                #data = {answer: 42};
+                #method() { gc(); return this.#data.answer; }
+                get #value() { return this.#method(); }
+                static reader() { return function (o) { return o.#value; }; }
+            }
+            const r = Proxy.revocable({}, {});
+            new C(r.proxy);
+            r.revoke();
+            return [r.proxy, C.reader()];
+        })();
+        gc();
+        const filler = [];
+        for (let i = 0; i < 400; i++) { filler.push({answer: i}); }
+        gc();
+        return pair[1](pair[0]);
+    )",
+              "42");
+}
+
 // --- native lambda captures ------------------------------------------------
 //
 // A `value` captured by a C++ lambda inside a native is invisible to the
@@ -312,6 +460,11 @@ int main(int argc, char ** argv) {
         if (only.empty() || name.find(only) != std::string_view::npos) { body(); }
     };
     run("bind", &test_bind_captures_survive_a_collection);
+    run("argument-list", &test_argument_list_survives_a_collection);
+    run("await-constructor", &test_await_constructor_survives_a_collection);
+    run("constructor-prototype", &test_constructor_prototype_survives_a_collection);
+    run("private-brand", &test_private_brand_survives_a_collection);
+    run("private-proxy", &test_private_proxy_survives_a_collection);
     run("symbol", &test_symbol_registry_survives_a_collection);
     run("native-accessors", &test_native_accessors_survive_a_collection);
     run("map", &test_map_result_survives_a_collection);

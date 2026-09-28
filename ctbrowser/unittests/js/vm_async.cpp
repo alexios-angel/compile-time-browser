@@ -316,6 +316,60 @@ void test_async_and_promises() {
                   "9");
 }
 
+void test_await_promise_resolve() {
+    // Await uses PromiseResolve(%Promise%, value) before suspending: read a
+    // promise's constructor once, and leave its then alone when it matches.
+    expect_after_turn(
+        "var result = ''; const P = Promise; const p = P.resolve(7);"
+        "Object.defineProperty(p, 'constructor', {get() { result += 'C'; return P; }});"
+        "Object.defineProperty(p, 'then', {get() { throw 'then'; }});"
+        "globalThis.Promise = null;"
+        "(async () => { const v = await p; result += v; })(); result += 'S';",
+        "CS7");
+    // A throwing constructor getter is abrupt before the continuation job.
+    expect_after_turn(
+        "var result = ''; const p = Promise.resolve(1);"
+        "Object.defineProperty(p, 'constructor', {get() { result += 'C'; throw 'E'; }});"
+        "(async () => { try { await p; result += 'bad'; } catch (e) { result += e; } })();"
+        "result += 'S';",
+        "CES");
+    // A different constructor requires adoption through the promise's then.
+    expect_after_turn(
+        "var result = ''; const p = Promise.resolve(1); p.constructor = function Other() {};"
+        "Object.defineProperty(p, 'then', {get() { result += 'G';"
+        " return function(resolve) { result += 'T'; resolve(9); }; }});"
+        "(async () => { const v = await p; result += v; })(); result += 'S';",
+        "GST9");
+    // Thenables are not promises: their constructor is irrelevant.
+    expect_after_turn(
+        "var result = ''; const p = {get constructor() { throw 'bad'; },"
+        " get then() { result += 'G'; return resolve => { result += 'T'; resolve(8); }; }};"
+        "(async () => { const v = await p; result += v; })(); result += 'S';",
+        "GST8");
+    // The getter can grow the VM's register stack while the await is active.
+    expect_after_turn(
+        "var result = ''; const p = Promise.resolve(7);"
+        "function deep(n) { return n ? deep(n - 1) + 1 : 0; }"
+        "Object.defineProperty(p, 'constructor', {get() { result += deep(40); return Promise; }});"
+        "(async () => { const kept = 5; const v = await p; result += ':' + (v + kept); })();",
+        "40:12");
+    expect_after_turn(
+        "var result = ''; const p = Promise.resolve(7);"
+        "Object.defineProperty(p, 'constructor', {get() { result += 'C'; return Promise; }});"
+        "async function* g() { const v = await p; result += v; } g().next(); result += 'S';",
+        "CS7");
+    expect_after_turn("var result = ''; const p = Promise.resolve(7);"
+                      "Object.defineProperty(p, 'constructor', {get() {"
+                      " try { throw 1; } catch (e) { result += e; } return Promise; }});"
+                      "(async () => { const v = await p; result += v; })(); result += 'S';",
+                      "1S7");
+    // Embedding entry code keeps its synchronous return-await convenience.
+    expect_result("const p = Promise.resolve(1);"
+                  "Object.defineProperty(p, 'constructor', {get() { throw 42; }});"
+                  "try { return await p; } catch (e) { return e; }",
+                  "42");
+}
+
 // A HANDLER RUNS AT THE END OF THE TURN, NOT WHEN THE PROMISE SETTLES.
 //
 // The difference is observable and pages are written against it. It used to run
@@ -699,6 +753,7 @@ int main() {
     test_yield_delegation();
     test_generator_return_runs_finally();
     test_async_and_promises();
+    test_await_promise_resolve();
     test_promise_handlers_are_microtasks();
     test_async_rejection();
     test_concurrent_awaits();

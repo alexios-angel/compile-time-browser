@@ -435,8 +435,8 @@ inline auto context::throw_error(std::string_view kind, std::string message) -> 
 // BindThisValue for the frame a native was called from (see
 // bind_this_name): a native pushes no frame, so frames_.back() is its
 // caller's - the derived constructor whose `super()` just returned. An
-// arrow's frame (a `super()` inside one) rebinds only the arrow's own
-// receiver. A NATIVE PARENT TOO: Error, Map, Date fill the instance and
+// arrow shares its enclosing constructor's binding through a cell.
+// A NATIVE PARENT TOO: Error, Map, Date fill the instance and
 // answer it, and Array and the typed arrays answer an array of their own
 // carrying the instance's prototype (adopt_subclass_prototype) - either
 // way the answer is the [[Construct]] result and is `this` from here.
@@ -444,7 +444,12 @@ inline auto context::throw_error(std::string_view kind, std::string message) -> 
 // Array` built a plain object that was never an array.
 inline auto context::rebind_receiver(value v) -> void {
     if (frames_.empty() || frames_.back().closure == nullptr) { return; }
-    frames_.back().receiver = v;
+    call_frame & frame = frames_.back();
+    const value cell = frame.closure->proto != nullptr && frame.closure->proto->is_arrow
+                           ? frame.closure->captured_this
+                           : frame.receiver_cell;
+    if (cell.is_kind(heap_kind::cell)) { static_cast<cell_object *>(cell.as_heap())->slot = v; }
+    frame.receiver = v;
 }
 
 // THE PARKED THROW, TAKEN AS A VALUE rather than rethrown: for a native

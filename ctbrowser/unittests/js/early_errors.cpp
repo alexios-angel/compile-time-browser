@@ -123,6 +123,42 @@ void answers(std::string_view source, std::string_view expected) {
 } // namespace
 
 int main() {
+    // Script and eval use [~Await]; the embedding API and modules use [+Await].
+    for (const std::string_view source :
+         {"function await(n) { return n + 1; } if (await(41) !== 42) throw 0;",
+          "'use strict'; function await() { return 42; } if (await() !== 42) throw 0;",
+          "var await = 41; await += 1; if (await !== 42) throw 0;",
+          "class await {} if (!(new await() instanceof await)) throw 0;",
+          "async function await() {} if (typeof await !== 'function') throw 0;"}) {
+        using namespace ctbrowser::script;
+        const program prog = compiler::compile_script(source);
+        check(prog.ok, source);
+        if (prog.ok) {
+            context cx;
+            install_builtins(cx);
+            check(cx.run(prog).ok, source);
+        }
+        module_refused(source);
+    }
+    for (const std::string_view source : {"await 1;", "await Promise.resolve(1);"}) {
+        using namespace ctbrowser::script;
+        const program script = compiler::compile_script(source);
+        check(!script.ok && script.error.starts_with("parse error:"), source);
+        const program eval = compiler::compile_for_eval(source);
+        check(!eval.ok && eval.error.starts_with("parse error:"), source);
+        accepted(source);
+        module_accepted(source);
+    }
+    answers("return eval('function await(n) { return n + 1; } await(41);');", "42");
+    answers("return (0, eval)('function await() { return 42; } await();');", "42");
+    answers("return await (async function() {"
+            " return eval('function await() { return 42; } await();'); })();",
+            "42");
+    answers("try { eval('await 1;'); } catch (e) { return e.name; }", "SyntaxError");
+    answers("try { (0, eval)('await 1;'); } catch (e) { return e.name; }", "SyntaxError");
+    answers("async function f() { return (await /x/).test('x'); } return await f();", "true");
+    module_accepted("const r = await /x/;");
+
     // A statement body may be `let` followed by a newline - the identifier -
     // but never `let [` (14.5's lookahead), newline or comment between.
     refused("if (false) let\n[a] = 0;");
@@ -511,6 +547,46 @@ int main() {
     // duplicate: the get/set exception needs both to be on the same side.
     refused("class C { static get #m() { return 1; } set #m(v) {} }");
 
+    // A bare loop target is an assignment to a name, even without a declaration.
+    refused("class C { #x; m() { for (#x in []) {} } }");
+    refused("class C { #x; m() { for (#x of []) {} } }");
+    refused("'use strict'; for (eval in {}) {}");
+    refused("'use strict'; for (arguments of []) {}");
+    refused("'use strict'; for (\\u0065val of []) {}");
+    refused("async function f() { for await (#x of []) {} }");
+    accepted("for (eval in {}) {} for (arguments of []) {}");
+    answers("class C { #x; m() { for (this.#x in { key: 1 }) {} return this.#x; } }"
+            " return new C().m();",
+            "key");
+    answers("class C { #x; m() { for (this.#x of [42]) {} return this.#x; } }"
+            " return new C().m();",
+            "42");
+    answers("class C { #x; m() { for (; #x in this;) { return true; } } }"
+            " return new C().m();",
+            "true");
+
+    // Arrow/yield expressions need grouping when used as operator operands.
+    refused("class C { #x; m() { return #x in () => {}; } }");
+    refused("class C { #x; m() { return #x in +() => {}; } }");
+    refused("return 'length' in () => {};");
+    refused("return 1 + x => x;");
+    refused("return void () => {};");
+    refused("return false || async () => {};");
+    refused("return (() => {} + 1);");
+    refused("return (() => {} || 1);");
+    refused("function f(x) {} f(() => {} + 1);");
+    refused("function* g() { return 1 + yield 2; }");
+    answers("class C { #x; m() { return #x in /* ( */ (/* ) */ () => {}); } }"
+            " return new C().m();",
+            "false");
+    answers("return 'length' in (async () => {});", "true");
+    answers("return typeof ((() => {} /* ( */) + 1);", "string");
+    answers("return typeof (false || (/* ) */ x => x));", "function");
+    answers("return typeof (true ? () => {} : async () => {});", "function");
+    answers("function* g() { return 1 + /* ( */ (yield 2); } var i = g();"
+            " return i.next().value + ':' + i.next(3).value;",
+            "2:4");
+
     // ================================================================
     // 14. `super()` - 15.7.1
     // ================================================================
@@ -553,10 +629,17 @@ int main() {
     accepted("var a = [1], b = { p: 1 }; var c = [...a, 2]; var d = { ...b, q: 2 };");
 
     // A QUOTED `__proto__` NAMES THE SAME THING a plain one does, and a
-    // COMPUTED one does not - the difference survives only in the source, since
-    // the parser gives both the same shape.
+    // COMPUTED one does not, including when comments separate it from `[`. The
+    // parser's quoted-name bit preserves the distinction; escaped names are cooked.
     refused("({ __proto__: 1, '__proto__': 2 });");
+    refused("({ __proto__: null, '\\x5f_proto__': null });");
+    refused("({ '\\u005f_proto__': null, '__proto__': null });");
+    refused("({ '__proto__': null, '\\u{5f}_proto__': null });");
     accepted("var o = { ['__proto__']: 1, __proto__: null };");
+    accepted("({ [/* name */ '__proto__']: 1, __proto__: null });");
+    accepted("({ [// name\n '__proto__']: 1, '__proto__': null });");
+    accepted("({ [/* name */ '\\x5f_proto__']: 1, __proto__: null });");
+    accepted("({ ['__proto__']: 1, ['__proto__']: 2, __proto__: null });");
 
     // ================================================================
     // 16. A NUMERIC LITERAL'S OWN GRAMMAR - 12.9.3

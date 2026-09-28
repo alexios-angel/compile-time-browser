@@ -223,32 +223,9 @@ void install_proxy(context & cx) {
         if (!key_of(c, arg_at(a, 1), key)) { return value::undefined(); }
         return value::boolean(c.has_property(a[0], key));
     });
-    // CreateListFromArrayLike, 7.3.20: any object with a `length`, read
-    // through [[Get]] - a non-object is the TypeError of step 2.
-    const auto list_from = [](context & c, value list, std::vector<value> & out,
-                              const char * name) {
-        if (!list.is_object_like()) {
-            c.throw_error("TypeError",
-                          std::string{"Reflect."} + name + ": arguments list must be an object");
-            return false;
-        }
-        if (list.is_array() && detail::dense_array_this(list) != nullptr &&
-            !list.is_kind(heap_kind::proxy)) {
-            out = static_cast<array_object *>(list.as_heap())->items;
-            return true;
-        }
-        const double n = detail::array_like_length(c, list);
-        if (c.throw_pending()) { return false; }
-        if (!detail::generic_walk_ok(c, n)) { return false; }
-        for (double i = 0; i < n; i += 1.0) {
-            out.push_back(detail::element_at(c, list, i));
-            if (c.throw_pending()) { return false; }
-        }
-        return true;
-    };
     // 28.1.2: target and newTarget must both be constructors, and the
     // argument list must be an object (CreateListFromArrayLike step 2).
-    method(cx, reflect, "construct", 2, [list_from](context & c, std::span<value> a) {
+    method(cx, reflect, "construct", 2, [](context & c, std::span<value> a) {
         if (!is_constructor(arg_at(a, 0))) {
             c.throw_error("TypeError", "Reflect.construct: target is not a constructor");
             return value::undefined();
@@ -257,25 +234,25 @@ void install_proxy(context & cx) {
             c.throw_error("TypeError", "Reflect.construct: newTarget is not a constructor");
             return value::undefined();
         }
-        std::vector<value> args;
-        if (!list_from(c, arg_at(a, 1), args, "construct")) { return value::undefined(); }
-        const context::rooted_values keep{c, args};
+        const value args = detail::create_argument_list(c, arg_at(a, 1), detail::max_generic_walk);
+        if (args.is_undefined()) { return args; }
+        const context::rooted keep{c, args};
         // Construct(target, args, newTarget): the instance is made from
         // newTarget's prototype (10.1.14), and a body sees it as new.target.
-        return c.construct(a[0], args, a.size() > 2 ? a[2] : a[0]);
+        return c.construct(a[0], static_cast<array_object *>(args.as_heap())->items,
+                           a.size() > 2 ? a[2] : a[0]);
     });
     // 28.1.1 Reflect.apply: a non-callable target is a TypeError BEFORE the
     // list is read.
-    method(cx, reflect, "apply", 3, [list_from](context & c, std::span<value> a) {
+    method(cx, reflect, "apply", 3, [](context & c, std::span<value> a) {
         if (!arg_at(a, 0).is_callable()) {
             c.throw_error("TypeError", "Reflect.apply: target is not a function");
             return value::undefined();
         }
-        if (c.refuse_class_call(a[0])) { return value::undefined(); }
-        std::vector<value> args;
-        if (!list_from(c, arg_at(a, 2), args, "apply")) { return value::undefined(); }
-        const context::rooted_values keep{c, args};
-        return c.call(a[0], args, arg_at(a, 1));
+        const value args = detail::create_argument_list(c, arg_at(a, 2), detail::max_generic_walk);
+        if (args.is_undefined()) { return args; }
+        const context::rooted keep{c, args};
+        return c.call(a[0], static_cast<array_object *>(args.as_heap())->items, arg_at(a, 1));
     });
     method(cx, reflect, "ownKeys", 1, [](context & c, std::span<value> a) {
         value out = c.make_array();

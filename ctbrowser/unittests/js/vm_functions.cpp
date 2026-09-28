@@ -294,6 +294,52 @@ void test_function_prototype() {
     expect_result("return typeof Math.max.apply;", "function");
 }
 
+void test_apply_reads_argument_properties() {
+    expect_result(R"(
+        var args = [0, 1];
+        Object.defineProperty(args, '0', {get: function () { args[1] = 8; return 42; }});
+        return (function (a, b) { return a + ',' + b; }).apply(null, args);
+    )",
+                  "42,8");
+    expect_result(R"(
+        var args = [, 2];
+        Object.setPrototypeOf(args, {0: 9});
+        return (function (a, b) { return a + ',' + b; }).apply(null, args);
+    )",
+                  "9,2");
+    for (const std::string_view invoke :
+         {"target.apply(null, args)", "Reflect.apply(target, null, args)",
+          "Reflect.construct(target, args)"}) {
+        const std::string call{invoke};
+        expect_result(R"(
+            var log = '';
+            function target() { log += 'called'; }
+            var args = {length: 2, get 0() { log += '0'; throw 42; },
+                        get 1() { log += '1'; return 0; }};
+            try { )" + call +
+                          R"(; } catch (e) { log += ':' + e; }
+            return log;
+        )",
+                      "0:42");
+        expect_result(R"(
+            var log = '';
+            function target() { log += 'called'; }
+            var args = {get length() { throw 42; }, get 0() { log += '0'; }};
+            try { )" + call +
+                          R"(; } catch (e) { log += e; }
+            return log;
+        )",
+                      "42");
+        expect_result(R"(
+            function target(a, b) { return {result: a + ',' + b}; }
+            var args = {length: 2, get 0() { try { throw 0; } catch (e) {} return 7; }, 1: 8};
+            return ()" + call +
+                          R"().result;
+        )",
+                      "7,8");
+    }
+}
+
 // A FUNCTION HAS A [[Prototype]] OF ITS OWN, and it is not its `prototype`
 // property. Babel's `_inherits` sets both - the subclass's prototype property
 // so instances find inherited methods, and the subclass FUNCTION so STATICS are
@@ -954,6 +1000,7 @@ int main() {
     test_destructuring_in_for_of();
     test_functions_have_a_prototype();
     test_function_prototype();
+    test_apply_reads_argument_properties();
     test_function_prototype_link();
     test_destructuring_in_a_block();
     test_call_type_error_is_catchable();

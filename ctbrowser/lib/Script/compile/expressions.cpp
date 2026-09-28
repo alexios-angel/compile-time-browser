@@ -466,7 +466,9 @@ void compiler_impl::compile_binary(const vp::node & n, std::uint16_t dst) {
     const std::uint16_t rhs = alloc_reg();
     // `#x in o` (13.10.1): the private name is the KEY the brand is checked
     // under, spelled as the class body resolved it - never a name to read.
-    if (n.text == "in" && at(n.a).kind == vp::nk::ident && at(n.a).text.starts_with('#')) {
+    const bool private_in =
+        n.text == "in" && at(n.a).kind == vp::nk::ident && at(n.a).text.starts_with('#');
+    if (private_in) {
         emit_string(lhs, member_key(at(n.a).text));
     } else {
         compile_expr(n.a, lhs);
@@ -512,6 +514,12 @@ void compiler_impl::compile_binary(const vp::node & n, std::uint16_t dst) {
     } else if (o == "instanceof") {
         code = op::instance_of;
     } else if (o == "in") {
+        if (!private_in) {
+            // HasProperty also serves `with` and generic array methods, which
+            // accept primitives. Only `in` validates before converting its key.
+            emit_iterator_native(in_object_name, rhs, rhs);
+            emit_iterator_native(to_property_key_name, lhs, lhs);
+        }
         code = op::has_property;
     } else if (o == "<") {
         code = op::less;

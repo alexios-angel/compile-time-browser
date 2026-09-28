@@ -698,8 +698,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 return collapse_keyword(text);
             }
             if (layer_property) {
-                if (std::string computed =
-                        style::css::computed_background_list(property, text, ctx);
+                if (std::string computed = style::css::computed_background_list(
+                        property, text, ctx, declared("writing-mode"), declared("direction"));
                     !computed.empty()) {
                     return computed;
                 }

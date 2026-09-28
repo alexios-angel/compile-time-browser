@@ -52,7 +52,7 @@ value context::call(value callable, std::span<const value> args, value this_valu
 }
 
 value context::call_fenced(value callable, std::span<const value> args, value this_value,
-                           bool & threw, value & thrown) {
+                           bool & threw, value & thrown, bool constructing) {
     threw = false;
     thrown = value::undefined();
     handler fence;
@@ -61,7 +61,7 @@ value context::call_fenced(value callable, std::span<const value> args, value th
     fence.fence = true;
     handlers_.push_back(fence);
     const std::size_t mark = handlers_.size();
-    const value out = invoke(callable, args, this_value, /*constructing*/ false);
+    const value out = invoke(callable, args, this_value, constructing);
     if (fence_hit_) {
         // unwind_to_handler popped the fence and everything above it.
         fence_hit_ = false;
@@ -85,6 +85,8 @@ value context::call_fenced(value callable, std::span<const value> args, value th
 // rather than a bug" and makes centralising this a phase of its own.
 value context::invoke(value callable, std::span<const value> args, value this_value,
                       bool constructing) {
+    const bool super_call = std::exchange(super_call_, false);
+    if (refuse_class_call(callable, constructing || super_call)) { return value::undefined(); }
     if (callable.is_kind(heap_kind::native)) {
         // A NATIVE PUSHES NO FRAME, so the 512-frame ceiling below cannot see
         // it: a native that re-enters the VM recurses on the C++ stack alone.
@@ -92,6 +94,11 @@ value context::invoke(value callable, std::span<const value> args, value this_va
         const reentry_scope guard{*this};
         if (guard.overflowed()) { return value::undefined(); }
         auto * nat = static_cast<native_object *>(callable.as_heap());
+        // Bound wrappers forward the constructor handoff; real natives
+        // consume it so their callbacks remain ordinary Calls.
+        if (nat->find(CTBROWSER_PRIVATE_KEY("BoundTargetFunction")) == nullptr) {
+            pending_new_target_ = value::undefined();
+        }
         std::vector<value> copy{args.begin(), args.end()};
         // THE ARGUMENTS ARE ROOTED FOR THE CALL. From C++ they live in the
         // caller's span and nowhere else - drain_microtasks pops a job's
@@ -133,10 +140,16 @@ value context::invoke(value callable, std::span<const value> args, value this_va
         auto * p = static_cast<proxy_object *>(callable.as_heap());
         if (!p->target.is_callable()) { return value::undefined(); }
         const rooted keep_callable{*this, callable};
+        const value new_target = std::exchange(pending_new_target_, value::undefined());
+        const rooted keep_new_target{*this, new_target};
         bool failed = false;
         const value trap = proxy_trap(callable, "apply", &failed);
         if (failed || throw_pending()) { return value::undefined(); }
-        if (!trap.is_callable()) { return call(p->target, args, this_value); }
+        if (!trap.is_callable()) {
+            pending_new_target_ = new_target;
+            return constructing ? invoke(p->target, args, this_value, true)
+                                : call(p->target, args, this_value);
+        }
         const rooted keep_trap{*this, trap};
         const value list = make_array();
         static_cast<array_object *>(list.as_heap())->items.assign(args.begin(), args.end());
@@ -638,9 +651,9 @@ bool context::refuse_class_call(value callee, bool super_call) {
 }
 
 value context::call_spread(value callee, value arg_array, value receiver) {
-    if (refuse_class_call(callee, std::exchange(super_call_, false))) { return callee; }
     const std::vector<value> args = spread_arguments(arg_array);
     if (!callee.is_callable()) {
+        super_call_ = false;
         // AND THE DESTINATION IS LEFT ALONE, which is why this answers the
         // callee rather than undefined. VM_CASE(apply) writes reg(in.a) only in
         // its else branch, and reg(in.a) is where the callee came from - so

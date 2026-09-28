@@ -287,6 +287,11 @@ void context::store_index(value target, value key, value v) {
 }
 
 void context::pass_new_target(value from) {
+    if (!frames_.empty() && frames_.back().closure != nullptr) {
+        if (const value * held = frames_.back().closure->find(CTBROWSER_PRIVATE_KEY("NewTarget"))) {
+            from = *held;
+        }
+    }
     pending_new_target_ = from;
 }
 
@@ -301,33 +306,38 @@ void context::store_property(value target, const std::string & name, value v) {
     }
     // A PRIVATE NAME IS A BRAND CHECK ON THE WRITE TOO (7.3.32 PrivateSet):
     // an object whose class did not add the element is the TypeError, as
-    // lookup_property's read is - and a private METHOD, which lives on the
-    // prototype under its key, is not writable at all; only a private
-    // accessor's setter (further down the chain walk) may take the value.
+    // lookup_property's read is - and a private METHOD is not writable at
+    // all; a private accessor invokes its setter on the original receiver.
     // A field is DEFINED by the class's initialiser, not written, so it never
     // comes through here before it exists.
     if (is_private_key(name)) [[unlikely]] {
         const std::size_t colon = name.find(':');
         const std::string shown =
             name.substr(1, colon == std::string::npos ? std::string::npos : colon - 1);
-        if (!target.is_object_like() || target.is_kind(heap_kind::proxy) ||
-            !private_element_present(target, name)) {
+        auto found = find_private_element(target, name);
+        if (!found) {
             throw_error("TypeError", "Cannot write private member " + shown +
                                          " to an object whose class did not declare it");
             return;
         }
-        property_descriptor own;
-        if (!own_property(target, name, own)) {
-            for (value up = get_prototype(target); up.is_object_like(); up = get_prototype(up)) {
-                property_descriptor found;
-                if (!own_property(up, name, found)) { continue; }
-                if (!found.is_accessor()) {
-                    throw_error("TypeError", "Private method " + shown + " is not writable");
-                    return;
-                }
-                break;
+        if (found->is_accessor()) {
+            if (!found->setter.is_callable()) {
+                throw_error("TypeError", "Private accessor " + shown + " has no setter");
+                return;
             }
+            const value args[1] = {v};
+            (void)call(found->setter, args, target);
+            return;
         }
+        if (!has_own_property(target, name)) {
+            throw_error("TypeError", "Private method " + shown + " is not writable");
+            return;
+        }
+        found->held = v;
+        if (!define_own_property(target, name, *found)) {
+            throw_error("TypeError", "Cannot write private member " + shown);
+        }
+        return;
     }
     // A proxy's `set` trap first: it is the only thing that can decide the
     // write does not land on the target at all, which is the point of it.
@@ -439,13 +449,6 @@ void context::store_property(value target, const std::string & name, value v) {
             }
             up = parent->prototype;
         }
-        // NOT the implicit Object.prototype a null link ends in, though a
-        // read-only data property there refuses a [[Set]] (10.1.9.2): an
-        // object literal's `{prop: v}` is compiled to this same [[Set]], where
-        // it is CreateDataProperty, and `{prop: 12}` must not be refused by an
-        // Object.prototype.prop a page made read-only
-        // (language/expressions/object/11.1.5_3-3-1). The literal needs its
-        // own define before this can ask.
         if (!obj->extensible) {
             store_rejected_ = true;
             return;
@@ -758,10 +761,16 @@ bool context::assign_through_accessor(value target, const std::string & name, va
     // are a [[Set]] that B.2.2.1's setter turns into [[SetPrototypeOf]].
     object_object * table = prototype(proto_kind::object);
     if (table == nullptr) { return false; }
+    if (table->find(name) != nullptr && (table->attrs_of(name) & attr_writable) == 0) {
+        store_rejected_ = true;
+        return true;
+    }
     if (accessor_entry * entry = table->find_accessor(name)) {
         if (entry->setter.is_callable()) {
             const value args[1] = {v};
             (void)call(entry->setter, args, target);
+        } else {
+            store_rejected_ = true;
         }
         return true;
     }

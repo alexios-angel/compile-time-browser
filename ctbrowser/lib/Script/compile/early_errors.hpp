@@ -74,8 +74,7 @@ struct early_error {
 // declaration and an expression - are one tree, and the source is asked. By
 // token and not by byte, because a comment may stand between the two and may
 // hold a `(` or hide one: the text up to `offset`, which must be a token's
-// start, is lexed again. A rare question - both callers ask it of a
-// default-exported function only - so the second lex is its whole cost.
+// start, is lexed again. Callers can pass a source slice to limit the rescan.
 [[nodiscard]] inline bool after_open_paren(std::string_view source, std::size_t offset) {
     if (offset > source.size()) { return false; }
     const std::vector<ctjs::vp::token> before = ctjs::vp::lex(source.substr(0, offset));

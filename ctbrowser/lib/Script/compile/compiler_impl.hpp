@@ -952,7 +952,7 @@ public:
     // `this` is the class and a static block is a function body of its own -
     // neither is true of code emitted inline in the enclosing frame, which is
     // where static fields were evaluated before.
-    // `brand` is the class's brand key (see context::private_element_present)
+    // `brand` is the class's brand key (see context::find_private_element)
     // when the class declares a private method or accessor of that kind, and
     // the initialiser adds it to every instance first; empty otherwise.
     [[nodiscard]] std::uint32_t compile_field_initialiser(const std::vector<std::int32_t> & fields,

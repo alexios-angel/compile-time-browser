@@ -315,37 +315,8 @@ void install_object(context & cx) {
         if (!object_coercible(c, self, "Object.prototype.hasOwnProperty")) {
             return value::boolean(false);
         }
-        // A PROXY ANSWERS FOR ITSELF, the way `in` already lets it: the trap is
-        // the only thing that knows what the proxy is standing in for. `window`
-        // is one, and `window.hasOwnProperty('HTMLVideoElement')` reaching past
-        // its handler to a bare object would say "no" about every global there
-        // is. Falling back to the target when there is no trap matches the
-        // `has_property` opcode exactly.
-        if (self.is_kind(heap_kind::proxy)) {
-            auto * p = static_cast<proxy_object *>(self.as_heap());
-            // 20.1.3.2 step 3 is [[GetOwnProperty]], which for a proxy is the
-            // getOwnPropertyDescriptor trap: an HTMLCollection's `length`,
-            // `item` and `namedItem` are on its prototype and its trap says so
-            // (Element-children: `for (p in list) if (list.hasOwnProperty(p))`
-            // is the indices only). The `has` trap is `in`, not this - it is
-            // asked only of a proxy with no descriptor trap, which is the
-            // engine's own window and style proxies, whose globals and
-            // declarations ARE own.
-            bool failed = false;
-            const value describe = c.proxy_trap(self, "getOwnPropertyDescriptor", &failed);
-            if (failed || c.throw_pending()) { return value::undefined(); }
-            if (describe.is_callable()) {
-                const value args[2] = {p->target, c.key_value(key)};
-                return value::boolean(!c.call(describe, args, p->handler).is_undefined());
-            }
-            const value trap = c.proxy_trap(self, "has", &failed);
-            if (failed || c.throw_pending()) { return value::undefined(); }
-            if (trap.is_callable()) {
-                const value args[2] = {p->target, c.key_value(key)};
-                return value::boolean(c.truthy(c.call(trap, args, p->handler)));
-            }
-            return value::boolean(!c.lookup_property(p->target, key).is_undefined());
-        }
+        // [[GetOwnProperty]] also handles proxies: recurse to the target when
+        // the descriptor trap is absent, and validate its result when present.
         // AN ARRAY, A FUNCTION, A NATIVE AND A STRING each have own properties
         // too - `a.length`, a sparse element, a NAMED property on an array
         // (which an arm here used to answer false about, so `verifyProperty`

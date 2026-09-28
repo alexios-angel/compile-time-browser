@@ -107,6 +107,8 @@ inline constexpr std::string_view array_holes_name = "__ctbrowser_array_holes";
 // RequireObjectCoercible (7.2.1) for an object pattern that reads nothing
 // (`{} = null`, `{...r} = undefined`): TypeError on null or undefined.
 inline constexpr std::string_view require_object_name = "__ctbrowser_require_object";
+// `in` requires an object RHS before ToPropertyKey runs on its LHS (13.10.1).
+inline constexpr std::string_view in_object_name = "__ctbrowser_in_object";
 // An accessor under a COMPUTED key - `get [k]() {}` in a class or a literal:
 // (target, key, getter, setter), the halves undefined when absent.
 // define_getter/define_setter take a name index, so a key that is only known
@@ -116,6 +118,7 @@ inline constexpr std::string_view define_accessor_name = "__ctbrowser_define_acc
 // writable, configurable data property - what a static class member named
 // `name` or `length` needs, since those are own properties of every function
 // already and a set_prop to them in strict (class) code is the TypeError.
+// Object literals use it too; this and ToPropertyKey exist in a bare context.
 inline constexpr std::string_view define_own_name = "__ctbrowser_define_own";
 // ToPropertyKey (7.1.19): a symbol, or the string ToPrimitive(hint string)
 // makes - what a class field's computed name is evaluated to, once, when the

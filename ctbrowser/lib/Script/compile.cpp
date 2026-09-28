@@ -64,7 +64,8 @@ program compile_source(std::string_view source, script_kind kind, const eval_sit
         replace_internal_key_lead(decoded);
         source = decoded;
     }
-    const vp::ast tree = vp::parse(source);
+    const bool top_level_await = kind == script_kind::module_ || (site == nullptr && !script_goal);
+    const vp::ast tree = vp::parse(source, top_level_await);
     program out;
     out.kind = kind;
     if (!tree.ok) {

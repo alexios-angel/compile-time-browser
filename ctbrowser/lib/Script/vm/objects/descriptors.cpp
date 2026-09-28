@@ -162,6 +162,10 @@ void context::delete_index(value target, value key) {
 // first thing test262's verifyProperty asks about any of them.
 bool context::own_property(value target, const std::string & name, property_descriptor & out) {
     out = property_descriptor{};
+    if (is_private_key(name) && target.is_kind(heap_kind::proxy)) [[unlikely]] {
+        const value elements = static_cast<proxy_object *>(target.as_heap())->private_elements;
+        return elements.is_object() && own_property(elements, name, out);
+    }
 
     // 10.5.5 [[GetOwnProperty]] of a proxy: the `getOwnPropertyDescriptor`
     // trap, or the target when there is none. The answer is ToPropertyDescriptor
@@ -618,6 +622,13 @@ bool context::delete_own_property(value target, const std::string & name) {
 // (Reflect.defineProperty).
 bool context::define_own_property(value target, const std::string & name,
                                   const property_descriptor & wanted) {
+    if (is_private_key(name) && target.is_kind(heap_kind::proxy)) [[unlikely]] {
+        auto * p = static_cast<proxy_object *>(target.as_heap());
+        if (!p->private_elements.is_object()) {
+            p->private_elements = value::object(allocate<object_object>());
+        }
+        return define_own_property(p->private_elements, name, wanted);
+    }
     // 10.4.6.6 [[DefineOwnProperty]] OF A MODULE NAMESPACE, for a string key:
     // nothing is ever defined - a description the export already satisfies
     // answers true, any other false. A symbol key (@@toStringTag) is an

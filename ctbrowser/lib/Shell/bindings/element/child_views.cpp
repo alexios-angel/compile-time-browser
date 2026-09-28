@@ -400,8 +400,7 @@ void dom_bindings::install_element_child_views(context & cx, script::object_obje
                                   })),
                               value::undefined());
         // `classList[i]` - the indexed getter, which only a proxy can keep live.
-        // The same shape as make_live_collection's, and only `get`: an index is
-        // read-only and everything else falls through to the list itself.
+        // An index is read-only and everything else falls through to the list itself.
         auto * handler = cx.allocate<script::object_object>();
         handler->set("get", value::object(cx.allocate<script::native_object>(
                                 "get", [tokens_now](context & c, std::span<value> args) {
@@ -431,6 +430,24 @@ void dom_bindings::install_element_child_views(context & cx, script::object_obje
                              }
                              return value::boolean(c.has_property(args[0], key));
                          })));
+        set_method(
+            cx, *handler, "getOwnPropertyDescriptor",
+            [tokens_now](context & c, std::span<value> args) {
+                if (args.size() < 2) { return value::undefined(); }
+                const std::string key = c.to_string(args[1]);
+                context::property_descriptor own;
+                if (c.own_property(args[0], key, own)) { return c.from_property_descriptor(own); }
+                std::uint32_t at = 0;
+                if (script::object_object::array_index_key(key, at)) {
+                    const auto tokens = tokens_now();
+                    return at < tokens.size()
+                               ? c.from_property_descriptor(context::property_descriptor::data(
+                                     c.string(tokens[at]),
+                                     script::attr_enumerable | script::attr_configurable))
+                               : value::undefined();
+                }
+                return value::undefined();
+            });
         return value::object(
             cx.allocate<script::proxy_object>(value::object(list), value::object(handler)));
     };

@@ -308,6 +308,8 @@ struct closure_object final : heap_object {
     // by the class_defined native once the class exists: it has no [[Call]]
     // (10.2.1 step 2), which context::refuse_class_call enforces.
     bool class_constructor = false;
+    // [[ConstructorKind]] stays derived even if its prototype link changes.
+    bool derived_constructor = false;
 
     const function_proto * proto = nullptr;
     // WHICH PROGRAM ITS NESTED FUNCTIONS LIVE IN. `op::closure` names a
@@ -318,6 +320,7 @@ struct closure_object final : heap_object {
     // Only meaningful when proto->is_arrow: the `this` in scope where the arrow
     // was written, captured when the closure was made. An arrow has no receiver
     // of its own, so this is the only place its `this` can come from.
+    // In a derived constructor this is a shared cell, since super() binds it later.
     value captured_this = value::undefined();
     // [[Realm]] (10.2.3 OrdinaryFunctionCreate step 4): the realm current when
     // this closure was made, which is the one its body resolves free names in.
@@ -394,11 +397,14 @@ inline constexpr std::string_view template_object_name = "__ctbrowser_template_o
 // cannot throw.
 inline constexpr std::string_view strict_assign_check_name = "__ctbrowser_strict_assign";
 // PrivateFieldAdd / PrivateMethodOrAccessorAdd (7.3.28, 7.3.29): `(obj, key,
-// v)` defines the private element - a field's value, or the class BRAND (see
-// context::private_element_present) as undefined - and it is the TypeError
+// v)` defines the private element - a field's value, or the class BRAND holding
+// its declaration home (see context::find_private_element) - and it is the TypeError
 // when the object already carries the key (a constructor that returns the
-// same object twice) or is not extensible.
+// same object twice) or is not extensible. A Proxy's private elements are
+// independent of its target's extensibility and never invoke its traps.
 inline constexpr std::string_view private_add_name = "__ctbrowser_private_add";
+// Retained by the field initializer independently of its mutable `__home`.
+inline constexpr std::string_view private_home_key = CTBROWSER_PRIVATE_KEY("PrivateHome");
 // ClassDefinitionEvaluation steps 6-9 (15.7.14) for `class C extends P`:
 // `(C, P, C.prototype)` checks P is null or a constructor and P.prototype an
 // object or null - each a TypeError otherwise - then chains C.prototype to

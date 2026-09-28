@@ -112,13 +112,17 @@ value context::make_instance(value callee) {
 
 void context::new_callee_type_error(const function_proto & fn, std::string_view origin,
                                     value callee) {
-    // CATCHABLE, and that is the whole difference from construct()'s
-    // raise("attempted to construct a non-function"): a page's own
-    // `try { new whatever() } catch` sees this one.
+    // The origin-aware TypeError shared by the plain opcode and boxed AOT.
     throw_error("TypeError", "`new` on " + describe_callee(fn, origin, callee));
 }
 
 value context::construct(value callee, std::span<const value> args, value new_target) {
+    // A Proxy only has [[Construct]] when its target does. Reject before
+    // reading its trap, and use the catchable TypeError for every value.
+    if (!is_constructor(callee)) {
+        throw_error("TypeError", describe_new_target(callee) + " is not a constructor");
+        return value::undefined();
+    }
     // `new C(...)` is Construct(C, args, C): new.target is the callee unless a
     // caller with one of its own - a proxy forwarding, Reflect.construct -
     // says otherwise.
@@ -151,13 +155,20 @@ value context::construct(value callee, std::span<const value> args, value new_ta
         }
         return construct(p->target, args, new_target);
     }
-    if (!callee.is_callable()) {
-        raise("attempted to construct a non-function");
-        return value::undefined();
-    }
-    if (!is_constructor(callee)) {
-        throw_error("TypeError", describe_new_target(callee) + " is not a constructor");
-        return value::undefined();
+    // A proxy's prototype getter can revoke it, dropping the only other root
+    // of the target constructor while this call is still using it.
+    const rooted keep_callee{*this, callee};
+    if (callee.is_kind(heap_kind::native)) {
+        auto * nat = static_cast<native_object *>(callee.as_heap());
+        // Bound [[Construct]] forwards before reading any prototype (10.4.1.2).
+        if (const value * target = nat->find(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"));
+            target != nullptr && nat->retained.size() >= 3) {
+            std::vector<value> all{nat->retained.begin() + 3, nat->retained.end()};
+            all.insert(all.end(), args.begin(), args.end());
+            const rooted_values keep_all{*this, all};
+            return construct(*target, all,
+                             new_target.strict_equals(callee) ? value::undefined() : new_target);
+        }
     }
     // OrdinaryCreateFromConstructor off NEW.TARGET (10.1.13 / 10.1.14
     // GetPrototypeFromConstructor): for a plain `new` that is the callee's own
@@ -166,35 +177,43 @@ value context::construct(value callee, std::span<const value> args, value new_ta
     // (an accessor runs and may throw, a proxy answers for its target), and
     // one that is not an object falls back to the callee's intrinsic.
     value self = make_instance(callee);
+    // The prototype getter, field initialisers and body can all collect.
+    const rooted keep_instance{*this, self};
     if (!new_target.strict_equals(callee)) {
         const std::size_t before = unwinds();
         const value proto = lookup_property(new_target, "prototype");
         if (throw_pending() || unwinds() != before) { return value::undefined(); }
         if (proto.is_object_like()) {
             static_cast<object_object *>(self.as_heap())->prototype = proto;
+        } else if (!callee.is_kind(heap_kind::function) ||
+                   !static_cast<closure_object *>(callee.as_heap())->derived_constructor) {
+            // GetFunctionRealm (7.3.24) unwraps bound functions and proxies
+            // without invoking traps; a revoked proxy throws at this step.
+            // ponytail: super() still calls its base on the existing receiver;
+            // move derived prototype lookup there when it uses Construct.
+            value target = new_target;
+            for (;;) {
+                if (target.is_kind(heap_kind::proxy)) {
+                    const auto * proxy = static_cast<const proxy_object *>(target.as_heap());
+                    if (proxy->handler.is_null()) {
+                        throw_error("TypeError", "Cannot get the realm of a revoked proxy");
+                        return value::undefined();
+                    }
+                    target = proxy->target;
+                } else if (target.is_kind(heap_kind::native)) {
+                    const value * bound = static_cast<native_object *>(target.as_heap())
+                                              ->find(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"));
+                    if (bound == nullptr) { break; }
+                    target = *bound;
+                } else {
+                    break;
+                }
+            }
         }
     }
-    // THE INSTANCE IS IN A C++ LOCAL FOR THE REST OF THIS FUNCTION, across a
-    // field-initialiser run and a constructor body - both of which run user
-    // JavaScript and can collect. Nothing rooted it, and under gc_stress that
-    // is a heap-use-after-free on the object `new` is building.
-    const rooted keep_instance{*this, self};
     run_field_initialisers(callee, self);
     if (callee.is_kind(heap_kind::native)) {
         auto * nat = static_cast<native_object *>(callee.as_heap());
-        // A BOUND FUNCTION (Function.prototype.bind, which says how `retained`
-        // is laid out): [[Construct]] is the target's, with the bound
-        // arguments in front and the bound `this` ignored (10.4.1.2).
-        if (const value * target = nat->find(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"));
-            target != nullptr && target->is_callable() && nat->retained.size() >= 3) {
-            std::vector<value> all{nat->retained.begin() + 3, nat->retained.end()};
-            all.insert(all.end(), args.begin(), args.end());
-            const rooted_values keep_all{*this, all};
-            // 10.4.1.2 step 5: a newTarget that was the bound function itself
-            // becomes the target; any other one is passed along.
-            return construct(*target, all,
-                             new_target.strict_equals(callee) ? value::undefined() : new_target);
-        }
         std::vector<value> copy{args.begin(), args.end()};
         // Rooted for the same reason invoke() roots a native's arguments: from
         // C++ they live in the caller's span alone.
@@ -228,37 +247,13 @@ value context::construct(value callee, std::span<const value> args, value new_ta
 }
 
 value context::construct_spread(value callee, value arg_array) {
-    // NOT construct_new. op::construct_apply calls context::construct
-    // WHOLESALE - no acceptance test of its own, no pending_new_target_
-    // handling - and its row is emphatic that the divergence from `new C(args)`
-    // is the INTERPRETER's and is reproduced rather than repaired: a spread
-    // `new` reports new.target undefined where a plain one reports C.
+    // op::construct_apply shares generic dispatch with the AOT spread helper.
     return construct(callee, spread_arguments(arg_array));
 }
 
-// `new callee(...)` AS THE OPCODE MEANS IT, which is not what construct() above
-// means. Three differences, and a page can see all three.
-//
-// (1) THE ACCEPTANCE TEST AND ITS TIER. construct() tests !is_callable() FIRST
-// and raise()s, which no try/catch can see; the opcode allocates, runs the field
-// initialisers and only THEN throws a catchable TypeError. Delegating wholesale
-// turns `try { new obj() } catch` into an engine fault.
-//
-// (2) NEW.TARGET. The opcode writes `fresh.new_target = callee` into the frame
-// it pushes; construct() reaches a frame only through invoke(), which takes
-// new.target from pending_new_target_ - undefined. SAVED AND RESTORED rather
-// than set and cleared, because the opcode never CONSUMES the flag.
-//
-// (3) THE ORDER. The instance exists and the field initialisers have run BEFORE
-// the is-a-function test, so a throw from here has already allocated an object
-// with a prototype installed. Only the collector can see that, and it is the
-// ordering the ABI row insists on.
-//
-// WHAT IT DOES NOT REPRODUCE, said rather than left to be found: a GENERATOR
-// callee. invoke() answers one with make_generator; the opcode has no such test
-// and runs the body as an ordinary frame, where the first `yield` raises. This
-// matches construct() and `new C(...args)` instead.
-
+// A value-returning counterpart of op::construct for boxed AOT. Closures keep
+// the opcode's pending-new-target preservation and origin-aware diagnostic;
+// native and Proxy constructors use the shared generic dispatch.
 value context::construct_new(value callee, std::span<const value> args,
                              const function_proto & from) {
     // A PROXY AND A NATIVE GO THE LONG WAY ROUND, exactly as the opcode sends

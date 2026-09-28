@@ -263,8 +263,10 @@ public:
     };
 
     value call(value callable, std::span<const value> args, value this_value = value::undefined());
+    // constructing permits a host to initialize an existing receiver, as
+    // custom-element upgrades require, without exposing that mode to Call.
     value call_fenced(value callable, std::span<const value> args, value this_value, bool & threw,
-                      value & thrown);
+                      value & thrown, bool constructing = false);
 
     void queue_microtask(value fn, std::vector<value> args = {});
 
@@ -440,9 +442,9 @@ public:
     // 10.2.1 [[Call]] step 2: a CLASS CONSTRUCTOR called without `new` is a
     // TypeError - thrown here, and true. A `super()` call is the one that
     // reaches it with a pending new.target, and is let through. Asked by the
-    // callers a page reaches it from: op::call, the spread call, and
-    // Function.prototype.call/apply and Reflect.apply. An embedder's own
-    // context::call does not ask (the custom-element upgrade [[Call]]s one).
+    // interpreter's inline call path and invoke, including C++ callbacks.
+    // Embedders constructing a class use construct or call_fenced's explicit
+    // construction mode for an existing receiver.
     bool refuse_class_call(value callee, bool super_call = false);
     // Assign through the chain, honouring a setter. Returns false when nothing
     // took the write, so the caller can fall back to defining an own property.
@@ -540,7 +542,8 @@ public:
     // Does `target` have an own property `name` at all? The question
     // hasOwnProperty, Object.hasOwn and verifyProperty all ask.
     [[nodiscard]] bool has_own_property(value target, const std::string & name);
-    [[nodiscard]] bool private_element_present(value target, const std::string & key);
+    [[nodiscard]] std::optional<property_descriptor> find_private_element(value target,
+                                                                          const std::string & key);
     // [[Get]] with an explicit receiver (10.1.8.1 OrdinaryGet): `base`'s own
     // property or the first one up its chain, a getter called on `receiver`.
     [[nodiscard]] value get_with_receiver(value base, const std::string & name, value receiver);
@@ -863,6 +866,9 @@ private:
         // The realm this body runs in: its closure's, or for a top level the
         // realm current when it was entered. Never null once pushed.
         realm_record * realm = nullptr;
+        // A derived constructor's mutable this binding, allocated only when
+        // an arrow captures it. Constructors cannot suspend into a coroutine.
+        value receiver_cell = value::undefined();
     };
 
     // The realm a frame for `callee` runs in - see call_frame::realm.

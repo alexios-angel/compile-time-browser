@@ -278,7 +278,9 @@ struct color_context {
 // property or value this does not model.
 [[nodiscard]] std::string computed_background_list(std::string_view property,
                                                    std::string_view specified,
-                                                   const color_context & ctx);
+                                                   const color_context & ctx,
+                                                   std::string_view writing_mode = "horizontal-tb",
+                                                   std::string_view direction = "ltr");
 // The same colour as sRGB, unclamped, for whoever paints it.
 struct srgb_color {
     float r = 0, g = 0, b = 0, a = 1;

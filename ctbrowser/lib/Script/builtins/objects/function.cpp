@@ -51,52 +51,23 @@ void install_function(context & cx) {
     method(cx, function_proto, "call", 1,
            [this_function, bind_this](context & c, std::span<value> a) {
                const value self = this_function(c, "call");
-               if (!self.is_callable() || c.refuse_class_call(self)) { return value::undefined(); }
+               if (!self.is_callable()) { return value::undefined(); }
                const std::vector<value> rest(a.begin() + (a.empty() ? 0 : 1), a.end());
                return c.call(self, rest, bind_this(c, self, arg_at(a, 0)));
            });
     method(cx, function_proto, "apply", 2,
            [this_function, bind_this](context & c, std::span<value> a) {
                const value self = this_function(c, "apply");
-               if (!self.is_callable() || c.refuse_class_call(self)) { return value::undefined(); }
-               // CreateListFromArrayLike, 7.3.18, which this did not do: it read
-               // `items` off a real Array and passed NO arguments for anything else,
-               // so `f.apply(o, arguments)` and `f.apply(o, {length: 1, 0: x})` both
-               // called `f()`. A null or undefined argArray is an empty list (step 3);
-               // anything else that is not an object is a TypeError (step 2).
+               if (!self.is_callable()) { return value::undefined(); }
+               // A null or undefined argArray is an empty list (20.2.3.1 step 3).
                const value list = arg_at(a, 1);
-               std::vector<value> args;
-               if (list.is_array() &&
-                   static_cast<array_object *>(list.as_heap())->elements == element_kind::none) {
-                   // A REAL ARRAY IS ITS ELEMENTS, unchanged: `items` is already the
-                   // list and its size is bounded by what was actually allocated, so
-                   // `Math.max.apply(null, twoHundredThousand)` keeps working. NOT a
-                   // typed array, whose elements are bytes in a buffer (a view's
-                   // `items` is empty): that one is read index by index below.
-                   args = static_cast<array_object *>(list.as_heap())->items;
-               } else if (!list.is_undefined() && !list.is_null()) {
-                   if (!list.is_object_like()) {
-                       c.throw_error("TypeError", "CreateListFromArrayLike called on non-object");
-                       return value::undefined();
-                   }
-                   // AN ARRAY-LIKE CLAIMS ITS LENGTH, and ToLength lets it claim
-                   // 2^53-1: `f.apply(o, {length: 1e15})` would ask for a petabyte of
-                   // arguments for a call the register file cannot make anyway. A
-                   // ceiling that THROWS is the honest form of that limit, the same
-                   // shape `max_string_length` takes for `repeat`.
-                   const double count = detail::array_like_length(c, list);
-                   if (count > 65536.0) {
-                       c.throw_error("RangeError",
-                                     "too many arguments to Function.prototype.apply");
-                       return value::undefined();
-                   }
-                   args.reserve(static_cast<std::size_t>(count));
-                   for (double i = 0; i < count; ++i) {
-                       args.push_back(c.lookup_index(list, value::number(i)));
-                   }
-               }
-               const context::rooted_values keep{c, args};
-               return c.call(self, args, bind_this(c, self, arg_at(a, 0)));
+               const value args = list.is_nullish()
+                                      ? c.make_array()
+                                      : detail::create_argument_list(c, list, 65536.0);
+               if (args.is_undefined()) { return args; }
+               const context::rooted keep{c, args};
+               return c.call(self, static_cast<array_object *>(args.as_heap())->items,
+                             bind_this(c, self, arg_at(a, 0)));
            });
     method(cx, function_proto, "bind", 1,
            [this_function, bind_this](context & c, std::span<value> a) {

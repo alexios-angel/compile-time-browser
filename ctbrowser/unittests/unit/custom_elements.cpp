@@ -95,6 +95,15 @@ void test_define_takes_the_modern_name_rule() {
 // define() returns, and the wrapper a page held before is the very object
 // that is now an instance of the class.
 void test_define_upgrades_what_the_parser_made() {
+    CHECK_EQ(
+        said("<html><body><x-proxy id=a></x-proxy><script>"
+             "const before = document.getElementById('a');"
+             "class C extends HTMLElement { constructor() { super(); this.textContent = 'ok'; } }"
+             "customElements.define('x-proxy', new Proxy(C, {}));"
+             "alert(before.textContent + ',' + (before instanceof C) + ',' +"
+             " (before === document.getElementById('a')));"
+             "</script></body></html>"),
+        "ok,true,true");
     CHECK_EQ(said("<html><body><x-foo id=a></x-foo><script>"
                   "var before = document.getElementById('a');"
                   "var log = [];"

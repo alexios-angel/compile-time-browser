@@ -481,7 +481,8 @@ void dom_bindings::run_upgrade(context & cx, std::size_t index, node_id target, 
         // COPIED OUT: the constructor may define another element and grow
         // the vector under a reference.
         const value constructor = reg.custom_definitions_[index].constructor;
-        const value made = cx.call_fenced(constructor, {}, wrapper, threw, thrown);
+        const value made =
+            cx.call_fenced(constructor, {}, wrapper, threw, thrown, /*constructing*/ true);
         const bool constructed =
             reg.custom_definitions_[index].construction_stack.back().constructed;
         reg.custom_definitions_[index].construction_stack.pop_back();

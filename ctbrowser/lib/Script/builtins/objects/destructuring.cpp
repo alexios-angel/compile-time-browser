@@ -250,20 +250,15 @@ void install_destructuring_iteration(context & cx) {
         }
         return value::undefined();
     });
-    install_using(cx);
-    cx.define_native(std::string{define_own_name}, [](context & c, std::span<value> a) {
-        if (a.size() < 3 || !a[0].is_object_like()) { return value::undefined(); }
-        context::property_descriptor wanted;
-        wanted.has_value = wanted.has_writable = wanted.has_enumerable = true;
-        wanted.has_configurable = true;
-        wanted.held = a[2];
-        wanted.writable = wanted.configurable = true;
-        wanted.enumerable = a.size() > 3 && context::truthy(a[3]);
-        if (!c.define_own_property(a[0], c.to_string(a[1]), wanted)) {
-            c.throw_error("TypeError", "Cannot redefine property: " + c.to_string(a[1]));
+    cx.define_native(std::string{in_object_name}, [](context & c, std::span<value> a) {
+        const value target = a.empty() ? value::undefined() : a[0];
+        if (!target.is_object_like()) {
+            c.throw_error("TypeError", "Right-hand side of 'in' must be an object");
+            return value::undefined();
         }
-        return value::undefined();
+        return target;
     });
+    install_using(cx);
     // See set_function_name_name.
     cx.define_native(std::string{set_function_name_name}, [](context & c, std::span<value> a) {
         if (a.size() < 2) { return value::undefined(); }
@@ -271,20 +266,11 @@ void install_destructuring_iteration(context & cx) {
                                   a.size() > 2 && a[2].is_string() ? c.to_string(a[2]) : "");
         return value::undefined();
     });
-    // See to_property_key_name.
-    cx.define_native(std::string{to_property_key_name}, [](context & c, std::span<value> a) {
-        value key = a.empty() ? value::undefined() : a[0];
-        if (key.is_object_like() && !c.to_primitive_hint(key, "string", key)) {
-            return value::undefined();
-        }
-        if (key.is_kind(heap_kind::symbol)) { return key; }
-        std::string text = c.to_string(key);
-        return c.throw_pending() ? value::undefined() : c.string(std::move(text));
-    });
     // See class_heritage_name.
     cx.define_native(std::string{class_heritage_name}, [](context & c, std::span<value> a) {
         if (a.size() < 3 || !a[0].is_kind(heap_kind::function)) { return value::undefined(); }
         auto * ctor = static_cast<closure_object *>(a[0].as_heap());
+        ctor->derived_constructor = true;
         const value parent = a[1];
         if (parent.is_null()) {
             // `extends null`: the prototype has no [[Prototype]], the
@@ -370,7 +356,7 @@ void install_destructuring_iteration(context & cx) {
     });
     // See private_add_name.
     cx.define_native(std::string{private_add_name}, [](context & c, std::span<value> a) {
-        if (a.size() < 2 || !a[0].is_object_like() || a[0].is_kind(heap_kind::proxy)) {
+        if (a.size() < 2 || !a[0].is_object_like()) {
             c.throw_error("TypeError", "a private element can only be added to an object");
             return value::undefined();
         }
@@ -386,7 +372,7 @@ void install_destructuring_iteration(context & cx) {
                                 "the same object");
             return value::undefined();
         }
-        if (!c.is_extensible(a[0])) {
+        if (!(a[0].is_kind(heap_kind::proxy) && is_private_key(key)) && !c.is_extensible(a[0])) {
             c.throw_error("TypeError", "Cannot define private elements on a non-extensible object");
             return value::undefined();
         }

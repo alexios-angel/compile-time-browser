@@ -1004,6 +1004,25 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         }
     });
 
+    // Logical position keywords compute on their own element, before a child
+    // inherits them. Wait for the final writing mode/direction: either can var().
+    const std::string position_mode = conditions.computed("writing-mode").value_or("horizontal-tb");
+    const std::string position_direction = conditions.computed("direction").value_or("ltr");
+    for (declaration & d : out) {
+        const std::string_view name = atoms_->text(d.property);
+        if (!ascii_iequals_any(name, {"background-position", "background-position-x",
+                                      "background-position-y", "mask-position"})) {
+            continue;
+        }
+        const css::length_context bases = lengths_for(d.property);
+        const css::color_context ctx{{}, &bases};
+        if (std::string computed = css::computed_background_list(name, d.value, ctx, position_mode,
+                                                                 position_direction);
+            !computed.empty()) {
+            d.value = std::move(computed);
+        }
+    }
+
     // SPLIT THE RESULT. Anything inherited goes into a fresh inherited half built
     // on top of the parent's; everything else stays the element's own.
     //

@@ -98,32 +98,24 @@ value array_inherited(context & cx, value target, const array_object & arr,
 
 } // namespace
 
-bool context::private_element_present(value target, const std::string & key) {
+std::optional<context::property_descriptor> context::find_private_element(value target,
+                                                                          const std::string & key) {
+    if (!target.is_object_like()) { return std::nullopt; }
     property_descriptor found;
-    if (own_property(target, key, found)) { return true; }
-    // A method or accessor: on the prototype chain, or up the constructor's
-    // static chain for a static one - and then only with the brand.
-    // Capped like every other walk here (lookup_property's 64): the internal
-    // set_prototype and proto_link never refuse a cycle.
-    bool declared = false;
-    int depth = 0;
-    for (value up = get_prototype(target); up.is_object_like() && !declared && depth < 64;
-         up = get_prototype(up), ++depth) {
-        declared = own_property(up, key, found);
-    }
-    if (!declared && target.is_callable()) {
-        depth = 0;
-        for (value up = target; up.is_kind(heap_kind::function) && !declared && depth < 64;
-             ++depth) {
-            up = static_cast<closure_object *>(up.as_heap())->proto_link;
-            declared = up.is_callable() && own_property(up, key, found);
-        }
-    }
-    if (!declared) { return false; }
+    if (own_property(target, key, found)) { return found; }
+    // A method/accessor definition stays on its declaration home. The own
+    // brand retains that home even when the receiver has a different prototype.
+    // Its storage key is separate from fields, so the home is not itself branded.
     const std::size_t colon = key.rfind(':');
-    if (colon == std::string::npos) { return true; }
+    if (colon == std::string::npos) { return std::nullopt; }
     const std::string brand = std::string{private_key_prefix} + key.substr(colon);
-    return own_property(target, brand, found);
+    if (!own_property(target, brand, found) ||
+        (!found.held.is_object() && !found.held.is_kind(heap_kind::function))) {
+        return std::nullopt;
+    }
+    const value home = found.held;
+    if (!own_property(home, key + ":method", found)) { return std::nullopt; }
+    return found;
 }
 
 value context::key_value(const std::string & key) {
@@ -254,12 +246,12 @@ value context::lookup_index(value target, value key) {
 
 value context::lookup_property(value target, const std::string & name) {
     // A PRIVATE NAME IS A BRAND CHECK (7.3.31 PrivateGet): an object whose
-    // class did not add the element is the TypeError, not undefined - and a
-    // proxy never carries one, whatever its target does. Two byte compares
-    // on the hot path; the walk only for the `@#` keys the compiler spells.
+    // class did not add the element is the TypeError, not undefined. A Proxy
+    // carries only its own elements, never its target's. Two byte compares
+    // on the hot path; the descriptor lookup only for the keys the compiler spells.
     if (is_private_key(name)) [[unlikely]] {
-        if (!target.is_object_like() || target.is_kind(heap_kind::proxy) ||
-            !private_element_present(target, name)) {
+        const auto found = find_private_element(target, name);
+        if (!found) {
             const std::size_t colon = name.find(':');
             throw_error(
                 "TypeError",
@@ -270,15 +262,9 @@ value context::lookup_property(value target, const std::string & name) {
         }
         // PrivateGet step 5.b: a private ACCESSOR with no getter - only a
         // `set #x` - is the TypeError too, where an ordinary accessor with
-        // no getter reads undefined. Own (a field, a static), or on the
-        // prototype chain (an instance method or accessor).
-        property_descriptor found;
-        bool present = own_property(target, name, found);
-        for (value up = get_prototype(target); !present && up.is_object_like();
-             up = get_prototype(up)) {
-            present = own_property(up, name, found);
-        }
-        if (present && found.is_accessor() && !found.getter.is_callable()) {
+        // no getter reads undefined.
+        if (!found->is_accessor()) { return found->held; }
+        if (!found->getter.is_callable()) {
             const std::size_t colon = name.find(':');
             throw_error(
                 "TypeError",
@@ -286,6 +272,7 @@ value context::lookup_property(value target, const std::string & name) {
                     "' was defined without a getter");
             return value::undefined();
         }
+        return call(found->getter, {}, target);
     }
     // A PROPERTY OF null OR undefined IS A TypeError (7.3.2 GetV -> ToObject),
     // not undefined. Until 2026-09-12 it was undefined, and docs/script.md

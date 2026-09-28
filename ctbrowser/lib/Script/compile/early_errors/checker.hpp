@@ -296,9 +296,8 @@ private:
     [[nodiscard]] static bool destructuring(nk kind);
     void check_assignment(std::int32_t idx);
     void check_update(std::int32_t idx);
-    void check_yield_operand(std::int32_t op_node, std::int32_t operand);
+    void check_operand(std::int32_t op_node, std::int32_t operand);
     [[nodiscard]] bool names_proto(const vp::node & prop) const;
-    [[nodiscard]] bool bracketed(std::int32_t key) const;
     void check_proto_duplicates(std::int32_t idx);
     void check_number(std::int32_t idx);
     // 12.9.4 / 12.9.6: the escapes a string or template literal may carry,

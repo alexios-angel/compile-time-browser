@@ -353,6 +353,9 @@ struct bigint_object final : heap_object {
 struct proxy_object final : heap_object {
     value target;
     value handler;
+    // Private elements belong to the Proxy itself, even after revocation.
+    // Allocated lazily; ordinary property operations only see the target.
+    value private_elements;
     proxy_object(value t, value h) : heap_object(heap_kind::proxy), target(t), handler(h) {}
 };
 

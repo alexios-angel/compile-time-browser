@@ -91,6 +91,134 @@ int main() {
               "return o.x+','+p.x+','+o.hasOwnProperty('x');})()",
               "2,1,true");
 
+    // OrdinarySet includes the implicit Object.prototype, but literal members
+    // use CreateDataProperty and never invoke an inherited setter.
+    js_expect(R"((function(){
+        Object.defineProperty(Object.prototype, 'blocked', {value: 1001});
+        var objects = [JSON, Math, {}, Object.create({})];
+        return objects.map(function(o) {
+            o.blocked = 2;
+            return o.blocked + ':' + Object.hasOwn(o, 'blocked');
+        }).join();
+    })())",
+              "1001:false,1001:false,1001:false,1001:false");
+    js_expect(R"((function(){
+        'use strict';
+        Object.defineProperty(Object.prototype, 'blocked', {value: 1});
+        try { JSON.blocked = 2; } catch (e) { return e.name; }
+    })())",
+              "TypeError");
+    js_expect(R"((function(){
+        'use strict';
+        Object.defineProperty(Object.prototype, 'blocked', {get() { return 1; }});
+        try { Math.blocked = 2; } catch (e) { return e.name; }
+    })())",
+              "TypeError");
+    js_expect(R"((function(){
+        Object.defineProperty(Object.prototype, 'blocked', {value: 1});
+        var own = {blocked: 2}, near = Object.create({blocked: 3}), bare = Object.create(null);
+        own.blocked = 4; near.blocked = 5; bare.blocked = 6;
+        return [own.blocked, near.blocked, bare.blocked].join();
+    })())",
+              "4,5,6");
+    js_expect(R"((function(){
+        var hits = 0;
+        Object.defineProperty(Object.prototype, 'x', {set(v) { hits++; }});
+        var x = 3, key = 'x';
+        var objects = [{x: 1}, {'x': 2}, {x}, {[key]: 4}, {x() { return 5; }}];
+        return hits + ':' + objects.map(function(o) { return Object.hasOwn(o, 'x'); }).join();
+    })())",
+              "0:true,true,true,true,true");
+    js_expect("(function(){var hits=0;var o={set x(v){hits++;},x:2};"
+              "var d=Object.getOwnPropertyDescriptor(o,'x');"
+              "return [hits,d.value,d.writable,d.enumerable,d.configurable].join();})()",
+              "0,2,true,true,true");
+    js_expect(R"((function(){
+        var log = '', key = {[Symbol.toPrimitive](hint) { log += hint; return 'x'; }};
+        var o = {[key]: (log += ':value', 7)};
+        return log + ':' + o.x;
+    })())",
+              "string:value:7");
+    js_expect(R"((function(){
+        var parent = {x: 1}, __proto__ = parent;
+        var quoted = {'__pr\u006fto__': parent};
+        var computed = {[ /* key */ '__proto__']: parent};
+        var shorthand = {__proto__};
+        var method = {__proto__() { return 2; }};
+        return [Object.getPrototypeOf(quoted) === parent,
+                Object.hasOwn(computed, '__proto__'), Object.getPrototypeOf(computed) === Object.prototype,
+                Object.hasOwn(shorthand, '__proto__'), method.__proto__(),
+                Object.getPrototypeOf({__proto__: null}) === null,
+                Object.getPrototypeOf({__proto__: 1}) === Object.prototype].join();
+    })())",
+              "true,true,true,true,2,true,true");
+
+    // The colon form sets [[Prototype]] directly, independently of the legacy
+    // accessor. Its value is evaluated once; primitives other than null do nothing.
+    js_expect(R"((function(){
+        Object.defineProperty(Object.prototype, '__proto__', {
+            get() { throw 1; }, set() { throw 2; }
+        });
+        var parent = {}, calls = 0;
+        var a = {__proto__: (calls++, parent)}, b = {'__proto__': null};
+        return [Object.getPrototypeOf(a) === parent, Object.getPrototypeOf(b) === null,
+                Object.hasOwn(a, '__proto__'), Object.hasOwn(b, '__proto__'), calls].join();
+    })())",
+              "true,true,false,false,1");
+    js_expect(R"((function(){
+        delete Object.prototype.__proto__;
+        var parent = [], a = {__proto__: parent}, b = {__proto__: null};
+        return [Object.getPrototypeOf(a) === parent, Object.getPrototypeOf(b) === null,
+                Object.hasOwn(a, '__proto__'), Object.hasOwn(b, '__proto__')].join();
+    })())",
+              "true,true,false,false");
+    js_expect(R"((function(){
+        Object.defineProperty(Object.prototype, '__proto__', {value: 1});
+        var parent = function() {}, a = {__proto__: parent};
+        var ignored = [undefined, true, 0, 'x', Symbol(), 1n];
+        return Object.getPrototypeOf(a) === parent && ignored.every(function(value) {
+            var o = {__proto__: value};
+            return Object.getPrototypeOf(o) === Object.prototype && !Object.hasOwn(o, '__proto__');
+        });
+    })())",
+              "true");
+    js_expect(R"((function(){
+        var calls = 0, parent = new Proxy({}, {get() { calls++; throw 1; }});
+        var o = {__proto__: parent};
+        return [Object.getPrototypeOf(o) === parent, calls].join();
+    })())",
+              "true,0");
+    js_expect(R"((function(){
+        var calls = 0, parent = {};
+        var a = {set __proto__(v) { calls++; }, __proto__: parent};
+        var b = {['__proto__']: 1, __proto__: parent};
+        return [Object.getPrototypeOf(a) === parent, Object.getPrototypeOf(b) === parent,
+                calls, b.__proto__].join();
+    })())",
+              "true,true,0,1");
+
+    // Object literals also work in embeddings that install no standard library,
+    // including a fresh realm created from the bare context's template.
+    {
+        using namespace ctbrowser::script;
+        context cx;
+        const program p = compiler::compile("var key = 'x'; return ({[key]: 7}).x;");
+        const run_result first = cx.run(p);
+        CHECK(first.ok);
+        CHECK_EQ(cx.to_string(first.returned), std::string{"7"});
+        const program linked =
+            compiler::compile("var parent = {x: 9}; return ({__proto__: parent}).x;");
+        const run_result inherited = cx.run(linked);
+        CHECK(inherited.ok);
+        CHECK_EQ(cx.to_string(inherited.returned), std::string{"9"});
+        realm_record & other = cx.create_realm();
+        const context::realm_scope in_other{cx, other};
+        const run_result second = cx.run(p);
+        CHECK(second.ok);
+        CHECK_EQ(cx.to_string(second.returned), std::string{"7"});
+        CHECK(cx.global("globalThis").is_undefined());
+    }
+
     // ================================================================
     // 4. [[Configurable]] - delete refuses, and so does a redefinition
     // ================================================================
@@ -229,6 +357,42 @@ int main() {
               "var d=Object.getOwnPropertyDescriptor(o,'x');"
               "return d.enumerable+','+d.configurable;})()",
               "true,true");
+
+    // A computed key may suspend and allocate temporary registers. Both
+    // accessor halves must still occupy their native call's argument slots.
+    js_expect(R"((function(){
+        function* make() {
+            return {get [yield]() { return this.value; },
+                    set [yield](v) { this.value = v; }};
+        }
+        var it = make(); it.next(); it.next('x');
+        var o = it.next('x').value; o.x = 7;
+        var d = Object.getOwnPropertyDescriptor(o, 'x');
+        return [o.x, d.get.name, d.set.name, d.enumerable, d.configurable].join();
+    })())",
+              "7,get x,set x,true,true");
+    js_expect(R"((function(){
+        function* make() {
+            return class {get [yield]() { return this.value; }
+                          set [yield](v) { this.value = v; }};
+        }
+        var it = make(); it.next(); it.next('x');
+        var C = it.next('x').value, o = new C(); o.x = 8;
+        var d = Object.getOwnPropertyDescriptor(C.prototype, 'x');
+        return [o.x, d.get.name, d.set.name, d.enumerable, d.configurable].join();
+    })())",
+              "8,get x,set x,false,true");
+    js_expect(R"((function(){
+        function* make() {
+            return class {static get [yield]() { return this.value; }
+                          static set [yield](v) { this.value = v; }};
+        }
+        var it = make(); it.next(); it.next('x');
+        var C = it.next('x').value; C.x = 9;
+        var d = Object.getOwnPropertyDescriptor(C, 'x');
+        return [C.x, d.get.name, d.set.name, d.enumerable, d.configurable].join();
+    })())",
+              "9,get x,set x,false,true");
 
     // ================================================================
     // 8. THE OTHER THREE PROPERTY TABLES, which answered nothing at all

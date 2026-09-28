@@ -325,6 +325,10 @@ void context::set_prototype(value target, value proto) {
 }
 
 bool context::has_property(value target, value key) {
+    if (key.is_string()) {
+        const std::string & name = static_cast<string_object *>(key.as_heap())->text;
+        if (is_private_key(name)) [[unlikely]] { return has_property(target, name); }
+    }
     // A PROXY ANSWERS `in` ITSELF, or hands it to the target.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
@@ -368,11 +372,15 @@ bool context::has_property(value target, value key) {
 }
 
 bool context::has_property(value target, const std::string & name) {
-    if (target.is_kind(heap_kind::proxy)) { return has_property(target, key_value(name)); }
     // `#x in o` (13.10.1): the brand check, not the chain walk.
     if (is_private_key(name)) [[unlikely]] {
-        return target.is_object_like() && private_element_present(target, name);
+        if (!target.is_object_like()) {
+            throw_error("TypeError", "Cannot check a private member on a non-object");
+            return false;
+        }
+        return find_private_element(target, name).has_value();
     }
+    if (target.is_kind(heap_kind::proxy)) { return has_property(target, key_value(name)); }
     // --- HasProperty, 7.3.11: THE WHOLE CHAIN, not the own table ----------
     //
     // `in` used to answer about own DATA properties of an object_object and

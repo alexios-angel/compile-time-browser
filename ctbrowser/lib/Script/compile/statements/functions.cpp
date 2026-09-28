@@ -59,12 +59,17 @@ void compiler_impl::emit_derived_return(std::uint16_t value) {
     proto().emit(instruction{op::type_of, kind, value});
     const std::uint16_t want = alloc_reg();
     const std::uint16_t same = alloc_reg();
+    // typeof null is "object", but [[Construct]] only accepts actual objects.
+    proto().emit(instruction{op::load_null, want});
+    proto().emit(instruction{op::equal, same, value, want});
+    const std::size_t is_null = proto().emit(instruction{op::jump_if_true, same});
     emit_string(want, "object");
     proto().emit(instruction{op::equal, same, kind, want});
     const std::size_t is_object = proto().emit(instruction{op::jump_if_true, same});
     emit_string(want, "function");
     proto().emit(instruction{op::equal, same, kind, want});
     const std::size_t is_function = proto().emit(instruction{op::jump_if_true, same});
+    patch_here(is_null);
     emit_throw("TypeError", "Derived constructors may only return object or undefined");
     patch_here(is_object);
     patch_here(is_function);

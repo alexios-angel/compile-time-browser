@@ -321,6 +321,46 @@ void test_elliptical_radius_cascade() {
     CHECK_EQ(logged(page, "negative="), std::string{"negative=0px 40px"});
 }
 
+// Reflection and hasOwnProperty share the live indexed properties, including
+// mutations that bypass the wrappers, and retain explicitly defined properties.
+void test_live_own_descriptors() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<div id="e" class="x y" style="color: red"></div><script>
+        const e = document.getElementById('e');
+        const style = e.style, tokens = e.classList;
+        style.expando = undefined;
+        function describe(object, key) {
+            const d = Object.getOwnPropertyDescriptor(object, key);
+            return d ? [d.value, d.writable, d.enumerable, d.configurable].join(':') : 'absent';
+        }
+        function own(object, key) { return Object.prototype.hasOwnProperty.call(object, key); }
+        console.log('indices=' + describe(style, '0') + ',' + describe(tokens, '1'));
+        console.log('own=' + Object.hasOwn(style, '0') + ',' +
+                    own(style, 'expando') + ',' + Object.hasOwn(style, 'expando') + ',' +
+                    own(style, '01') + ',' +
+                    own(tokens, '1') + ',' + own(tokens, '01'));
+        e.setAttribute('style', 'width: 1px');
+        e.className = 'z';
+        console.log('live=' + describe(style, '0') + ',' + describe(tokens, '0') + ',' +
+                    describe(tokens, '1'));
+        e.removeAttribute('style');
+        e.removeAttribute('class');
+        console.log('removed=' + own(style, '0') + ',' + own(tokens, '0'));
+        Object.defineProperty(style, 'expando', {
+            value: 'x', writable: false, enumerable: false, configurable: false
+        });
+        console.log('defined=' + describe(style, 'expando') + ',' + own(style, 'expando'));
+    </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "indices="),
+             std::string{"indices=color:false:true:true,y:false:true:true"});
+    CHECK_EQ(logged(page, "own="), std::string{"own=true,true,true,false,true,false"});
+    CHECK_EQ(logged(page, "live="),
+             std::string{"live=width:false:true:true,z:false:true:true,absent"});
+    CHECK_EQ(logged(page, "removed="), std::string{"removed=false,false"});
+    CHECK_EQ(logged(page, "defined="), std::string{"defined=x:false:false:false,true"});
+}
+
 // CSS-namespace-object-class-string, CSSStyleDeclaration-iterator, escape,
 // cssom-fontfacerule-constructors: the class strings, the iterator and the
 // namespace object's own tag and arities.
@@ -698,6 +738,7 @@ int main() {
     test_match_media();
     test_descriptors_refuse_tree_counting();
     test_class_strings_and_iterators();
+    test_live_own_descriptors();
     test_removed_rules_charset_keyframes_and_container();
     test_declaration_blocks();
     test_sheet_attribute_and_origin();

@@ -44,6 +44,37 @@ int main() {
               "Reflect.construct(Error, ['m'], N).mark + ',' + Reflect.construct(Error, ['m'], "
               "N).message; })()",
               "1,m");
+    js_expect("(function () { const out = []; for (const make of [p => new p(),"
+              " p => new p(...[]), p => Reflect.construct(p, [])]) { let body = 0;"
+              " const h = Proxy.revocable(function () { body++; }, {get(t, k) {"
+              " if (k === 'prototype') { h.revoke(); return undefined; } return t[k]; }});"
+              " try { make(h.proxy); out.push('no throw'); } catch (e) { out.push(e.name); }"
+              " out.push(body); } return out.join(); })()",
+              "TypeError,0,TypeError,0,TypeError,0");
+    js_expect("(function () { const out = []; for (const proto of [undefined, {}]) {"
+              " let body = 0; const h = Proxy.revocable(function () {}, {});"
+              " const b = h.proxy.bind(null).bind(null);"
+              " Object.defineProperty(b, 'prototype', {get() { h.revoke(); return proto; }});"
+              " try { const made = Reflect.construct(function () { body++; }, [], b);"
+              " out.push(Object.getPrototypeOf(made) === proto); }"
+              " catch (e) { out.push(e.name); } out.push(body); } return out.join(); })()",
+              "TypeError,0,true,1");
+    // A derived body can return an object without ever constructing its base.
+    js_expect("(function () { const out = []; for (const parent of [Object, null]) {"
+              " class D extends parent { constructor() { return {x: 42}; } }"
+              " for (const C of [D, D.bind(null)]) {"
+              " const h = Proxy.revocable(function () {}, {get() { h.revoke(); }});"
+              " out.push(Reflect.construct(C, [], h.proxy).x); } } return out.join(); })()",
+              "42,42,42,42");
+    js_expect("(function () { let reads = 0; const N = new Proxy(function () {},"
+              " {get(t, k) { if (k === 'prototype') { reads++; } return t[k]; }});"
+              " Reflect.construct((function () {}).bind(null).bind(null), [], N);"
+              " return reads; })()",
+              "1");
+    js_expect("(function () { const sentinel = {}; const N = new Proxy(function () {},"
+              " {get() { throw sentinel; }}); try { Reflect.construct(function () {}, [], N); }"
+              " catch (e) { return e === sentinel; } return false; })()",
+              "true");
     // THE `new` OPERATOR ITSELF, not only Reflect.construct: the interpreter's
     // op::construct ran an arrow, a generator and an async function as
     // constructors while the other two tiers refused them.

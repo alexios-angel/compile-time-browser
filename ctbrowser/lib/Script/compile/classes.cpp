@@ -22,9 +22,11 @@ void compiler_impl::emit_computed_accessor(std::uint16_t target, std::int32_t ke
     const std::uint16_t object = alloc_reg();
     proto().emit(instruction{op::move, object, target});
     const std::uint16_t key_reg = alloc_reg();
-    compile_expr(key, key_reg);
     const std::uint16_t getter = alloc_reg();
     const std::uint16_t setter_reg = alloc_reg();
+    // Reserve the contiguous call arguments before the key can allocate
+    // temporaries (for example, the value sent by a bare yield).
+    compile_expr(key, key_reg);
     proto().emit(instruction{op::load_undef, setter ? getter : setter_reg});
     method_pending_ = true; // see frame::has_home
     compile_expr(fn_node, setter ? setter_reg : getter);
@@ -127,9 +129,11 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
         const std::uint32_t mark = reg_mark();
         const std::uint16_t self = alloc_reg();
         proto().emit(instruction{op::load_this, self});
-        const std::uint16_t nothing = alloc_reg();
-        proto().emit(instruction{op::load_undef, nothing});
-        emit_private_add(self, brand, nothing);
+        const std::uint16_t home = alloc_reg();
+        proto().emit(instruction{op::load_callee, home});
+        proto().emit(
+            instruction{op::get_prop, home, home, name_operand(std::string{private_home_key})});
+        emit_private_add(self, brand, home);
         release_to(mark);
     }
     for (const std::int32_t member : fields) {
@@ -384,7 +388,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         const vp::node & m = at(member);
         if (m.c == 0 && (m.d & 1) == 0) { instance_fields.push_back(member); }
         // A private method or accessor brands its holder - see
-        // context::private_element_present.
+        // context::find_private_element.
         if ((m.c == 1 || m.c == 2) && (m.d & 2) == 0 && m.text.starts_with('#')) {
             ((m.d & 1) != 0 ? static_brand : instance_brand) = true;
         }
@@ -397,6 +401,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         const std::uint16_t init = alloc_reg();
         proto().emit(instruction::with_bx(op::closure, init, fields));
         proto().emit(instruction{op::set_prop, dst, name_operand("__fields"), init});
+        if (instance_brand) { emit_define_own(init, private_home_key, prototype_reg, false); }
         // AN INSTANCE FIELD'S HOME OBJECT IS THE PROTOTYPE (15.7.10
         // ClassFieldDefinitionEvaluation: MakeMethod(initializer, homeObject)),
         // so `x = super.y` reads the parent's - wired, as an object literal's
@@ -407,13 +412,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             proto().emit(instruction{op::set_prop, init, name_operand("__home"), prototype_reg});
         }
     }
-    if (static_brand) {
-        const std::uint32_t inner = reg_mark();
-        const std::uint16_t nothing = alloc_reg();
-        proto().emit(instruction{op::load_undef, nothing});
-        emit_private_add(dst, brand, nothing);
-        release_to(inner);
-    }
+    if (static_brand) { emit_private_add(dst, brand, dst); }
 
     // A NAMED CLASS EXPRESSION BINDS ITS OWN NAME, and its methods see it.
     //
@@ -475,7 +474,9 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             // An accessor is named for its key, "get id" (15.4.5 step 6).
             compile_named_expr(m.b, slot, ((m.d & 4) != 0 ? "set " : "get ") + std::string{m.text});
             method_pending_ = false;
-            const std::uint16_t name = member_operand(m.text);
+            const std::uint16_t name = m.text.starts_with('#')
+                                           ? name_operand(member_key(m.text) + ":method")
+                                           : member_operand(m.text);
             proto().emit(instruction{(m.d & 4) != 0 ? op::define_setter : op::define_getter, target,
                                      name, slot});
             // An accessor has a home object like a method (15.4.5 step 3 /
@@ -539,10 +540,9 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             // Function.prototype's %ThrowTypeError% accessor.
             emit_define_own(target, m.text, slot, false);
         } else if (m.text.starts_with('#')) {
-            // A private method is DEFINED too: a set_prop is a PrivateSet, and
-            // store_property's brand check would refuse it on a prototype
-            // that does not carry the element yet.
-            emit_define_own(target, member_key(m.text), slot, false);
+            // The home holds the definition under a separate key: it is not
+            // itself branded, and may later receive a private field or brand.
+            emit_define_own(target, member_key(m.text) + ":method", slot, false);
         } else {
             const std::uint16_t name = member_operand(m.text);
             proto().emit(instruction{op::set_prop, target, name, slot});

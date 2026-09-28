@@ -7,6 +7,73 @@
 // strict one takes the value as given. And `new bound()` constructs the
 // target with the bound arguments in front (10.4.1.2).
 void test_call_bind_this() {
+    for (const char * expression :
+         {"new globalThis(1)", "new globalThis(...[1])", "new ({})(...[1])", "new (0)(...[1])"}) {
+        expect_result(std::string{"try { "} + expression +
+                          "; return 'constructed'; } catch (e) { return e.name; }",
+                      "TypeError");
+    }
+    // A construct trap cannot give a non-constructor [[Construct]]. Arguments
+    // are still evaluated before the TypeError, without even reading the trap.
+    for (const char * target : {"{}", "() => {}", "Math.abs", "function* () {}"}) {
+        expect_result(std::string{"let log = ''; const p = new Proxy("} + target +
+                          ", {get construct() { log += 'lookup'; return function() {"
+                          " log += 'trap'; return {}; }; }});"
+                          "try { new p((log += 'arg', 1)); return 'constructed'; }"
+                          "catch (e) { return e.name + ',' + log; }",
+                      "TypeError,arg");
+    }
+    // A suspended constructor expression or argument must not shift the
+    // contiguous argument registers consumed by Construct.
+    expect_result(R"(
+        function C(a, b) { this.a = a; this.b = b; this.target = new.target; }
+        function* make() { return new (yield 'ctor')(7, 2); }
+        const it = make(), first = it.next().value;
+        const o = it.next(C).value;
+        return [first, o.a, o.b, o.target === C].join();
+    )",
+                  "ctor,7,2,true");
+    expect_result(R"(
+        function C(a, b) { this.a = a; this.b = b; this.target = new.target; }
+        function* make() { return new C(yield 'a', yield 'b'); }
+        const it = make(), first = it.next().value, second = it.next(7).value;
+        const o = it.next(2).value;
+        return [first, second, o.a, o.b, o.target === C].join();
+    )",
+                  "a,b,7,2,true");
+    // Every Call path rejects a class before its body starts, including
+    // wrappers and callbacks that enter through context::invoke.
+    for (const char * target : {"C", "C.bind(null)", "C.bind(null).bind(null)", "new Proxy(C, {})",
+                                "new Proxy(C.bind(null), {})", "new Proxy(C, {}).bind(null)"}) {
+        expect_result(std::string{"let ran = 0; class C { constructor() { ran++; } } const f = "} +
+                          target +
+                          "; const out = []; for (const call of [() => f(),"
+                          " () => f(...[]), () => f.call(null), () => f.apply(null, []),"
+                          " () => Reflect.apply(f, null, []), () => [0].map(f)]) {"
+                          " try { call(); out.push('no throw'); }"
+                          " catch (e) { out.push(e.name); } } return out.join() + ',' + ran;",
+                      "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,0");
+    }
+    // IsCallable(class) is true: CreateListFromArrayLike happens before Call.
+    expect_result("class C {} const log = []; const args = {get length() {"
+                  " log.push('length'); return 1; }, get 0() { log.push('arg'); return 0; }};"
+                  "for (const apply of [() => C.apply(null, args),"
+                  " () => Reflect.apply(C, null, args)]) {"
+                  " try { apply(); } catch (e) { log.push(e.name); } } return log.join();",
+                  "length,arg,TypeError,length,arg,TypeError");
+    expect_result("class C {} const args = { get length() { throw 'argument'; } };"
+                  "const out = []; for (const apply of [() => C.apply(null, args),"
+                  " () => Reflect.apply(C, null, args)]) {"
+                  " try { apply(); } catch (e) { out.push(e); } } return out.join();",
+                  "argument,argument");
+    // A proxy apply trap can implement Call without invoking its class target.
+    expect_result("class C {} const f = new Proxy(C, { apply(t, self, args) { return args[0]; }});"
+                  "return f(7) + ',' + f.bind(null, 8)();",
+                  "7,8");
+    expect_result("class A { constructor(v) { this.v = v; } }"
+                  "class B extends A { constructor(v) { (() => super(...[v]))(); } }"
+                  "const C = B.bind(null, 9); return new C().v + ',' + new B(8).v;",
+                  "9,8");
     // 10.4.1.3: a bound function's [[Prototype]] is the target's, and its
     // length follows 20.2.3.2 step 7 - an infinite target length stays
     // infinite, a fractional one truncates, less the bound arguments.
@@ -57,12 +124,112 @@ void test_derived_constructors() {
     expect_result("class A {} class B extends A { constructor() { return 1; } }"
                   "try { new B(); } catch (e) { return e.name; } return 'no throw';",
                   "TypeError");
+    expect_result("class B extends Object { constructor() { return null; } }"
+                  "const results = []; for (const make of [() => new B(), () => new B(...[]),"
+                  " () => Reflect.construct(B, []), () => new (B.bind(null))()]) {"
+                  " try { make(); results.push('no throw'); } catch (e) { results.push(e.name); }"
+                  " } return results.join();",
+                  "TypeError,TypeError,TypeError,TypeError");
+    expect_result("let ran = 0; class B extends Object { constructor() { super();"
+                  " try { return null; } finally { ran++; } } }"
+                  "try { new B(); } catch (e) { return e.name + ',' + ran; } return 'no throw';",
+                  "TypeError,1");
+    expect_result("class B extends Object { constructor() { try { return null; }"
+                  " finally { return {x: 7}; } } } return new B().x;",
+                  "7");
+    // [[Construct]] validates the completed body, beyond its catch clauses.
+    expect_result("const results = []; for (const value of [null, 1, undefined]) {"
+                  " class B extends Object { constructor() { try { return value; }"
+                  " catch (e) { results.push('caught'); return {}; } } }"
+                  " try { new B(); results.push('no throw'); } catch (e) { results.push(e.name); }"
+                  " } return results.join();",
+                  "TypeError,TypeError,ReferenceError");
+    expect_result("const log = []; function* items() { try { yield 0; }"
+                  " finally { log.push('close'); } }"
+                  "class B extends Object { constructor() { try { for (const x of items()) {"
+                  " try { return null; } finally { log.push('finally'); } } }"
+                  " catch (e) { log.push('caught'); return {}; } } }"
+                  "try { new B(); } catch (e) { log.push(e.name); } return log.join();",
+                  "finally,close,TypeError");
+    // Errors evaluating the return expression or closing its iterator still
+    // belong to the body and can be handled there.
+    expect_result("function fail() { throw 'expression'; }"
+                  "function* items() { try { yield 0; } finally { throw 'close'; } }"
+                  "class A extends Object { constructor() { try { return fail(); }"
+                  " catch (e) { return {kind: e}; } } }"
+                  "class B extends Object { constructor() { try { for (const x of items()) {"
+                  " return null; } } catch (e) { return {kind: e}; } } }"
+                  "return new A().kind + ',' + new B().kind;",
+                  "expression,close");
+    expect_result("class A { constructor() { this.x = 3; return null; } }"
+                  "class B extends A { constructor() { super(); return undefined; } }"
+                  "return new A().x + ',' + new B().x;",
+                  "3,3");
     expect_result("class A {} class B extends A { constructor() { return {y: 2}; } }"
                   "return new B().y;",
                   "2");
     expect_result("class A {} class B extends A { constructor() { const f = () => super(); f();"
                   " this.x = 3; } } return new B().x;",
                   "3");
+    // Arrows share the binding, including captures made before super() and
+    // calls made after the constructor has returned a different object.
+    for (const char * call : {"super()", "(() => super())()", "(() => () => super(...[]))()()"}) {
+        expect_result(std::string{"const out = []; class A { constructor(v) { return {v: 7}; } }"
+                                  "class B extends A { field = 9; constructor() {"
+                                  " const read = () => this; const result = "} +
+                          call +
+                          "; out.push(result === this, read() === this, this.v, this.field);"
+                          " this.read = read; } } const b = new B();"
+                          "out.push(b.read() === b); return out.join();",
+                      "true,true,7,9,true");
+    }
+    expect_result("const pending = []; class A { constructor(v) { return {v}; } }"
+                  "class B extends A { constructor() { const read = () => this;"
+                  " pending.push({read, finish: v => { const result = super(v);"
+                  " return result === this && read() === this; }}); return {}; } }"
+                  "new B(); new B(); const out = [];"
+                  "try { pending[0].read(); } catch (e) { out.push(e.name); }"
+                  "out.push(pending[0].finish(1), pending[1].finish(2),"
+                  " pending[0].read().v, pending[1].read().v);"
+                  "try { pending[0].finish(3); } catch (e) { out.push(e.name); }"
+                  "return out.join();",
+                  "ReferenceError,true,true,1,2,ReferenceError");
+    expect_result("class B extends Array { constructor() { const read = () => this;"
+                  " (() => super(...[1, 2]))(); this.same = read() === this; } }"
+                  "const b = new B(); return [Array.isArray(b), b.length, b.same].join();",
+                  "true,2,true");
+    expect_after_turn("var result = ''; let finish, read;"
+                      "class A { constructor() { return {v: 7}; } }"
+                      "class B extends A { constructor() { read = () => this;"
+                      " finish = async () => { await 0; (() => super())(); await 0;"
+                      " result = (read() === this) + ',' + this.v; }; return {}; } }"
+                      "new B(); finish();",
+                      "true,7");
+    // Bare super() forwards the enclosing constructor's new.target even
+    // through escaped/nested arrows and bound or proxy superclass calls.
+    expect_result("let finish; class A { constructor() { return {target: new.target}; } }"
+                  "class B extends A { constructor() { finish = () => () => super();"
+                  " return {}; } } new B(); return finish()().target === B;",
+                  "true");
+    expect_result("class A { constructor() { return {target: new.target}; } }"
+                  "const P = A.bind(null); P.prototype = Object.create(A.prototype);"
+                  "P.prototype.constructor = P;"
+                  "class B extends P { constructor() { return (() => super(...[]))(); } }"
+                  "return new B().target === B;",
+                  "true");
+    expect_result("class A { constructor() { return {target: new.target}; } }"
+                  "const P = new Proxy(A, {}); A.prototype.constructor = P;"
+                  "class B extends P { constructor() { return (() => super())(); } }"
+                  "return new B().target === B;",
+                  "true");
+    // A native superclass must not lend its new.target to later Call paths.
+    expect_result("class A {} class B extends Array { constructor() { (() => super())(); A(); } }"
+                  "try { new B(); } catch (e) { return e.name; } return 'no throw';",
+                  "TypeError");
+    expect_result("let ran = 0; class A { constructor() { ran++; throw 'body'; } }"
+                  "class B extends Map { constructor() { super({[Symbol.iterator]: A}); } }"
+                  "try { new B(); } catch (e) { return e.name + ',' + ran; } return 'no throw';",
+                  "TypeError,0");
     expect_result(
         "class A {} class B extends A { constructor() { const g = () => this; try { g(); }"
         " catch (e) { super(); return; } } } new B(); return 'caught';",

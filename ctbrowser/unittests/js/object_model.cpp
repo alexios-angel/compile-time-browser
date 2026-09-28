@@ -104,6 +104,32 @@ int main() {
               "{value:1,configurable:true}:undefined;}});"
               "return ['b' in p, p.hasOwnProperty('b'), p.hasOwnProperty('a')].join();})()",
               "true,false,true");
+    // An absent trap forwards [[GetOwnProperty]], including a nested proxy's
+    // virtual descriptor. Neither [[HasProperty]] nor [[Get]] is consulted.
+    js_expect("(function(){var target=new Proxy({},{getOwnPropertyDescriptor:function(){"
+              "return {value:undefined,configurable:true};}});"
+              "return Object.prototype.hasOwnProperty.call(new Proxy(target,"
+              "{getOwnPropertyDescriptor:null}),'x');})()",
+              "true");
+    js_expect("(function(){var p=new Proxy({x:undefined},{"
+              "get has(){throw 1;},get get(){throw 2;}});"
+              "return Object.prototype.hasOwnProperty.call(p,'x')+','+"
+              "Object.prototype.hasOwnProperty.call(p,'missing');})()",
+              "true,false");
+    js_expect("(function(){var t=Object.create({get x(){throw 1;}});"
+              "return Object.prototype.hasOwnProperty.call(new Proxy(t,{}),'x');})()",
+              "false");
+    // hasOwnProperty must perform the same descriptor validation as reflection.
+    js_expect("Object.prototype.hasOwnProperty.call(new Proxy({},"
+              "{getOwnPropertyDescriptor:function(){return null;}}),'x')",
+              "THREW");
+    js_expect("(function(){var t=Object.defineProperty({},'x',{value:1});"
+              "return Object.prototype.hasOwnProperty.call(new Proxy(t,"
+              "{getOwnPropertyDescriptor:function(){}}),'x');})()",
+              "THREW");
+    js_expect("Object.prototype.hasOwnProperty.call(new Proxy({},"
+              "{getOwnPropertyDescriptor:function(){return {value:1};}}),'x')",
+              "THREW");
     // (Over a target that HAS such a property: 10.5.5 step 16 refuses a
     // non-configurable answer for one the target lacks - see below.)
     js_expect("(function(){var t={};Object.defineProperty(t,'a',{value:1});"
