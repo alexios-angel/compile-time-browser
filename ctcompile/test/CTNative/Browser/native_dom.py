@@ -273,7 +273,8 @@ FORCED_CHECKS = r"""
         assert(!@ENTRY@(alias));
         writes = doc.take_writes();
         assert(doc.version() == version + 2);
-        assert(writes.size() == 1 && writes[0].name == classes);
+        assert(writes.size() == 2 && writes[0].name == classes && !writes[0].removal);
+        assert(writes[1].name == disabled && writes[1].removal);
         assert(doc.read().attribute_value(button, classes) == "btn");
         assert(!doc.read().has_attribute(button, disabled));
         assert(doc.remove_child(button));
@@ -298,8 +299,9 @@ ATTRIBUTE_CHECKS = r"""
             assert(doc.read().attribute_value(button, seen) == "true");
             const auto writes = doc.take_writes();
             assert(doc.version() == version + (call == 0 ? 4u : 3u));
-            assert(writes.size() == (call == 0 ? 3u : 2u));
-            assert(writes.front().name == empty && writes.back().name == seen);
+            assert(writes.size() == (call == 0 ? 4u : 3u));
+            assert(writes.front().name == empty && writes[writes.size() - 2].name == seen);
+            assert(writes.back().name == empty && writes.back().removal);
             if (call == 0) { assert(writes[1].name == copy); }
         }
         (void)foreign;
@@ -345,13 +347,14 @@ EXPLICIT_FORCE_CHECKS = r"""
             assert(!doc.read().has_attribute(button, disabled));
             const auto writes = doc.take_writes();
             assert(doc.version() == version + (active ? 4u : 6u));
-            assert(writes.size() == (active ? 3u : 5u));
-            const auto class_writes = writes.size() - 2;
+            assert(writes.size() == (active ? 4u : 6u));
+            const auto class_writes = writes.size() - 3;
             for (std::size_t at = 0; at < class_writes; ++at) {
                 assert(writes[at].name == classes);
             }
             assert(writes[class_writes].name == was_missing);
-            assert(writes.back().name == disabled);
+            assert(writes[class_writes + 1].name == disabled && !writes[class_writes + 1].removal);
+            assert(writes.back().name == disabled && writes.back().removal);
         }
         (void)foreign;
         (void)pressed;

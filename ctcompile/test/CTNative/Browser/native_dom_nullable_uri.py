@@ -140,8 +140,9 @@ def client(name, entry, owned):
     call = "session.invoke(value)" if owned else entry + "(value)"
     writes = "assert(writes.empty() && doc.version() == version);"
     if name == "nullable_uri_saved":
-        writes = """assert(writes.size() == 1 && doc.version() == version + 2);
-                assert(writes[0].node == node && writes[0].name == state);
+        writes = """assert(writes.size() == 2 && doc.version() == version + 2);
+                assert(writes[0].node == node && writes[0].name == state && !writes[0].removal);
+                assert(writes[1].node == node && writes[1].name == state && writes[1].removal);
                 assert(!doc.read().has_attribute(node, state));"""
     return f"""
     {{

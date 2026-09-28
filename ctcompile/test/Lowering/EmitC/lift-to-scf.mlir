@@ -216,32 +216,60 @@ ctjs.func @guarded_property_call(%receiver: !ctjs.value, %new_target: !ctjs.valu
   ctjs.return %saved
 }
 
-// Local allocations keep the importer's register vectors too, as captured
-// helpers do: a local iterator holder's saved slots are what recovery reads on
-// the catch edge (41c9f87de). Simplification would forward the entry value
-// through both handler edges and erase that correspondence.
+// Local object and iterator-holder allocations keep the importer's register
+// vectors only for a catch that observes its exception: its saved slots are
+// what recovery reads (41c9f87de). A landing whose value reaches only a dead
+// register - an iterator close's suppression - takes the simplification path,
+// because the DOM close normalizer proves that shape argument-free.
 // CHECK-LABEL: ctjs.func @guarded_allocation
 // CHECK-SAME: ctjs.not_structured = "{{.*}}side effects{{.*}}"
 // CHECK: %[[OBJECT:[^ ]+]] = ctjs.create_object
-// CHECK-NEXT: cf.br ^[[ALLOC_INSTALL:bb[0-9]+]](%[[OBJECT]] : !ctjs.value)
-// CHECK-NEXT: ^[[ALLOC_INSTALL]](%[[PREFIX:[^:]+]]: !ctjs.value):
-// CHECK-NEXT: ctjs.push_handler ^[[NORMAL:bb[0-9]+]](%[[PREFIX]] : !ctjs.value) catch ^[[CAUGHT:bb[0-9]+]](%[[PREFIX]] : !ctjs.value)
-// CHECK: ^[[NORMAL]](%[[VALUE:[^:]+]]: !ctjs.value):
-// CHECK: ctjs.return %[[VALUE]]
-// CHECK: ^[[CAUGHT]](%[[SAVED:[^:]+]]: !ctjs.value):
-// CHECK: ctjs.return %[[SAVED]]
+// CHECK-NEXT: cf.br ^[[ALLOC_INSTALL:bb[0-9]+]]{{$}}
+// CHECK-NEXT: ^[[ALLOC_INSTALL]]:
+// CHECK-NEXT: ctjs.push_handler ^[[NORMAL:bb[0-9]+]] catch ^[[CAUGHT:bb[0-9]+]]
+// CHECK: ^[[NORMAL]]:
+// CHECK: ctjs.return %[[OBJECT]]
+// CHECK: ^[[CAUGHT]]:
+// CHECK-NEXT: ctjs.catch_land
+// CHECK: ctjs.return %[[OBJECT]]
 ctjs.func @guarded_allocation(%receiver: !ctjs.value, %new_target: !ctjs.value,
                              %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
   %object = ctjs.create_object
-  cf.br ^install(%object : !ctjs.value)
-^install(%prefix: !ctjs.value):
-  ctjs.push_handler ^body(%prefix : !ctjs.value) catch ^pad(%prefix : !ctjs.value)
-^body(%value: !ctjs.value):
+  cf.br ^install(%object, %object : !ctjs.value, !ctjs.value)
+^install(%prefix: !ctjs.value, %slot: !ctjs.value):
+  ctjs.push_handler ^body(%prefix, %slot : !ctjs.value, !ctjs.value)
+    catch ^pad(%prefix, %slot : !ctjs.value, !ctjs.value)
+^body(%value: !ctjs.value, %unused: !ctjs.value):
   ctjs.pop_handler
   ctjs.return %value
-^pad(%saved: !ctjs.value):
-  ctjs.return %saved
+^pad(%saved: !ctjs.value, %old: !ctjs.value):
+  %pad_id, %thrown = ctjs.catch_land
+  cf.br ^caught(%saved, %thrown : !ctjs.value, !ctjs.value)
+^caught(%kept: !ctjs.value, %error: !ctjs.value):
+  ctjs.return %kept
+}
+
+// CHECK-LABEL: ctjs.func @guarded_allocation_observed
+// CHECK-SAME: ctjs.not_structured = "{{.*}}side effects{{.*}}"
+// CHECK: %[[KEPT:[^ ]+]] = ctjs.create_object
+// CHECK-NEXT: cf.br ^{{bb[0-9]+}}(%[[KEPT]], %[[KEPT]] : !ctjs.value, !ctjs.value)
+ctjs.func @guarded_allocation_observed(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                                      %callee: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %object = ctjs.create_object
+  cf.br ^install(%object, %object : !ctjs.value, !ctjs.value)
+^install(%prefix: !ctjs.value, %slot: !ctjs.value):
+  ctjs.push_handler ^body(%prefix, %slot : !ctjs.value, !ctjs.value)
+    catch ^pad(%prefix, %slot : !ctjs.value, !ctjs.value)
+^body(%value: !ctjs.value, %unused: !ctjs.value):
+  ctjs.pop_handler
+  ctjs.return %value
+^pad(%saved: !ctjs.value, %old: !ctjs.value):
+  %pad_id, %thrown = ctjs.catch_land
+  cf.br ^caught(%saved, %thrown : !ctjs.value, !ctjs.value)
+^caught(%kept: !ctjs.value, %error: !ctjs.value):
+  ctjs.return %error
 }
 
 // Recover only the importer's exact 1/0 Boolean mux. The upstream while

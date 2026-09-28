@@ -224,8 +224,10 @@ def client(name, entry, owned):
     writes = "assert(writes.empty() && doc.version() == version);"
     if name in MUTATIONS:
         offset = int(name == "numeric_repeated")
-        writes = f"""assert(writes.size() == {offset + 1});
+        writes = f"""assert(writes.size() == {offset + 2});
                 assert(writes[{offset}].node == node && writes[{offset}].name == state);
+                assert(!writes[{offset}].removal && writes[{offset + 1}].removal);
+                assert(writes[{offset + 1}].node == node && writes[{offset + 1}].name == state);
                 assert(doc.version() == version + {offset + 2});
                 assert(!doc.read().has_attribute(node, state));"""
         if offset:
