@@ -503,7 +503,11 @@ void checker::check_for_in_of(std::int32_t idx, std::vector<binding> & vars) {
             break;
         }
     }
-    if (target.b >= 0) { walk_pattern(target.b); }
+    if (target.b >= 0) {
+        walk_pattern(target.b);
+    } else {
+        check_strict_binding(target.text, n.a);
+    }
     // A DECLARED HEAD: its names are bindings (13.1.1 in strict code), and
     // for `let`/`const` (d bit3 / bit0) 14.7.5.1 adds that they are
     // distinct, that none is `let`, and that none is also var-declared in

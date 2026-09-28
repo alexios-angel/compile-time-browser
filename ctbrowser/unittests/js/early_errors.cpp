@@ -511,6 +511,24 @@ int main() {
     // duplicate: the get/set exception needs both to be on the same side.
     refused("class C { static get #m() { return 1; } set #m(v) {} }");
 
+    // A bare loop target is an assignment to a name, even without a declaration.
+    refused("class C { #x; m() { for (#x in []) {} } }");
+    refused("class C { #x; m() { for (#x of []) {} } }");
+    refused("'use strict'; for (eval in {}) {}");
+    refused("'use strict'; for (arguments of []) {}");
+    refused("'use strict'; for (\\u0065val of []) {}");
+    refused("async function f() { for await (#x of []) {} }");
+    accepted("for (eval in {}) {} for (arguments of []) {}");
+    answers("class C { #x; m() { for (this.#x in { key: 1 }) {} return this.#x; } }"
+            " return new C().m();",
+            "key");
+    answers("class C { #x; m() { for (this.#x of [42]) {} return this.#x; } }"
+            " return new C().m();",
+            "42");
+    answers("class C { #x; m() { for (; #x in this;) { return true; } } }"
+            " return new C().m();",
+            "true");
+
     // ================================================================
     // 14. `super()` - 15.7.1
     // ================================================================
