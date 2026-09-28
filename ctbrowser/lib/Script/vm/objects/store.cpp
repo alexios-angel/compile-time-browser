@@ -306,33 +306,38 @@ void context::store_property(value target, const std::string & name, value v) {
     }
     // A PRIVATE NAME IS A BRAND CHECK ON THE WRITE TOO (7.3.32 PrivateSet):
     // an object whose class did not add the element is the TypeError, as
-    // lookup_property's read is - and a private METHOD, which lives on the
-    // prototype under its key, is not writable at all; only a private
-    // accessor's setter (further down the chain walk) may take the value.
+    // lookup_property's read is - and a private METHOD is not writable at
+    // all; a private accessor invokes its setter on the original receiver.
     // A field is DEFINED by the class's initialiser, not written, so it never
     // comes through here before it exists.
     if (is_private_key(name)) [[unlikely]] {
         const std::size_t colon = name.find(':');
         const std::string shown =
             name.substr(1, colon == std::string::npos ? std::string::npos : colon - 1);
-        if (!target.is_object_like() || target.is_kind(heap_kind::proxy) ||
-            !private_element_present(target, name)) {
+        auto found = find_private_element(target, name);
+        if (!found) {
             throw_error("TypeError", "Cannot write private member " + shown +
                                          " to an object whose class did not declare it");
             return;
         }
-        property_descriptor own;
-        if (!own_property(target, name, own)) {
-            for (value up = get_prototype(target); up.is_object_like(); up = get_prototype(up)) {
-                property_descriptor found;
-                if (!own_property(up, name, found)) { continue; }
-                if (!found.is_accessor()) {
-                    throw_error("TypeError", "Private method " + shown + " is not writable");
-                    return;
-                }
-                break;
+        if (found->is_accessor()) {
+            if (!found->setter.is_callable()) {
+                throw_error("TypeError", "Private accessor " + shown + " has no setter");
+                return;
             }
+            const value args[1] = {v};
+            (void)call(found->setter, args, target);
+            return;
         }
+        if (!has_own_property(target, name)) {
+            throw_error("TypeError", "Private method " + shown + " is not writable");
+            return;
+        }
+        found->held = v;
+        if (!define_own_property(target, name, *found)) {
+            throw_error("TypeError", "Cannot write private member " + shown);
+        }
+        return;
     }
     // A proxy's `set` trap first: it is the only thing that can decide the
     // write does not land on the target at all, which is the point of it.

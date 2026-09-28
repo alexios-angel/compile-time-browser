@@ -315,6 +315,48 @@ int main() {
     answers("class C { #p = 1; static has(o) { return #p in o; } } return C.has(new C()) + ':' +"
             " C.has({});",
             "true:false");
+    // Private methods belong to the stamped object regardless of its prototype.
+    answers("class B { constructor(o) { return o; } } class C extends B {"
+            " #m() { return this.v; } get #a() { return this.#m(); }"
+            " set #a(v) { this.v = v; } static has(o) { return #m in o && #a in o; }"
+            " static use(o) { o.#a = 7; return o.#a; } }"
+            " const o = {}; new C(o); const a = []; new C(a);"
+            " Object.setPrototypeOf(o, null);"
+            " return [C.has(o), C.use(o), C.has(a), C.use(a), C.has(C.prototype)].join();",
+            "true,7,true,7,false");
+    answers("class B { constructor(o) { return o; } } class C extends B {"
+            " #m() { return 8; } static has(o) { return #m in o; }"
+            " static read(o) { return o.#m(); } } const out = [C.has(C.prototype)];"
+            " try { C.read(C.prototype); } catch (e) { out.push(e.name); }"
+            " new C(C.prototype); out.push(C.has(C.prototype), C.read(C.prototype));"
+            " return out.join();",
+            "false,TypeError,true,8");
+    answers("class C { #m() {} static #s() {}"
+            " static change(o) { o.#m = 1; } static changeStatic() { this.#s = 1; } }"
+            " const out = []; for (const f of [() => C.change(new C()),"
+            " () => C.changeStatic()]) { try { f(); out.push('no throw'); }"
+            " catch (e) { out.push(e.name); } } return out.join();",
+            "TypeError,TypeError");
+    answers("class B { constructor(o) { return o; } } class C extends B {"
+            " set #s(v) {} get #g() { return 1; }"
+            " static read(o) { return o.#s; } static write(o) { o.#g = 1; } }"
+            " const o = {}; new C(o); const out = [];"
+            " for (const f of [() => C.read(o), () => C.write(o)]) {"
+            " try { f(); out.push('no throw'); } catch (e) { out.push(e.name); } }"
+            " return out.join();",
+            "TypeError,TypeError");
+    answers("class C { #f = 1; #m() {} static has(o) { return [#f in o, #m in o].join(); } }"
+            " let traps = 0; const p = new Proxy(new C(), {has() { traps++; return true; },"
+            " getOwnPropertyDescriptor() { traps++; }, getPrototypeOf() { traps++; }});"
+            " const out = [C.has(p), traps];"
+            " try { C.has(1); } catch (e) { out.push(e.name); } return out.join();",
+            "false,false,0,TypeError");
+    // Altering the initializer's super home must not redirect private lookup.
+    answers("class C { #m() { return 1; } static read(o) { return o.#m(); } }"
+            " let traps = 0; C.__fields.__home = new Proxy({}, {getOwnPropertyDescriptor() {"
+            " traps++; return {value() { return 2; }, configurable: true}; }});"
+            " return C.read(new C()) + ',' + traps;",
+            "1,0");
 
     // --- strict code cannot create a global by assignment (6.2.5.6)
     answers("var r; (function () { 'use strict'; try { zz1 = 1; } catch (e) { r = e.name; } })();"

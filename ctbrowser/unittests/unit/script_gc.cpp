@@ -146,6 +146,28 @@ void test_constructor_prototype_survives_a_collection() {
               "42,7");
 }
 
+void test_private_brand_survives_a_collection() {
+    expect_gc("stamped receiver retains private method home", R"(
+        const pair = (function () {
+            class B { constructor(o) { return o; } }
+            class C extends B {
+                #method() { return 42; }
+                get #value() { return this.#method(); }
+                static reader() { return function (o) { return o.#value; }; }
+            }
+            const o = {};
+            new C(o);
+            return [o, C.reader()];
+        })();
+        gc();
+        const filler = [];
+        for (let i = 0; i < 400; i++) { filler.push({answer: i}); }
+        gc();
+        return pair[1](pair[0]);
+    )",
+              "42");
+}
+
 // --- native lambda captures ------------------------------------------------
 //
 // A `value` captured by a C++ lambda inside a native is invisible to the
@@ -390,6 +412,7 @@ int main(int argc, char ** argv) {
     run("bind", &test_bind_captures_survive_a_collection);
     run("argument-list", &test_argument_list_survives_a_collection);
     run("constructor-prototype", &test_constructor_prototype_survives_a_collection);
+    run("private-brand", &test_private_brand_survives_a_collection);
     run("symbol", &test_symbol_registry_survives_a_collection);
     run("native-accessors", &test_native_accessors_survive_a_collection);
     run("map", &test_map_result_survives_a_collection);

@@ -397,11 +397,13 @@ inline constexpr std::string_view template_object_name = "__ctbrowser_template_o
 // cannot throw.
 inline constexpr std::string_view strict_assign_check_name = "__ctbrowser_strict_assign";
 // PrivateFieldAdd / PrivateMethodOrAccessorAdd (7.3.28, 7.3.29): `(obj, key,
-// v)` defines the private element - a field's value, or the class BRAND (see
-// context::private_element_present) as undefined - and it is the TypeError
+// v)` defines the private element - a field's value, or the class BRAND holding
+// its declaration home (see context::find_private_element) - and it is the TypeError
 // when the object already carries the key (a constructor that returns the
 // same object twice) or is not extensible.
 inline constexpr std::string_view private_add_name = "__ctbrowser_private_add";
+// Retained by the field initializer independently of its mutable `__home`.
+inline constexpr std::string_view private_home_key = CTBROWSER_PRIVATE_KEY("PrivateHome");
 // ClassDefinitionEvaluation steps 6-9 (15.7.14) for `class C extends P`:
 // `(C, P, C.prototype)` checks P is null or a constructor and P.prototype an
 // object or null - each a TypeError otherwise - then chains C.prototype to

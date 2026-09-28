@@ -542,7 +542,8 @@ public:
     // Does `target` have an own property `name` at all? The question
     // hasOwnProperty, Object.hasOwn and verifyProperty all ask.
     [[nodiscard]] bool has_own_property(value target, const std::string & name);
-    [[nodiscard]] bool private_element_present(value target, const std::string & key);
+    [[nodiscard]] std::optional<property_descriptor> find_private_element(value target,
+                                                                          const std::string & key);
     // [[Get]] with an explicit receiver (10.1.8.1 OrdinaryGet): `base`'s own
     // property or the first one up its chain, a getter called on `receiver`.
     [[nodiscard]] value get_with_receiver(value base, const std::string & name, value receiver);

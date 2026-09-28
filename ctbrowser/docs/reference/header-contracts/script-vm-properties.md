@@ -393,16 +393,17 @@ through a prototype getter. `from` must be an object - the callers check.
 
 <a id="contract-31"></a>
 
-`[[nodiscard]] bool private_element_present(value target, const std::string & key);`
+`[[nodiscard]] std::optional<property_descriptor> find_private_element(value target, const std::string & key);`
 
-PrivateElementFind (7.3.30) over this engine's spelling: a private
-FIELD is an own property under its `@#name:class` key; a private
-METHOD or ACCESSOR lives on the prototype (or the constructor when
-static) under its key, and an object carries it only when it carries
-the class's BRAND - the own `@#:class` key the class's initialiser
-adds to every instance it constructs (and to the constructor itself,
-for the statics). So `Object.create(C.prototype)` and a subclass
-constructor fail the brand check, as PrivateBrandCheck says.
+PrivateElementFind (7.3.30) returns a descriptor, or `nullopt` when the
+receiver has no such private element. A field uses its own private key.
+A method or accessor uses that key plus `:method` on its declaration home;
+the receiver's own class brand retains that home. The initializer retains
+the home in a hidden slot, independently of its mutable `__home` property.
+Lookup never walks the receiver's prototype chain or invokes proxy traps.
+Thus a stamped replacement object keeps its methods after its prototype
+changes, while an unstamped `C.prototype`, `Object.create(C.prototype)` or
+subclass constructor fails the corresponding brand check.
 
 <a id="contract-32"></a>
 

@@ -256,15 +256,18 @@ treats any `@#` key as 7.3.31 PrivateGet: an object the class did not
 initialise - or any proxy - is the TypeError "Cannot read private member #x
 from an object whose class did not declare it". A write is the same check
 (7.3.32), a private method is not writable, and `#x in obj` is the check as a
-boolean. Since 2026-09-12 (later that day) the check is
-`context::private_element_present`, PrivateElementFind for this spelling: an
-own `@#x:N` key - a FIELD, added once by `__ctbrowser_private_add`, which is
-the TypeError when the object already carries it or is not extensible - or a
-METHOD/ACCESSOR key up the prototype chain (up the static chain for a static
-one) PLUS the class's brand, the own `@#:N` key the class's `<fields>`
-initialiser adds to every instance it constructs and the definition adds to
-the constructor for the statics. So `Object.create(C.prototype)` and a
-subclass constructor fail a method's brand check. Not yet: two evaluations of
+boolean; a primitive right-hand side throws and an unbranded proxy answers
+false without invoking traps. Since 2026-09-28,
+`context::find_private_element` returns the descriptor used by all three
+operations. A field has its own private key, added once by
+`__ctbrowser_private_add`, which throws when the object already carries it or
+is not extensible. A method or accessor has a separate `:method` storage key
+on its declaration home. The instance's own class brand retains that home;
+static brands retain the constructor. Lookup does not depend on the
+receiver's prototype, so methods work on objects returned by a superclass
+and survive prototype changes. An unstamped `C.prototype`,
+`Object.create(C.prototype)` or subclass constructor fails the corresponding
+method's brand check. Not yet: two evaluations of
 one class expression share N, so their private names alias where the
 specification gives each evaluation its own.
 
