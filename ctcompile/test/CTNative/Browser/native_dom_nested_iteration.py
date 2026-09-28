@@ -138,6 +138,7 @@ CHECKS = r"""
             assert(invoke(alias, foreign, selectors).value() == 0);
             assert(doc.take_writes().empty());
             doc.set_document_element(button);
+            (void)doc.take_writes(); // The Document's own child insertion is noted too.
         }
         assert(invoke(alias, foreign, selectors).value() == 1);
         assert(doc.take_writes().size() == 5);
@@ -317,6 +318,18 @@ def main():
         "return 0; }\n"
     )
     for name, text in bad_sources.items():
+        if name == "escaping-inner-member":
+            # A return out of both loops closes both iterators under one guard
+            # plus a suppression handler each (380ee61d5), and the importer
+            # refuses more than one protected region before any DOM proof.
+            js = args.work / f"{name}.js"
+            js.write_text(text)
+            raw = args.work / f"{name}.raw.mlir"
+            imported = dom.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
+            if "is not compiled: more than one protected region" not in imported.stderr:
+                raise RuntimeError(f"{name}: the nested return was not refused at import")
+            refusals += 1
+            continue
         ir, manifest = dom.prepare(args, name, text, 2, entry_name="bad")
         manifest.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
         dom.refuse(args, ir, manifest, f"refused-{name}")

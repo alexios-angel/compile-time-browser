@@ -5826,6 +5826,26 @@ var savedThrow, savedExhausted;
         "return-mutable-nonliteral-close",
         "normal-mutable-nonliteral-close",
     }
+    # Refusals when written (2026-09-23); the later cleanup-read snapshot and
+    # read-order proofs admit them, which saved-throw-number hid from 09-24.
+    # Native matched Node+jsdom (value, write sequence, final attributes) in 48
+    # initial states each, both policies, GCC and Clang.
+    accepted_normal_closes |= {
+        "unsupported-postwrite-read",
+        "unsupported-terminal-postselector-read-order",
+        "unsupported-terminal-match-read-order",
+        "unsupported-terminal-earlier-read-write-reuse",
+        "unsupported-before-selector-read-write-reuse",
+        "unsupported-before-first-selector-read-write-reuse",
+        "unsupported-before-second-write-read-write-reuse",
+        "unsupported-before-first-write-read-write-reuse",
+        "unsupported-inside-first-write-read-write-reuse",
+        "unsupported-feeding-first-read-write-reuse",
+        "unsupported-final-argument-read-write-reuse",
+        "unsupported-selector-final-argument-read-write-reuse",
+        "unsupported-selector-inside-final-argument-reuse",
+        "unsupported-terminal-selector-write-reuse",
+    }
     admitted = 0
     for label, text in (
         (
