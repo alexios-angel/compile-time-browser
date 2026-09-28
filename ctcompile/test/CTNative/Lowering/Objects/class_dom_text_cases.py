@@ -246,19 +246,17 @@ for cases in (CLASS_CASES, FILTER_CASES, M_CASES, NUMBER_CASES, F_CASES, DYNAMIC
     cases.update(FULL_H_CASES)
 for refusals in (CLASS_REFUSALS, FILTER_REFUSALS, M_REFUSALS, NUMBER_REFUSALS, F_REFUSALS):
     refusals.update(FULL_H_REFUSALS)
-# The VM still indexes bytes. Pin its known divergence separately from the
-# Node/native UTF-16 contract; all pre-existing differential expectations remain.
-UTF16_CASES, UTF16_VM_BITS = {}, {}
-for name, text, first, rest, agrees in (
-    ("empty", "", "", "", True),
-    ("ascii", "ab", "a", "b", True),
-    ("nul", "\0x", "\0", "x", True),
-    ("bmp", "Éx", "É", "x", False),
-    ("dotted", "İx", "İ", "x", False),
-    ("pair", "𐐀x", "\ud801", "\udc00x", False),
-    ("high", "\ud800x", "\ud800", "x", False),
-    ("low", "\udc00x", "\udc00", "x", False),
-    ("ascii_pair", "A𐐀", "A", "𐐀", True),
+UTF16_CASES = {}
+for name, text, first, rest in (
+    ("empty", "", "", ""),
+    ("ascii", "ab", "a", "b"),
+    ("nul", "\0x", "\0", "x"),
+    ("bmp", "Éx", "É", "x"),
+    ("dotted", "İx", "İ", "x"),
+    ("pair", "𐐀x", "\ud801", "\udc00x"),
+    ("high", "\ud800x", "\ud800", "x"),
+    ("low", "\udc00x", "\udc00", "x"),
+    ("ascii_pair", "A𐐀", "A", "𐐀"),
 ):
     name = "class_utf16_" + name
     body = (
@@ -281,7 +279,6 @@ for name, text, first, rest, agrees in (
 """
     )
     UTF16_CASES[name + "_early"] = (body, "1111")
-    UTF16_VM_BITS[name + "_early"] = "1111" if agrees else "0000"
     body = (
         body.replace(
             "if (text === null) return false;", "let answer = false; if (text !== null) {"
@@ -289,7 +286,6 @@ for name, text, first, rest, agrees in (
         + "  } return answer;\n"
     )
     UTF16_CASES[name] = (body, "1111")
-    UTF16_VM_BITS[name] = "1111" if agrees else "0000"
 UTF16_CASES["class_utf16_reverse_guard"] = (
     UTF16_CASES["class_utf16_ascii"][0].replace("text !== null", "null !== text"),
     "1111",

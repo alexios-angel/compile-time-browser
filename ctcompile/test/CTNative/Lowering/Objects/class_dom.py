@@ -12,11 +12,9 @@ def source(name, body):
 def check_oracles(args):
     cases = CLASS_CASES | CASES
     declarations = "".join(source(name, body) for name, (body, _) in cases.items())
-    observations, expected, vm_expected = [], [], []
+    observations, expected = [], []
     for name, (_, bits) in cases.items():
-        for value, bit, vm_bit in zip(
-            ("null", "''", r"'a\0b'", r"'\u00e9'"), bits, UTF16_VM_BITS.get(name, bits)
-        ):
+        for value, bit in zip(("null", "''", r"'a\0b'", r"'\u00e9'"), bits):
             variable = f"observation{len(observations):03}"
             effects = {
                 "class_order": "if (element.getAttribute('x') !== 'after' || element.getAttribute('marker') !== 'done') throw new Error('lost class writes');",
@@ -48,7 +46,6 @@ def check_oracles(args):
   return result;
 }})();""")
             expected.append(f"{variable}={'true' if bit == '1' else 'false'}\n")
-            vm_expected.append(f"{variable}={'true' if vm_bit == '1' else 'false'}\n")
     oracle = declarations + strings.BOOLEAN_DOUBLE + "\n".join(observations) + "\n"
     path = args.work / "oracle.js"
     path.write_text(oracle)
@@ -61,7 +58,7 @@ def check_oracles(args):
         )
     )
     node = run([args.node, str(path)]).stdout
-    if reference != "".join(vm_expected) or node != "".join(expected):
+    if reference != "".join(expected) or node != "".join(expected):
         raise RuntimeError(f"class DOM source observations differ: {reference!r}, {node!r}")
     return len(observations)
 
