@@ -79,8 +79,18 @@ so the Data holder needs the Data-session provider's Map support in the class
 path. With a real element the arm `(t = a(t)) && (...)` is LIVE, and R1b cannot
 decide it: `evaluateHelper` takes primitive actuals only.
 
-**Next boundary: element facts** (design and options:
-`bootstrap-native-next/06-element-facts-design.md`). Give `partial_eval` an element-parameter
+**Element facts landed as `ee59a201c`** (design, what landed and pins:
+`bootstrap-native-next/06-element-facts-design.md`): the VM's element name set
+(588 names, enumerated with the new `ctcompile-test-native-reference --page`
+and drift-gated by `element-names.test`); a declared DOM element actual is
+truthy, typeof "object", `nodeType` 1, and reads undefined outside the set;
+an arm on `a(element)` is decided and the call replaced by its argument; the
+DOM uncalled-helper rule for pure capture transport. `class_element_arm`
+(authentic `r`/`a`) lowers natively. **The DOM probe still stops at `class
+own-key snapshot requires fixed constructor fields`, now from the provider gate
+in `ownFieldSnapshots` (any snapshot outside closed-source refuses), and behind
+it `inherited DOM methods require per-leaf body proof`: those two are the next
+rungs.** The original element-facts plan follows. Give `partial_eval` an element-parameter
 value (truthy, `typeof` "object", `nodeType` defined, an absent expando such as
 `jquery` undefined when no source writes that key on an element and no
 prototype is mutated - the census already refuses prototype writes) so
@@ -115,17 +125,27 @@ skipping.
   Number escape refusal controls, unreached behind the Symbol pin, lower since
   847718fbd and are native witnesses with Node's results (replacement control
   `signed-slice-primitive-negation-escape`). Gate: 23/23 lit.
-- Open: F (native-dom-custom-iteration saved-throw-number, suspected
-  41c9f87de's LiftToSCF preserve list), G (SIGABRT write-log asserts in
-  native-dom and -nested-iteration clients), H (native-dom-strings g++ timeout
-  under load); a subagent is on them.
+- `c55943389` (triage-fgh): F - 41c9f87de made every for-of function keep its
+  register CFG; holder ops now keep it only when a `catch_land` value reaches a
+  non-copy use (LiftToSCF `observesThrown`), which restores the DOM iterator
+  close normalizer's input; 14 saved_throws sources refused since 09-23 now
+  lower and match Node + jsdom (56 native runs). G - the DOM write log notes
+  removals (ff6f51bac) and Document child edits (c0153d185); clients updated.
+  H - load flakiness (17 s of a 120 s limit). native-dom-custom-iteration's
+  driver runs longer than gate.sh's 2 h: it passed in segments only.
+- `ee59a201c` (element facts, see below).
 
 Checks (devbox, focused): class_initialization subset 562/562 (1500 s: last
 session's 386 plus every unused/helper/captured control and fixture 60) on the
 merged tree; lit class-entry, class-instanceof, native-class-dom-alias,
 class-terminal-publication, native-class-dom-data, class-dom 6/6 (540.8 s);
 native-bootstrap-button-probe and -dom-data-session 2/2; `tools/format.sh
---check` clean. Full CTest/lit, WPT/test262 and sanitizers were not run.
+--check` clean. After the element-facts (ee59a201c) and triage-fgh (c55943389) merges, on
+the final tree: class_initialization subset 562/562 (1324 s with element facts,
+1315 s after fgh); lit element-names, lift-to-scf, class-entry,
+class-instanceof, native-class-dom-alias, exceptions,
+class-terminal-publication, class-dom, native-class-dom-data 9/9 (435 s).
+Full CTest/lit, WPT/test262 and sanitizers were not run.
 
 ## Bootstrap base classes built by their leaves, implicit super and helper arms, 2026-09-28 UTC
 
