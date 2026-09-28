@@ -301,6 +301,10 @@ int main() {
     CHECK(string_concat("x", low) == "x" + low);
     CHECK(string_concat(std::string("a\0", 2), "b") == std::string("a\0b", 3));
     CHECK(high.size() == 3 && low.size() == 3);
+    // `length` is UTF-16 code units: a pair's code point is two, a lone half one.
+    CHECK(string_length(std::string("\xC3\xA9\xF0\x9F\x98\x80\0", 7)) == 4);
+    CHECK(string_length(high) == 1 && string_length(high + low) == 2);
+    CHECK(string_length("") == 0 && string_length("ab") == 2);
     const std::vector<double> three{10, 20, 30};
     CHECK(vec_at(three, nullable_scalar{-0.5}).value == 10); // the engine truncates
     CHECK(vec_at(three, nullable_scalar{3.0}).tag == nullable_scalar::kind::undefined);

@@ -78,4 +78,14 @@ public:
 
 using js_string = js_basic_string<char>;
 
+// ctcompile: a String's `length` - UTF-16 code units over the WTF-8 storage, the
+// interpreter's count (script/utf16.hpp): a code point above U+FFFF is two.
+inline std::size_t string_length(std::string_view text) {
+    std::size_t units = 0;
+    for (std::size_t at = 0; at < text.size();) {
+        units += ctbrowser::decode_utf8(text, at) >= 0x10000 ? 2 : 1;
+    }
+    return units;
+}
+
 } // namespace ctnative

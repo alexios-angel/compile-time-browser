@@ -55,7 +55,7 @@ def main():
         "declared-callable-escape": 5,
         "declared-replaced": 9,
         "declared-alias-delete": 1,
-        "utf8-length": 7,
+        "utf8-length": 4,
         "empty-length": 0,
         "unknown-property": 0,
     }.items():
@@ -71,8 +71,7 @@ def main():
                 )
                 + 'return f64({text: "owned"});\n}\nvar a = forwarded();\n'
             )
-        node_expected = 4 if name == "utf8-length" else expected
-        assert run([args.node, "-e", NODE, str(source)]).stdout == f"a={node_expected}\n", name
+        assert run([args.node, "-e", NODE, str(source)]).stdout == f"a={expected}\n", name
         assert run([args.reference, str(source)]).stdout == f"a={expected}\n", name
         if name in (
             "strings",

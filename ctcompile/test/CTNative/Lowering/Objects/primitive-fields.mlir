@@ -185,7 +185,7 @@ function borrowed() {
 }
 var a = borrowed();
 
-// ND-1 pins the engine's byte count separately from Node's UTF-16 count.
+// `length` is UTF-16 code units over the stored UTF-8: 4, not the 7 bytes (ND-1).
 //--- utf8-length.js
 function length() {
     var value = {text: "é😀\0"};

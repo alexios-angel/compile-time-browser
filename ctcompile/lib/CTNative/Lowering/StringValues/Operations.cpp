@@ -13,8 +13,9 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && read.getObject().getType() == string) {
         // Admission proved the length key before key constants were lowered.
-        // ND-1: the engine's String length counts its stored UTF-8 bytes.
-        auto size = callValue(b, where, ec::OpaqueType::get(context, "std::size_t"), "std::size",
+        // ND-1: `length` counts UTF-16 code units over the stored WTF-8 bytes.
+        auto size = callValue(b, where, ec::OpaqueType::get(context, "std::size_t"),
+                              "ctnative::string_length",
                               convertScalar(b, where, read.getObject(),
                                             ec::OpaqueType::get(context, kRawStringType)));
         auto count = ec::CastOp::create(b, where, b.getF64Type(), size);
