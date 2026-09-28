@@ -81,6 +81,8 @@
 #include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/value.hpp>
 #include <ctbrowser/script/vm.hpp>
+#include <ctbrowser/shell/bindings.hpp>
+#include <ctbrowser/shell/browser.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -137,16 +139,36 @@ void write_percent_encoded(const std::string & s) {
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (argc != 2) {
-        std::fprintf(stderr, "usage: ctcompile-test-native-reference PROGRAM.js\n");
+    const bool page = argc == 3 && std::string_view{argv[1]} == "--page";
+    if (argc != 2 && !page) {
+        std::fprintf(stderr,
+                     "usage: ctcompile-test-native-reference [--page PAGE.html | PROGRAM.js]\n");
         return 2;
     }
-    std::ifstream in{argv[1], std::ios::binary};
+    const char * path = argv[argc - 1];
+    std::ifstream in{path, std::ios::binary};
     if (!in) {
-        std::fprintf(stderr, "native reference: cannot read %s\n", argv[1]);
+        std::fprintf(stderr, "native reference: cannot read %s\n", path);
         return 1;
     }
     const std::string source{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
+
+    // --page: the same VM behind a live document, for questions about the DOM
+    // bindings themselves (element_names.py enumerates the element surface this
+    // way). Prints each console.log line; a script error fails.
+    if (page) {
+        ctbrowser::shell::browser live{ctbrowser::shell::browser_options{400, 300}};
+        live.load_html(source);
+        if (!live.script_error().empty()) {
+            std::fprintf(stderr, "native reference: %s threw: %s\n", path,
+                         live.script_error().c_str());
+            return 1;
+        }
+        for (const std::string & line : live.bindings().console_output()) {
+            std::printf("%s\n", line.c_str());
+        }
+        return 0;
+    }
 
     // THE PROGRAM OUTLIVES THE CONTEXT - vm.hpp's rule, since closures hold
     // function_protos that point into it - so it is compiled first and declared
