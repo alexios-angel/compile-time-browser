@@ -3157,77 +3157,10 @@ var symbol197StringUTF16DoubleNegatedIndices = stringDoubleNegatedIndices('\u00c
         "StringUTF16DoubleNegatedIndices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
-    # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
-    # Preserve those known differences; native uses the existing Unicode Core API.
-    vm_expected = expected.replace(
-        "symbol50DescriptionExpandedCase=true", "symbol50DescriptionExpandedCase=false"
-    ).replace("symbol51DescriptionGreekCase=true", "symbol51DescriptionGreekCase=false")
-    vm_expected = vm_expected.replace(
-        "symbol55StringUTF16Indices=true", "symbol55StringUTF16Indices=false"
-    ).replace("symbol59StringUTF16SliceBounds=true", "symbol59StringUTF16SliceBounds=false")
-    vm_expected = vm_expected.replace(
-        "symbol64StringUTF16SignedSlices=true", "symbol64StringUTF16SignedSlices=false"
-    ).replace("symbol68StringUTF16SignedCharAt=true", "symbol68StringUTF16SignedCharAt=false")
-    vm_expected = vm_expected.replace(
-        "symbol71StringUTF16FractionalIndices=true",
-        "symbol71StringUTF16FractionalIndices=false",
-    ).replace(
-        "symbol101StringUTF16DefaultIndices=true",
-        "symbol101StringUTF16DefaultIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol107StringUTF16UndefinedIndices=true",
-        "symbol107StringUTF16UndefinedIndices=false",
-    ).replace(
-        "symbol112StringUTF16PrimitiveIndices=true",
-        "symbol112StringUTF16PrimitiveIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol117StringUTF16DivisionIndices=true",
-        "symbol117StringUTF16DivisionIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol121StringUTF16SubtractionIndices=true",
-        "symbol121StringUTF16SubtractionIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol125StringUTF16MultiplicationIndices=true",
-        "symbol125StringUTF16MultiplicationIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol129StringUTF16RemainderIndices=true",
-        "symbol129StringUTF16RemainderIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol133StringUTF16AdditionIndices=true",
-        "symbol133StringUTF16AdditionIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol137StringUTF16PowerIndices=true",
-        "symbol137StringUTF16PowerIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol146StringUTF16NegatedIndices=true",
-        "symbol146StringUTF16NegatedIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol160StringUTF16SignedOperandIndices=true",
-        "symbol160StringUTF16SignedOperandIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol173StringUTF16NestedIndices=true",
-        "symbol173StringUTF16NestedIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol190StringUTF16NegatedPrimitiveIndices=true",
-        "symbol190StringUTF16NegatedPrimitiveIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol197StringUTF16DoubleNegatedIndices=true",
-        "symbol197StringUTF16DoubleNegatedIndices=false",
-    )
     actual = run([args.reference, str(vm)]).stdout
-    if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
+    # The VM has matched Node here since its Unicode casing (8f61dcf9c) and
+    # UTF-16 String indices (2b710a0d2); native uses the same Core API.
+    if actual != "".join(sorted(expected.splitlines(keepends=True))):
         raise RuntimeError(f"VM Symbol export observations differ: {actual}")
     node = args.work / "oracle.cjs"
     node.write_text(
@@ -3239,10 +3172,7 @@ var symbol197StringUTF16DoubleNegatedIndices = stringDoubleNegatedIndices('\u00c
     )
     if run([args.node, str(node)]).stdout != expected:
         raise RuntimeError("Node Symbol export observations differ")
-    agreements = sum(
-        a == b for a, b in zip(expected.splitlines(), vm_expected.splitlines(), strict=True)
-    )
-    return agreements, len(observations) - agreements
+    return len(observations)
 
 
 def standalone(args, native, name, checks, expected, compilers, includes, libraries):
@@ -3331,7 +3261,7 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
 
 def main():
     args = dom.parse_args(__doc__, oracles=True)
-    agreements, differences = oracle(args)
+    agreements = oracle(args)
     compilers = args.compilers
     includes, libraries = dom.link_options(args, core_only=True)
     accepted = {}
@@ -4599,7 +4529,7 @@ def main():
     refuse(ir, manifest, "parameter-shadow-refused")
     print(
         f"Symbol exports: typed parameters/helpers/captures, guarded String methods, scalar equality and branch/loop return; "
-        f"{agreements} Node/VM agreements, {differences} known VM casing/index differences; "
+        f"{agreements} Node/VM agreements; "
         f"{8 * len(CASES)} native executions, {refusals} refusals, 2 mutations; Core only, no DOM inputs"
     )
 
