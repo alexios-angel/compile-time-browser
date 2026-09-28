@@ -70,6 +70,22 @@ void expect_gc(std::string_view what, const std::string & source, std::string_vi
     }
 }
 
+void test_argument_list_survives_a_collection() {
+    for (const std::string_view invoke :
+         {"target.apply(null, args)", "Reflect.apply(target, null, args)",
+          "Reflect.construct(target, args)"}) {
+        expect_gc(invoke,
+                  R"(
+            function target(x) { return x; }
+            var args = {length: 2, 0: {answer: 42},
+                        get 1() { delete this[0]; gc(); return 0; }};
+            return ()" +
+                      std::string{invoke} + R"().answer;
+        )",
+                  "42");
+    }
+}
+
 // --- native lambda captures ------------------------------------------------
 //
 // A `value` captured by a C++ lambda inside a native is invisible to the
@@ -312,6 +328,7 @@ int main(int argc, char ** argv) {
         if (only.empty() || name.find(only) != std::string_view::npos) { body(); }
     };
     run("bind", &test_bind_captures_survive_a_collection);
+    run("argument-list", &test_argument_list_survives_a_collection);
     run("symbol", &test_symbol_registry_survives_a_collection);
     run("native-accessors", &test_native_accessors_survive_a_collection);
     run("map", &test_map_result_survives_a_collection);

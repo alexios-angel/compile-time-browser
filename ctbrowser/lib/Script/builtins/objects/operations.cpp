@@ -17,6 +17,34 @@ object_object * typed_array_prototype(context & cx, element_kind kind);
 
 namespace ctbrowser::script::detail {
 
+value create_argument_list(context & cx, value list, double limit) {
+    if (!list.is_object_like()) {
+        cx.throw_error("TypeError", "CreateListFromArrayLike called on non-object");
+        return value::undefined();
+    }
+    const value out = cx.make_array();
+    const context::rooted keep{cx, out};
+    auto & args = static_cast<array_object *>(out.as_heap())->items;
+    if (const array_object * dense = dense_array_this(list)) {
+        args = dense->items;
+        return out;
+    }
+    const context::stack_mark before = cx.mark_stack();
+    const double count = array_like_length(cx, list);
+    if (threw_since(cx, before)) { return value::undefined(); }
+    if (count > limit) {
+        cx.throw_error("RangeError", "too many arguments in array-like list");
+        return value::undefined();
+    }
+    args.reserve(static_cast<std::size_t>(count));
+    for (double i = 0; i < count; ++i) {
+        const value next = element_at(cx, list, i);
+        if (threw_since(cx, before)) { return value::undefined(); }
+        args.push_back(next);
+    }
+    return out;
+}
+
 namespace {
 
 [[nodiscard]] inline bool wanted_key(key_filter which, const std::string & key) {

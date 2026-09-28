@@ -11,6 +11,10 @@
 
 namespace ctbrowser::script::detail {
 
+// CreateListFromArrayLike, with the caller's existing limit for a generic walk.
+// The returned array keeps earlier arguments alive across later getters.
+[[nodiscard]] value create_argument_list(context & cx, value list, double limit);
+
 // key_filter and own_property_names are declared in ../internal.hpp: the JSON
 // reviver walk needs OwnPropertyKeys too.
 
