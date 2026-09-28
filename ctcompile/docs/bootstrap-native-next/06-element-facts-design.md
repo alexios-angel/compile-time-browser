@@ -50,11 +50,22 @@ running caller and the 2026-09-28 uncalled-helper rule removes it).
    `evaluateHelper` consults it. Pin (b) with a control that writes
    `element.jquery` and must refuse.
 
-**Recommendation: option 2.** The partial-evaluation side is small (an
-element-actual marker in `evaluateHelper`: truthy, typeof "object", IDL reads
-from the table's known constants, absent keys undefined, results that are
-the actual itself); the extraction is the real work and must keep the
-binding's WPT/test262 behaviour unchanged.
+3. **The same name set, enumerated from the VM**: the element surface is
+   installed across ~8.8k lines of `lib/Shell/bindings/element/` (own data
+   properties per wrapper, reflection rows, interface prototypes from
+   `interfaces.cpp`'s table), so a table-driven binding is a large,
+   WPT-sensitive refactor. Instead enumerate, with the reference interpreter,
+   every own and prototype-chain property name of an element of each
+   interface in `interface_table`, check the union in as data, and add a
+   focused test that re-enumerates and fails on any difference. It is derived
+   data with a drift gate, not a second implementation.
+
+**Recommendation: option 2's rule with option 3's name set.** The
+partial-evaluation side is small: an element-actual marker in
+`evaluateHelper` (truthy, `typeof` "object", known IDL constants such as
+`nodeType` 1, names outside the set undefined, a result that is the actual
+itself). The name set and its drift test are the real work, and no binding
+code changes.
 
 After it: `this._config = this._getConfig(i)` runs `_mergeConfigObj`, which
 needs the real `H` (Manipulator) in the fixture, and the Data holder's Maps
