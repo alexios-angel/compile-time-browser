@@ -226,6 +226,9 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     for (ctjs::CallOp call : calls) {
         if (!examine(call, contract, domEntry)) { return false; }
     }
+    if (!pendingSnapshots.empty()) {
+        return refuse("class own-key snapshot deferred to leaves lacks a folding leaf");
+    }
     if (!earlyCaptures.empty()) {
         return refuse("class local cell is observed before initialization");
     }

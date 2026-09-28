@@ -1044,9 +1044,14 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
     }
     auto & entry = function.getBody().front();
+    // A base no exact `new` constructs runs only as its leaves' normalized
+    // super copies, and each leaf proves its own receiver across that copy.
+    // The original still records every use for the census; rewrite erases it.
+    const bool leafConstructed = instances.empty() && baseClasses.contains(closure.getResult());
     if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
         (closure.getUpvalues().empty() && !entry.getArgument(ctjs::arg_callee).use_empty()) ||
-        !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
+        !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true,
+                    leafConstructed)) {
         return refuse("class constructor observes new.target, lexical home or receiver identity");
     }
     llvm::SmallVector<ctjs::GetPropertyOp> getterOnlyReads;

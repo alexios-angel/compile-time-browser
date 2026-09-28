@@ -574,7 +574,18 @@ bool classInitialization::ownFieldSnapshots(
     auto function = target(constructor);
     auto inherited = heritage.lookup(constructor.getResult());
     const auto base = inherited ? sourceValue(inherited.getArgs()[1]) : mlir::Value{};
+    const auto parent = [&](mlir::Value derived) {
+        auto call = heritage.lookup(derived);
+        return call ? sourceValue(call.getArgs()[1]) : mlir::Value{};
+    };
+    // A deferred ancestor's fields are fixed by the first leaf that folded it.
     auto required = snapshotFields.find(base);
+    for (auto ancestor = base;
+         required == snapshotFields.end() && deferredSnapshots.contains(ancestor);) {
+        if (!step()) { return false; }
+        ancestor = parent(ancestor);
+        required = snapshotFields.find(ancestor);
+    }
     llvm::SetVector<mlir::Value> receivers;
     for (ctjs::ConstructOp made : instances) {
         receivers.insert(made.getResult());
@@ -625,6 +636,22 @@ bool classInitialization::ownFieldSnapshots(
     }
     if (contract.provider != HostContract::Provider::closedSource) {
         return refuse("class own-key snapshot requires fixed constructor fields");
+    }
+    // A base whose only constructions are its leaves' super calls (exact
+    // `new` sites are the only ones admitted) has no shape of its own: each
+    // leaf proves the snapshot after super normalization, where the leaf's
+    // actuals can decide the base's arms. Until then fieldsOnly admits the
+    // snapshot and its loop writes; the folding leaf rechecks the body.
+    // ponytail: the first leaf to fold a shared body fixes its fields for
+    // every sibling; per-leaf fields need bodies that only copies reach.
+    if (instances.empty() && baseClasses.contains(constructor.getResult()) &&
+        required == snapshotFields.end()) {
+        deferredSnapshots.insert(constructor.getResult());
+        for (mlir::Operation * call : snapshots) {
+            pendingSnapshots.insert(call);
+            pendingSnapshotMethods.insert(call->getParentOfType<ctjs::FuncOp>());
+        }
+        return true;
     }
     // ponytail: fixed named fields, with one ordered shape across an inherited
     // snapshot's receivers. Variable presence needs a separate proof.
@@ -955,12 +982,18 @@ bool classInitialization::ownFieldSnapshots(
         auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
         selections.insert(read);
         loads.insert(read.getObject().getDefiningOp());
+        pendingSnapshots.erase(call);
+        pendingSnapshotMethods.erase(call->getParentOfType<ctjs::FuncOp>());
         eraseRooted(call);
     }
     for (mlir::Operation * operation : selections) { eraseIfRooted(operation); }
     for (mlir::Operation * operation : loads) { eraseIfRooted(operation); }
     // An empty snapshot is a requirement too. Descendants must recheck every
     // inherited body and field write even after its snapshot has been folded.
+    for (auto ancestor = base; deferredSnapshots.contains(ancestor); ancestor = parent(ancestor)) {
+        if (!step()) { return false; }
+        snapshotFields.try_emplace(ancestor, fields);
+    }
     snapshotFields[constructor.getResult()] = std::move(fields);
     return true;
 }
@@ -1063,7 +1096,7 @@ bool classInitialization::retainedMapReads(
 
 bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                                      llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
-                                     bool methodsAvailable) {
+                                     bool methodsAvailable, bool unconstructed) {
     for (mlir::OpOperand * sourceUse : sourceUses(object)) {
         auto & use = *sourceUse;
         if (!step()) { return false; }
@@ -1080,6 +1113,19 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
         if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(op)) {
             llvm::SmallVector<ctjs::GetPropertyOp> reads;
             if (borrowedHelperReads(use, methodKeys, reads)) { continue; }
+        }
+        // A deferred snapshot and its loop's computed null writes wait for the
+        // leaf that folds them; it rechecks this body once they are fields.
+        if (pendingSnapshotMethods.contains(op->getParentOfType<ctjs::FuncOp>())) {
+            auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+            auto value =
+                write ? write.getValue().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+            if ((pendingSnapshots.contains(op) && use.getOperandNumber() == 2) ||
+                (value && use.getOperandNumber() == 0 &&
+                 llvm::isa<ctjs::NullAttr>(value.getValue()) &&
+                 !write.getKey().getDefiningOp<ctjs::ConstantOp>())) {
+                continue;
+            }
         }
         if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
             closure && use.getOperandNumber() == 1 && helpers.contains(target(closure)) &&
@@ -1100,6 +1146,7 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
                 auto getter = llvm::dyn_cast<ctjs::GetPropertyOp>(selected.getOwner());
                 if (!getter || selected.getOperandNumber() != 0 ||
                     !ctjs::ordinaryKey(getter.getKey())) {
+                    if (unconstructed) { continue; }
                     return refuse("class constructor identity escapes its local getter read");
                 }
                 staticReads.push_back(getter);
@@ -1118,6 +1165,9 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
             }
         }
         const auto key = ctjs::propertyKey(op);
+        // A body that never runs keeps its records for the census; the uses
+        // themselves are proved on every copy that does run.
+        if (unconstructed) { continue; }
         if (use.getOperandNumber() != 0 || !key || !ctjs::ordinaryKey(key)) {
             return refuse("class receiver escapes or observes a prototype/descriptor");
         }

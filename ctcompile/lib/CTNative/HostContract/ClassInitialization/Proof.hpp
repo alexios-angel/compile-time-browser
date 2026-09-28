@@ -95,6 +95,10 @@ struct classInitialization {
     llvm::DenseMap<mlir::Value, llvm::StringMap<ctjs::FuncOp>> receiverGetters;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<llvm::StringRef>> snapshotFields;
     llvm::DenseSet<mlir::Operation *> snapshotMethods;
+    // Bases constructed only through their leaves' super calls leave their
+    // snapshots (calls and methods) to the first leaf that folds them.
+    llvm::DenseSet<mlir::Value> deferredSnapshots;
+    llvm::DenseSet<mlir::Operation *> pendingSnapshots, pendingSnapshotMethods;
     llvm::SmallVector<std::pair<ctjs::CallOp, ctjs::SetPropertyOp>> inheritedSlots;
     llvm::DenseSet<mlir::Operation *> setup;
     llvm::DenseSet<mlir::Operation *> retainedSetup;
@@ -186,9 +190,10 @@ struct classInitialization {
                            const llvm::StringMap<ctjs::DefineAccessorOp> & staticDefinitions,
                            const llvm::StringMap<ctjs::SetPropertyOp> & staticMethods,
                            const HostContract & contract);
+    // `unconstructed`: the original body of a base only leaves construct.
     bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
-                    bool methodsAvailable = false);
+                    bool methodsAvailable = false, bool unconstructed = false);
     bool retainedMapAliases(mlir::OpOperand & use, llvm::SmallVectorImpl<mlir::Value> & reads);
     bool retainedMapReads(mlir::OpOperand & use, const llvm::StringSet<> & methodKeys,
                           llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads);
