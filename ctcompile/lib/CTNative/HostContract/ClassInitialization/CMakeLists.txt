@@ -4,6 +4,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   CapturedMapHelpers.cpp
   DOMData.cpp
   OwnFieldLoops.cpp
+  EmptyEntries.cpp
   Inheritance.cpp
   Proof.cpp
   Rewrite.cpp

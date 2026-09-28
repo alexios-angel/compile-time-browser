@@ -226,6 +226,8 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     for (ctjs::CallOp call : calls) {
         if (!examine(call, contract, domEntry)) { return false; }
     }
+    // Every class has recorded its getter reads; the census below sees the folds.
+    if (!domEntry && !foldEmptyEntries(contract)) { return false; }
     if (!pendingSnapshots.empty()) {
         return refuse("class own-key snapshot deferred to leaves lacks a folding leaf");
     }

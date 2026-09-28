@@ -540,10 +540,16 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                     continue;
                 }
             } else if (load.getName() == "Array" || load.getName() == "Object") {
-                const auto member = load.getName() == "Array" ? "from" : "getOwnPropertyNames";
+                // Object.entries, like getOwnPropertyNames, is one closed own-key
+                // read of its argument. The class proof folds or refuses each call.
+                const auto member = [&](llvm::StringRef key) {
+                    return load.getName() == "Array"
+                               ? key == "from"
+                               : key == "getOwnPropertyNames" || key == "entries";
+                };
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
                     read && use.getOperandNumber() == 0 &&
-                    ctjs::constantKey(read.getKey()) == member) {
+                    member(ctjs::constantKey(read.getKey()))) {
                     bool closed = true;
                     for (mlir::OpOperand & methodUse : read.getResult().getUses()) {
                         if (llvm::isa<ctjs::RootOp>(methodUse.getOwner())) { continue; }
@@ -558,7 +564,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                     call && use.getOperandNumber() == 1 && call.getArgs().size() == 1) {
                     auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                     if (read && read.getObject() == load.getResult() &&
-                        ctjs::constantKey(read.getKey()) == member) {
+                        member(ctjs::constantKey(read.getKey()))) {
                         continue;
                     }
                 }

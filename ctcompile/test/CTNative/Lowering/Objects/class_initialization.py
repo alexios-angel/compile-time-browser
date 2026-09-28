@@ -123,6 +123,25 @@ OBSERVATIONS.update(
     }
 )
 POSITIVES.update({"own-fields-branch-decided-falsy", "own-fields-branch-decided-truthy"})
+# Bootstrap's type check: Object.entries of a fresh empty static getter object.
+OWN_ENTRIES = {
+    name: (7, 7)
+    for name in (
+        "own-entries-default-type",
+        "inherited-own-entries-default-type",
+        "own-entries-default-type-fields",
+        "own-entries-default-type-primitive",
+        "own-entries-default-type-written",
+        "own-entries-default-type-escaped",
+        "own-entries-argument",
+        "own-entries-default-type-passed",
+        "own-entries-default-type-effect",
+    )
+}
+OBSERVATIONS.update(OWN_ENTRIES)
+ENTRIES_FRESH = "class Object.entries requires a fresh empty static getter object"
+ENTRIES_PATH = "class Object.entries requires a proved method with a closed effect-free path"
+POSITIVES.update({"own-entries-default-type", "inherited-own-entries-default-type"})
 # A base constructed only through leaf super calls leaves its snapshot to the leaf.
 DEFERRED = {
     "inherited-own-fields-iterate-deferred-arm": (7, 7),
@@ -581,14 +600,20 @@ def main():
             or name.startswith("own-fields-branch-")
             or name.startswith("inherited-own-fields-")
             or name.startswith("bootstrap-base")
+            or name in OWN_ENTRIES
         ):
             manifest["initial_intrinsics"].append("Object")
-        if name in (
-            "own-fields-loop",
-            "inherited-own-fields-loop",
-            "class-map-record-alias-snapshot-dispose",
-            "class-map-record-constructor-snapshot-dispose",
-        ) or name.startswith(("inherited-own-fields-iterate-", "bootstrap-base")):
+        if (
+            name
+            in (
+                "own-fields-loop",
+                "inherited-own-fields-loop",
+                "class-map-record-alias-snapshot-dispose",
+                "class-map-record-constructor-snapshot-dispose",
+            )
+            or name.startswith(("inherited-own-fields-iterate-", "bootstrap-base"))
+            or name in OWN_ENTRIES
+        ):
             manifest["initial_intrinsics"] += [
                 "Array",
                 "__ctbrowser_for_of_open",
@@ -755,8 +780,15 @@ def main():
             "inherited-method-base-shadow": "class method is observed or shadowed",
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": "declared intrinsic identity escapes, is reflected or is mutated",
-            "bootstrap-base-data": "declared intrinsic identity escapes, is reflected or is mutated",
+            "bootstrap-base": "static method receiver requires an exact own getter read",
+            "bootstrap-base-data": "static method receiver requires an exact own getter read",
+            "own-entries-default-type-fields": "static getter body is not a closed expression",
+            "own-entries-default-type-primitive": ENTRIES_FRESH,
+            "own-entries-default-type-written": ENTRIES_FRESH,
+            "own-entries-default-type-escaped": ENTRIES_FRESH,
+            "own-entries-argument": ENTRIES_FRESH,
+            "own-entries-default-type-passed": ENTRIES_PATH,
+            "own-entries-default-type-effect": ENTRIES_PATH,
             "bootstrap-base-button": "static method receiver requires an exact own getter read",
             "inherited-own-fields-iterate-deferred-siblings-differ": "inherited own-key snapshot requires the same ordered fields",
             "inherited-own-fields-iterate-deferred-mixed": "class own-key snapshot branches change ordered fields",

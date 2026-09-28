@@ -171,6 +171,7 @@ struct classInitialization {
                              unsigned depth = 0);
     bool clearOwnFieldLoop(ctjs::CallOp snapshot, llvm::ArrayRef<llvm::StringRef> fields,
                            const HostContract & contract);
+    bool foldEmptyEntries(const HostContract & contract);
     bool normalizePublicationHelper(ctjs::CreateClosureOp constructor,
                                     const HostContract & contract);
     bool normalizePublicationKey(ctjs::CreateClosureOp constructor, const HostContract & contract);
