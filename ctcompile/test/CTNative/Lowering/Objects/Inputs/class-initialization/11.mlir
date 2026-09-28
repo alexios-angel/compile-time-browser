@@ -88,13 +88,13 @@ var a = inherited_own_fields_empty();
 
 // The observed argument does not establish unconditional constructor field presence.
 //--- inherited-own-fields-conditional.js
-function inherited_own_fields_conditional() {
+function inherited_own_fields_conditional(u = 1) {
     class Base {
         constructor(n) { if (n) this.a = 7; }
         count() { return Object.getOwnPropertyNames(this).length; }
     }
     class Leaf extends Base { constructor(n) { super(n); } }
-    return new Leaf(1).count();
+    return new Leaf(u).count();
 }
 var a = inherited_own_fields_conditional();
 
@@ -118,7 +118,7 @@ function inherited_own_fields_empty_added() {
         count() { return Object.getOwnPropertyNames(this).length; }
     }
     class Leaf extends Base { constructor() { super(); this.a = 7; } }
-    return new Leaf().count();
+    return new Base().count() * 10 + new Leaf().count();
 }
 var a = inherited_own_fields_empty_added();
 
@@ -131,7 +131,7 @@ function inherited_own_fields_grandchild_added() {
     }
     class Middle extends Base { constructor() { super(); this.a = 2; } }
     class Leaf extends Middle { constructor() { super(); this.b = 3; } }
-    return new Leaf().count();
+    return new Base().count() * 10 + new Leaf().count();
 }
 var a = inherited_own_fields_grandchild_added();
 
@@ -193,7 +193,7 @@ function inherited_own_fields_ancestor_write() {
 }
 var a = inherited_own_fields_ancestor_write();
 
-// Implicit derived rest/apply construction still needs its own super proof.
+// Implicit derived rest/apply construction forwards to the base like super().
 //--- inherited-own-fields-implicit.js
 function inherited_own_fields_implicit() {
     class Base {

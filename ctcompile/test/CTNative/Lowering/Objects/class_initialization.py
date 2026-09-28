@@ -123,6 +123,49 @@ OBSERVATIONS.update(
     }
 )
 POSITIVES.update({"own-fields-branch-decided-falsy", "own-fields-branch-decided-truthy"})
+# A base constructed only through leaf super calls leaves its snapshot to the leaf.
+DEFERRED = {
+    "inherited-own-fields-iterate-deferred-arm": (7, 7),
+    "inherited-own-fields-iterate-deferred-loop": (7, 7),
+    "inherited-own-fields-iterate-deferred-truthy": (14, 14),
+    "inherited-own-fields-iterate-deferred-siblings": (7, 7),
+    "inherited-own-fields-iterate-deferred-chain": (7, 7),
+    "inherited-own-fields-iterate-deferred-siblings-differ": (7, 7),
+    "inherited-own-fields-iterate-deferred-mixed": (7, 7),
+    "inherited-own-fields-iterate-deferred-early-snapshot": (7, 7),
+    "inherited-own-fields-iterate-deferred-added": (7, 7),
+    "inherited-own-fields-iterate-deferred-implicit": (7, 7),
+    "inherited-own-fields-iterate-deferred-implicit-arguments": (7, 7),
+    "inherited-own-fields-iterate-deferred-helper": (7, 7),
+    "own-fields-branch-helper-falsy": (7, 7),
+    "own-fields-branch-helper-nested": (7, 7),
+    "own-fields-branch-helper-truthy": (14, 14),
+    "own-fields-branch-helper-mixed": (7, 7),
+    "own-fields-branch-helper-object": (7, 7),
+    "own-fields-branch-helper-property": (7, 7),
+}
+OBSERVATIONS.update(DEFERRED)
+OBSERVATIONS["bootstrap-base-button"] = (7, 7)
+# The element helpers read properties of an untyped formal: native lowering
+# still refuses them, so only the prepared proof is pinned.
+PREPARED_ONLY.update(
+    {"own-fields-branch-helper-nested", "inherited-own-fields-iterate-deferred-helper"}
+)
+POSITIVES.update(
+    {
+        "inherited-own-fields-iterate-deferred-arm",
+        "inherited-own-fields-iterate-deferred-loop",
+        "inherited-own-fields-iterate-deferred-truthy",
+        "inherited-own-fields-iterate-deferred-siblings",
+        "inherited-own-fields-iterate-deferred-chain",
+        "inherited-own-fields-iterate-deferred-added",
+        "inherited-own-fields-iterate-deferred-implicit",
+        "inherited",
+        "inherited-own-fields-implicit",
+        "own-fields-branch-helper-falsy",
+        "own-fields-branch-helper-truthy",
+    }
+)
 # B's own method keeps W's throwing NAME; only the prepared copy is pinned.
 PREPARED_ONLY.add("inherited-static-getters-component-method")
 POSITIVES.update(
@@ -418,6 +461,22 @@ def main():
         .read_text()
         .replace("function bootstrapBase() {\n", "function bootstrapBase() {\n" + data, 1)
     )
+    # Button extends B and overrides NAME: B's arm reaches the Data holder only
+    # through U, so B's own-key snapshot waits for U's super normalization.
+    button = bootstrap[
+        bootstrap.index("    class U extends B {") : bootstrap.index(
+            '    P.on(document, "click.bs.button.data-api"'
+        )
+    ]
+    (args.fixtures / "bootstrap-base-button.js").write_text(
+        (args.fixtures / "bootstrap-base-data.js")
+        .read_text()
+        .replace(
+            "    var instance = new B(null, null);",
+            button + "    var instance = new U(null, null);",
+            1,
+        )
+    )
     (args.fixtures / "bootstrap-config-r-defaults.js").write_text(
         declaration + (args.fixtures / "bootstrap-config-defaults.js").read_text()
     )
@@ -494,7 +553,10 @@ def main():
             host.manifest(args.opt, structured),
             initial_intrinsics=["__ctbrowser_class_defined"],
         )
-        if name.startswith("class-map-") or name == "bootstrap-base-data":
+        if name.startswith("class-map-") or name in (
+            "bootstrap-base-data",
+            "bootstrap-base-button",
+        ):
             manifest["initial_intrinsics"].append("Map")
         if name == "own-fields-boxed-key":
             lifted = structured.read_text()
@@ -567,6 +629,7 @@ def main():
         ) or name in (
             "bootstrap-base",
             "bootstrap-base-data",
+            "bootstrap-base-button",
             "bootstrap-config-defaults",
             "bootstrap-config-r-defaults",
             "bootstrap-config-r-h-defaults",
@@ -657,7 +720,6 @@ def main():
             "inherited-own-fields-leaf-collision": "class own-key snapshot requires fixed constructor fields",
             "inherited-own-fields-before-store": "class construction method observes an own-key snapshot",
             "inherited-own-fields-ancestor-write": "class own-key snapshot field set changes",
-            "inherited-own-fields-implicit": "derived class requires receiver-preserving super normalization",
             "own-fields-conditional": "class own-key snapshot branches change ordered fields",
             "own-fields-dynamic": "class own-key snapshot requires fixed constructor fields",
             "own-fields-new-field": "class own-key snapshot field set changes",
@@ -685,7 +747,6 @@ def main():
             "captured-helper-excess": "captured helper escapes its ordinary local call",
             "captured-helper-nested": "class method capture is not its constructor or an inert sibling helper",
             "inherited-super-helper": "super method requires a proved capture-free linear base target",
-            "inherited": "derived class requires receiver-preserving super normalization",
             "inherited-explicit": "derived class requires receiver-preserving super normalization",
             "override-ambient": "unknown call, binding or reflective effect",
             "override-shadowed-receiver": "class method is observed or shadowed",
@@ -696,6 +757,14 @@ def main():
             "inherited-method-shadow": "class method is observed or shadowed",
             "bootstrap-base": "declared intrinsic identity escapes, is reflected or is mutated",
             "bootstrap-base-data": "declared intrinsic identity escapes, is reflected or is mutated",
+            "bootstrap-base-button": "static method receiver requires an exact own getter read",
+            "inherited-own-fields-iterate-deferred-siblings-differ": "inherited own-key snapshot requires the same ordered fields",
+            "inherited-own-fields-iterate-deferred-mixed": "class own-key snapshot branches change ordered fields",
+            "inherited-own-fields-iterate-deferred-early-snapshot": "class construction method observes an own-key snapshot",
+            "inherited-own-fields-iterate-deferred-implicit-arguments": "derived class requires receiver-preserving super normalization",
+            "own-fields-branch-helper-mixed": "class own-key snapshot branches change ordered fields",
+            "own-fields-branch-helper-object": "class own-key snapshot branches change ordered fields",
+            "own-fields-branch-helper-property": "class own-key snapshot branches change ordered fields",
             "class-map-record-nested-nullable-raw-undefined": "class retained Map get requires a present record",
             "class-map-inherited-early-snapshot": "class construction method observes an own-key snapshot",
             "method-counter-ambient": "unknown call, binding or reflective effect",
@@ -949,6 +1018,8 @@ def main():
                 "override-different-leaves",
                 "inherited-helper-order",
                 "captured-holder-unused",
+                "own-fields-branch-helper-nested",
+                "inherited-own-fields-iterate-deferred-helper",
             ):
                 operations = ()
             elif name in (
@@ -1208,7 +1279,10 @@ def main():
                         or not re.search(r"emitc.func @keyed_\d+\(", native_text)
                     ):
                         raise RuntimeError(f"{name}: receiver copy lost its native boundary")
-                elif name in PREPARED_ONLY and not (name == "bootstrap-r" and optimize):
+                elif name in PREPARED_ONLY and not (
+                    optimize
+                    and name in ("bootstrap-r", "inherited-own-fields-iterate-deferred-helper")
+                ):
                     native_text = native.read_text()
                     check_refusal(name, native_text, len(FUNCTION.findall(prepared.read_text())))
                     key_type = (
