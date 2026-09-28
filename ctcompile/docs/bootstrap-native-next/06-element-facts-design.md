@@ -1,6 +1,7 @@
 # Element facts for Bootstrap's element helpers (design, 2026-09-28)
 
-Status: designed, not started. Follows `05-component-data-registration-design.md`.
+Status: landed (option 2's rule with option 3's name set), see "What landed"
+at the end. Follows `05-component-data-registration-design.md`.
 
 ## Where the DOM path stops
 
@@ -70,3 +71,44 @@ code changes.
 After it: `this._config = this._getConfig(i)` runs `_mergeConfigObj`, which
 needs the real `H` (Manipulator) in the fixture, and the Data holder's Maps
 need the Data-session provider's Map support in the class path.
+
+## What landed
+
+- **Name set.** `ctcompile-test-native-reference --page` runs an HTML file in a
+  live `ctbrowser::shell::browser` and prints its console lines.
+  `test/CTNative/HostContract/element_names.py` parses `interface_table`'s tags
+  out of `interfaces.cpp`, creates one element per tag plus unknown, custom,
+  SVG, MathML and other-namespace elements, and unions
+  `Object.getOwnPropertyNames` along each element's whole prototype chain; it
+  also fails when a `<form>` or `<select>` answers a named or indexed key.
+  The result (588 names) is `HostContract/ClassInitialization/ElementNames.inc`;
+  `element-names.test` re-enumerates and fails on any difference (`--write`
+  regenerates).
+- **`evaluateHelper`** takes `partial_eval::value` actuals; a declared DOM
+  element parameter is a `reference` to its index (recorded in `prove`). It is
+  truthy, `typeof` "object", strictly unequal to primitives, `nodeType` 1, and a
+  constant key outside the name set reads undefined. `__` keys stay unknown (the
+  binding adds `__selected`, `__cached_...` slots lazily), as does any key in the
+  set, a numeric key, and a comparison of two different element parameters.
+- **`foldDecidedArms`** decides on those results; a call that returns the same
+  argument's element in every construction is replaced by that argument and
+  erased. In DOM entries the uncalled-helper rule now applies to a captured
+  helper whose only names are its proved capture transport (its closure only
+  fills its fixed cell, only proved closures capture the cell, no `cell_get`),
+  because those reads are recorded calls; other DOM helpers keep the census.
+- **Soundness.** The typed DOM proof admits `set_property` only on fresh local
+  objects, so no accepted program writes an element expando (pinned before and
+  after construction and in an unused method), and the census refuses
+  `Object.prototype` (pinned with `Object` declared). A non-element actual
+  (`new Button({})`) stays undecided and keeps `a`'s census.
+- **Fixtures** (class-dom): `class_element_arm` (authentic `r`/`a`, lowers and
+  runs natively), `element_arm_expando{,_after,_method}`, `_prototype`,
+  `_object` with pinned refusals.
+
+**Measured DOM frontier** (`/tmp/bdom.js`, authentic W+B+Button+Data): still
+`class own-key snapshot requires fixed constructor fields`, but from the
+provider gate in `ownFieldSnapshots` (any snapshot outside closed-source
+refuses), not from the arm. Without `dispose`'s own-key loop the next refusal
+is `inherited DOM methods require per-leaf body proof` (`examine`, any DOM
+class with inherited methods). Both are independent of element facts; the
+non-inherited probe with the same helpers now lowers.
