@@ -70,3 +70,53 @@ proof cannot simply be skipped: either compute B's fields per leaf after super
 normalization (where R1a/R1b can decide the arm on the leaf's actuals), or
 record B's two arm shapes and let each leaf select one. R1b (helper
 evaluation) only pays off after that.
+
+## Landed, 2026-09-28: the base-class rungs and R1b
+
+Four rungs, each a separate commit, took the authentic probe through B and U:
+
+1. **Deferred base snapshots.** A base no exact `new` constructs (B: only its
+   leaves' super calls) leaves its own-key snapshot to the leaves. The first
+   leaf that folds a shared snapshot body records its fields on every deferred
+   ancestor, so a sibling must match them; until then `fieldsOnly` admits the
+   pending snapshot call and its loop's computed null writes, and the folding
+   leaf rechecks the body. A snapshot still pending after every class is
+   examined refuses (`class own-key snapshot deferred to leaves lacks a folding
+   leaf`).
+2. **Deferred base receiver.** The same base's own constructor receiver proof is
+   the leaves' too: each leaf proves its receiver across the spliced super copy,
+   and rewrite erases the unconstructed original with its closure.
+3. **Implicit derived constructors.** `super(...args)` (gather_rest, the
+   importer's exact zero-based copy loop, call_spread) normalizes like
+   `super(p0, .., pn)` over formals the copy gains up to the base's count, when
+   neither body has an arguments object.
+4. **R1b.** `foldDecidedArms` also decides an arm on an exact captured helper
+   applied to formals and literals, evaluating the helper on its executed path
+   (pure primitive operations and nested exact helper calls, `partial_eval`
+   algebra). Bootstrap's `a(null)`/`r(null)` are `null`/`false`.
+
+Measured ladder on the authentic probe (W + B + Button U + Data holder,
+`new U(null, null)`):
+
+- with B's `getOrCreateInstance`: `static method receiver requires an exact own
+  getter read` (its `new this`), raised in B's examine before U's;
+- without it (and without U's `jQueryInterface`): `declared intrinsic identity
+  escapes, is reflected or is mutated` - W's `Object.entries`, the same frontier
+  as `bootstrap-base`.
+
+Then two more landed the same day: `Object.entries` of a fresh empty static
+getter object folds (`foldEmptyEntries`, W's `_typeCheckConfig`), and static
+methods no read reaches are dropped before the proof (`dropUnreadStatics`: B's
+`getOrCreateInstance` and U's `jQueryInterface` are unread in the fixtures).
+All three generated fixtures now reach the final class census:
+`bootstrap-base` stops on the element helper's unexecuted
+`document.querySelector` (global "document"), `-data` and `-button` on the
+Data holder's child `new Map` in `set` (global "Map").
+
+Next (a design decision first): every remaining refusal is in a body that
+never runs - the unconstructed base original (erased at rewrite), the holder's
+`set` (called only from it) and the element helper `a` (its one live call only
+decides the arm R1b folded). The census deliberately checks uncalled bodies
+(`inherited-method-ambient` pins it); the next rung makes it reach bodies from
+the proof's own call records instead, and erases a decided pure helper call
+whose result dies with the fold. HANDOFF.md has the detail.

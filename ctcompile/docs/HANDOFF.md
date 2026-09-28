@@ -22,6 +22,112 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Bootstrap base classes built by their leaves, implicit super and helper arms, 2026-09-28 UTC
+
+Claude compiler worker (`claude-ctcompile`). The browser worker was stopped all
+session and the user granted the compiler worker sole use of the repository for
+2026-09-27/28. Resumed thread: the correction at the end of
+`bootstrap-native-next/05-component-data-registration-design.md` (B's own-key
+snapshot for a base constructed only through leaf super calls).
+
+Landed after a 9-hour drvfs outage (`/mnt/c` EIO from ~03:38 UTC) held the
+gated work in `/tmp`; commits `8b10e9417` (deferred base snapshot and
+receiver), `7cb6e4d2e` (implicit super), `df1c5443e` (R1b), `378ca8207`
+(fixtures 55/56/58, harness), `23c98c324` (`Object.entries` fold, the
+`claude-ctcompile-entries` subagent), `8b60703a6` (unread statics):
+
+- **Deferred base proofs.** A base that no exact `new` constructs (Bootstrap's
+  B, built only by its components' super calls) leaves two proofs to its
+  leaves. Its own-key snapshot: the first leaf that folds a shared snapshot body
+  records its fields on every deferred ancestor, so siblings must agree;
+  `fieldsOnly` admits the pending snapshot call and its loop's computed null
+  writes until then, and a snapshot still pending after every class is examined
+  refuses (`class own-key snapshot deferred to leaves lacks a folding leaf`).
+  Its constructor receiver: `fieldsOnly` runs in an `unconstructed` mode that
+  keeps every census record but skips the receiver-escape refusals, which each
+  leaf re-proves on its spliced super copy; rewrite erases the original.
+  (A first version skipped `fieldsOnly` entirely and lost those records: three
+  positives regressed to `unknown call` census refusals. Caught by the subset.)
+- **Implicit derived constructors.** `super(...args)` - gather_rest, the
+  importer's exact zero-based copy loop, call_spread - normalizes like
+  `super(p0, .., pn)` over formals the copy gains up to the base's count, when
+  neither body has an arguments object.
+- **R1b.** `foldDecidedArms` also decides an arm on an exact captured helper
+  applied to formals and literals: `evaluateHelper` walks the helper's executed
+  path through pure primitive operations, the lift's join encoding (poison,
+  index casts, index_switch) and nested exact helper calls with the
+  `partial_eval` algebra. Bootstrap's `a(null)` is `null`. The element/isElement
+  helpers themselves still refuse native lowering (property reads on an untyped
+  formal), so those fixtures are PREPARED_ONLY; with optimization the leaf
+  program lowers completely and runs (the helper calls specialize away).
+- **Stale pins triaged.** Four refusal controls that the 2026-09-27 receiver
+  copies (13643e6a2, 42d74a6bf) made admissible, failing since then:
+  `inherited-own-fields-iterate-getter-{nearest,distinct}`,
+  `inherited-getter-override{,-dependency}`. Now native-checked positives.
+  Refusal controls whose bases are now leaf-constructed keep testing the old
+  invariant: `inherited-own-fields-conditional` takes its actual from a
+  parameter, `-empty-added`/`-grandchild-added` also construct the base.
+
+Measured ladder, authentic W + B + Button U + Data holder, `new U(null, null)`
+(new generated fixture `bootstrap-base-button`):
+
+- as authored: `static method receiver requires an exact own getter read`
+  (B's `getOrCreateInstance`: `new this`), raised in B's examine;
+- without `getOrCreateInstance` and U's `jQueryInterface`: `declared intrinsic
+  identity escapes, is reflected or is mutated` - W's `Object.entries`, the
+  same frontier as `bootstrap-base`. B and U themselves now prove.
+- the same variant with the `Object.entries` fold (subagent, landed alongside):
+  `class initialization source contains an unknown call, binding or reflective
+  effect (global "Map")` - the Data holder's `set` builds a child `new Map`,
+  and `set` has no caller left once U's arm folds. The census still checks
+  uncalled bodies; the existing reachability pass keeps holder slots alive
+  through their closure creation.
+
+**Also landed (after the ladder above): unread static methods.** A pre-pass in
+`prove` removes static methods no `get_property` of their key reaches (outside
+other unread static bodies), with every function only their bodies create, before
+any proof. Importer hooks (`__fields`, read by `__ctbrowser_init_fields`) are
+never candidates - a first version dropped a field initializer and
+`inherited-fields` caught it. B's `getOrCreateInstance` (`new this`) and U's
+`jQueryInterface` are unread in the fixtures and disappear. With it and the
+`Object.entries` fold, all three generated fixtures reach the final class
+census: `bootstrap-base` stops on the element helper's unexecuted
+`document.querySelector` (global "document"), `-data` and `-button` on the Data
+holder's child `new Map` in `set` (global "Map").
+
+**Next boundary (a design decision first):** the census deliberately checks
+uncalled bodies (`inherited-method-ambient` and the other `-unused-ambient`
+controls pin that policy), and every
+remaining Bootstrap refusal is in one that never runs: the unconstructed base
+original (erased at rewrite), the Data holder's `set` (called only from that
+original), and the element helper `a` (its one live call only decides the arm
+R1b folded; the result is otherwise unused). The next rung is census
+reachability from the proof's own call records (captured helpers, holder slots,
+method calls, static calls), skipping unreachable bodies that rewrite or
+`--ctnative-prune-unreachable` already erase, plus erasing a decided pure helper
+call whose result dies with the fold (dropping an element helper with no call left
+also needs its capture slot removed from every capturing closure, with the
+remaining `load_upvalue` indices renumbered, before `retireCell`/`retireHelper`). Behind that, by design, uncalled instance
+methods that name host globals still refuse (`inherited-method-ambient` pins
+it): W's `_mergeConfigObj` uses `H.getDataAttribute`, B's `dispose` uses `P.off`
+and `_queueCallback` uses `b`, so the generated fixtures must include the real
+Manipulator `H`, EventHandler `P` and `b`/`s` helpers. Then real static factories:
+`U.getOrCreateInstance(el)` from an entry means an inherited static read on the
+leaf, `new this` constructing U inside a static body (constructions inside
+`scf.if` arms, both in the proof and in ClosureLifting's same-block
+requirement), and `getInstance`'s Data lookup keyed by an element.
+
+Checks. Before the outage, on the devbox with focused `class_initialization.py`
+subsets (the harness module with `OBSERVATIONS` narrowed, lit RUN-line
+arguments): the combined tree 386/386 fixtures (`ctjs-opt.dead3`), rungs 1-3 +
+R1b 371/371, the `Object.entries` subagent's 40-fixture subset. After landing:
+local `clang++ -fsyntax-only -Werror` on the five changed C++ files and
+`tools/format.sh --check` only - the WSL restart killed the build ssh-agent
+(its key has a passphrase), so the landed tree has NOT been rebuilt on the
+devbox yet. First thing next session: `ctjs-opt` + the subset of fixtures
+55-59 and `bootstrap-base*`. `12af22af0` formats a ctbrowser table the
+browser worker left unformatted (whitespace only).
+
 ## Ponytail shrink pass, 2026-09-27 UTC
 
 Refactor only, landed as `2d78cf6dc` (merge of `pt-integration`): the `shrink:`
