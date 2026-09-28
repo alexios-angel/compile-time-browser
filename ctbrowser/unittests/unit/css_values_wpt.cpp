@@ -495,6 +495,26 @@ void test_what_a_page_reads_back() {
         t.style.maskPosition = '1em 2rem';
         child.style.maskPosition = 'inherit';
         console.log('mask-inherited=' + getComputedStyle(child).maskPosition);
+        t.style.backgroundPosition = 'x-start top, x-end top';
+        t.style.maskPosition = 'x-start top, x-end top';
+        child.style.direction = 'ltr';
+        console.log('logical-layers=' + cs.backgroundPosition + '|' + cs.maskPosition);
+        const childStyle = getComputedStyle(child);
+        console.log('logical-inherited=' + childStyle.backgroundPosition + '|' + childStyle.maskPosition);
+        t.style.backgroundPositionX = 'x-start 10px, x-end 20%';
+        console.log('logical-x=' + cs.backgroundPositionX);
+        t.style.writingMode = 'sideways-lr';
+        t.style.direction = 'ltr';
+        t.style.backgroundPositionY = 'y-start 10px, y-end 20%';
+        console.log('logical-y=' + cs.backgroundPositionY);
+        t.style.cssText = '--mode: horizontal-tb; --dir: rtl; writing-mode: var(--mode);' +
+            'direction: var(--dir); background-position: x-start top, x-end top';
+        console.log('logical-vars=' + cs.backgroundPosition);
+        t.style.backgroundPosition = '123.456px 0px';
+        const singlePosition = cs.backgroundPosition;
+        t.style.backgroundPosition = '123.456px 0px, center';
+        t.style.maskPosition = '123.456px 0px';
+        console.log('fractional-position=' + singlePosition + '|' + cs.backgroundPosition + '|' + cs.maskPosition);
         // `vi`/`vb` follow the ELEMENT'S writing mode (the root's does not
         // matter): a 400x200 viewport.
         const v = document.createElement('div');
@@ -518,6 +538,15 @@ void test_what_a_page_reads_back() {
     CHECK_EQ(logged(page, "background-layers="),
              std::string{"background-layers=40px 40px, 50% 50%"});
     CHECK_EQ(logged(page, "mask-inherited="), std::string{"mask-inherited=40px 40px"});
+    CHECK_EQ(logged(page, "logical-layers="),
+             std::string{"logical-layers=100% 0%, 0% 0%|100% 0%, 0% 0%"});
+    CHECK_EQ(logged(page, "logical-inherited="),
+             std::string{"logical-inherited=100% 0%, 0% 0%|100% 0%, 0% 0%"});
+    CHECK_EQ(logged(page, "logical-x="), std::string{"logical-x=calc(100% - 10px), 20%"});
+    CHECK_EQ(logged(page, "logical-y="), std::string{"logical-y=calc(100% - 10px), 20%"});
+    CHECK_EQ(logged(page, "logical-vars="), std::string{"logical-vars=100% 0%, 0% 0%"});
+    CHECK_EQ(logged(page, "fractional-position="),
+             std::string{"fractional-position=123.456px 0px|123.456px 0px, 50% 50%|123.456px 0px"});
     CHECK_EQ(logged(page, "vi="), std::string{"vi=400px 200px|400px 200px|200px 400px"});
 }
 

@@ -22,6 +22,8 @@ namespace {
 
 struct layer_context {
     const length_context * lengths = nullptr; // computed when set
+    std::string_view writing_mode = "horizontal-tb";
+    std::string_view direction = "ltr";
 };
 
 // The significant tokens of each comma-separated layer.
@@ -183,7 +185,8 @@ struct layer_context {
     }
     // Computed: a keyword is a percentage, an offset from the far side is a
     // calc() unless it is a percentage.
-    const bool far = side == "right" || side == "bottom" || side == "x-end" || side == "y-end";
+    const std::string position = computed_position(side, ctx.writing_mode, ctx.direction);
+    const bool far = vertical ? position.ends_with("100%") : position.starts_with("100%");
     if (side == "center") { return "50%"; }
     if (offset.empty()) { return side.empty() ? std::nullopt : std::optional{far ? "100%" : "0%"}; }
     if (!far) { return offset; }
@@ -203,15 +206,15 @@ struct layer_context {
         for (const css_token & t : ts.tokens) {
             if (t.type == token_type::eof) { break; }
             if (t.type == token_type::dimension) {
-                const std::optional<float> px = length_text_to_px(ts.text_of(t), *ctx.lengths);
+                const std::optional<std::string> px = size_part(ts.text_of(t), ctx, false);
                 if (!px) { return std::nullopt; }
-                folded += serialize_calc(calc_result{*px, 0.0, false, false, numeric_type::length});
+                folded += *px;
                 continue;
             }
             folded += ts.text_of(t);
         }
         if (may_have_math(folded)) { folded = fold_math(folded, *ctx.lengths).text; }
-        const std::string computed = computed_position(folded, "horizontal-tb", "ltr");
+        const std::string computed = computed_position(folded, ctx.writing_mode, ctx.direction);
         if (computed.empty()) { return std::nullopt; }
         return computed;
     }
@@ -391,10 +394,11 @@ bool match_background_list(std::string_view property, const token_stream & ts, c
 } // namespace detail
 
 std::string computed_background_list(std::string_view property, std::string_view specified,
-                                     const color_context & ctx) {
+                                     const color_context & ctx, std::string_view writing_mode,
+                                     std::string_view direction) {
     const length_context fallback;
-    layer_context lc;
-    lc.lengths = ctx.lengths != nullptr ? ctx.lengths : &fallback;
+    const layer_context lc{ctx.lengths != nullptr ? ctx.lengths : &fallback, writing_mode,
+                           direction};
     const token_stream ts = tokenize(trim(specified, html_whitespace));
     const scan found = scan_tokens(ts);
     if (found.significant.empty()) { return {}; }
