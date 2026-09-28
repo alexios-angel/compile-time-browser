@@ -41,12 +41,11 @@ RECORDER = (
 # Map.prototype carries its @@toStringTag, since 2026-09-12, as in Node:
 # iterator_reuse, iterator_override and object_coercion agree with Node now; a
 # fractional Number key names a property since 91e7c17ff, so fractional_index
-# does too.)
+# does too; Map and Set iterators are live since 55ff045ad, so iterator_mutation
+# reads the late entry as Node does.)
 # Pin these separate expectations only on refused diagnostic paths. Supported
 # immediate snapshots and recorder callbacks must agree with Node exactly.
-INTERPRETER_DIVERGENCES = {
-    "iterator_mutation": {"trace1": mutations.UNDEFINED},
-}
+INTERPRETER_DIVERGENCES = {}
 
 
 @dataclass
