@@ -22,9 +22,11 @@ void compiler_impl::emit_computed_accessor(std::uint16_t target, std::int32_t ke
     const std::uint16_t object = alloc_reg();
     proto().emit(instruction{op::move, object, target});
     const std::uint16_t key_reg = alloc_reg();
-    compile_expr(key, key_reg);
     const std::uint16_t getter = alloc_reg();
     const std::uint16_t setter_reg = alloc_reg();
+    // Reserve the contiguous call arguments before the key can allocate
+    // temporaries (for example, the value sent by a bare yield).
+    compile_expr(key, key_reg);
     proto().emit(instruction{op::load_undef, setter ? getter : setter_reg});
     method_pending_ = true; // see frame::has_home
     compile_expr(fn_node, setter ? setter_reg : getter);

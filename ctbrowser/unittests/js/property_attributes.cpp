@@ -358,6 +358,42 @@ int main() {
               "return d.enumerable+','+d.configurable;})()",
               "true,true");
 
+    // A computed key may suspend and allocate temporary registers. Both
+    // accessor halves must still occupy their native call's argument slots.
+    js_expect(R"((function(){
+        function* make() {
+            return {get [yield]() { return this.value; },
+                    set [yield](v) { this.value = v; }};
+        }
+        var it = make(); it.next(); it.next('x');
+        var o = it.next('x').value; o.x = 7;
+        var d = Object.getOwnPropertyDescriptor(o, 'x');
+        return [o.x, d.get.name, d.set.name, d.enumerable, d.configurable].join();
+    })())",
+              "7,get x,set x,true,true");
+    js_expect(R"((function(){
+        function* make() {
+            return class {get [yield]() { return this.value; }
+                          set [yield](v) { this.value = v; }};
+        }
+        var it = make(); it.next(); it.next('x');
+        var C = it.next('x').value, o = new C(); o.x = 8;
+        var d = Object.getOwnPropertyDescriptor(C.prototype, 'x');
+        return [o.x, d.get.name, d.set.name, d.enumerable, d.configurable].join();
+    })())",
+              "8,get x,set x,false,true");
+    js_expect(R"((function(){
+        function* make() {
+            return class {static get [yield]() { return this.value; }
+                          static set [yield](v) { this.value = v; }};
+        }
+        var it = make(); it.next(); it.next('x');
+        var C = it.next('x').value; C.x = 9;
+        var d = Object.getOwnPropertyDescriptor(C, 'x');
+        return [C.x, d.get.name, d.set.name, d.enumerable, d.configurable].join();
+    })())",
+              "9,get x,set x,false,true");
+
     // ================================================================
     // 8. THE OTHER THREE PROPERTY TABLES, which answered nothing at all
     // ================================================================
