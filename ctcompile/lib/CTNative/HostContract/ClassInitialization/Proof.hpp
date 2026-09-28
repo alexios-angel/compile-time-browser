@@ -200,6 +200,10 @@ struct classInitialization {
 
     bool foldDecidedArms(ctjs::CreateClosureOp constructor,
                          llvm::ArrayRef<ctjs::ConstructOp> instances);
+    // The primitive an exact captured helper returns for primitive actuals.
+    std::optional<mlir::Attribute> evaluateHelper(ctjs::FuncOp fn,
+                                                  llvm::ArrayRef<mlir::Attribute> actuals,
+                                                  unsigned depth);
     bool freshFunctionIndex(unsigned & next);
     // A copy of `fn` appended to the module as source function `index`.
     ctjs::FuncOp cloneFunction(ctjs::FuncOp fn, unsigned index);
