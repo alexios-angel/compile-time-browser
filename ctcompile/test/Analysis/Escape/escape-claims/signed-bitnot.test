@@ -3,7 +3,8 @@
 // RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name signed-bitnot
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-bitnot.claims
 
-// BitNot preserves signed Number snapshots and bounded canonical original Strings.
+// BitNot preserves signed Number snapshots, ToInt32 of an unbounded Number and
+// exactly converted original Strings, canonical or not.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.unary bitnot
 // IMPORT: ctjs.set_property
@@ -42,8 +43,8 @@
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
 // CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr confined
 
 // IMPORT-LABEL: ctjs.func @stringReturned$
 // IMPORT: ctjs.unary bitnot
@@ -51,8 +52,8 @@
 // IMPORT: ctjs.unary bitnot
 // CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr confined
 
 //--- source.js
 function snapshotReleased() {

@@ -4,7 +4,8 @@
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-unary.claims
 
 // Plus preserves a held negative Number; a second Neg restores its magnitude.
-// Saved values survive source mutation; canonical decimal Strings convert exactly.
+// Saved values survive source mutation; decimal Strings convert exactly, canonical
+// or not.
 // IMPORT-LABEL: ctjs.func @plusReleased$
 // IMPORT: ctjs.unary neg
 // IMPORT: ctjs.unary plus
@@ -52,8 +53,8 @@
 // IMPORT: ctjs.unary plus
 // CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr confined
 
 //--- source.js
 function plusReleased() {

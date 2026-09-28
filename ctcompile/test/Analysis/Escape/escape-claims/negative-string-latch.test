@@ -4,8 +4,9 @@
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-negative-string-latch.claims
 
 // Original Sub latches convert the held negative String, including a saved read
-// before its container changes. Add remains concatenation; noncanonical and
-// changing latches refuse. No source is rewritten to supply a Number stride.
+// before its container changes; a noncanonical String converts exactly too. Add
+// remains concatenation; changing latches refuse. No source is rewritten to
+// supply a Number stride.
 // IMPORT-LABEL: ctjs.func @released$
 // IMPORT: ctjs.binary sub
 // IMPORT-LABEL: ctjs.func @returned$
@@ -32,8 +33,8 @@
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr escapes:passed
 // CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
