@@ -22,6 +22,40 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Ponytail shrink pass, 2026-09-27 UTC
+
+Refactor only, landed as `2d78cf6dc` (merge of `pt-integration`): the `shrink:`
+findings of a duplication audit, done by eight area agents and gated as one
+integrated tree against `44894832f`. 347 files under `ctcompile/`, +7,269/-12,792.
+No intended behaviour change; the Bootstrap boundary below is unchanged.
+
+- New shared helpers (use these, do not re-derive): `ctnative::WorkBudget`
+  (`CTNative/Analysis/WorkBudget.h`); `ctjs::constantAttr<A>`,
+  `isUndefinedConstant`, `propertyKey`, `nonCoercing`, `uniqueFunction`,
+  `uniqueGlobalStore` (`CTJSOps.h`); `ctjs::isArithmetic` (`CTJSEnums.h`,
+  explicit list - tests forge BinaryKind 255); `mapMethodArity`,
+  `plainMapConstruction`, `mapMethodName`, `mapScalarTag` (`NativeMap.h`);
+  `CTNative/harness.py` `build_and_run`, `run_sanitized`, `threshold`,
+  `prepare_js`, `forge_module`, `node_globals`; `native_dom.parse_args`,
+  `variants`, `refuse`. The five `global-maps*.test` run
+  `python3 -m CTNative.Ownership.native_owned_global_maps.driver`.
+- Measured on the devbox: all targets build; pipeline modules, generated code
+  and CTest registrations byte-identical to base; 825 FileCheck inputs identical
+  except `object-string-fields` group ids, which the base binary itself varies
+  run to run (`NativeObjectIdentity` iterates a `DenseMap<Value>`).
+- PRE-EXISTING failures at `44894832f` (identical reasons after the merge; not
+  caused by this pass): CTest `ctnative_lattice`, `exception_recovery`; lit
+  `01-guards.mlir`, `constructor-refusals.mlir`, `exceptions.mlir`,
+  `lift-to-scf.mlir`, `upstream/member.mlir`, `primitive-fields.mlir`, 16
+  escape-claims latch/index CLAIMs, 8 Browser native-dom cases, the fractional
+  index differentials (maps, string-snapshots, index-truncation, deforestation,
+  Provider/diagnostics - the VM now answers nan/undefined), native-intrinsic-
+  symbols, class-dom.mlir, and class_initialization's
+  `inherited-own-fields-iterate-getter-*` family. Triage them before trusting
+  those suites as a gate.
+- `ctcompile-target-cpp` does not use `ctcompile_target` and so compiles with
+  the compiler's default standard: a C++20 header there fails only on the devbox.
+
 ## Bootstrap static rungs, component getters and the measured ladder, 2026-09-27 UTC
 
 Claude compiler worker (`claude-ctcompile`), resumed after a WSL crash. Linux
