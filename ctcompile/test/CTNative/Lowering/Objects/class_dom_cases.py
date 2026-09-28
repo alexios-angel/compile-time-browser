@@ -582,6 +582,51 @@ CLASS_REFUSALS.update(
         ),
     }
 )
+# Bootstrap's element helpers, verbatim. On a declared element `a` returns its
+# argument (element facts: `jquery` is outside the VM's element name set), so
+# the constructor arm is decided, the call becomes its argument and both
+# helpers lose their last call.
+BOOTSTRAP_ELEMENT = """r = t => !(!t || "object" != typeof t) && (void 0 !== t.jquery && (t = t[0]), void 0 !== t.nodeType),
+        a = t => r(t) ? t.jquery ? t[0] : t : "string" == typeof t && t.length > 0 ? document.querySelector(n(t)) : null"""
+ELEMENT_ARM = "const " + BOOTSTRAP_ELEMENT + """;
+  class Button {
+    constructor(t) { (t = a(t)) && (this.element = t); }
+    read() { return this.element.getAttribute('x') === null; }
+  }
+"""
+ELEMENT_ARM_CASES = {
+    "class_element_arm": (ELEMENT_ARM + "  return new Button(element).read();\n", "1000")
+}
+CLASS_CASES.update(ELEMENT_ARM_CASES)
+# Each must refuse where named. An element expando - before or after the
+# construction, or in an unused method - fails the typed DOM proof's write
+# check, a prototype write fails the census, and a non-element actual leaves
+# the arm undecided, so `a` keeps its call and its census.
+ELEMENT_ARM_REFUSALS = {
+    "element_arm_expando": (
+        ELEMENT_ARM + "  element.jquery = 1;\n  return new Button(element).read();\n",
+        "DOM JSON assignment requires a fresh target",
+    ),
+    "element_arm_expando_after": (
+        ELEMENT_ARM
+        + "  const button = new Button(element);\n  element.jquery = 1;\n  return button.read();\n",
+        "DOM JSON assignment requires a fresh target",
+    ),
+    "element_arm_expando_method": (
+        ELEMENT_ARM.replace("    read() {", "    mark() { this.element.jquery = 1; }\n    read() {")
+        + "  return new Button(element).read();\n",
+        "DOM JSON assignment requires a fresh target",
+    ),
+    "element_arm_prototype": (
+        ELEMENT_ARM + "  Object.prototype.jquery = 1;\n  return new Button(element).read();\n",
+        "(op ctjs.get_property)",
+    ),
+    "element_arm_object": (
+        ELEMENT_ARM + "  return new Button({}).read();\n",
+        'unknown call, binding or reflective effect (global "document")',
+    ),
+}
+CLASS_REFUSALS.update({name: body for name, (body, _) in ELEMENT_ARM_REFUSALS.items()})
 NUMBER_CLASS = """class Shape {
     constructor(element) { this.element = element; }
     read() { return Number(this.element.getAttribute('x')).toString() === '0'; }
