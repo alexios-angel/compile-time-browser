@@ -112,13 +112,17 @@ value context::make_instance(value callee) {
 
 void context::new_callee_type_error(const function_proto & fn, std::string_view origin,
                                     value callee) {
-    // CATCHABLE, and that is the whole difference from construct()'s
-    // raise("attempted to construct a non-function"): a page's own
-    // `try { new whatever() } catch` sees this one.
+    // The origin-aware TypeError shared by the plain opcode and boxed AOT.
     throw_error("TypeError", "`new` on " + describe_callee(fn, origin, callee));
 }
 
 value context::construct(value callee, std::span<const value> args, value new_target) {
+    // A Proxy only has [[Construct]] when its target does. Reject before
+    // reading its trap, and use the catchable TypeError for every value.
+    if (!is_constructor(callee)) {
+        throw_error("TypeError", describe_new_target(callee) + " is not a constructor");
+        return value::undefined();
+    }
     // `new C(...)` is Construct(C, args, C): new.target is the callee unless a
     // caller with one of its own - a proxy forwarding, Reflect.construct -
     // says otherwise.
@@ -150,14 +154,6 @@ value context::construct(value callee, std::span<const value> args, value new_ta
             return made;
         }
         return construct(p->target, args, new_target);
-    }
-    if (!callee.is_callable()) {
-        raise("attempted to construct a non-function");
-        return value::undefined();
-    }
-    if (!is_constructor(callee)) {
-        throw_error("TypeError", describe_new_target(callee) + " is not a constructor");
-        return value::undefined();
     }
     // A proxy's prototype getter can revoke it, dropping the only other root
     // of the target constructor while this call is still using it.
@@ -251,37 +247,13 @@ value context::construct(value callee, std::span<const value> args, value new_ta
 }
 
 value context::construct_spread(value callee, value arg_array) {
-    // NOT construct_new. op::construct_apply calls context::construct
-    // WHOLESALE - no acceptance test of its own, no pending_new_target_
-    // handling - and its row is emphatic that the divergence from `new C(args)`
-    // is the INTERPRETER's and is reproduced rather than repaired: a spread
-    // `new` reports new.target undefined where a plain one reports C.
+    // op::construct_apply shares generic dispatch with the AOT spread helper.
     return construct(callee, spread_arguments(arg_array));
 }
 
-// `new callee(...)` AS THE OPCODE MEANS IT, which is not what construct() above
-// means. Three differences, and a page can see all three.
-//
-// (1) THE ACCEPTANCE TEST AND ITS TIER. construct() tests !is_callable() FIRST
-// and raise()s, which no try/catch can see; the opcode allocates, runs the field
-// initialisers and only THEN throws a catchable TypeError. Delegating wholesale
-// turns `try { new obj() } catch` into an engine fault.
-//
-// (2) NEW.TARGET. The opcode writes `fresh.new_target = callee` into the frame
-// it pushes; construct() reaches a frame only through invoke(), which takes
-// new.target from pending_new_target_ - undefined. SAVED AND RESTORED rather
-// than set and cleared, because the opcode never CONSUMES the flag.
-//
-// (3) THE ORDER. The instance exists and the field initialisers have run BEFORE
-// the is-a-function test, so a throw from here has already allocated an object
-// with a prototype installed. Only the collector can see that, and it is the
-// ordering the ABI row insists on.
-//
-// WHAT IT DOES NOT REPRODUCE, said rather than left to be found: a GENERATOR
-// callee. invoke() answers one with make_generator; the opcode has no such test
-// and runs the body as an ordinary frame, where the first `yield` raises. This
-// matches construct() and `new C(...args)` instead.
-
+// A value-returning counterpart of op::construct for boxed AOT. Closures keep
+// the opcode's pending-new-target preservation and origin-aware diagnostic;
+// native and Proxy constructors use the shared generic dispatch.
 value context::construct_new(value callee, std::span<const value> args,
                              const function_proto & from) {
     // A PROXY AND A NATIVE GO THE LONG WAY ROUND, exactly as the opcode sends

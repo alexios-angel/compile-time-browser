@@ -135,6 +135,43 @@ const char * name_of(op kind) {
 } // namespace
 
 int main() {
+    // Both Construct helpers must let a compiled handler catch a non-constructor
+    // TypeError, including the global object's Proxy forwarding path.
+    for (const bool spread : {false, true}) {
+        context cx;
+        ctbrowser::script::install_builtins(cx);
+        const auto tiny = ctbrowser::script::compiler::compile("0;");
+        check(cx.run(tiny).ok, "construction fixture runs");
+        const auto * site =
+            reinterpret_cast<const ctbrowser::aot::ct_aot_site *>(&tiny.functions[0]);
+        alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
+        auto * frame =
+            ctbrowser::aot::ct_aot_enter(reinterpret_cast<ctbrowser::aot::ct_aot_ctx *>(&cx), site,
+                                         1u, value::undefined().bits(), storage);
+        check(frame != nullptr, "construction frame enters");
+        if (frame == nullptr) { return 1; }
+        ctbrowser::aot::ct_aot_handler_push(frame, 7u, 0u);
+        std::uint64_t out = value::number(123).bits();
+        const auto callee = cx.global("globalThis").bits();
+        const auto status = static_cast<ctbrowser::aot::ct_aot_status>(
+            spread ? ctbrowser::aot::ct_aot_construct_spread(frame, callee, cx.make_array().bits(),
+                                                             site, &out)
+                   : ctbrowser::aot::ct_aot_construct(frame, callee, nullptr, 0u, site, &out));
+        check(status == ctbrowser::aot::ct_aot_status::caught, "non-constructor is catchable");
+        check(out == value::number(123).bits(), "failed construction leaves output unchanged");
+        if (status == ctbrowser::aot::ct_aot_status::caught) {
+            std::uint64_t thrown = value::undefined().bits();
+            check(ctbrowser::aot::ct_aot_catch_land(frame, &thrown) == 7u,
+                  "construction reaches its catch pad");
+            check(cx.to_string(cx.lookup_property(value::from_bits(thrown), "name")) == "TypeError",
+                  "construction throws TypeError");
+        } else if (status != ctbrowser::aot::ct_aot_status::unwound) {
+            ctbrowser::aot::ct_aot_handler_pop(frame);
+        }
+        if (status != ctbrowser::aot::ct_aot_status::unwound) {
+            ctbrowser::aot::ct_aot_leave(frame);
+        }
+    }
     context ctx;
     ctbrowser::script::install_builtins(ctx);
 

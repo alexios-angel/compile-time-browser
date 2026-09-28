@@ -7,6 +7,22 @@
 // strict one takes the value as given. And `new bound()` constructs the
 // target with the bound arguments in front (10.4.1.2).
 void test_call_bind_this() {
+    for (const char * expression :
+         {"new globalThis(1)", "new globalThis(...[1])", "new ({})(...[1])", "new (0)(...[1])"}) {
+        expect_result(std::string{"try { "} + expression +
+                          "; return 'constructed'; } catch (e) { return e.name; }",
+                      "TypeError");
+    }
+    // A construct trap cannot give a non-constructor [[Construct]]. Arguments
+    // are still evaluated before the TypeError, without even reading the trap.
+    for (const char * target : {"{}", "() => {}", "Math.abs", "function* () {}"}) {
+        expect_result(std::string{"let log = ''; const p = new Proxy("} + target +
+                          ", {get construct() { log += 'lookup'; return function() {"
+                          " log += 'trap'; return {}; }; }});"
+                          "try { new p((log += 'arg', 1)); return 'constructed'; }"
+                          "catch (e) { return e.name + ',' + log; }",
+                      "TypeError,arg");
+    }
     // A suspended constructor expression or argument must not shift the
     // contiguous argument registers consumed by Construct.
     expect_result(R"(
