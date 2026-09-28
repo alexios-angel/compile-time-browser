@@ -57,6 +57,23 @@ void test_derived_constructors() {
     expect_result("class A {} class B extends A { constructor() { return 1; } }"
                   "try { new B(); } catch (e) { return e.name; } return 'no throw';",
                   "TypeError");
+    expect_result("class B extends Object { constructor() { return null; } }"
+                  "const results = []; for (const make of [() => new B(), () => new B(...[]),"
+                  " () => Reflect.construct(B, []), () => new (B.bind(null))()]) {"
+                  " try { make(); results.push('no throw'); } catch (e) { results.push(e.name); }"
+                  " } return results.join();",
+                  "TypeError,TypeError,TypeError,TypeError");
+    expect_result("let ran = 0; class B extends Object { constructor() { super();"
+                  " try { return null; } finally { ran++; } } }"
+                  "try { new B(); } catch (e) { return e.name + ',' + ran; } return 'no throw';",
+                  "TypeError,1");
+    expect_result("class B extends Object { constructor() { try { return null; }"
+                  " finally { return {x: 7}; } } } return new B().x;",
+                  "7");
+    expect_result("class A { constructor() { this.x = 3; return null; } }"
+                  "class B extends A { constructor() { super(); return undefined; } }"
+                  "return new A().x + ',' + new B().x;",
+                  "3,3");
     expect_result("class A {} class B extends A { constructor() { return {y: 2}; } }"
                   "return new B().y;",
                   "2");
