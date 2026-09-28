@@ -369,7 +369,7 @@ function field_initializer() {
 }
 var a = field_initializer();
 
-// __home remains observable to a derived constructor's super call.
+// An implicit derived constructor forwards its actuals to the base's formals.
 //--- inherited.js
 function inherited() {
     class Base {

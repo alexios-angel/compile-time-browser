@@ -123,12 +123,113 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
         if (!bit || bit.getValue()) { return refuse("super guard must begin false"); }
         guard = cell;
     }
-    if (!guard) { return refuse("derived class requires receiver-preserving super normalization"); }
-    for (auto & use : guard.getResult().getUses()) {
-        if (!step()) { return false; }
-        if (use.getOperandNumber() != 0 ||
-            !llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp, ctjs::RootOp>(use.getOwner())) {
-            return refuse("super guard escapes its private reads and write");
+    // An implicit derived constructor, `super(...args)`, spreads a copy of its
+    // rest array made by the importer's exact zero-based index loop. With no
+    // arguments object on either side it is `super(p0, .., pn)` over formals
+    // the copy gains up to the base's count: missing actuals stay undefined
+    // and extra ones were already evaluated and are ignored.
+    ctjs::CallSpreadOp spread;
+    llvm::DenseSet<mlir::Operation *> forwarding;
+    const auto usesOnly = [&](mlir::Operation * op, llvm::ArrayRef<mlir::Operation *> allowed) {
+        for (mlir::Operation * user : op->getUsers()) {
+            if (!step() || (!llvm::isa<ctjs::RootOp>(user) && !llvm::is_contained(allowed, user))) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto numberIs = [](mlir::Value value, double expected) {
+        auto number = ctjs::constantAttr<ctjs::NumberAttr>(value);
+        return number && number.getDouble() == expected;
+    };
+    const auto forwardsActuals = [&] {
+        for (mlir::Operation & op : original) {
+            if (!step() || llvm::isa<ctjs::MakeArgumentsOp>(op)) { return false; }
+            if (auto call = llvm::dyn_cast<ctjs::CallSpreadOp>(op)) {
+                if (spread) { return false; }
+                spread = call;
+            }
+        }
+        const auto observed = base.walk([&](mlir::Operation * op) {
+            return !step() || llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(op)
+                       ? mlir::WalkResult::interrupt()
+                       : mlir::WalkResult::advance();
+        });
+        auto array =
+            spread ? spread.getArgs().getDefiningOp<ctjs::CreateArrayOp>() : ctjs::CreateArrayOp{};
+        if (observed.wasInterrupted() || !array || !array.getElements().empty() ||
+            array->getBlock() != &original) {
+            return false;
+        }
+        ctjs::AppendOp append;
+        for (mlir::Operation * user : array->getUsers()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(user) || user == spread) { continue; }
+            auto put = llvm::dyn_cast<ctjs::AppendOp>(user);
+            if (!put || append || put.getArray() != array.getResult()) { return false; }
+            append = put;
+        }
+        auto loop = append ? llvm::dyn_cast<mlir::scf::WhileOp>(append->getParentOp())
+                           : mlir::scf::WhileOp{};
+        if (!loop || loop->getBlock() != &original || !loop.getBefore().hasOneBlock() ||
+            !loop.getAfter().hasOneBlock() || loop.getInits().size() != 1 ||
+            !numberIs(loop.getInits()[0], 0) || !usesOnly(loop, {})) {
+            return false;
+        }
+        auto & before = loop.getBefore().front();
+        auto & after = loop.getAfter().front();
+        if (before.getNumArguments() != 1 || after.getNumArguments() != 1 ||
+            before.getOperations().size() != 3 || after.getOperations().size() != 4) {
+            return false;
+        }
+        auto compare = llvm::dyn_cast<ctjs::CompareOp>(before.front());
+        auto truth = llvm::dyn_cast<ctjs::TruthyOp>(before.front().getNextNode());
+        auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(before.back());
+        auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(after.front());
+        auto advance = llvm::dyn_cast<ctjs::BinaryStaticOp>(append->getNextNode());
+        auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(after.back());
+        auto length =
+            compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+        auto items =
+            length ? length.getObject().getDefiningOp<ctjs::IterableOp>() : ctjs::IterableOp{};
+        auto rest =
+            items ? items.getSource().getDefiningOp<ctjs::GatherRestOp>() : ctjs::GatherRestOp{};
+        if (!compare || compare.getKind() != ctjs::CompareKind::Lt ||
+            compare.getLhs() != before.getArgument(0) || !truth ||
+            truth.getValue() != compare.getResult() || !condition ||
+            condition.getCondition() != truth.getResult() || condition.getArgs().size() != 1 ||
+            condition.getArgs()[0] != before.getArgument(0) || !read ||
+            read->getNextNode() != append || read.getKey() != after.getArgument(0) ||
+            append.getElement() != read.getResult() || !advance ||
+            advance.getKind() != ctjs::BinaryKind::Add ||
+            advance.getLhs() != after.getArgument(0) || !numberIs(advance.getRhs(), 1) || !yield ||
+            yield.getNumOperands() != 1 || yield.getOperand(0) != advance.getResult() ||
+            ctjs::constantKey(length.getKey()) != "length" || !rest || rest.getFrom() != 0 ||
+            read.getObject() != items.getResult() || rest->getBlock() != &original ||
+            items->getBlock() != &original || length->getBlock() != &original ||
+            !rest->isBeforeInBlock(items) || !items->isBeforeInBlock(length) ||
+            !length->isBeforeInBlock(loop) || !array->isBeforeInBlock(loop) ||
+            !loop->isBeforeInBlock(spread) || !usesOnly(rest, {items}) ||
+            !usesOnly(items, {length, read}) || !usesOnly(length, {compare})) {
+            return false;
+        }
+        for (mlir::Operation * op :
+             {rest.getOperation(), items.getOperation(), length.getOperation(),
+              array.getOperation(), loop.getOperation()}) {
+            forwarding.insert(op);
+        }
+        return true;
+    };
+    if (!guard && !forwardsActuals()) {
+        return refuse("derived class requires receiver-preserving super normalization");
+    }
+    if (guard) {
+        for (auto & use : guard.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (use.getOperandNumber() != 0 ||
+                !llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp, ctjs::RootOp>(use.getOwner())) {
+                return refuse("super guard escapes its private reads and write");
+            }
         }
     }
     if (!spendWalk(function, cloneCost)) { return false; }
@@ -214,7 +315,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
     };
     unsigned phase = 0; // base call, guard write, bind-this, fields, completion.
     bool initialized = false, finished = false;
-    ctjs::CallOp baseCall;
+    mlir::Value baseResult;
     llvm::DenseSet<mlir::Block *> visited;
     const auto visit = [&](auto && self, mlir::Block & block,
                            llvm::SmallVectorImpl<mlir::Value> & yielded, unsigned depth) -> bool {
@@ -223,12 +324,18 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
         }
         for (mlir::Operation & op : block) {
             if (!step()) { return false; }
+            // The rest copy becomes the spliced formals; its roots go with it.
+            if (forwarding.contains(&op) ||
+                (llvm::isa<ctjs::RootOp>(op) &&
+                 forwarding.contains(op.getOperand(0).getDefiningOp()))) {
+                continue;
+            }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
                 const auto bit = integer(branch.getCondition());
                 auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
                 auto read =
                     truth ? truth.getValue().getDefiningOp<ctjs::CellGetOp>() : ctjs::CellGetOp{};
-                const bool guardBranch = read && read.getCell() == guard.getResult();
+                const bool guardBranch = read && guard && read.getCell() == guard.getResult();
                 if (!bit || !guardBranch) {
                     if (phase != 4) {
                         return refuse("super initialization has an unproved branch");
@@ -339,7 +446,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
             }
             if (&op == guard) { continue; }
             if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op)) {
-                if (read.getCell() != guard.getResult()) {
+                if (!guard || read.getCell() != guard.getResult()) {
                     return refuse("super reads an unrelated cell");
                 }
                 mapping.map(
@@ -351,7 +458,8 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
             }
             if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(op)) {
                 auto bit = ctjs::constantAttr<ctjs::BooleanAttr>(write.getValue());
-                if (phase != 1 || write.getCell() != guard.getResult() || !bit || !bit.getValue()) {
+                if (phase != 1 || !guard || write.getCell() != guard.getResult() || !bit ||
+                    !bit.getValue()) {
                     return refuse("super guard requires one true write after the base call");
                 }
                 initialized = true;
@@ -380,24 +488,27 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                 continue;
             }
             if (auto pass = llvm::dyn_cast<ctjs::PassNewTargetOp>(op)) {
-                if (phase != 0 || !llvm::isa_and_nonnull<ctjs::CallOp>(pass->getNextNode())) {
+                auto * next = pass->getNextNode();
+                if (phase != 0 || !next || (!llvm::isa<ctjs::CallOp>(next) && next != spread)) {
                     return refuse("super new.target must immediately precede its base call");
                 }
                 continue;
             }
-            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
-                auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call || &op == spread) {
+                auto read = (call ? call.getCallee() : spread.getCallee())
+                                .getDefiningOp<ctjs::GetPropertyOp>();
                 auto proto =
                     read ? read.getObject().getDefiningOp<ctjs::GetProtoOp>() : ctjs::GetProtoOp{};
                 if (proto && proto->getOperand(0).getDefiningOp<ctjs::LoadHomeOp>() &&
                     ctjs::constantKey(read.getKey()) == "constructor") {
-                    if (phase != 0 || call.getReceiver() != receiver ||
-                        !llvm::isa_and_nonnull<ctjs::PassNewTargetOp>(call->getPrevNode()) ||
-                        call.getArgs().size() + ctjs::implicit_arguments >
-                            base.getBody().front().getNumArguments()) {
+                    if (phase != 0 ||
+                        (call ? call.getReceiver() : spread.getReceiver()) != receiver ||
+                        !llvm::isa_and_nonnull<ctjs::PassNewTargetOp>(op.getPrevNode()) ||
+                        (call && call.getArgs().size() + ctjs::implicit_arguments >
+                                     base.getBody().front().getNumArguments())) {
                         return refuse("super requires one exact ordered base call");
                     }
-                    for (auto & use : call.getResult().getUses()) {
+                    for (auto & use : op.getResult(0).getUses()) {
                         if (!step()) { return false; }
                         auto bind = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                         auto load = bind ? bind.getCallee().getDefiningOp<ctjs::LoadGlobalOp>()
@@ -417,7 +528,12 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                     for (auto [i, formal] : llvm::enumerate(
                              body.getArguments().drop_front(ctjs::implicit_arguments))) {
                         if (!step()) { return false; }
-                        arguments.map(formal, i < call.getArgs().size()
+                        const auto index = static_cast<unsigned>(ctjs::implicit_arguments + i);
+                        while (!call && output->getNumArguments() <= index) {
+                            output->addArgument(formal.getType(), formal.getLoc());
+                        }
+                        arguments.map(formal, !call ? output->getArgument(index)
+                                              : i < call.getArgs().size()
                                                   ? mapping.lookupOrDefault(call.getArgs()[i])
                                                   : absent.getResult());
                     }
@@ -428,15 +544,17 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                             if (!clone(operation, arguments)) { return false; }
                         }
                     }
-                    mapping.map(call.getResult(), absent);
-                    baseCall = call;
-                    phase = 1;
+                    mapping.map(op.getResult(0), absent);
+                    baseResult = op.getResult(0);
+                    phase = call ? 1 : 2; // No guard records the forwarded call.
                     continue;
                 }
+            }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
                 auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
                 if (load && undefined(call.getReceiver()) && call.getResult().use_empty()) {
                     if (load.getName() == "__ctbrowser_bind_this" && phase == 2 &&
-                        call.getArgs().size() == 1 && call.getArgs()[0] == baseCall.getResult()) {
+                        call.getArgs().size() == 1 && call.getArgs()[0] == baseResult) {
                         phase = 3;
                         continue;
                     }
@@ -459,7 +577,9 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                 }
                 return refuse("super initialization contains an unproved call");
             }
-            if (llvm::isa<ctjs::RootOp>(op) && op.getOperand(0) == guard.getResult()) { continue; }
+            if (guard && llvm::isa<ctjs::RootOp>(op) && op.getOperand(0) == guard.getResult()) {
+                continue;
+            }
             if (phase != 4 && llvm::is_contained(op.getOperands(), receiver)) {
                 return refuse("derived receiver is used before super initialization");
             }
@@ -523,6 +643,10 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
         }
     }
     function.getBody().takeBody(copy->getBody());
+    // A forwarded super call adds the base's formals.
+    function.setFunctionTypeAttr(mlir::TypeAttr::get(
+        mlir::FunctionType::get(module.getContext(), function.getBody().front().getArgumentTypes(),
+                                function.getFunctionType().getResults())));
     return true;
 }
 
