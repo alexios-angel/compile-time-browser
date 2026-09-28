@@ -465,22 +465,33 @@ void checker::check_delete(std::int32_t operand) {
     return enclosing_non_arrow_frame().what;
 }
 
-// A YieldExpression IS AN AssignmentExpression, NOT AN OPERAND (15.5): `void
-// yield`, `a + yield b` and `yield 3 + yield 4` are not in the grammar, and
-// only parentheses make them one. The parser drops parentheses, so the
-// source after the operator's lexeme says whether they were there.
-void checker::check_yield_operand(std::int32_t op_node, std::int32_t operand) {
-    if (at(operand).kind != nk::yield_expr) { return; }
+// Arrows and yield are AssignmentExpressions, not operator operands (15.3/15.5).
+// Yield keeps a grouping flag; an arrow's span excludes its wrapping parentheses.
+void checker::check_operand(std::int32_t op_node, std::int32_t operand) {
+    const vp::node & n = at(operand);
     const vp::node & op = at(op_node);
-    const std::size_t where = offset_of(op_node);
-    if (where == early_error::nowhere || op.text.empty()) { return; }
-    for (std::size_t i = where + op.text.size(); i < source_.size(); ++i) {
-        const char c = source_[i];
-        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { continue; }
-        if (c == '(') { return; }
-        break;
+    if (n.kind == nk::yield_expr) {
+        if (n.c == 1) { return; }
+    } else if (n.kind == nk::arrow) {
+        const std::size_t where = offset_of(op_node);
+        if (where == early_error::nowhere) { return; }
+        const std::size_t after_op = where + op.text.size();
+        if (n.begin >= after_op && n.begin <= source_.size()) {
+            if (after_open_paren(source_.substr(after_op), n.begin - after_op)) { return; }
+        } else if (n.end <= where) {
+            const auto after = vp::lex(source_.substr(n.end, where - n.end));
+            if (!after.empty() && after.front().kind == vp::tk::punct && after.front().s == ")") {
+                return;
+            }
+        } else {
+            return;
+        }
+    } else {
+        return;
     }
-    report("`yield` is not an operand of `" + std::string{op.text} + "`; parenthesise it", operand);
+    report(std::string{n.kind == nk::yield_expr ? "`yield`" : "an arrow function"} +
+               " is not an operand of `" + std::string{op.text} + "`; parenthesise it",
+           op_node);
 }
 
 void checker::walk_expression(std::int32_t idx) {
@@ -505,7 +516,7 @@ void checker::walk_expression(std::int32_t idx) {
 
     case nk::unary:
         if (n.text == "delete") { check_delete(n.a); }
-        check_yield_operand(idx, n.a);
+        check_operand(idx, n.a);
         if (n.text == "await" && in_parameters_ && frames_.back().is_async) {
             report("`await` is not allowed in the parameters of an async function", idx);
         }
@@ -576,14 +587,18 @@ void checker::walk_expression(std::int32_t idx) {
     // `#x in o` (13.10.1): the one place a private name stands alone, and
     // it is a reference like any other.
     case nk::binary:
+        check_operand(idx, n.a);
+        check_operand(idx, n.b);
         if (n.text == "in" && at(n.a).kind == nk::ident && at(n.a).text.starts_with('#')) {
             check_private_reference(at(n.a).text, n.a);
             walk_expression(n.b);
             return;
         }
-        check_yield_operand(idx, n.b);
         break;
-    case nk::logical: check_yield_operand(idx, n.b); break;
+    case nk::logical:
+        check_operand(idx, n.a);
+        check_operand(idx, n.b);
+        break;
 
     case nk::num: check_number(idx); return;
 

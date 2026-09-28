@@ -529,6 +529,28 @@ int main() {
             " return new C().m();",
             "true");
 
+    // Arrow/yield expressions need grouping when used as operator operands.
+    refused("class C { #x; m() { return #x in () => {}; } }");
+    refused("class C { #x; m() { return #x in +() => {}; } }");
+    refused("return 'length' in () => {};");
+    refused("return 1 + x => x;");
+    refused("return void () => {};");
+    refused("return false || async () => {};");
+    refused("return (() => {} + 1);");
+    refused("return (() => {} || 1);");
+    refused("function f(x) {} f(() => {} + 1);");
+    refused("function* g() { return 1 + yield 2; }");
+    answers("class C { #x; m() { return #x in /* ( */ (/* ) */ () => {}); } }"
+            " return new C().m();",
+            "false");
+    answers("return 'length' in (async () => {});", "true");
+    answers("return typeof ((() => {} /* ( */) + 1);", "string");
+    answers("return typeof (false || (/* ) */ x => x));", "function");
+    answers("return typeof (true ? () => {} : async () => {});", "function");
+    answers("function* g() { return 1 + /* ( */ (yield 2); } var i = g();"
+            " return i.next().value + ':' + i.next(3).value;",
+            "2:4");
+
     // ================================================================
     // 14. `super()` - 15.7.1
     // ================================================================
