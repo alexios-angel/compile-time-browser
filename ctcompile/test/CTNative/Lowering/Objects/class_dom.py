@@ -35,7 +35,7 @@ def check_oracles(args):
             }.get(name, "")
             observations.append(f"""var {variable} = (() => {{
   const element = observationElement({value});
-  {"element.dataset = {bsConfig: 'value', bsConfigExtra: 'value', bsToggle: 'value', other: 'value'};" if name in DYNAMIC_CASES else "element.dataset = {bsConfig: 'a', bsConfigExtra: 'b', bsToggle: 'c', other: 'd'};" if name in FILTER_CASES else ""}
+  {"element.dataset = {bsConfig: 'value', bsConfigExtra: 'value', bsToggle: 'value', other: 'value'};" if name in DYNAMIC_CASES else "element.dataset = {bsConfig: 'a', bsConfigExtra: 'b', bsToggle: 'c', other: 'd'};" if name in FILTER_CASES else "element.nodeType = 1;" if name in ELEMENT_ARM_CASES else ""}
   const other = observationElement('different');
   other.setAttribute('other', 'second');
   let toggles = 0;
@@ -305,6 +305,7 @@ def main():
     assert strings.BOOTSTRAP_F in vendor.read_text(), "Bootstrap F source pin changed"
     assert BOOTSTRAP_H in vendor.read_text(), "Bootstrap H source pin changed"
     assert FILTER_PREDICATE in BOOTSTRAP_H, "Bootstrap dataset predicate changed"
+    assert BOOTSTRAP_ELEMENT in vendor.read_text(), "Bootstrap element helper source pin changed"
     observations = check_oracles(args)
     compilers = args.compilers
     includes, libraries = dom.link_options(args)
@@ -376,7 +377,8 @@ def main():
                 + (["Error"] if name.startswith("class_error_") else [])
                 + (["Number"] if name in NUMBER_CASES or name in NUMBER_REFUSALS else [])
                 + (["JSON", "decodeURIComponent"] if name in M_CASES or name in M_REFUSALS else [])
-                + (["__ctbrowser_regexp"] if name in F_CASES or name in F_REFUSALS else []),
+                + (["__ctbrowser_regexp"] if name in F_CASES or name in F_REFUSALS else [])
+                + (["Object"] if name == "element_arm_prototype" else []),
             )
             if (
                 name in UTF16_CASES
@@ -436,6 +438,8 @@ def main():
                         raise RuntimeError(
                             f"{name}: static method lost its shared DOM helper refusal"
                         )
+                if name in ELEMENT_ARM_REFUSALS and ELEMENT_ARM_REFUSALS[name][1] not in diagnostic:
+                    raise RuntimeError(f"{name}: element facts lost their refusal: {diagnostic}")
                 refusals += 1
                 continue
             prepared.append((name, owned, ir, request))

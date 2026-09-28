@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../Lowering/Exceptions/Recovery.h"
+#include "../../PartialEvaluation/Heap.h"
 #include "../Analysis.h"
 #include "../Preparation.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -118,6 +119,9 @@ struct classInitialization {
     // Constructors of bases only leaves' super copies build: never run.
     llvm::DenseSet<mlir::Operation *> leafBuilt;
     llvm::DenseSet<mlir::Operation *> domEntryHelpers;
+    // DOM entries: each declared element parameter and its index, the element
+    // actual evaluateHelper knows by a partial_eval reference to that index.
+    llvm::DenseMap<mlir::Value, unsigned> elementActuals;
     llvm::DenseSet<mlir::Operation *> domDataOperations;
     llvm::DenseMap<mlir::Value, mlir::Value> retainedRecordOrigins;
     llvm::DenseSet<mlir::Operation *> getters;
@@ -207,10 +211,11 @@ struct classInitialization {
 
     bool foldDecidedArms(ctjs::CreateClosureOp constructor,
                          llvm::ArrayRef<ctjs::ConstructOp> instances);
-    // The primitive an exact captured helper returns for primitive actuals.
-    std::optional<mlir::Attribute> evaluateHelper(ctjs::FuncOp fn,
-                                                  llvm::ArrayRef<mlir::Attribute> actuals,
-                                                  unsigned depth);
+    // The primitive or element actual an exact captured helper returns for
+    // primitive and element actuals.
+    std::optional<partial_eval::value> evaluateHelper(ctjs::FuncOp fn,
+                                                      llvm::ArrayRef<partial_eval::value> actuals,
+                                                      unsigned depth);
     bool freshFunctionIndex(unsigned & next);
     // A copy of `fn` appended to the module as source function `index`.
     ctjs::FuncOp cloneFunction(ctjs::FuncOp fn, unsigned index);
