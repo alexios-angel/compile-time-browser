@@ -156,6 +156,27 @@ UNREAD_STATICS = {
 }
 OBSERVATIONS.update(UNREAD_STATICS)
 POSITIVES.update({"static-unread-new-this", "static-unread-chain", "static-unread-nested"})
+# A decided arm's pure helper call goes; a helper no running body calls is not censused.
+DECIDED_HELPERS = {
+    name: (7, 7)
+    for name in (
+        "helper-decided-uncalled",
+        "helper-decided-nested-uncalled",
+        "inherited-helper-decided-leaf-built",
+        "helper-decided-live-result",
+        "helper-decided-other-call",
+        "helper-decided-holder-slot",
+    )
+}
+OBSERVATIONS.update(DECIDED_HELPERS)
+POSITIVES.update(
+    {
+        "helper-decided-uncalled",
+        "helper-decided-nested-uncalled",
+        "inherited-helper-decided-leaf-built",
+        "helper-decided-holder-slot",
+    }
+)
 # A base constructed only through leaf super calls leaves its snapshot to the leaf.
 DEFERRED = {
     "inherited-own-fields-iterate-deferred-arm": (7, 7),
@@ -179,9 +200,9 @@ DEFERRED = {
 }
 OBSERVATIONS.update(DEFERRED)
 OBSERVATIONS["bootstrap-base-button"] = (7, 7)
-# The element helpers read properties of an untyped formal: native lowering
-# still refuses them, so only the prepared proof is pinned.
-PREPARED_ONLY.update(
+# The element helpers' only calls go with the arms they decide, so the helpers
+# are erased and the leaf program lowers completely.
+POSITIVES.update(
     {"own-fields-branch-helper-nested", "inherited-own-fields-iterate-deferred-helper"}
 )
 POSITIVES.update(
@@ -794,8 +815,8 @@ def main():
             "inherited-method-base-shadow": "class method is observed or shadowed",
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": 'unknown call, binding or reflective effect (global "document")',
-            "bootstrap-base-data": 'unknown call, binding or reflective effect (global "Map")',
+            "bootstrap-base": 'unknown call, binding or reflective effect (global "H")',
+            "bootstrap-base-data": "unknown call, binding or reflective effect (op ctjs.call)",
             "own-entries-default-type-fields": "static getter body is not a closed expression",
             "own-entries-default-type-primitive": ENTRIES_FRESH,
             "own-entries-default-type-written": ENTRIES_FRESH,
@@ -803,10 +824,12 @@ def main():
             "own-entries-argument": ENTRIES_FRESH,
             "own-entries-default-type-passed": ENTRIES_PATH,
             "own-entries-default-type-effect": ENTRIES_PATH,
-            "bootstrap-base-button": 'unknown call, binding or reflective effect (global "Map")',
+            "bootstrap-base-button": "unknown call, binding or reflective effect (op ctjs.call)",
             "inherited-static-unread-leaf-read": "static method receiver requires an exact own getter read",
             "static-unread-dynamic": "static method receiver requires an exact own getter read",
             "static-unread-constructor-read": "static method receiver requires an exact own getter read",
+            "helper-decided-live-result": 'unknown call, binding or reflective effect (global "ambient")',
+            "helper-decided-other-call": 'unknown call, binding or reflective effect (global "ambient")',
             "inherited-own-fields-iterate-deferred-siblings-differ": "inherited own-key snapshot requires the same ordered fields",
             "inherited-own-fields-iterate-deferred-mixed": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-iterate-deferred-early-snapshot": "class construction method observes an own-key snapshot",
@@ -1067,8 +1090,6 @@ def main():
                 "override-different-leaves",
                 "inherited-helper-order",
                 "captured-holder-unused",
-                "own-fields-branch-helper-nested",
-                "inherited-own-fields-iterate-deferred-helper",
             ):
                 operations = ()
             elif name in (
@@ -1328,10 +1349,7 @@ def main():
                         or not re.search(r"emitc.func @keyed_\d+\(", native_text)
                     ):
                         raise RuntimeError(f"{name}: receiver copy lost its native boundary")
-                elif name in PREPARED_ONLY and not (
-                    optimize
-                    and name in ("bootstrap-r", "inherited-own-fields-iterate-deferred-helper")
-                ):
+                elif name in PREPARED_ONLY and not (optimize and name == "bootstrap-r"):
                     native_text = native.read_text()
                     check_refusal(name, native_text, len(FUNCTION.findall(prepared.read_text())))
                     key_type = (
