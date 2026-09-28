@@ -401,6 +401,8 @@ A method or accessor uses that key plus `:method` on its declaration home;
 the receiver's own class brand retains that home. The initializer retains
 the home in a hidden slot, independently of its mutable `__home` property.
 Lookup never walks the receiver's prototype chain or invokes proxy traps.
+Proxies store their own private elements separately from their targets;
+revocation and target extensibility do not affect those elements.
 Thus a stamped replacement object keeps its methods after its prototype
 changes, while an unstamped `C.prototype`, `Object.create(C.prototype)` or
 subclass constructor fails the corresponding brand check.

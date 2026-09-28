@@ -194,6 +194,30 @@ void test_private_brand_survives_a_collection() {
               "42");
 }
 
+void test_private_proxy_survives_a_collection() {
+    expect_gc("revoked proxy retains private fields and method home", R"(
+        const pair = (function () {
+            class B { constructor(o) { return o; } }
+            class C extends B {
+                #data = {answer: 42};
+                #method() { gc(); return this.#data.answer; }
+                get #value() { return this.#method(); }
+                static reader() { return function (o) { return o.#value; }; }
+            }
+            const r = Proxy.revocable({}, {});
+            new C(r.proxy);
+            r.revoke();
+            return [r.proxy, C.reader()];
+        })();
+        gc();
+        const filler = [];
+        for (let i = 0; i < 400; i++) { filler.push({answer: i}); }
+        gc();
+        return pair[1](pair[0]);
+    )",
+              "42");
+}
+
 // --- native lambda captures ------------------------------------------------
 //
 // A `value` captured by a C++ lambda inside a native is invisible to the
@@ -440,6 +464,7 @@ int main(int argc, char ** argv) {
     run("await-constructor", &test_await_constructor_survives_a_collection);
     run("constructor-prototype", &test_constructor_prototype_survives_a_collection);
     run("private-brand", &test_private_brand_survives_a_collection);
+    run("private-proxy", &test_private_proxy_survives_a_collection);
     run("symbol", &test_symbol_registry_survives_a_collection);
     run("native-accessors", &test_native_accessors_survive_a_collection);
     run("map", &test_map_result_survives_a_collection);

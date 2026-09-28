@@ -351,6 +351,38 @@ int main() {
             " const out = [C.has(p), traps];"
             " try { C.has(1); } catch (e) { out.push(e.name); } return out.join();",
             "false,false,0,TypeError");
+    // Private elements stamped onto a Proxy belong to it, without consulting traps.
+    answers("class B { constructor(o) { return o; } } class C extends B {"
+            " #f = 3; #m() { return this.#f; } get #a() { return this.#m(); }"
+            " set #a(v) { this.#f = v; } static has(o) { return #f in o && #m in o; }"
+            " static use(o) { o.#a = 7; return o.#a; } }"
+            " let traps = 0; const target = {}; const p = new Proxy(target,"
+            " new Proxy({}, {get() { traps++; throw Error('trap'); }}));"
+            " new C(p); const out = [C.has(p), C.use(p), C.has(target),"
+            " C.has(new Proxy(p, {})), traps];"
+            " try { new C(p); } catch (e) { out.push(e.name); } return out.join();",
+            "true,7,false,false,0,TypeError");
+    answers("class B { constructor(o) { return o; } } class C extends B {"
+            " #f = 1; static read(o) { return o.#f; } static write(o, v) { o.#f = v; } }"
+            " const target = {}; const p = new Proxy(target, {}); const q = new Proxy(p, {});"
+            " new C(target); new C(p); new C(q); C.write(p, 2); C.write(q, 3);"
+            " const out = [C.read(target), C.read(p), C.read(q), Reflect.ownKeys(p).length];"
+            " try { new C(p); } catch (e) { out.push(e.name); } return out.join();",
+            "1,2,3,0,TypeError");
+    answers("class B { constructor(o) { return o; } } class C extends B {"
+            " #f = 4; #m() { return this.#f; } static use(o) { return o.#m(); } }"
+            " const r = Proxy.revocable(Object.freeze({}), {}); r.revoke(); new C(r.proxy);"
+            " const p = new Proxy(Object.freeze({}), {}); new C(p); Object.freeze(p);"
+            " return C.use(r.proxy) + ',' + C.use(p);",
+            "4,4");
+    answers("class B { constructor(o) { return o; } } class C extends B {"
+            " #m() {} set #s(v) {} get #g() { return 1; }"
+            " static read(o) { return o.#s; } static write(o) { o.#g = 1; }"
+            " static replace(o) { o.#m = 1; } } const p = new Proxy({}, {}); new C(p);"
+            " const out = []; for (const f of [() => new C(p), () => C.read(p),"
+            " () => C.write(p), () => C.replace(p)]) { try { f(); out.push('no throw'); }"
+            " catch (e) { out.push(e.name); } } return out.join();",
+            "TypeError,TypeError,TypeError,TypeError");
     // Altering the initializer's super home must not redirect private lookup.
     answers("class C { #m() { return 1; } static read(o) { return o.#m(); } }"
             " let traps = 0; C.__fields.__home = new Proxy({}, {getOwnPropertyDescriptor() {"

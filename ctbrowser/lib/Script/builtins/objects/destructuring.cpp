@@ -379,7 +379,7 @@ void install_destructuring_iteration(context & cx) {
     });
     // See private_add_name.
     cx.define_native(std::string{private_add_name}, [](context & c, std::span<value> a) {
-        if (a.size() < 2 || !a[0].is_object_like() || a[0].is_kind(heap_kind::proxy)) {
+        if (a.size() < 2 || !a[0].is_object_like()) {
             c.throw_error("TypeError", "a private element can only be added to an object");
             return value::undefined();
         }
@@ -395,7 +395,7 @@ void install_destructuring_iteration(context & cx) {
                                 "the same object");
             return value::undefined();
         }
-        if (!c.is_extensible(a[0])) {
+        if (!(a[0].is_kind(heap_kind::proxy) && is_private_key(key)) && !c.is_extensible(a[0])) {
             c.throw_error("TypeError", "Cannot define private elements on a non-extensible object");
             return value::undefined();
         }

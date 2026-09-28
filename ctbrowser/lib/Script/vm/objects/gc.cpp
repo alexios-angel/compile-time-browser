@@ -115,6 +115,7 @@ void context::trace_object(heap_object * o) {
         auto * proxy = static_cast<proxy_object *>(o);
         edge(proxy->target);
         edge(proxy->handler);
+        edge(proxy->private_elements);
         break;
     }
     case heap_kind::coroutine: {

@@ -100,7 +100,7 @@ value array_inherited(context & cx, value target, const array_object & arr,
 
 std::optional<context::property_descriptor> context::find_private_element(value target,
                                                                           const std::string & key) {
-    if (!target.is_object_like() || target.is_kind(heap_kind::proxy)) { return std::nullopt; }
+    if (!target.is_object_like()) { return std::nullopt; }
     property_descriptor found;
     if (own_property(target, key, found)) { return found; }
     // A method/accessor definition stays on its declaration home. The own
@@ -246,8 +246,8 @@ value context::lookup_index(value target, value key) {
 
 value context::lookup_property(value target, const std::string & name) {
     // A PRIVATE NAME IS A BRAND CHECK (7.3.31 PrivateGet): an object whose
-    // class did not add the element is the TypeError, not undefined - and a
-    // proxy never carries one, whatever its target does. Two byte compares
+    // class did not add the element is the TypeError, not undefined. A Proxy
+    // carries only its own elements, never its target's. Two byte compares
     // on the hot path; the descriptor lookup only for the keys the compiler spells.
     if (is_private_key(name)) [[unlikely]] {
         const auto found = find_private_element(target, name);
