@@ -3,7 +3,8 @@
 // RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name signed-product
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-product.claims
 
-// Products retain signed Number snapshots and exact canonical String conversions.
+// Products retain signed Number snapshots and exact String conversions, canonical
+// or not.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.binary sub
 // IMPORT: ctjs.set_property
@@ -59,8 +60,8 @@
 // CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr confined
 
 //--- source.js
 function snapshotReleased() {

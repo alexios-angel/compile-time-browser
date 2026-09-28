@@ -39,10 +39,13 @@ function fractionalSnapshots(index) {
     map.set(1, 10).set(2, 20);
     var values = Array.from(map.values());
     var keys = Array.from(map.keys());
-    // As for array literals, the reference truncates before bounds checking.
-    return values[0.5] + values[-0.5] + values[index] + keys[index];
+    // As for array literals, a fractional Number key names a property ("1.9"),
+    // not an element, so its read is undefined; -0 names "0".
+    return values[-0] + values[1] + values[index] + keys[index];
 }
-var fractional42 = fractionalSnapshots(1.9);
+var integral52 = fractionalSnapshots(1);
+var fractionalNaN = fractionalSnapshots(1.9);
+var negativeFractionalNaN = fractionalSnapshots(0 - 0.5);
 
 function zeroKey() {
     var map = new Map();

@@ -261,13 +261,10 @@ excluded from the numeric global census; they never become globals to print.
 
 ## Snapshot indexing correction
 
-Map snapshots reuse the dense-array helpers. Review exposed the existing
-ND-8 defect: `vec_at` rejected fractional numeric indices, while the reference
-truncates toward zero before checking bounds. It now truncates first, retaining
-the NaN, infinity and bounds guards before integer conversion. The original
-`ctcompile/test/CTNative/Fixtures/Objects/index-truncation.js` is a passing regression with an off-by-one
-negative control. The Map fixture independently exercises fractional reads
-through both snapshots, including `-0.5` and a computed parameter.
+Map snapshots reuse the dense-array index rule, `element_index`: an integral
+Number key (including `-0`) selects an entry and any other Number is undefined,
+as in the interpreter since `91e7c17ff` and in Node. The Map fixture reads both
+numeric snapshots at `-0`, an integer, `1.9` and `-0.5`.
 See [native-divergences.md](native-divergences.md#nd-8--an-out-of-range-index-produces-tagged-undefined).
 
 ## Bootstrap boundary

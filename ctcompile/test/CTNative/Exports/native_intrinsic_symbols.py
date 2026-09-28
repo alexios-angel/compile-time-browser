@@ -2,6 +2,7 @@
 """Check Symbol-only native exports against Node/VM without a DOM input or runtime."""
 
 import json
+import math
 import re
 
 from CTNative.Browser import native_dom as dom
@@ -1203,6 +1204,168 @@ DOUBLE_NEGATED_INDICES = {
 }
 """,
 }
+# Thirty former refusals, byte-identical, whose literal index census confined
+# an exact Number. Since 847718fbd a Neg or arithmetic over Number operands is
+# itself a proved Number, so it may escape, compare or go unused, and the String
+# index lowering converts that same value at run time. Expected values are
+# Node's for NUMBER_ESCAPE_INPUTS. Boolean and null leaves still refuse for
+# escaping their bounds (negated-primitive-index-leaf-escape and its siblings).
+NUMBER_ESCAPE_INPUTS = (("", 0), ("a", 0), ("abc", 0), ("", -1))
+NUMBER_ESCAPE_WITNESSES = {
+    name: (f"function bad(text, index) {{ {body} }}\n", expected)
+    for name, body, expected in (
+        (
+            "signed-slice-negation-escape",
+            "const bound=-1; text.slice(bound); return bound;",
+            (-1.0,) * 4,
+        ),
+        (
+            "signed-charat-negation-escape",
+            "const bound=-1; text.charAt(bound); return bound;",
+            (-1.0,) * 4,
+        ),
+        (
+            "fractional-index-negation-escape",
+            "const bound=-0.5; text.charAt(bound); return bound;",
+            (-0.5,) * 4,
+        ),
+        (
+            "wide-index-negation-escape",
+            "const bound=-1e999; text.slice(bound); return bound;",
+            (-math.inf,) * 4,
+        ),
+        (
+            "division-index-result-escape",
+            "const missing=0 / 0; text.charAt(missing); return missing;",
+            (math.nan,) * 4,
+        ),
+        (
+            "division-index-unused-result",
+            "const missing=0 / 0; return text.charAt(0);",
+            ("", "a", "a", ""),
+        ),
+        (
+            "subtraction-index-result-escape",
+            "const missing=1e999 - 1e999; text.charAt(missing); return missing;",
+            (math.nan,) * 4,
+        ),
+        (
+            "subtraction-index-unused-result",
+            "const missing=1e999 - 1e999; return text.charAt(0);",
+            ("", "a", "a", ""),
+        ),
+        (
+            "multiplication-index-result-escape",
+            "const missing=0 * 1e999; text.charAt(missing); return missing;",
+            (math.nan,) * 4,
+        ),
+        (
+            "multiplication-index-unused-result",
+            "const missing=0 * 1e999; return text.charAt(0);",
+            ("", "a", "a", ""),
+        ),
+        (
+            "remainder-index-result-escape",
+            "const missing=1 % 0; text.charAt(missing); return missing;",
+            (math.nan,) * 4,
+        ),
+        (
+            "remainder-index-unused-result",
+            "const missing=1 % 0; return text.charAt(0);",
+            ("", "a", "a", ""),
+        ),
+        (
+            "power-index-result-escape",
+            "const missing=1 ** 1e999; text.charAt(missing); return missing;",
+            (math.nan,) * 4,
+        ),
+        (
+            "power-index-unused-result",
+            "const missing=1 ** 1e999; return text.charAt(0);",
+            ("", "a", "a", ""),
+        ),
+        (
+            "negated-index-result-escape",
+            "const bound=-(0 / 0); text.charAt(bound); return bound;",
+            (math.nan,) * 4,
+        ),
+        (
+            "negated-index-inner-result-escape",
+            "const bound=0 / 0; text.charAt(-bound); return bound;",
+            (math.nan,) * 4,
+        ),
+        (
+            "negated-index-unused-result",
+            "const bound=-(0 / 0); return text.charAt(0);",
+            ("", "a", "a", ""),
+        ),
+        (
+            "signed-operand-index-leaf-escape",
+            "const bound=-1; text.charAt(0 - bound); return bound;",
+            (-1.0,) * 4,
+        ),
+        (
+            "signed-operand-index-leaf-comparison",
+            "const bound=-1; return text.charAt(0 - bound) === text && bound === index;",
+            (False, False, False, True),
+        ),
+        (
+            "signed-operand-index-result-escape",
+            "const bound=-1 + 1; text.charAt(bound); return bound;",
+            (0.0,) * 4,
+        ),
+        (
+            "signed-operand-index-result-comparison",
+            "const bound=-1 + 1; return text.charAt(bound) === text && bound === index;",
+            (True, True, False, False),
+        ),
+        (
+            "signed-operand-index-outer-result-escape",
+            "const bound=-(-1 + 1); text.charAt(bound); return bound;",
+            (-0.0,) * 4,
+        ),
+        (
+            "signed-operand-index-unused-result",
+            "const bound=-1 + 1; return text.charAt(0);",
+            ("", "a", "a", ""),
+        ),
+        (
+            "nested-index-inner-result-escape",
+            "const inner=0 / 0; text.charAt(inner + 1); return inner;",
+            (math.nan,) * 4,
+        ),
+        (
+            "nested-index-add-result-escape",
+            "const inner=0 / 0; const bound=inner + 1; text.charAt(bound); return bound;",
+            (math.nan,) * 4,
+        ),
+        (
+            "nested-index-add-result-comparison",
+            "const bound=(0 / 0) + 1; return text.charAt(bound) === text && bound === index;",
+            (False,) * 4,
+        ),
+        (
+            "nested-index-signed-add-result-escape",
+            "const bound=(-1 + 1) + 1; text.charAt(bound); return bound;",
+            (1.0,) * 4,
+        ),
+        (
+            "nested-index-outer-result-escape",
+            "const bound=-((0 / 0) + 1); text.charAt(bound); return bound;",
+            (math.nan,) * 4,
+        ),
+        (
+            "nested-index-unused-add-result",
+            "const inner=0 / 0; const bound=inner + 1; return text.charAt(inner);",
+            ("", "a", "a", ""),
+        ),
+        (
+            "nested-index-unused-result",
+            "const bound=(0 / 0) * 1; return text.charAt(0);",
+            ("", "a", "a", ""),
+        ),
+    )
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -1265,6 +1428,7 @@ PARAMETER_TYPES = {
     **{name: ["string"] for name in PRIMITIVE_WITNESSES},
     "string-primitive-indices": ["string", "string", "string", "string"],
     "description-capture-primitive-index": ["symbol"],
+    **{name: ["string", "number"] for name in NUMBER_ESCAPE_WITNESSES},
     **{name: ["string", "number"] for name in DIVISION_WITNESSES},
     "string-division-indices": ["string", "string", "string", "string"],
     "description-capture-division-index": ["symbol"],
@@ -1975,6 +2139,44 @@ for name, (source, expected) in (
         + "".join(
             f"    assert(@ENTRY@(js_string{{{json.dumps(text)}}}, ctnative::js_num{{0.0}}).value() == {json.dumps(value)});\n"
             for text, value in zip(("", "a", "abc"), expected, strict=True)
+        )
+        + '    std::cout << "true\\n";\n',
+        "true\n",
+    )
+
+
+def number_escape_check(call, value):
+    if isinstance(value, bool):
+        return call if value else "!" + call
+    if isinstance(value, str):
+        return f"{call}.value() == {json.dumps(value)}"
+    if math.isnan(value):
+        return f"std::isnan({call}.value())"
+    # Compare the sign too: -0 must stay -0.
+    magnitude = "std::numeric_limits<double>::infinity()" if math.isinf(value) else abs(value)
+    negative = math.copysign(1, value) < 0
+    return (
+        f"{call}.value() == {'-' if negative else ''}{magnitude} && "
+        f"std::signbit({call}.value()) == {str(negative).lower()}"
+    )
+
+
+for name, (source, expected) in NUMBER_ESCAPE_WITNESSES.items():
+    result = {bool: "js_boolean_t", str: "js_string", float: "ctnative::js_num"}[type(expected[0])]
+    CASES[name] = (
+        source,
+        f"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), {result} (*)(js_string, ctnative::js_num)>);
+"""
+        + "".join(
+            "    assert("
+            + number_escape_check(
+                f"@ENTRY@(js_string{{{json.dumps(text)}}}, ctnative::js_num{{{float(index)}}})",
+                value,
+            )
+            + ");\n"
+            for (text, index), value in zip(NUMBER_ESCAPE_INPUTS, expected, strict=True)
         )
         + '    std::cout << "true\\n";\n',
         "true\n",
@@ -3016,6 +3218,15 @@ var symbol197StringUTF16DoubleNegatedIndices = stringDoubleNegatedIndices('\u00c
   stringDoubleNegatedIndices('\ud800xy', '\ud800', 'x', 'y') &&
   stringDoubleNegatedIndices('A\udc00x', 'A', '\udc00', 'x');
 """
+        + "".join(
+            f"\nfunction observeNumberEscape{i}() {{ {body}return "
+            + " && ".join(
+                f"Object.is(bad({json.dumps(text)}, {index}), {json.dumps(value)})"
+                for (text, index), value in zip(NUMBER_ESCAPE_INPUTS, expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}NumberEscapeWitness{i} = observeNumberEscape{i}();\n"
+            for i, (body, expected) in enumerate(NUMBER_ESCAPE_WITNESSES.values(), 198)
+        )
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -3155,79 +3366,13 @@ var symbol197StringUTF16DoubleNegatedIndices = stringDoubleNegatedIndices('\u00c
         "StringDoubleNegatedIndices",
         "DescriptionCaptureDoubleNegatedIndex",
         "StringUTF16DoubleNegatedIndices",
+        *(f"NumberEscapeWitness{i}" for i in range(198, 228)),
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
-    # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
-    # Preserve those known differences; native uses the existing Unicode Core API.
-    vm_expected = expected.replace(
-        "symbol50DescriptionExpandedCase=true", "symbol50DescriptionExpandedCase=false"
-    ).replace("symbol51DescriptionGreekCase=true", "symbol51DescriptionGreekCase=false")
-    vm_expected = vm_expected.replace(
-        "symbol55StringUTF16Indices=true", "symbol55StringUTF16Indices=false"
-    ).replace("symbol59StringUTF16SliceBounds=true", "symbol59StringUTF16SliceBounds=false")
-    vm_expected = vm_expected.replace(
-        "symbol64StringUTF16SignedSlices=true", "symbol64StringUTF16SignedSlices=false"
-    ).replace("symbol68StringUTF16SignedCharAt=true", "symbol68StringUTF16SignedCharAt=false")
-    vm_expected = vm_expected.replace(
-        "symbol71StringUTF16FractionalIndices=true",
-        "symbol71StringUTF16FractionalIndices=false",
-    ).replace(
-        "symbol101StringUTF16DefaultIndices=true",
-        "symbol101StringUTF16DefaultIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol107StringUTF16UndefinedIndices=true",
-        "symbol107StringUTF16UndefinedIndices=false",
-    ).replace(
-        "symbol112StringUTF16PrimitiveIndices=true",
-        "symbol112StringUTF16PrimitiveIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol117StringUTF16DivisionIndices=true",
-        "symbol117StringUTF16DivisionIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol121StringUTF16SubtractionIndices=true",
-        "symbol121StringUTF16SubtractionIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol125StringUTF16MultiplicationIndices=true",
-        "symbol125StringUTF16MultiplicationIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol129StringUTF16RemainderIndices=true",
-        "symbol129StringUTF16RemainderIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol133StringUTF16AdditionIndices=true",
-        "symbol133StringUTF16AdditionIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol137StringUTF16PowerIndices=true",
-        "symbol137StringUTF16PowerIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol146StringUTF16NegatedIndices=true",
-        "symbol146StringUTF16NegatedIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol160StringUTF16SignedOperandIndices=true",
-        "symbol160StringUTF16SignedOperandIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol173StringUTF16NestedIndices=true",
-        "symbol173StringUTF16NestedIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol190StringUTF16NegatedPrimitiveIndices=true",
-        "symbol190StringUTF16NegatedPrimitiveIndices=false",
-    )
-    vm_expected = vm_expected.replace(
-        "symbol197StringUTF16DoubleNegatedIndices=true",
-        "symbol197StringUTF16DoubleNegatedIndices=false",
-    )
     actual = run([args.reference, str(vm)]).stdout
-    if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
+    # The VM has matched Node here since its Unicode casing (8f61dcf9c) and
+    # UTF-16 String indices (2b710a0d2); native uses the same Core API.
+    if actual != "".join(sorted(expected.splitlines(keepends=True))):
         raise RuntimeError(f"VM Symbol export observations differ: {actual}")
     node = args.work / "oracle.cjs"
     node.write_text(
@@ -3239,10 +3384,7 @@ var symbol197StringUTF16DoubleNegatedIndices = stringDoubleNegatedIndices('\u00c
     )
     if run([args.node, str(node)]).stdout != expected:
         raise RuntimeError("Node Symbol export observations differ")
-    agreements = sum(
-        a == b for a, b in zip(expected.splitlines(), vm_expected.splitlines(), strict=True)
-    )
-    return agreements, len(observations) - agreements
+    return len(observations)
 
 
 def standalone(args, native, name, checks, expected, compilers, includes, libraries):
@@ -3331,7 +3473,7 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
 
 def main():
     args = dom.parse_args(__doc__, oracles=True)
-    agreements, differences = oracle(args)
+    agreements = oracle(args)
     compilers = args.compilers
     includes, libraries = dom.link_options(args, core_only=True)
     accepted = {}
@@ -3372,6 +3514,7 @@ def main():
             | NESTED_INDICES
             | NEGATED_PRIMITIVE_INDICES
             | DOUBLE_NEGATED_INDICES
+            | NUMBER_ESCAPE_WITNESSES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -3820,7 +3963,9 @@ def main():
         "end-dynamic": "return text.slice(0, -index);",
         "start-coercion": "return text.slice(-'1');",
         "end-object": "return text.slice(0, -{valueOf() { return 1; }});",
-        "negation-escape": "const bound=-1; text.slice(bound); return bound;",
+        # negation-escape is a Number witness now; a negated Boolean still
+        # escapes the literal index census.
+        "primitive-negation-escape": "const bound=-true; text.slice(bound); return bound;",
         "replacement": "String.prototype.slice=0; return text.slice(-1);",
         "first-unit-authority": "return text.slice(-1).toLowerCase();",
     }.items():
@@ -3833,7 +3978,9 @@ def main():
         )
         contract["initial_intrinsics"] = ["Symbol", "String"]
         for optimize in (False, True):
-            refuse(ir, contract, f"signed-slice-{name}-{optimize}", optimize=optimize)
+            reason = refuse(ir, contract, f"signed-slice-{name}-{optimize}", optimize=optimize)
+            if name == "primitive-negation-escape" and "escapes its bounds" not in reason:
+                raise RuntimeError(f"signed-slice-{name}-{optimize}: other refusal\n{reason}")
     ir, contract = accepted["description-capture-signed-slice"]
     for budget in (0, 1, 100):
         refuse(ir, contract, f"signed-slice-budget-{budget}", max_steps=budget)
@@ -3853,7 +4000,6 @@ def main():
         "dynamic": "return text.charAt(-index);",
         "coercion": "return text.charAt(-'1');",
         "object": "return text.charAt(-{valueOf() { return 1; }});",
-        "negation-escape": "const bound=-1; text.charAt(bound); return bound;",
         "replacement": "String.prototype.charAt=0; return text.charAt(-1);",
         "first-unit-authority": "return text.charAt(-1).toLowerCase();",
         "negative-zero-authority": "return text.charAt(-0).toLowerCase();",
@@ -3891,7 +4037,6 @@ def main():
         "slice-coercion": "return text.slice(-'1.5');",
         "charat-dynamic": "return text.charAt(index + 0.5);",
         "slice-dynamic": "return text.slice(0, index - 0.5);",
-        "negation-escape": "const bound=-0.5; text.charAt(bound); return bound;",
         "extra-argument": "return text.charAt(0, -0.5);",
         "detached": "const method=text.slice; return method(-0.5);",
         "first-unit-authority": "return text.charAt(0.5).toLowerCase();",
@@ -3930,7 +4075,6 @@ def main():
         "slice-infinity-global": "return text.slice(-Infinity);",
         "coercion": "return text.charAt('1e999');",
         "object": "return text.slice(0, {valueOf() { return 1e999; }});",
-        "negation-escape": "const bound=-1e999; text.slice(bound); return bound;",
         "extra-bound": "return text.charAt(0, -1e999);",
         "first-unit-authority": "return text.charAt(1e999).toLowerCase();",
         "slice-authority": "return text.slice(-1e999).toLowerCase();",
@@ -4076,8 +4220,6 @@ def main():
         "dynamic-divisor": "return text.slice(0 / index);",
         "coercion": "return text.charAt('0' / 0);",
         "object-coercion": "return text.slice(0, {valueOf() { return 0; }} / 0);",
-        "result-escape": "const missing=0 / 0; text.charAt(missing); return missing;",
-        "unused-result": "const missing=0 / 0; return text.charAt(0);",
         "extra-argument": "return text.charAt(0, 0 / 0);",
         "charat-authority": "return text.charAt(0 / 0).toLowerCase();",
         "slice-authority": "return text.slice(1 / 1).toLowerCase();",
@@ -4111,8 +4253,6 @@ def main():
         "dynamic-right": "return text.slice(0 - index);",
         "coercion": "return text.charAt('0' - 0);",
         "object-coercion": "return text.slice(0, {valueOf() { return 0; }} - 0);",
-        "result-escape": "const missing=1e999 - 1e999; text.charAt(missing); return missing;",
-        "unused-result": "const missing=1e999 - 1e999; return text.charAt(0);",
         "extra-argument": "return text.charAt(0, 1 - 1);",
         "charat-authority": "return text.charAt(1 - 1).toLowerCase();",
         "slice-authority": "return text.slice(2 - 1).toLowerCase();",
@@ -4148,8 +4288,6 @@ def main():
         "coercion": "return text.charAt('0' * 1);",
         "object-coercion": "return text.slice(0, {valueOf() { return 0; }} * 1);",
         "nan-global": "return text.charAt(NaN * 0);",
-        "result-escape": "const missing=0 * 1e999; text.charAt(missing); return missing;",
-        "unused-result": "const missing=0 * 1e999; return text.charAt(0);",
         "extra-argument": "return text.charAt(0, 0 * 1);",
         "charat-authority": "return text.charAt(0 * 1).toLowerCase();",
         "slice-authority": "return text.slice(1 * 1).toLowerCase();",
@@ -4191,8 +4329,6 @@ def main():
         "object-coercion": "return text.slice(0, {valueOf() { return 0; }} % 1);",
         "nan-global": "return text.charAt(NaN % 1);",
         "infinity-global": "return text.slice(1 % Infinity);",
-        "result-escape": "const missing=1 % 0; text.charAt(missing); return missing;",
-        "unused-result": "const missing=1 % 0; return text.charAt(0);",
         "extra-argument": "return text.charAt(0, 0 % 1);",
         "charat-authority": "return text.charAt(0 % 1).toLowerCase();",
         "slice-authority": "return text.slice(1 % 2).toLowerCase();",
@@ -4267,8 +4403,6 @@ def main():
         "boolean": "return text.charAt(false ** 0);",
         "null": "return text.slice(0 ** null);",
         "object-coercion": "return text.slice(0, {valueOf() { return 0; }} ** 1);",
-        "result-escape": "const missing=1 ** 1e999; text.charAt(missing); return missing;",
-        "unused-result": "const missing=1 ** 1e999; return text.charAt(0);",
         "nan-global": "return text.charAt(NaN ** 1);",
         "infinity-global": "return text.slice(1 ** Infinity);",
         "extra-argument": "return text.charAt(0, 0 ** 1);",
@@ -4309,9 +4443,6 @@ def main():
         "object-coercion": "return text.slice(-(0 / {valueOf() { return 0; }}));",
         "double-negation": "return text.slice(-(-(0 / 0)));",
         "number-global": "return text.charAt(-(NaN / 0));",
-        "result-escape": "const bound=-(0 / 0); text.charAt(bound); return bound;",
-        "inner-result-escape": "const bound=0 / 0; text.charAt(-bound); return bound;",
-        "unused-result": "const bound=-(0 / 0); return text.charAt(0);",
         "extra-argument": "return text.charAt(0, -(0 / 0));",
         "charat-authority": "return text.charAt(-(0 / 0)).toLowerCase();",
         "slice-authority": "return text.slice(-(0 - 1)).toLowerCase();",
@@ -4348,12 +4479,6 @@ def main():
         "object-coercion": "return text.slice(-{valueOf() { return 0; }} / 1);",
         "number-global": "return text.charAt(-NaN / 1);",
         "infinity-global": "return text.slice(-Infinity / 1);",
-        "leaf-escape": "const bound=-1; text.charAt(0 - bound); return bound;",
-        "leaf-comparison": "const bound=-1; return text.charAt(0 - bound) === text && bound === index;",
-        "result-escape": "const bound=-1 + 1; text.charAt(bound); return bound;",
-        "result-comparison": "const bound=-1 + 1; return text.charAt(bound) === text && bound === index;",
-        "outer-result-escape": "const bound=-(-1 + 1); text.charAt(bound); return bound;",
-        "unused-result": "const bound=-1 + 1; return text.charAt(0);",
         "extra-argument": "return text.charAt(0, -1 + 1);",
         "charat-authority": "return text.charAt(-1 + 1).toLowerCase();",
         "slice-authority": "return text.slice(-1 * -1).toLowerCase();",
@@ -4396,13 +4521,6 @@ def main():
         "object-coercion": "return text.slice(({valueOf() { return 0; }} / 1) + 1);",
         "number-global": "return text.charAt((NaN / 1) + 1);",
         "infinity-global": "return text.slice(1 + (Infinity / 1));",
-        "inner-result-escape": "const inner=0 / 0; text.charAt(inner + 1); return inner;",
-        "add-result-escape": "const inner=0 / 0; const bound=inner + 1; text.charAt(bound); return bound;",
-        "add-result-comparison": "const bound=(0 / 0) + 1; return text.charAt(bound) === text && bound === index;",
-        "signed-add-result-escape": "const bound=(-1 + 1) + 1; text.charAt(bound); return bound;",
-        "outer-result-escape": "const bound=-((0 / 0) + 1); text.charAt(bound); return bound;",
-        "unused-add-result": "const inner=0 / 0; const bound=inner + 1; return text.charAt(inner);",
-        "unused-result": "const bound=(0 / 0) * 1; return text.charAt(0);",
         "extra-argument": "return text.charAt(0, (0 / 0) + 1);",
         "charat-authority": "return text.charAt((0 / 0) + 1).toLowerCase();",
         "slice-authority": "return text.slice((0 - 1) * -1).toLowerCase();",
@@ -4599,7 +4717,7 @@ def main():
     refuse(ir, manifest, "parameter-shadow-refused")
     print(
         f"Symbol exports: typed parameters/helpers/captures, guarded String methods, scalar equality and branch/loop return; "
-        f"{agreements} Node/VM agreements, {differences} known VM casing/index differences; "
+        f"{agreements} Node/VM agreements; "
         f"{8 * len(CASES)} native executions, {refusals} refusals, 2 mutations; Core only, no DOM inputs"
     )
 

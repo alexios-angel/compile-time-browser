@@ -666,12 +666,23 @@ js_boolean_t primitive_equal(const L & left, const R & right) {
 // says it may be - the join starts from `undefined` for this reason
 // (TypeInference::elementTypeOf).
 
+// A Number key selects an element only when it is an integral index below
+// `size`; -0 names "0". Any other Number names a property ("0.5", "-1") that a
+// proved array or snapshot does not have, as in the VM and Node.
+// ctcompile: the element a Number key selects, if any
+inline bool element_index(nullable_scalar key, std::size_t size, std::size_t & index) {
+    if (key.tag != nullable_scalar::kind::number || !(key.value >= 0.0) ||
+        key.value >= static_cast<double>(size) || std::trunc(key.value) != key.value) {
+        return false;
+    }
+    index = static_cast<std::size_t>(key.value);
+    return true;
+}
 // ctcompile: `a[i]`, whose out-of-range answer is undefined, which is NaN here
 inline nullable_scalar vec_at(const std::vector<double> & v, nullable_scalar key) {
-    if (key.tag != nullable_scalar::kind::number) { return {}; }
-    double i = std::trunc(key.value);
-    if (!(i >= 0.0) || i >= static_cast<double>(v.size())) { return {}; }
-    return v[static_cast<std::vector<double>::size_type>(i)];
+    std::size_t i = 0;
+    if (!element_index(key, v.size(), i)) { return {}; }
+    return v[i];
 }
 // ctcompile: `a.length`, which is `size()` exactly - the site proof is what
 // rules out a hole
@@ -684,10 +695,9 @@ inline void vec_push(std::vector<double> & v, js_num x) {
 }
 // ctcompile: confined owning Map string-key snapshots
 inline nullable_string vec_at(const std::vector<std::string> & values, nullable_scalar key) {
-    if (key.tag != nullable_scalar::kind::number) { return {}; }
-    const double index = std::trunc(key.value);
-    if (!(index >= 0.0) || index >= static_cast<double>(values.size())) { return {}; }
-    return values[static_cast<std::vector<std::string>::size_type>(index)];
+    std::size_t index = 0;
+    if (!element_index(key, values.size(), index)) { return {}; }
+    return values[index];
 }
 
 // --- object values -----------------------------------------------------------
@@ -1041,16 +1051,15 @@ template <class Map> auto map_keys(const Map & map) {
     for (const auto & entry : map->entries) { out.push_back(entry.first); }
     return out;
 }
-// The numeric snapshot indexing contract is vec_at's: check the tag, truncate,
-// then bounds-check. In particular -0.5 indexes zero in the current interpreter.
+// The numeric snapshot indexing contract is vec_at's element_index: -0.5 names
+// the property "-0.5", not element zero.
 // ctcompile: scalar consumer of a proved unmodified Map snapshot
 template <bool Keys, class K, class V>
 nullable_scalar map_snapshot_at(const std::shared_ptr<map_storage<K, V>> & map,
                                 nullable_scalar key) {
-    if (key.tag != nullable_scalar::kind::number) { return {}; }
-    const double index = std::trunc(key.value);
-    if (!(index >= 0.0) || index >= static_cast<double>(map->entries.size())) { return {}; }
-    const auto & entry = map->entries[static_cast<std::size_t>(index)];
+    std::size_t index = 0;
+    if (!element_index(key, map->entries.size(), index)) { return {}; }
+    const auto & entry = map->entries[index];
     if constexpr (Keys) {
         return entry.first;
     } else {
