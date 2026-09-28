@@ -2327,8 +2327,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 (compared && (index < 17 || index == 21)) || control == 268 || control == 269 ||
                 control == 1356 || control == 1357 ||
                 (calculated &&
-                 (index < 15 ||
-                  (!power && !staticCalculated && !coercingBinary && !stringAdd && index == 20) ||
+                 (index < 15 || (!power && !coercingBinary && !stringAdd && index == 20) ||
                   (power && index == 18))) ||
                 (numericUnary && (index < 15 || (!coercingUnary && index == 18))) ||
                 (equality &&
@@ -2784,7 +2783,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             (control >= 1166 && control < 1210) || (control >= 1220 && control < 1226) ||
             control == 268 || control == 269 || (control >= 1248 && control < 1312) ||
             (control >= 1324 && control < 1330) || (control >= 1356 && control < 1388) ||
-            (control >= 1394 && control < 1400) || (control >= 1426 && control < 1478);
+            (control >= 1394 && control < 1400) || (control >= 1426 && control < 1478) ||
+            control == 424 || control == 425; // a bitwise ctjs.binary folds since e6babb265
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
