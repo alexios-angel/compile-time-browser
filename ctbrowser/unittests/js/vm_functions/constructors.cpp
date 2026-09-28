@@ -7,6 +7,39 @@
 // strict one takes the value as given. And `new bound()` constructs the
 // target with the bound arguments in front (10.4.1.2).
 void test_call_bind_this() {
+    // Every Call path rejects a class before its body starts, including
+    // wrappers and callbacks that enter through context::invoke.
+    for (const char * target : {"C", "C.bind(null)", "C.bind(null).bind(null)", "new Proxy(C, {})",
+                                "new Proxy(C.bind(null), {})", "new Proxy(C, {}).bind(null)"}) {
+        expect_result(std::string{"let ran = 0; class C { constructor() { ran++; } } const f = "} +
+                          target +
+                          "; const out = []; for (const call of [() => f(),"
+                          " () => f(...[]), () => f.call(null), () => f.apply(null, []),"
+                          " () => Reflect.apply(f, null, []), () => [0].map(f)]) {"
+                          " try { call(); out.push('no throw'); }"
+                          " catch (e) { out.push(e.name); } } return out.join() + ',' + ran;",
+                      "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,0");
+    }
+    // IsCallable(class) is true: CreateListFromArrayLike happens before Call.
+    expect_result("class C {} const log = []; const args = {get length() {"
+                  " log.push('length'); return 1; }, get 0() { log.push('arg'); return 0; }};"
+                  "for (const apply of [() => C.apply(null, args),"
+                  " () => Reflect.apply(C, null, args)]) {"
+                  " try { apply(); } catch (e) { log.push(e.name); } } return log.join();",
+                  "length,arg,TypeError,length,arg,TypeError");
+    expect_result("class C {} const args = { get length() { throw 'argument'; } };"
+                  "const out = []; for (const apply of [() => C.apply(null, args),"
+                  " () => Reflect.apply(C, null, args)]) {"
+                  " try { apply(); } catch (e) { out.push(e); } } return out.join();",
+                  "argument,argument");
+    // A proxy apply trap can implement Call without invoking its class target.
+    expect_result("class C {} const f = new Proxy(C, { apply(t, self, args) { return args[0]; }});"
+                  "return f(7) + ',' + f.bind(null, 8)();",
+                  "7,8");
+    expect_result("class A { constructor(v) { this.v = v; } }"
+                  "class B extends A { constructor(v) { (() => super(...[v]))(); } }"
+                  "const C = B.bind(null, 9); return new C().v + ',' + new B(8).v;",
+                  "9,8");
     // 10.4.1.3: a bound function's [[Prototype]] is the target's, and its
     // length follows 20.2.3.2 step 7 - an infinite target length stays
     // infinite, a fractional one truncates, less the bound arguments.
@@ -104,6 +137,31 @@ void test_derived_constructors() {
     expect_result("class A {} class B extends A { constructor() { const f = () => super(); f();"
                   " this.x = 3; } } return new B().x;",
                   "3");
+    // Bare super() forwards the enclosing constructor's new.target even
+    // through escaped/nested arrows and bound or proxy superclass calls.
+    expect_result("let finish; class A { constructor() { return {target: new.target}; } }"
+                  "class B extends A { constructor() { finish = () => () => super();"
+                  " return {}; } } new B(); return finish()().target === B;",
+                  "true");
+    expect_result("class A { constructor() { return {target: new.target}; } }"
+                  "const P = A.bind(null); P.prototype = Object.create(A.prototype);"
+                  "P.prototype.constructor = P;"
+                  "class B extends P { constructor() { return (() => super(...[]))(); } }"
+                  "return new B().target === B;",
+                  "true");
+    expect_result("class A { constructor() { return {target: new.target}; } }"
+                  "const P = new Proxy(A, {}); A.prototype.constructor = P;"
+                  "class B extends P { constructor() { return (() => super())(); } }"
+                  "return new B().target === B;",
+                  "true");
+    // A native superclass must not lend its new.target to later Call paths.
+    expect_result("class A {} class B extends Array { constructor() { (() => super())(); A(); } }"
+                  "try { new B(); } catch (e) { return e.name; } return 'no throw';",
+                  "TypeError");
+    expect_result("let ran = 0; class A { constructor() { ran++; throw 'body'; } }"
+                  "class B extends Map { constructor() { super({[Symbol.iterator]: A}); } }"
+                  "try { new B(); } catch (e) { return e.name + ',' + ran; } return 'no throw';",
+                  "TypeError,0");
     expect_result(
         "class A {} class B extends A { constructor() { const g = () => this; try { g(); }"
         " catch (e) { super(); return; } } } new B(); return 'caught';",

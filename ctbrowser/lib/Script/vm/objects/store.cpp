@@ -287,6 +287,11 @@ void context::store_index(value target, value key, value v) {
 }
 
 void context::pass_new_target(value from) {
+    if (!frames_.empty() && frames_.back().closure != nullptr) {
+        if (const value * held = frames_.back().closure->find(CTBROWSER_PRIVATE_KEY("NewTarget"))) {
+            from = *held;
+        }
+    }
     pending_new_target_ = from;
 }
 

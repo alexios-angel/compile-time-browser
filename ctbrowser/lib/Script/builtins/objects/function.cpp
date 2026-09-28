@@ -51,14 +51,14 @@ void install_function(context & cx) {
     method(cx, function_proto, "call", 1,
            [this_function, bind_this](context & c, std::span<value> a) {
                const value self = this_function(c, "call");
-               if (!self.is_callable() || c.refuse_class_call(self)) { return value::undefined(); }
+               if (!self.is_callable()) { return value::undefined(); }
                const std::vector<value> rest(a.begin() + (a.empty() ? 0 : 1), a.end());
                return c.call(self, rest, bind_this(c, self, arg_at(a, 0)));
            });
     method(cx, function_proto, "apply", 2,
            [this_function, bind_this](context & c, std::span<value> a) {
                const value self = this_function(c, "apply");
-               if (!self.is_callable() || c.refuse_class_call(self)) { return value::undefined(); }
+               if (!self.is_callable()) { return value::undefined(); }
                // A null or undefined argArray is an empty list (20.2.3.1 step 3).
                const value list = arg_at(a, 1);
                const value args = list.is_nullish()

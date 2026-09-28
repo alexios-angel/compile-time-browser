@@ -87,6 +87,19 @@ void test_argument_list_survives_a_collection() {
 }
 
 void test_constructor_prototype_survives_a_collection() {
+    expect_gc("escaped super arrow retains new.target", R"(
+        let finish;
+        class A { constructor() { return {target: new.target}; } }
+        class B extends A { constructor() { finish = () => super(); return {}; } }
+        (function () {
+            function Other() {}
+            Other.prototype = null;
+            Reflect.construct(B, [], Other);
+        })();
+        gc();
+        return finish().target.name;
+    )",
+              "Other");
     expect_gc("constructor prototype getter collects", R"(
         const handle = Proxy.revocable(function () { this.answer = 42; }, {
             get(target, key) {

@@ -249,7 +249,6 @@ void install_proxy(context & cx) {
             c.throw_error("TypeError", "Reflect.apply: target is not a function");
             return value::undefined();
         }
-        if (c.refuse_class_call(a[0])) { return value::undefined(); }
         const value args = detail::create_argument_list(c, arg_at(a, 2), detail::max_generic_walk);
         if (args.is_undefined()) { return args; }
         const context::rooted keep{c, args};

@@ -98,6 +98,17 @@ value context::make_closure(closure_object * enclosing, std::uint32_t function_i
     // still see the method's object. The caller reads the EFFECTIVE receiver.
     if (target.is_arrow) {
         made->captured_this = enclosing_this;
+        // Bare super() also needs the lexical new.target, even when no
+        // explicit new.target expression made the compiler capture it.
+        value new_target = frames_.empty() ? value::undefined() : frames_.back().new_target;
+        if (enclosing != nullptr) {
+            if (const value * held = enclosing->find(CTBROWSER_PRIVATE_KEY("NewTarget"))) {
+                new_target = *held;
+            }
+        }
+        if (!new_target.is_undefined()) {
+            made->define(CTBROWSER_PRIVATE_KEY("NewTarget"), new_target, attr_none);
+        }
         // ...AND ITS HOME OBJECT, for the same reason: `super.m()` and
         // `super()` inside an arrow resolve against the method or constructor
         // the arrow was written in (an arrow has no [[HomeObject]] of its

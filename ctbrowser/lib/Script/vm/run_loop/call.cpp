@@ -42,6 +42,9 @@ void context::execute_call(instruction in, call_frame * vm_frame, const function
             const std::size_t arg_base = base + in.a + 1;
             if (callee.is_kind(heap_kind::native)) {
                 auto * nat = static_cast<native_object *>(callee.as_heap());
+                if (nat->find(CTBROWSER_PRIVATE_KEY("BoundTargetFunction")) == nullptr) {
+                    pending_new_target_ = value::undefined();
+                }
                 // A HEAP PAST ITS THRESHOLD COLLECTS HERE TOO. A loop whose
                 // only calls are natives - `nodeList[j]` through a native
                 // proxy trap, 250 million times - never reaches invoke's
