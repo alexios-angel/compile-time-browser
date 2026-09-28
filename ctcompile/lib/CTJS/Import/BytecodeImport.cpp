@@ -305,15 +305,61 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                           "executing the body, even without a suspension point - Phase 14");
         }
 
+        // THE HANDLERS OPEN AT EACH INSTRUCTION, BY CONTROL FLOW rather than by
+        // instruction order. A `return`, `break` or `continue` leaving a try
+        // pops its handler on its own path before jumping (380ee61d5 made one
+        // routed into a finally do it too), so the try's normal-path pop comes
+        // LATER in the code with the region still open on its own path. Read
+        // in instruction order, that second pop found nothing open and every
+        // `try { return } finally {}` was refused.
+        //
+        // A pad starts with the handlers open at its push_handler, because the
+        // interpreter's unwinder pops the handler it lands from. Unreached code
+        // keeps what the walk had, and its pop is emitted as it stands.
+        using handler_stack = decltype(function_importer::handlers);
+        std::vector<std::optional<handler_stack>> open_at(proto.code.size());
+        if (!state.gave_up && !proto.code.empty()) {
+            llvm::SmallVector<std::size_t> work{0};
+            open_at[0].emplace();
+            const auto reach = [&](std::size_t from, std::int64_t target,
+                                   const handler_stack & open) {
+                // A target past the end has no block; the walk refuses it.
+                if (target < 0 || target >= static_cast<std::int64_t>(proto.code.size())) {
+                    return;
+                }
+                std::optional<handler_stack> & known = open_at[static_cast<std::size_t>(target)];
+                if (!known) {
+                    known = open;
+                    work.push_back(static_cast<std::size_t>(target));
+                } else if (*known != open) {
+                    state.give_up(from, proto.code[from].code,
+                                  "paths into one instruction have different handlers open");
+                }
+            };
+            while (!work.empty() && !state.gave_up) {
+                const std::size_t at = work.pop_back_val();
+                const instruction & in = proto.code[at];
+                handler_stack open = *open_at[at];
+                if (in.code == op::push_handler) {
+                    reach(at, jump_target(at, in), open);
+                    open.push_back({state.block_at(jump_target(at, in)), in.a});
+                } else if (in.code == op::pop_handler) {
+                    if (open.empty()) {
+                        state.give_up(at, in.code,
+                                      "pop_handler with no open handler in this function");
+                        break;
+                    }
+                    open.pop_back();
+                } else if (is_jump(in.code)) {
+                    reach(at, jump_target(at, in), open);
+                }
+                if (falls_through(in.code)) { reach(at, static_cast<std::int64_t>(at) + 1, open); }
+            }
+        }
+
         for (std::size_t at = 0; at < proto.code.size() && !state.gave_up; ++at) {
             if (leader[at] && (at > 0 || targets_zero)) { enter_block(at); }
-            // A PAD BLOCK CLOSES THE REGION IT LANDS FROM. The bytecode's
-            // pop_handler runs on the NORMAL path only, so a throw leaves the
-            // handler stack as the interpreter's unwinder left it - popped.
-            if (!state.handlers.empty() &&
-                state.handlers.back().pad == state.block_at(static_cast<std::int64_t>(at))) {
-                state.handlers.pop_back();
-            }
+            if (leader[at] && open_at[at]) { state.handlers = *open_at[at]; }
             // A PAD BLOCK TAKES ITS THROWN VALUE FROM THE RUNTIME, not from a
             // predecessor. ctjs.catch_land is the block's first operation and
             // its result replaces the block argument for the catch register -
