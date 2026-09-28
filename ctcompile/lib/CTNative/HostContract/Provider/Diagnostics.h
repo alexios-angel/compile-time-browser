@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Prefix.h"
+#include "../Prefix/Analysis.h"
 
 namespace ctcompile::ctnative::host_detail {
 

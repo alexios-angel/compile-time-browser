@@ -1,4 +1,4 @@
-#include "../../../lib/CTNative/HostContract/ProviderState.h"
+#include "../../../lib/CTNative/HostContract/Provider/State.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 
 #include "mlir/IR/MLIRContext.h"

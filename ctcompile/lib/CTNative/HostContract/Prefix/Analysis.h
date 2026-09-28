@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Analysis.h"
-#include "ProviderState.h"
+#include "../Analysis.h"
+#include "../Provider/State.h"
 #include "ctcompile/CTNative/Analysis/HostPrefix.h"
 #include "llvm/ADT/StringSet.h"
 

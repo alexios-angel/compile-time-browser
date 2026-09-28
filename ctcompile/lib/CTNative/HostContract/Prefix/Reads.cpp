@@ -1,4 +1,4 @@
-#include "ProviderPaths.h"
+#include "../Provider/Paths.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 

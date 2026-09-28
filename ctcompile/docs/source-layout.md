@@ -12,7 +12,7 @@ where fixtures and shared build helpers belong.
 | Partial evaluation | `lib/CTNative/PartialEvaluation/` | Factory admission, static entry prefixes, bounded evaluation, call-target and heap-equivalence proofs, primitive adapter and residualisation |
 | Binding time | `lib/CTNative/Analysis/BindingTime/` and `BindingTime/` | Argument/callee facts, conditional effect summaries and queries, heap flow and annotation pass |
 | Host contracts | `lib/CTNative/HostContract/` | Fingerprinted closed-source manifests, fresh allocation identity, own-data slot flow, bounded proof reports and entry-prefix specialization |
-| Private provider state | `lib/CTNative/HostContract/ProviderState.*`, `ProviderObjects.*`, `ProviderPaths.h` and `PrefixMutations.cpp` | Transactional Maps, live object identities/scalar fields, allocation/call provenance and bounded normal-return path summaries |
+| Private provider state | `lib/CTNative/HostContract/Provider/State.*`, `Objects.*`, `Paths.h` and `Prefix/Mutations.cpp` | Transactional Maps, live object identities/scalar fields, allocation/call provenance and bounded normal-return path summaries |
 | Precomputation | `lib/CTNative/Symbolic/` | Primitive and normal-result facts, bounded propagation, scalar constant replacement patterns and native region splicing |
 | Specialization | `lib/CTNative/Specialization/` | Closed direct-call candidates, exact argument tuples and bounded residual variants |
 | Reachability | `lib/CTNative/Reachability/` | Bounded graph proof and transactional removal of private helpers |
@@ -20,7 +20,7 @@ where fixtures and shared build helpers belong.
 | Deforestation | `lib/CTNative/Deforestation/` | Snapshot producer/consumer constraints, effect barriers and scalar projection helpers |
 | Native pass | `lib/CTNative/Lowering/LowerToEmitC.cpp` | Default optimization policy, pass setup, inference, admission fixpoint and lowering order |
 | Closure lifting | `lib/CTNative/Lowering/ClosureLifting/` | Calls, callbacks, bindings, cells, captures, returned closures and method tables, constructors, diagnostics and rewriting |
-| Provider paths | `lib/CTNative/HostContract/Provider*` and `PrefixMutations.cpp` | Private Map transactions, ordered diagnostic snapshots, bounded primitive callback effects and atomic global post-state |
+| Provider paths | `lib/CTNative/HostContract/Provider/` and `Prefix/Mutations.cpp` | Private Map transactions, ordered diagnostic snapshots, bounded primitive callback effects and atomic global post-state |
 | Native admission | `lib/CTNative/Lowering/Admission/` | Value, object, operation and function checks |
 | Native exceptions | `lib/CTNative/Lowering/Exceptions/` | Bounded handler recovery using LLVM CFG-to-SCF, homogeneous primitive payload/effect admission, transactional rollback and owning catch-state storage |
 | Native emission | `lib/CTNative/Lowering/EmitC/` | Shapes, types, owning environments and method tables, Maps, expressions, operations, functions and module declarations |

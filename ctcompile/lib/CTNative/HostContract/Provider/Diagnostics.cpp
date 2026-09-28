@@ -1,6 +1,6 @@
-#include "ProviderDiagnostics.h"
+#include "Diagnostics.h"
 
-#include "ProviderCallbacks.h"
+#include "Callbacks.h"
 
 #include <ctbrowser/core/algorithms.hpp>
 

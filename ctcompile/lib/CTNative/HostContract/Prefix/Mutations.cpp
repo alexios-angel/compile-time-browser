@@ -1,7 +1,7 @@
-#include "ProviderPaths.h"
+#include "../Provider/Paths.h"
 
-#include "ProviderDiagnostics.h"
-#include "ProviderObjects.h"
+#include "../Provider/Diagnostics.h"
+#include "../Provider/Objects.h"
 
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"

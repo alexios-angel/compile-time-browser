@@ -1,5 +1,5 @@
 #include "../../../Analysis/StringNumber.h"
-#include "../../Prefix.h"
+#include "../../Prefix/Analysis.h"
 #include "../Source/Proof.hpp"
 #include "ctbrowser/core/symbol.hpp"
 #include "ctcompile/CTNative/Runtime/String.hpp"

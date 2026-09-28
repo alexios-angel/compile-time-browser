@@ -222,7 +222,7 @@ speculative heap or report facts.
 
 ## Implementation and reports
 
-`HostContract/ProviderState.h/.cpp` implements the identity, SameValueZero and
+`HostContract/Provider/State.h/.cpp` implements the identity, SameValueZero and
 transactional Map-state helpers. `PrefixFactories.cpp` registers successful
 captured roots in that state. The new `PrefixMutations.cpp` interprets method
 paths against transaction-local state. `PrefixReads.cpp` retains the existing

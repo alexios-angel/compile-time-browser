@@ -1,4 +1,4 @@
-#include "Analysis.h"
+#include "../Analysis.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"

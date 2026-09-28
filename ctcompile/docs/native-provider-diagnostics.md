@@ -104,10 +104,10 @@ observations; the reference printer does not expose globals after a throw.
 
 | Area | Implementation |
 |---|---|
-| Ordered snapshot storage and atomic budget failure | `lib/CTNative/HostContract/ProviderState.{h,cpp}` |
-| Checked lookups, iterator consumption and messages | `lib/CTNative/HostContract/ProviderDiagnostics.{h,cpp}` |
-| Primitive callback paths and global effects | `lib/CTNative/HostContract/ProviderCallbacks.{h,cpp}` |
-| Enclosing transaction commit | `lib/CTNative/HostContract/PrefixMutations.cpp` |
+| Ordered snapshot storage and atomic budget failure | `lib/CTNative/HostContract/Provider/State.{h,cpp}` |
+| Checked lookups, iterator consumption and messages | `lib/CTNative/HostContract/Provider/Diagnostics.{h,cpp}` |
+| Primitive callback paths and global effects | `lib/CTNative/HostContract/Provider/Callbacks.{h,cpp}` |
+| Enclosing transaction commit | `lib/CTNative/HostContract/Prefix/Mutations.cpp` |
 | Source regression | `test/CTNative/HostContract/Provider/diagnostics.{py,test}` |
 | Exact Bootstrap oracle and boxed differential | `tools/check/bootstrap-host-prefix.py`, `test/cmake/BootstrapData.cmake` |
 
