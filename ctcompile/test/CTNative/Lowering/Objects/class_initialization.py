@@ -142,6 +142,20 @@ OBSERVATIONS.update(OWN_ENTRIES)
 ENTRIES_FRESH = "class Object.entries requires a fresh empty static getter object"
 ENTRIES_PATH = "class Object.entries requires a proved method with a closed effect-free path"
 POSITIVES.update({"own-entries-default-type", "inherited-own-entries-default-type"})
+# Static methods no read reaches are removed before the class proof.
+UNREAD_STATICS = {
+    name: (7, 7)
+    for name in (
+        "static-unread-new-this",
+        "static-unread-chain",
+        "static-unread-nested",
+        "inherited-static-unread-leaf-read",
+        "static-unread-dynamic",
+        "static-unread-constructor-read",
+    )
+}
+OBSERVATIONS.update(UNREAD_STATICS)
+POSITIVES.update({"static-unread-new-this", "static-unread-chain", "static-unread-nested"})
 # A base constructed only through leaf super calls leaves its snapshot to the leaf.
 DEFERRED = {
     "inherited-own-fields-iterate-deferred-arm": (7, 7),
@@ -453,7 +467,7 @@ def main():
         + ";\n"
         + bootstrap[start:base_end]
         + "\n    var instance = new B(null, null);\n"
-        "    return instance._element === undefined ? 7 : 9;\n}\nvar a = bootstrapBase();\n"
+        "    return instance._element === void 0 ? 7 : 9;\n}\nvar a = bootstrapBase();\n"
     )
     # Add the original shared Map and complete Data holder without changing the
     # existing ambient-e control. Only the declaration separator becomes a ';'.
@@ -780,8 +794,8 @@ def main():
             "inherited-method-base-shadow": "class method is observed or shadowed",
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": "static method receiver requires an exact own getter read",
-            "bootstrap-base-data": "static method receiver requires an exact own getter read",
+            "bootstrap-base": 'unknown call, binding or reflective effect (global "document")',
+            "bootstrap-base-data": 'unknown call, binding or reflective effect (global "Map")',
             "own-entries-default-type-fields": "static getter body is not a closed expression",
             "own-entries-default-type-primitive": ENTRIES_FRESH,
             "own-entries-default-type-written": ENTRIES_FRESH,
@@ -789,7 +803,10 @@ def main():
             "own-entries-argument": ENTRIES_FRESH,
             "own-entries-default-type-passed": ENTRIES_PATH,
             "own-entries-default-type-effect": ENTRIES_PATH,
-            "bootstrap-base-button": "static method receiver requires an exact own getter read",
+            "bootstrap-base-button": 'unknown call, binding or reflective effect (global "Map")',
+            "inherited-static-unread-leaf-read": "static method receiver requires an exact own getter read",
+            "static-unread-dynamic": "static method receiver requires an exact own getter read",
+            "static-unread-constructor-read": "static method receiver requires an exact own getter read",
             "inherited-own-fields-iterate-deferred-siblings-differ": "inherited own-key snapshot requires the same ordered fields",
             "inherited-own-fields-iterate-deferred-mixed": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-iterate-deferred-early-snapshot": "class construction method observes an own-key snapshot",

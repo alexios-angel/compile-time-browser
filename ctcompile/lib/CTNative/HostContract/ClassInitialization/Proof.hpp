@@ -229,6 +229,8 @@ struct classInitialization {
                        llvm::ArrayRef<ctjs::GetPropertyOp> reads, ctjs::CallOp helper);
 
     bool proveHeritage(const HostContract & contract);
+    // Static methods no read reaches never run; remove them before any proof.
+    bool dropUnreadStatics();
     bool proveInstanceOf(const HostContract & contract);
 
     bool heritageUse(mlir::OpOperand & use, mlir::Value constructor);

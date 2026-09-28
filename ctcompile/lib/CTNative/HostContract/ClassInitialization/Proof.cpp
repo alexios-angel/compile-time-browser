@@ -71,6 +71,147 @@ bool classInitialization::proveInstanceOf(const HostContract & contract) {
     return !walked.wasInterrupted();
 }
 
+bool classInitialization::dropUnreadStatics() {
+    // A static method runs only through a read of its key: `C.k`, `this.k` in
+    // a static body, `this.constructor.k`, or a read on a subclass. One that no
+    // read reaches - outside the bodies of other unread static methods - never
+    // runs: drop its definition, closure and every function only its body
+    // creates, before any proof or census sees them. Every other use of a
+    // class value is refused by the class proof itself.
+    // ponytail: any read of the key anywhere keeps it, and so does a dynamic
+    // key on a receiver, constructor or closure; a per-class read proof keeps
+    // fewer.
+    llvm::MapVector<mlir::Operation *, llvm::StringRef> statics;
+    for (ctjs::CallOp call : calls) {
+        auto closure = call.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>();
+        if (!closure) { continue; }
+        for (mlir::Operation * user : closure->getUsers()) {
+            if (!step()) { return false; }
+            auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+            const auto key = write ? ctjs::constantKey(write.getKey()) : llvm::StringRef{};
+            // Importer hooks such as `__fields` are read by runtime helpers
+            // through the home object, never by a property read: keep them.
+            if (write && write.getObject() == closure.getResult() && ctjs::ordinaryKey(key) &&
+                key != "prototype" && !key.starts_with("__") &&
+                write.getValue().getDefiningOp<ctjs::CreateClosureOp>() &&
+                write->getBlock() == call->getBlock() && write->isBeforeInBlock(call)) {
+                statics[write] = key;
+            }
+        }
+    }
+    // Every function a set of static bodies creates, transitively.
+    const auto bodies = [&](auto && selected, llvm::SetVector<mlir::Operation *> & result) {
+        for (auto [write, key] : statics) {
+            if (!selected(key)) { continue; }
+            auto value = llvm::cast<ctjs::SetPropertyOp>(write).getValue();
+            if (auto fn = target(value.getDefiningOp<ctjs::CreateClosureOp>())) {
+                result.insert(fn);
+            }
+        }
+        for (size_t i = 0; i < result.size(); ++i) {
+            const auto walked = result[i]->walk([&](ctjs::CreateClosureOp nested) {
+                if (!step()) { return mlir::WalkResult::interrupt(); }
+                if (auto fn = target(nested)) { result.insert(fn); }
+                return mlir::WalkResult::advance();
+            });
+            if (walked.wasInterrupted()) { return false; }
+        }
+        return true;
+    };
+    llvm::StringSet<> unread;
+    for (auto [write, key] : statics) { unread.insert(key); }
+    for (bool changed = true; changed && !unread.empty();) {
+        changed = false;
+        llvm::SetVector<mlir::Operation *> excluded;
+        if (!bodies([&](llvm::StringRef key) { return unread.contains(key); }, excluded)) {
+            return false;
+        }
+        llvm::StringSet<> read;
+        bool dynamic = false;
+        const auto walked = module.walk([&](ctjs::GetPropertyOp get) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (excluded.contains(get->getParentOfType<ctjs::FuncOp>())) {
+                return mlir::WalkResult::advance();
+            }
+            const auto key = ctjs::constantKey(get.getKey());
+            if (!key.empty()) {
+                read.insert(key);
+                return mlir::WalkResult::advance();
+            }
+            // Only a class value, a receiver or a constructor read can name a
+            // static method through a computed key.
+            const auto object = sourceValue(get.getObject());
+            auto argument = llvm::dyn_cast<mlir::BlockArgument>(object);
+            auto owner = object.getDefiningOp<ctjs::GetPropertyOp>();
+            dynamic |= (argument && argument.getArgNumber() == ctjs::arg_receiver &&
+                        argument.getOwner()->isEntryBlock() &&
+                        llvm::isa<ctjs::FuncOp>(argument.getOwner()->getParentOp())) ||
+                       object.getDefiningOp<ctjs::CreateClosureOp>() ||
+                       (owner && ctjs::constantKey(owner.getKey()) == "constructor");
+            return mlir::WalkResult::advance();
+        });
+        if (walked.wasInterrupted()) { return false; }
+        if (dynamic) { return true; }
+        for (auto [write, key] : statics) {
+            if (unread.contains(key) && read.contains(key)) {
+                unread.erase(key);
+                changed = true;
+            }
+        }
+    }
+    llvm::SetVector<mlir::Operation *> dead;
+    if (!bodies([&](llvm::StringRef key) { return unread.contains(key); }, dead)) { return false; }
+    // Check every closure, body and symbol before changing anything.
+    llvm::SmallVector<mlir::Operation *> homes;
+    for (auto [write, key] : statics) {
+        if (!unread.contains(key)) { continue; }
+        auto definition = llvm::cast<ctjs::SetPropertyOp>(write);
+        auto closure = definition.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        // The definition, its lexical home and roots are the closure's only uses.
+        for (mlir::Operation * user : closure->getUsers()) {
+            if (!step()) { return false; }
+            auto home = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+            if (user == definition || llvm::isa<ctjs::RootOp>(user)) { continue; }
+            if (!home || home.getObject() != closure.getResult() ||
+                ctjs::constantKey(home.getKey()) != "__home") {
+                return refuse("unread static method identity escapes its definition");
+            }
+            homes.push_back(home);
+        }
+    }
+    for (mlir::Operation * fn : dead) {
+        const auto walked = fn->walk([&](mlir::Operation * op) {
+            if (!step() || llvm::is_contained(calls, op) || llvm::isa<ctjs::StoreGlobalOp>(op)) {
+                return mlir::WalkResult::interrupt();
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (!reason.empty()) { return false; }
+        if (walked.wasInterrupted() ||
+            !mlir::SymbolTable::symbolKnownUseEmpty(fn, module.getOperation())) {
+            return refuse("unread static method declares, publishes or is named");
+        }
+    }
+    for (mlir::Operation * home : homes) { home->erase(); }
+    for (auto [write, key] : statics) {
+        if (!unread.contains(key)) { continue; }
+        auto definition = llvm::cast<ctjs::SetPropertyOp>(write);
+        auto closure = definition.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        definition.erase();
+        eraseRooted(closure);
+    }
+    for (mlir::Operation * fn : dead) {
+        fn->walk([&](mlir::Operation * op) {
+            errorOperations.erase(op);
+            cellOperations.erase(op);
+        });
+        forgetRecords(llvm::cast<ctjs::FuncOp>(fn).getBody());
+        functions.erase(*functionIndex(llvm::cast<ctjs::FuncOp>(fn)));
+        fn->erase();
+    }
+    return true;
+}
+
 bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     if (!entry || !functionIndex(entry)) {
@@ -195,6 +336,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         }
     }
     if (!proveHeritage(contract)) { return false; }
+    if (!dropUnreadStatics()) { return false; }
     if (!maps.empty()) {
         llvm::SmallVector<unsigned> requiredHelpers;
         for (ctjs::CallOp call : calls) {
