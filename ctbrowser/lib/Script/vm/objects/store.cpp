@@ -449,13 +449,6 @@ void context::store_property(value target, const std::string & name, value v) {
             }
             up = parent->prototype;
         }
-        // NOT the implicit Object.prototype a null link ends in, though a
-        // read-only data property there refuses a [[Set]] (10.1.9.2): an
-        // object literal's `{prop: v}` is compiled to this same [[Set]], where
-        // it is CreateDataProperty, and `{prop: 12}` must not be refused by an
-        // Object.prototype.prop a page made read-only
-        // (language/expressions/object/11.1.5_3-3-1). The literal needs its
-        // own define before this can ask.
         if (!obj->extensible) {
             store_rejected_ = true;
             return;
@@ -768,10 +761,16 @@ bool context::assign_through_accessor(value target, const std::string & name, va
     // are a [[Set]] that B.2.2.1's setter turns into [[SetPrototypeOf]].
     object_object * table = prototype(proto_kind::object);
     if (table == nullptr) { return false; }
+    if (table->find(name) != nullptr && (table->attrs_of(name) & attr_writable) == 0) {
+        store_rejected_ = true;
+        return true;
+    }
     if (accessor_entry * entry = table->find_accessor(name)) {
         if (entry->setter.is_callable()) {
             const value args[1] = {v};
             (void)call(entry->setter, args, target);
+        } else {
+            store_rejected_ = true;
         }
         return true;
     }

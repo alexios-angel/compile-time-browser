@@ -16,6 +16,7 @@
 #include <string_view>
 
 #include <ctbrowser/script/bigint.hpp>
+#include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/vm.hpp>
 
 namespace ctbrowser::script {
@@ -23,6 +24,31 @@ namespace ctbrowser::script {
 context::context() {
     realms_.push_back(std::make_unique<realm_record>());
     scope_realm_ = realms_.front().get();
+    // Compiler primitives needed even when the embedding installs no builtins.
+    define_native(std::string{define_own_name}, [](context & c, std::span<value> a) {
+        if (a.size() < 3 || !a[0].is_object_like()) { return value::undefined(); }
+        context::property_descriptor wanted;
+        wanted.has_value = wanted.has_writable = wanted.has_enumerable = true;
+        wanted.has_configurable = true;
+        wanted.held = a[2];
+        wanted.writable = wanted.configurable = true;
+        wanted.enumerable = a.size() > 3 && context::truthy(a[3]);
+        if (!c.define_own_property(a[0], c.to_string(a[1]), wanted)) {
+            c.throw_error("TypeError", "Cannot redefine property: " + c.to_string(a[1]));
+        }
+        return value::undefined();
+    });
+    // See to_property_key_name.
+    define_native(std::string{to_property_key_name}, [](context & c, std::span<value> a) {
+        value key = a.empty() ? value::undefined() : a[0];
+        if (key.is_object_like() && !c.to_primitive_hint(key, "string", key)) {
+            return value::undefined();
+        }
+        if (key.is_kind(heap_kind::symbol)) { return key; }
+        std::string text = c.to_string(key);
+        return c.throw_pending() ? value::undefined() : c.string(std::move(text));
+    });
+    set_realm_template(globals());
     set_global_this(make_global_object(*scope_realm_));
 }
 

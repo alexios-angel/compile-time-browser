@@ -920,32 +920,30 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
         // DefineMethod): known now for a literal key, and otherwise only once
         // the key is evaluated - which then comes first, made a key once
         // (13.2.5.5 steps 1-2, before the value), and names the value at run
-        // time. Only a computed key holding a function changes shape.
+        // time.
         const std::optional<std::string> literal_key =
             (prop.d & 1) != 0 && prop.a >= 0 ? literal_key_name(prop.a) : std::nullopt;
+        // Only a colon after an identifier or quoted __proto__ sets the
+        // prototype. Computed names, shorthand properties and methods define data.
+        const bool sets_prototype =
+            prop.c < 0 && (((prop.d & 1) == 0 && prop.text == "__proto__") ||
+                           ((prop.d & 2) != 0 && literal_key == "__proto__"));
         const bool named_at_run_time = (prop.d & 1) != 0 && prop.a >= 0 && !literal_key &&
                                        (prop.c == 1 || is_anonymous_function_definition(prop.b));
-        if (named_at_run_time) {
-            const std::uint16_t key = alloc_reg();
+        std::uint16_t key = 0;
+        if ((prop.d & 1) != 0) {
+            key = alloc_reg();
             compile_expr(prop.a, key);
-            emit_iterator_native(to_property_key_name, key, key);
-            method_pending_ = homed;
-            compile_expr(prop.b, v);
-            method_pending_ = false;
-            if (homed) { emit_define_own(v, "__home", dst, false); }
-            emit_set_function_name(v, key);
-            proto().emit(instruction{op::set_index, dst, key, v});
-            release_to(mark);
-            continue;
+            if (!literal_key) { emit_iterator_native(to_property_key_name, key, key); }
         }
         method_pending_ = homed;
         if (prop.b < 0) {
             compile_ident(prop, v); // shorthand { x }
-        } else if ((prop.d & 1) == 0 && prop.text != "__proto__") {
+        } else if ((prop.d & 1) == 0 && !sets_prototype) {
             // `{ f: function () {} }` names f (13.2.5.5); `__proto__: ...`
             // is a prototype assignment and names nothing.
             compile_named_expr(prop.b, v, decode_string_literal(prop.text));
-        } else if (literal_key && *literal_key != "__proto__") {
+        } else if (literal_key && !sets_prototype) {
             compile_named_expr(prop.b, v, *literal_key);
         } else {
             compile_expr(prop.b, v);
@@ -955,16 +953,13 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
         // in `{ m() { super.m(); } }` starts at Object.prototype or whatever
         // `__proto__:` set.
         if (homed) { emit_define_own(v, "__home", dst, false); }
-        // A computed key - `{[k]: v}`, and also `{"a": v}` and `{1: v}`,
-        // which the parser routes the same way so quotes and escapes get
-        // cooked by evaluating the literal.
-        if ((prop.d & 1) != 0) {
-            const std::uint16_t key = alloc_reg();
-            compile_expr(prop.a, key);
-            proto().emit(instruction{op::set_index, dst, key, v});
+        if (named_at_run_time) { emit_set_function_name(v, key); }
+        if (sets_prototype) {
+            proto().emit(instruction{op::set_prop, dst, name_operand("__proto__"), v});
+        } else if ((prop.d & 1) != 0) {
+            emit_define_own_key(dst, key, v, true);
         } else {
-            const std::uint16_t name = name_operand(decode_string_literal(prop.text));
-            proto().emit(instruction{op::set_prop, dst, name, v});
+            emit_define_own(dst, decode_string_literal(prop.text), v, true);
         }
         release_to(mark);
     }

@@ -259,35 +259,12 @@ void install_destructuring_iteration(context & cx) {
         return target;
     });
     install_using(cx);
-    cx.define_native(std::string{define_own_name}, [](context & c, std::span<value> a) {
-        if (a.size() < 3 || !a[0].is_object_like()) { return value::undefined(); }
-        context::property_descriptor wanted;
-        wanted.has_value = wanted.has_writable = wanted.has_enumerable = true;
-        wanted.has_configurable = true;
-        wanted.held = a[2];
-        wanted.writable = wanted.configurable = true;
-        wanted.enumerable = a.size() > 3 && context::truthy(a[3]);
-        if (!c.define_own_property(a[0], c.to_string(a[1]), wanted)) {
-            c.throw_error("TypeError", "Cannot redefine property: " + c.to_string(a[1]));
-        }
-        return value::undefined();
-    });
     // See set_function_name_name.
     cx.define_native(std::string{set_function_name_name}, [](context & c, std::span<value> a) {
         if (a.size() < 2) { return value::undefined(); }
         detail::set_function_name(c, a[0], a[1],
                                   a.size() > 2 && a[2].is_string() ? c.to_string(a[2]) : "");
         return value::undefined();
-    });
-    // See to_property_key_name.
-    cx.define_native(std::string{to_property_key_name}, [](context & c, std::span<value> a) {
-        value key = a.empty() ? value::undefined() : a[0];
-        if (key.is_object_like() && !c.to_primitive_hint(key, "string", key)) {
-            return value::undefined();
-        }
-        if (key.is_kind(heap_kind::symbol)) { return key; }
-        std::string text = c.to_string(key);
-        return c.throw_pending() ? value::undefined() : c.string(std::move(text));
     });
     // See class_heritage_name.
     cx.define_native(std::string{class_heritage_name}, [](context & c, std::span<value> a) {

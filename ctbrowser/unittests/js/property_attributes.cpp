@@ -91,6 +91,85 @@ int main() {
               "return o.x+','+p.x+','+o.hasOwnProperty('x');})()",
               "2,1,true");
 
+    // OrdinarySet includes the implicit Object.prototype, but literal members
+    // use CreateDataProperty and never invoke an inherited setter.
+    js_expect(R"((function(){
+        Object.defineProperty(Object.prototype, 'blocked', {value: 1001});
+        var objects = [JSON, Math, {}, Object.create({})];
+        return objects.map(function(o) {
+            o.blocked = 2;
+            return o.blocked + ':' + Object.hasOwn(o, 'blocked');
+        }).join();
+    })())",
+              "1001:false,1001:false,1001:false,1001:false");
+    js_expect(R"((function(){
+        'use strict';
+        Object.defineProperty(Object.prototype, 'blocked', {value: 1});
+        try { JSON.blocked = 2; } catch (e) { return e.name; }
+    })())",
+              "TypeError");
+    js_expect(R"((function(){
+        'use strict';
+        Object.defineProperty(Object.prototype, 'blocked', {get() { return 1; }});
+        try { Math.blocked = 2; } catch (e) { return e.name; }
+    })())",
+              "TypeError");
+    js_expect(R"((function(){
+        Object.defineProperty(Object.prototype, 'blocked', {value: 1});
+        var own = {blocked: 2}, near = Object.create({blocked: 3}), bare = Object.create(null);
+        own.blocked = 4; near.blocked = 5; bare.blocked = 6;
+        return [own.blocked, near.blocked, bare.blocked].join();
+    })())",
+              "4,5,6");
+    js_expect(R"((function(){
+        var hits = 0;
+        Object.defineProperty(Object.prototype, 'x', {set(v) { hits++; }});
+        var x = 3, key = 'x';
+        var objects = [{x: 1}, {'x': 2}, {x}, {[key]: 4}, {x() { return 5; }}];
+        return hits + ':' + objects.map(function(o) { return Object.hasOwn(o, 'x'); }).join();
+    })())",
+              "0:true,true,true,true,true");
+    js_expect("(function(){var hits=0;var o={set x(v){hits++;},x:2};"
+              "var d=Object.getOwnPropertyDescriptor(o,'x');"
+              "return [hits,d.value,d.writable,d.enumerable,d.configurable].join();})()",
+              "0,2,true,true,true");
+    js_expect(R"((function(){
+        var log = '', key = {[Symbol.toPrimitive](hint) { log += hint; return 'x'; }};
+        var o = {[key]: (log += ':value', 7)};
+        return log + ':' + o.x;
+    })())",
+              "string:value:7");
+    js_expect(R"((function(){
+        var parent = {x: 1}, __proto__ = parent;
+        var quoted = {'__pr\u006fto__': parent};
+        var computed = {[ /* key */ '__proto__']: parent};
+        var shorthand = {__proto__};
+        var method = {__proto__() { return 2; }};
+        return [Object.getPrototypeOf(quoted) === parent,
+                Object.hasOwn(computed, '__proto__'), Object.getPrototypeOf(computed) === Object.prototype,
+                Object.hasOwn(shorthand, '__proto__'), method.__proto__(),
+                Object.getPrototypeOf({__proto__: null}) === null,
+                Object.getPrototypeOf({__proto__: 1}) === Object.prototype].join();
+    })())",
+              "true,true,true,true,2,true,true");
+
+    // Object literals also work in embeddings that install no standard library,
+    // including a fresh realm created from the bare context's template.
+    {
+        using namespace ctbrowser::script;
+        context cx;
+        const program p = compiler::compile("var key = 'x'; return ({[key]: 7}).x;");
+        const run_result first = cx.run(p);
+        CHECK(first.ok);
+        CHECK_EQ(cx.to_string(first.returned), std::string{"7"});
+        realm_record & other = cx.create_realm();
+        const context::realm_scope in_other{cx, other};
+        const run_result second = cx.run(p);
+        CHECK(second.ok);
+        CHECK_EQ(cx.to_string(second.returned), std::string{"7"});
+        CHECK(cx.global("globalThis").is_undefined());
+    }
+
     // ================================================================
     // 4. [[Configurable]] - delete refuses, and so does a redefinition
     // ================================================================
