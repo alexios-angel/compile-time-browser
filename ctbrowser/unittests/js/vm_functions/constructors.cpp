@@ -164,6 +164,13 @@ void test_derived_constructors() {
                   " (() => super(...[1, 2]))(); this.same = read() === this; } }"
                   "const b = new B(); return [Array.isArray(b), b.length, b.same].join();",
                   "true,2,true");
+    expect_after_turn("var result = ''; let finish, read;"
+                      "class A { constructor() { return {v: 7}; } }"
+                      "class B extends A { constructor() { read = () => this;"
+                      " finish = async () => { await 0; (() => super())(); await 0;"
+                      " result = (read() === this) + ',' + this.v; }; return {}; } }"
+                      "new B(); finish();",
+                      "true,7");
     // Bare super() forwards the enclosing constructor's new.target even
     // through escaped/nested arrows and bound or proxy superclass calls.
     expect_result("let finish; class A { constructor() { return {target: new.target}; } }"
