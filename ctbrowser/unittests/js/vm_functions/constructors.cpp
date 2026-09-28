@@ -7,6 +7,24 @@
 // strict one takes the value as given. And `new bound()` constructs the
 // target with the bound arguments in front (10.4.1.2).
 void test_call_bind_this() {
+    // A suspended constructor expression or argument must not shift the
+    // contiguous argument registers consumed by Construct.
+    expect_result(R"(
+        function C(a, b) { this.a = a; this.b = b; this.target = new.target; }
+        function* make() { return new (yield 'ctor')(7, 2); }
+        const it = make(), first = it.next().value;
+        const o = it.next(C).value;
+        return [first, o.a, o.b, o.target === C].join();
+    )",
+                  "ctor,7,2,true");
+    expect_result(R"(
+        function C(a, b) { this.a = a; this.b = b; this.target = new.target; }
+        function* make() { return new C(yield 'a', yield 'b'); }
+        const it = make(), first = it.next().value, second = it.next(7).value;
+        const o = it.next(2).value;
+        return [first, second, o.a, o.b, o.target === C].join();
+    )",
+                  "a,b,7,2,true");
     // Every Call path rejects a class before its body starts, including
     // wrappers and callbacks that enter through context::invoke.
     for (const char * target : {"C", "C.bind(null)", "C.bind(null).bind(null)", "new Proxy(C, {})",

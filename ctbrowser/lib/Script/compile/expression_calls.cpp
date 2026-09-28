@@ -657,8 +657,13 @@ void compiler_impl::compile_new(const vp::node & n, std::uint16_t dst) {
         release_to(mark);
         return;
     }
+    // Construct reads base+1 arguments, just like Call. Neither the callee
+    // nor an argument may allocate a temporary inside that window.
+    std::vector<std::uint16_t> arg_regs;
+    arg_regs.reserve(args.size());
+    for (std::size_t i = 0; i < args.size(); ++i) { arg_regs.push_back(alloc_reg()); }
     compile_expr(n.a, base);
-    for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
+    for (std::size_t i = 0; i < args.size(); ++i) { compile_expr(args[i], arg_regs[i]); }
     proto().emit(instruction{op::construct, base, static_cast<std::uint16_t>(args.size())});
     proto().emit(instruction{op::move, dst, base});
     release_to(mark);
