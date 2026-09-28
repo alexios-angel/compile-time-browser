@@ -9,10 +9,10 @@ namespace ctbrowser::shell::detail {
 // WindowEventHandlers (HTML 8.1.7.2): the Window's own handlers, a mixin
 // HTMLBodyElement and HTMLFrameSetElement include as well.
 inline constexpr std::string_view window_event_handlers[] = {
-    "onafterprint",   "onbeforeprint", "onbeforeunload",       "onhashchange", "onlanguagechange",
-    "onmessage",      "onmessageerror", "onoffline",           "ononline",     "onpagehide",
-    "onpagereveal",   "onpageshow",    "onpageswap",           "onpopstate",   "onrejectionhandled",
-    "onstorage",      "onunhandledrejection", "onunload"};
+    "onafterprint", "onbeforeprint",        "onbeforeunload", "onhashchange", "onlanguagechange",
+    "onmessage",    "onmessageerror",       "onoffline",      "ononline",     "onpagehide",
+    "onpagereveal", "onpageshow",           "onpageswap",     "onpopstate",   "onrejectionhandled",
+    "onstorage",    "onunhandledrejection", "onunload"};
 
 // WHAT A `<body>` OR `<frameset>` HANDLER FORWARDS TO THE WINDOW (HTML 8.1.8.2):
 // the window-reflecting body element event handler set - six GlobalEventHandlers
