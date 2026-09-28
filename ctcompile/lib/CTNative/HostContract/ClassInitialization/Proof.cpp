@@ -269,6 +269,14 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
              ctjs::implicit_arguments + contract.elementParameters.size())) {
         return refuse("class DOM preparation requires every entry element input");
     }
+    // The DOM host passes an element for each of these; nothing else is one.
+    for (unsigned index : contract.elementParameters) {
+        if (domEntry && !entry.getBody().empty() &&
+            ctjs::implicit_arguments + index < entry.getBody().front().getNumArguments()) {
+            elementActuals[entry.getBody().front().getArgument(ctjs::implicit_arguments + index)] =
+                index;
+        }
+    }
     for (mlir::Operation & op : module.getBody()->getOperations()) {
         if (!step()) { return false; }
         auto fn = llvm::dyn_cast<ctjs::FuncOp>(op);
@@ -561,9 +569,40 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         return mlir::WalkResult::advance();
     });
     if (!reason.empty()) { return false; }
-    // DOM entries admit calls the typed proof checks later, without records.
-    if (domEntry || contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
+    // DOM entries admit calls the typed proof checks later, without records,
+    // so there a helper is uncalled only while its capture transport is all
+    // that names it: its closure only fills its fixed cell, and only proved
+    // closures capture that cell - their reads are recorded calls or refused.
+    const auto transportOnly = [&](mlir::Operation * fn) {
+        auto closure = llvm::find_if(capturedHelpers, [&](mlir::Operation * made) {
+            return target(llvm::cast<ctjs::CreateClosureOp>(made)) == fn;
+        });
+        if (closure == capturedHelpers.end()) { return false; }
+        for (mlir::OpOperand & use : (*closure)->getUses()) {
+            auto * owner = use.getOwner();
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(owner)) { continue; }
+            const auto cell = llvm::isa<ctjs::CellSetOp>(owner) && use.getOperandNumber() == 1
+                                  ? owner->getOperand(0)
+                              : llvm::isa<ctjs::CreateCellOp>(owner) ? owner->getResult(0)
+                                                                     : mlir::Value{};
+            if (!cell || !cells.count(cell)) { return false; }
+            for (mlir::OpOperand & read : cell.getUses()) {
+                if (!step()) { return false; }
+                auto capture = llvm::dyn_cast<ctjs::CreateClosureOp>(read.getOwner());
+                if (!llvm::isa<ctjs::RootOp, ctjs::CellSetOp>(read.getOwner()) &&
+                    !(capture && llvm::is_contained(capturedClosures, capture) &&
+                      read.getOperandNumber() >= capture.getUpvalues().getBeginOperandIndex())) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
         uncalled.clear();
+    } else if (domEntry) {
+        uncalled.remove_if([&](mlir::Operation * fn) { return !transportOnly(fn); });
     }
     uncalled.remove_if([&](mlir::Operation * fn) {
         return methods.contains(fn) || constructors.contains(fn) || getters.contains(fn);

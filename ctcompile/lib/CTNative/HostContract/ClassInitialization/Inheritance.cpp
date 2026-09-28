@@ -2,6 +2,13 @@
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::class_detail {
+namespace {
+// Every own and prototype-chain property name a ctbrowser VM element has,
+// enumerated from the VM; element-names.test fails on any difference.
+constexpr std::string_view elementNames[] = {
+#include "ElementNames.inc"
+};
+} // namespace
 
 void classInitialization::forgetRecords(mlir::Region & region) {
     region.walk([&](mlir::Operation * op) {
@@ -734,26 +741,36 @@ bool classInitialization::normalizeSuperMethods(
     return true;
 }
 
-std::optional<mlir::Attribute> classInitialization::evaluateHelper(
-    ctjs::FuncOp fn, llvm::ArrayRef<mlir::Attribute> actuals, unsigned depth) {
-    // An exact captured helper runs the same way for the same primitive
-    // actuals: walk only its executed path through pure primitive operations
-    // and nested exact helper calls. Any other operation leaves it unknown.
-    // Poison is the lift's dead carried slot: it may travel, never be used.
-    // ponytail: structured single-block bodies; loops, objects, property
-    // reads and host bindings need the full partial evaluator's heap.
+std::optional<partial_eval::value> classInitialization::evaluateHelper(
+    ctjs::FuncOp fn, llvm::ArrayRef<partial_eval::value> actuals, unsigned depth) {
+    // An exact captured helper runs the same way for the same actuals: walk
+    // only its executed path through pure primitive operations and nested
+    // exact helper calls. Any other operation leaves it unknown. Poison is
+    // the lift's dead carried slot: it may travel, never be used.
+    // An actual may be a declared DOM element parameter, a reference to its
+    // index. It is truthy, typeof "object" and strictly unequal to every
+    // primitive; its `nodeType` is 1 and a constant key outside the VM's
+    // element name set reads undefined: the census refuses prototype writes
+    // and the typed DOM proof refuses unmodeled element writes, so no source
+    // adds one. Keys spelled `__` stay unknown: the binding adds internal
+    // slots (`__selected`, `__cached_...`) to an element lazily.
+    // ponytail: structured single-block bodies; loops, objects, other
+    // property reads and host bindings need the full partial evaluator's heap.
     if (depth == 16 || !fn || !fn.getBody().hasOneBlock()) { return std::nullopt; }
     auto * context = module.getContext();
     using partial_eval::value;
+    const auto known = [](const value & data) {
+        return data.tag == value::kind::constant || data.tag == value::kind::reference;
+    };
     llvm::DenseMap<mlir::Value, value> values;
     llvm::DenseMap<mlir::Value, ctjs::FuncOp> callees;
     auto & entry = fn.getBody().front();
     for (auto [i, formal] :
          llvm::enumerate(entry.getArguments().drop_front(ctjs::implicit_arguments))) {
         values[formal] =
-            value::primitive(i < actuals.size() ? actuals[i] : ctjs::UndefinedAttr::get(context));
+            i < actuals.size() ? actuals[i] : value::primitive(ctjs::UndefinedAttr::get(context));
     }
-    std::optional<mlir::Attribute> returned;
+    std::optional<value> returned;
     const auto walk = [&](auto && self, mlir::Block & block,
                           llvm::SmallVectorImpl<value> & yielded) -> bool {
         // A structured arm or switch case: its yields become the op's results.
@@ -776,8 +793,8 @@ std::optional<mlir::Attribute> classInitialization::evaluateHelper(
             }
             if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
                 auto data = values.lookup(result.getValue());
-                if (data.tag != value::kind::constant) { return false; }
-                returned = data.constant;
+                if (!known(data)) { return false; }
+                returned = data;
                 return true;
             }
             if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op)) {
@@ -816,17 +833,26 @@ std::optional<mlir::Attribute> classInitialization::evaluateHelper(
             value data;
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
                 auto helper = callees.lookup(call.getCallee());
-                llvm::SmallVector<mlir::Attribute> arguments;
+                llvm::SmallVector<value> arguments;
                 for (mlir::Value argument : call.getArgs()) {
-                    auto actual = values.lookup(argument);
-                    if (actual.tag != value::kind::constant) { return false; }
-                    arguments.push_back(actual.constant);
+                    arguments.push_back(values.lookup(argument));
+                    if (!known(arguments.back())) { return false; }
                 }
                 auto answer = helper && undefined(call.getReceiver())
                                   ? evaluateHelper(helper, arguments, depth + 1)
                                   : std::nullopt;
                 if (!answer) { return false; }
-                data = value::primitive(*answer);
+                data = *answer;
+            } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+                const auto key = ctjs::constantKey(read.getKey());
+                if (values.lookup(read.getObject()).tag == value::kind::reference && !key.empty() &&
+                    !key.starts_with("__")) {
+                    if (key == "nodeType") {
+                        data = partial_eval::numeric(context, 1);
+                    } else if (!std::ranges::binary_search(elementNames, std::string_view{key})) {
+                        data = value::primitive(ctjs::UndefinedAttr::get(context));
+                    }
+                }
             } else if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) {
                 if (ctjs::isPrimitiveAttr(constant.getValue())) {
                     data = value::primitive(constant.getValue());
@@ -845,11 +871,19 @@ std::optional<mlir::Attribute> classInitialization::evaluateHelper(
                         cast.getType(), static_cast<int64_t>(number.getValue().getZExtValue())));
                 }
             } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op)) {
-                data = partial_eval::unary(unary.getKind(), values.lookup(unary.getOperand()),
-                                           context);
+                auto operand = values.lookup(unary.getOperand());
+                data = operand.tag == value::kind::reference &&
+                               unary.getKind() == ctjs::UnaryKind::TypeOf
+                           ? value::primitive(ctjs::StringAttr::get(context, "object"))
+                           : partial_eval::unary(unary.getKind(), operand, context);
             } else if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op)) {
-                data = partial_eval::compare(compare.getKind(), values.lookup(compare.getLhs()),
-                                             values.lookup(compare.getRhs()), context);
+                auto lhs = values.lookup(compare.getLhs());
+                auto rhs = values.lookup(compare.getRhs());
+                // Two element parameters may be one element.
+                if (lhs.tag != value::kind::reference || rhs.tag != value::kind::reference ||
+                    lhs.node == rhs.node) {
+                    data = partial_eval::compare(compare.getKind(), lhs, rhs, context);
+                }
             } else if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(op)) {
                 data = partial_eval::binary(binary.getKind(), values.lookup(binary.getLhs()),
                                             values.lookup(binary.getRhs()), context, true);
@@ -860,7 +894,7 @@ std::optional<mlir::Attribute> classInitialization::evaluateHelper(
             } else if (auto boxed = llvm::dyn_cast<ctjs::FromBoolOp>(op)) {
                 data = values.lookup(boxed.getOperand());
             }
-            if (data.tag != value::kind::constant || op.getNumResults() != 1) { return false; }
+            if (!known(data) || op.getNumResults() != 1) { return false; }
             values[op.getResult(0)] = data;
         }
         return false;
@@ -874,9 +908,10 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
                                           llvm::ArrayRef<ctjs::ConstructOp> instances) {
     // Nothing extends this class, so these exact `new`s are every construction.
     // A top-level arm on a formal - or on an exact captured helper applied to
-    // formals and literals - that every actual makes equally truthy runs the
-    // same way each time: keep that arm alone. Arms whose dropped side holds
-    // constructions, closures, cells, global writes or setup keep today's proofs.
+    // formals and literals - that every actual (a literal or a declared DOM
+    // element) makes equally truthy runs the same way each time: keep that
+    // arm alone. Arms whose dropped side holds constructions, closures, cells,
+    // global writes or setup keep today's proofs.
     if (instances.empty() || baseClasses.contains(constructor.getResult())) { return true; }
     auto function = target(constructor);
     if (!function || function.getBody().empty()) { return true; }
@@ -887,14 +922,23 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
         return argument && argument.getOwner() == &entry &&
                argument.getArgNumber() >= ctjs::implicit_arguments;
     };
-    // The literal an exact `new` gives an operand, or null when it is unknown.
-    const auto actual = [&](ctjs::ConstructOp made, mlir::Value value) -> mlir::Attribute {
-        if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) { return constant.getValue(); }
+    // What an exact `new` gives an operand: a literal, a declared DOM element
+    // parameter (a reference to its index) or unknown.
+    using partial_eval::value;
+    const auto actual = [&](ctjs::ConstructOp made, mlir::Value operand) -> value {
+        if (auto constant = operand.getDefiningOp<ctjs::ConstantOp>()) {
+            return value::primitive(constant.getValue());
+        }
         const auto index =
-            llvm::cast<mlir::BlockArgument>(value).getArgNumber() - ctjs::implicit_arguments;
-        if (index >= made.getArgs().size()) { return ctjs::UndefinedAttr::get(context); }
-        auto constant = made.getArgs()[index].getDefiningOp<ctjs::ConstantOp>();
-        return constant ? constant.getValue() : mlir::Attribute{};
+            llvm::cast<mlir::BlockArgument>(operand).getArgNumber() - ctjs::implicit_arguments;
+        if (index >= made.getArgs().size()) {
+            return value::primitive(ctjs::UndefinedAttr::get(context));
+        }
+        if (auto constant = made.getArgs()[index].getDefiningOp<ctjs::ConstantOp>()) {
+            return value::primitive(constant.getValue());
+        }
+        auto element = elementActuals.find(made.getArgs()[index]);
+        return element == elementActuals.end() ? value{} : value::reference(element->second);
     };
     for (mlir::Operation & op : llvm::make_early_inc_range(entry)) {
         if (!step()) { return false; }
@@ -921,23 +965,26 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
         if (!operand || (!formal(operand) && !helper)) { continue; }
         std::optional<bool> decided;
         bool undecided = false;
+        // The call arguments whose element every construction's call returns.
+        llvm::SmallVector<bool> forwarded(arguments.size(), true);
         for (ctjs::ConstructOp made : instances) {
             if (!step()) { return false; }
-            mlir::Attribute literal = helper ? mlir::Attribute{} : actual(made, operand);
+            value literal = helper ? value{} : actual(made, operand);
             if (helper) {
-                llvm::SmallVector<mlir::Attribute> literals;
+                llvm::SmallVector<value> literals;
                 for (mlir::Value argument : arguments) {
                     literals.push_back(actual(made, argument));
                 }
-                if (llvm::all_of(literals, [](mlir::Attribute a) { return bool(a); })) {
-                    literal = evaluateHelper(helper, literals, 0).value_or(mlir::Attribute{});
+                if (llvm::all_of(literals,
+                                 [](const value & a) { return a.tag != value::kind::unknown; })) {
+                    literal = evaluateHelper(helper, literals, 0).value_or(value{});
+                }
+                for (auto [i, argument] : llvm::enumerate(literals)) {
+                    forwarded[i] = forwarded[i] && literal.tag == value::kind::reference &&
+                                   partial_eval::sameValue(argument, literal);
                 }
             }
-            if (!literal) {
-                undecided = true;
-                break;
-            }
-            const auto truthy = partial_eval::truthy(partial_eval::value::primitive(literal));
+            const auto truthy = partial_eval::truthy(literal);
             if (!truthy || (decided && *decided != *truthy)) {
                 undecided = true;
                 break;
@@ -985,9 +1032,18 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
                                          block.begin(), yield->getIterator());
             branch.erase();
         }
-        // Every construction ran the helper on a pure primitive path, so a
-        // call whose result died with the arm does nothing: erase it.
-        if (!helper || domEntryHelpers.contains(helper)) { continue; }
+        // Every construction ran the helper on a pure path, so a call whose
+        // result died with the arm does nothing: erase it. One that returns
+        // the same argument's element in every construction is that argument.
+        if (!helper) { continue; }
+        const auto forward = llvm::find(forwarded, true);
+        if (forward != forwarded.end()) {
+            call.getResult().replaceUsesWithIf(
+                call.getArgs()[static_cast<unsigned>(forward - forwarded.begin())],
+                [](mlir::OpOperand & use) { return !llvm::isa<ctjs::RootOp>(use.getOwner()); });
+        } else if (domEntryHelpers.contains(helper)) {
+            continue;
+        }
         if (truth->use_empty()) { truth.erase(); }
         if (rootedOnly(call)) {
             helperCalls.erase(call);
